@@ -56,7 +56,7 @@ export function gatewayInvocation(root, port, t3Port, executorPort) {
     args: [...(osSandbox ? ['-p', macSandboxProfile(root), process.execPath] :
       ['--permission', `--allow-fs-read=${serverDir}`, `--allow-fs-read=${staticDir}`,
       `--allow-fs-read=${root}`, `--allow-fs-write=${root}`,
-      ...(process.allowedNodeEnvironmentFlags.has('--allow-net') ? ['--allow-net'] : [])]),
+      ...['--allow-net', '--allow-addons'].filter((flag) => process.allowedNodeEnvironmentFlags.has(flag))]),
       path.join(serverDir, 'gateway.mjs')],
     env: {
       PATH: path.dirname(process.execPath), HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
