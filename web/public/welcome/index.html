@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Threebot: your Bot is a T3 thread</title>
-<meta name="description" content="Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have." />
+<meta name="description" content="Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for." />
 <meta name="theme-color" content="#FFAF38" />
 <meta property="og:title" content="Threebot" />
 <meta property="og:description" content="Your Bot is a T3 thread. Personal agents on T3 Code, on the subscriptions you already have." />
@@ -16,7 +16,7 @@
 <link rel="preload" href="/welcome/img/ball.webp" as="image" />
 <style>
 @font-face { font-family: "Rubik"; font-style: normal; font-weight: 300 900; font-display: swap; src: url("/welcome/fonts/rubik.woff2") format("woff2"); }
-:root { --amber: #FFAF38; --pink: #FF5EB1; --night: #2b2263; --ink: #000; --paper: #fff; --mx: 0; --my: 0; --ease: cubic-bezier(.2, .7, .2, 1); }
+:root { --amber: #FFAF38; --ink: #000; --paper: #fff; --mx: 0; --my: 0; --ease: cubic-bezier(.2, .7, .2, 1); }
 * { box-sizing: border-box; }
 html { overflow-x: clip; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
 body { margin: 0; background: var(--amber); color: var(--ink); font: 400 18px/1.45 "Rubik", -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
@@ -65,10 +65,17 @@ h1 { margin-top: 14px; max-width: 12.5em; font-size: clamp(50px, min(9vw, 13.5vh
 
 /* Worlds */
 .world { position: relative; overflow: clip; padding: clamp(80px, 12vh, 136px) clamp(18px, 3vw, 40px); }
-.pink { background: var(--pink); }
 .amber { background: var(--amber); }
-.night { background: #17133F; color: #fff; }
 .black { background: #000; color: #fff; }
+.black .btn:not(.line) { background: var(--amber); color: #000; }
+.black .shot { box-shadow: 0 0 0 1px #2c2c2e; }
+.hl { color: var(--amber); }
+.slim { padding-block: clamp(36px, 5vh, 56px); }
+.any { width: min(1040px, 100%); margin: 0 auto; text-align: center; }
+.any h3 { font-size: clamp(25px, 3vw, 34px); line-height: 1.1; font-weight: 600; letter-spacing: -.02em; }
+.any p { margin-top: 8px; font-size: 18px; line-height: 1.35; text-wrap: pretty; }
+.names { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 16px; list-style: none; }
+.names li { padding: 5px 12px; border-radius: 999px; box-shadow: inset 0 0 0 1.5px #000; font-size: 15px; font-weight: 500; }
 .say { max-width: 980px; margin: 0 auto clamp(36px, 6vh, 64px); text-align: center; }
 h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; letter-spacing: -.03em; text-wrap: balance; }
 .say p { max-width: 640px; margin: 18px auto 0; font-size: clamp(18px, 1.8vw, 22px); line-height: 1.38; text-wrap: pretty; }
@@ -113,13 +120,19 @@ h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; lett
 .chat .chip { width: clamp(190px, 26vw, 300px); border-radius: 999px; }
 .bub { max-width: 100%; padding: 16px 24px; border-radius: 28px; background: #171717; color: #fff; font-size: clamp(16px, 1.7vw, 20px); line-height: 1.35; }
 .bub b { display: block; font-size: 14px; font-weight: 500; color: #A97EFE; }
-.bub.in b { color: #FF5EB1; }
+.bub.in b { color: #FF309B; }
 
 /* Asks first */
 .model { width: min(420px, 100%); margin: clamp(36px, 6vh, 64px) auto 0; }
 .ask { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: center; gap: clamp(18px, 4vw, 60px); width: min(1180px, 100%); margin-inline: auto; }
 .phone { position: relative; width: 100%; max-width: 340px; border-radius: clamp(30px, 3.2vw, 44px); background: #000; box-shadow: 0 0 0 7px #000, 0 0 0 9px #2c2c2e; overflow: hidden; justify-self: center; }
 .phone img { width: 100%; }
+
+/* Phones, side by side */
+.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin: 0 auto clamp(48px, 7vh, 80px); }
+.strip .phone { width: 100%; max-width: none; box-shadow: 0 0 0 5px #000, 0 0 0 7px #2c2c2e; }
+.strip h3 { margin-top: 22px; font-size: 22px; font-weight: 600; letter-spacing: -.015em; }
+.strip p { margin-top: 4px; font-size: 16px; text-wrap: pretty; }
 
 /* FAQ */
 .faq { max-width: 780px; margin: 0 auto; border-top: 1px solid rgba(255, 255, 255, .22); }
@@ -151,6 +164,7 @@ footer a { text-decoration: underline; }
   .sleep .sleeper, .apps .sky { width: min(72%, 300px); justify-self: center; }
   .sleep .panel { width: 82%; justify-self: center; }
   .phone { width: min(64vw, 260px); }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -173,7 +187,7 @@ footer a { text-decoration: underline; }
     <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></button>
     <p class="ball-hint" data-ball-state>Click the ball</p>
     <h1>Your Bot is a T3 thread</h1>
-    <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have.</p>
+    <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
     <div class="cta">
       <a class="btn post" href="https://github.com/RokaSwK/threebot" rel="noopener">Get it on GitHub</a>
       <a class="btn line" href="https://t3.codes/" rel="noopener">t3.codes</a>
@@ -186,9 +200,9 @@ footer a { text-decoration: underline; }
     <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=4" type="video/mp4" /></video></div>
   </section>
 
-  <section class="world amber" id="same">
+  <section class="world black" id="same">
     <div class="say">
-      <h2>First the Bot, then its thread</h2>
+      <h2>First the Bot, <span class="hl">then its thread</span></h2>
       <p>Pick a face and a name. Threebot makes the icon, then opens the Bot's thread in T3 Code, and the thread wears the same face.</p>
     </div>
     <div class="pair watch">
@@ -198,7 +212,7 @@ footer a { text-decoration: underline; }
     </div>
   </section>
 
-  <section class="world pink">
+  <section class="world amber">
     <div class="say">
       <h2>What a personal assistant does, faster</h2>
       <p>It reads, drafts, checks and reminds, on your machine. There's an app for your desktop and one for your phone, and both are the same thread.</p>
@@ -209,9 +223,9 @@ footer a { text-decoration: underline; }
     </div>
   </section>
 
-  <section class="world night">
+  <section class="world black">
     <div class="say">
-      <h2>Say it once</h2>
+      <h2><span class="hl">Say it once</span></h2>
       <p>Tell a Bot to do something every weekday at 8 and it becomes a routine. It wakes up on time, does the work, and tells you how it went.</p>
     </div>
     <div class="sleep watch">
@@ -243,14 +257,16 @@ footer a { text-decoration: underline; }
   </section>
 
   <section class="world black">
-    <div class="say"><h2>The rest of a personal agent</h2></div>
-    <div class="two watch">
-      <div><div class="shot rise"><img src="/welcome/img/vault-logos.webp" width="1100" height="932" alt="The Vault with saved logins for Figma, GitHub, Linear, Notion, Stripe and Vercel" loading="lazy" /></div><h3>A vault for its logins</h3><p>Powered by secure requests from T3 Code. A Bot can fill in a website's password without ever reading it.</p></div>
-      <div><div class="shot rise"><img src="/welcome/img/browser.webp" width="1500" height="626" alt="Inbox opening t3.codes in its own browser and reading the headline" loading="lazy" /></div><h3>A browser of its own</h3><p>It opens a real page, reads it, and you can watch it work.</p></div>
+    <div class="say"><h2>The rest of a <span class="hl">personal agent</span></h2></div>
+    <div class="strip">
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-bot.webp" width="560" height="1212" alt="A Bot's page with its face, routines, library, computer, model and subagents" loading="lazy" /></div><h3>A face</h3><p>You can tell what it's doing just by looking at it.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-routine.webp" width="560" height="1212" alt="A routine: Morning feedback triage, weekdays at 8:00 AM" loading="lazy" /></div><h3>Routines</h3><p>Ask once, then put it on a schedule.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-vault.webp" width="560" height="1212" alt="The Vault with saved logins and real logos" loading="lazy" /></div><h3>A vault</h3><p>Bots can fill website passwords without reading them.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-apps.webp" width="560" height="1212" alt="Connect apps with real logos" loading="lazy" /></div><h3>Your apps</h3><p>Connect the tools it should work with.</p></div>
     </div>
   </section>
 
-  <section class="world night">
+  <section class="world amber">
     <div class="say">
       <h2>It runs your other threads and other machines</h2>
       <p>Powered by T3 Code MCP. You talk to one Bot, and it starts real T3 threads and subagents, each with its own shape, here or on another machine.</p>
@@ -267,9 +283,9 @@ footer a { text-decoration: underline; }
     </div>
   </section>
 
-  <section class="world pink">
+  <section class="world black">
     <div class="say">
-      <h2>Bots talk to each other</h2>
+      <h2>Bots talk to <span class="hl">each other</span></h2>
       <p>Ship needed to know who was paying, so it asked Inbox. You can read every word.</p>
     </div>
     <div class="chat watch">
@@ -279,28 +295,17 @@ footer a { text-decoration: underline; }
     </div>
   </section>
 
-  <section class="world amber">
-    <div class="say">
-      <h2>Still a T3 thread</h2>
-      <p>The question shows up on your phone and in T3 Code at once, because it's the same thread.</p>
-    </div>
-    <div class="ask watch">
-      <div class="shot rise"><img src="/welcome/img/t3.webp" width="1600" height="1258" alt="T3 Code showing the Ship thread, three new threads in the sidebar, and the question: All 3 bugs fixed, tests pass. Send the 7 replies?" loading="lazy" /></div>
-      <div class="phone rise"><img src="/welcome/img/ask.webp" width="780" height="748" alt="A question on a phone, with small Send and Not yet buttons side by side" loading="lazy" /></div>
+  <section class="world amber slim">
+    <div class="any">
+      <h3>Runs on whatever T3 Code runs</h3>
+      <p>Threebot doesn't sell you AI. Your Bots use the plans you already pay for, or your own local models.</p>
+      <ul class="names"><li>Claude</li><li>Codex</li><li>Cursor</li><li>Grok Build</li><li>OpenCode</li><li>Antigravity</li><li>Muse Code</li><li>Pi</li><li>fx</li><li>Hermes</li><li>Ollama</li><li>any ACP agent</li></ul>
     </div>
   </section>
 
-  <section class="world night">
-    <div class="say" style="margin-bottom:0">
-      <h2>On the Claude and Codex subs you already have</h2>
-      <p>Threebot doesn't sell you AI. Your Bots use the plans you already pay for, and you can change the model whenever you like.</p>
-    </div>
-    <div class="shot model rise watch"><img src="/welcome/img/model-sheet.webp" width="840" height="1336" alt="Threebot's model selector with Codex and Claude, the model list, reasoning and fast mode" loading="lazy" /></div>
-  </section>
-
-  <section class="world pink" id="credits">
+  <section class="world black" id="credits">
     <div class="say" style="margin-bottom:clamp(20px,3vh,32px)">
-      <h2>Built on T3 Code</h2>
+      <h2>Built on <span class="hl">T3 Code</span></h2>
       <p>Threebot stands on T3 Code. The threads, subagents, routines, browser, secure requests and MCP tools are all theirs. It's open source, made by T3 Tools and its contributors. Thank you.</p>
     </div>
     <div class="cta">
@@ -314,7 +319,7 @@ footer a { text-decoration: underline; }
     <div class="faq">
       <details><summary>What is Threebot?</summary><p>An app that gives a T3 Code thread a face, a memory and a place on your phone. You message it like a person, and it runs your other threads for you.</p></details>
       <details><summary>How is it different from T3 Code?</summary><p>T3 Code is where threads run. Threebot sits on top of it and keeps things small: one or two Bots for each part of your life, each with its own thread, running the others.</p></details>
-      <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the Claude or Codex plan you already use with T3 Code. Threebot has no account of its own.</p></details>
+      <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the provider you already use with T3 Code, or on your own local models. Threebot has no account of its own.</p></details>
       <details><summary>Where does it run?</summary><p>On your own machine or server. Your Bots, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
       <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: clone the <a href="https://github.com/RokaSwK/threebot" rel="noopener">repository</a> and follow the README.</p></details>
       <details><summary>Is this made by the T3 Code team?</summary><p>No. Threebot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
