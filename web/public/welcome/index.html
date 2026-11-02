@@ -44,8 +44,13 @@ img { display: block; max-width: 100%; height: auto; }
 .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
 
 /* The ball, with eyes that are alive */
-.ball { position: relative; width: var(--size, 300px); aspect-ratio: 1; flex: none; }
+.ball { position: relative; display: block; width: var(--size, 300px); aspect-ratio: 1; flex: none; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
 .ball img { width: 100%; }
+.ball svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.ball.is-live img, .ball.is-live .pill { display: none; }
+.ball:focus-visible { outline: 3px solid #000; outline-offset: 6px; border-radius: 50%; }
+.ball-hint { display: none; margin-top: -4px; font-size: 15px; font-weight: 500; }
+.is-live + .ball-hint { display: block; }
 .pill { position: absolute; top: 35%; width: 8.7%; height: 24%; border-radius: 999px; background: #fff; transform: translate(calc(var(--mx) * 26%), calc(var(--my) * 7%)) scaleY(var(--open, 1)); transition: transform .14s ease-out; }
 .pill.l { left: 33.6%; } .pill.r { left: 57.7%; }
 
@@ -90,12 +95,7 @@ h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; lett
 .sleep .stack { display: grid; gap: clamp(14px, 2vw, 24px); }
 .sleep .panel { width: min(68%, 460px); justify-self: end; }
 
-/* Real logos in the ball's real orbit */
-.apps { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 4vw, 64px); width: min(1240px, 100%); margin-inline: auto; }
-.sky { position: relative; aspect-ratio: 1; }
-.sky > img { width: 100%; }
-.moon { position: absolute; left: 50%; top: 50%; width: 15%; aspect-ratio: 1; margin: -7.5%; padding: 2.4%; border-radius: 28%; background: #fff; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--s, 1)); z-index: var(--z, 1); }
-.moon img { width: 100%; }
+.wide { width: min(1120px, 100%); margin-inline: auto; }
 
 /* Subagents */
 .kids { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin-inline: auto; }
@@ -110,6 +110,7 @@ h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; lett
 .bub.in b { color: #FF5EB1; }
 
 /* Asks first */
+.model { width: min(420px, 100%); margin: clamp(36px, 6vh, 64px) auto 0; }
 .ask { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: center; gap: clamp(18px, 4vw, 60px); width: min(1180px, 100%); margin-inline: auto; }
 .phone { position: relative; width: 100%; max-width: 340px; border-radius: clamp(30px, 3.2vw, 44px); background: #000; box-shadow: 0 0 0 7px #000, 0 0 0 9px #2c2c2e; overflow: hidden; justify-self: center; }
 .phone img { width: 100%; }
@@ -137,11 +138,11 @@ footer a { text-decoration: underline; }
 @media (max-width: 760px) {
   .nav a:not(.brand):not(.btn) { display: none; }
   .btn { height: 52px; font-size: 17px; }
-  .pair, .two, .sleep, .apps, .kids, .ask { grid-template-columns: minmax(0, 1fr); }
+  .pair, .two, .sleep, .kids, .ask { grid-template-columns: minmax(0, 1fr); }
   .pair { justify-items: center; }
   .pair .shot:first-child { width: min(76%, 320px); }
   .arrow { transform: rotate(90deg); }
-  .sleep .sleeper, .apps .sky { width: min(72%, 300px); justify-self: center; }
+  .sleep .sleeper { width: min(72%, 300px); justify-self: center; }
   .sleep .panel { width: 82%; justify-self: center; }
   .phone { width: min(64vw, 260px); }
 }
@@ -164,7 +165,8 @@ footer a { text-decoration: underline; }
 
 <main id="top">
   <header class="hero">
-    <div class="ball" aria-hidden="true"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></div>
+    <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></button>
+    <p class="ball-hint" data-ball-state>Click the ball</p>
     <h1>Your Bot is a T3 thread</h1>
     <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have.</p>
     <div class="cta">
@@ -176,7 +178,7 @@ footer a { text-decoration: underline; }
   </header>
 
   <section class="world amber" id="film">
-    <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=2" type="video/mp4" /></video></div>
+    <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=3" type="video/mp4" /></video></div>
   </section>
 
   <section class="world amber" id="same">
@@ -197,7 +199,7 @@ footer a { text-decoration: underline; }
       <p>It reads, drafts, checks and reminds, on your machine. There's an app for your desktop and one for your phone, and both are the same thread.</p>
     </div>
     <div class="peek watch">
-      <div class="ball" aria-hidden="true"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></div>
+      <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
       <div class="shot rise"><img src="/welcome/img/desktop.webp" width="1800" height="1125" alt="The Threebot desktop app: Ship's conversation, its subagents and its details" loading="lazy" /></div>
     </div>
   </section>
@@ -219,44 +221,33 @@ footer a { text-decoration: underline; }
   <section class="world amber">
     <div class="say">
       <h2>Connect your apps</h2>
-      <p>Gmail, Calendar, Linear, GitHub, Slack, Notion, Stripe. Connect the ones a Bot should work with, and it works in them for you.</p>
+      <p>Powered by Executor. Gmail, Calendar, Linear, GitHub, Slack, Notion, Stripe: connect the ones a Bot should work with.</p>
     </div>
-    <div class="apps watch">
-      <div class="sky rise" id="sky" aria-hidden="true">
-        <img src="/welcome/img/planet.webp" width="720" height="720" alt="" loading="lazy" />
-        <i class="moon"><img src="/welcome/img/logo-gmail.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-linear.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-github.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-slack.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-notion.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-stripe.webp" width="96" height="96" alt="" loading="lazy" /></i>
-      </div>
-      <div class="shot rise"><img src="/welcome/img/connect.webp" width="1400" height="754" alt="Connect apps showing Gmail, Google Calendar, Linear, GitHub, Slack, Notion and Stripe with their real logos" loading="lazy" /></div>
-    </div>
+    <div class="shot wide rise watch"><img src="/welcome/img/connect.webp" width="1400" height="754" alt="Connect apps showing Gmail, Google Calendar, Linear, GitHub, Slack, Notion and Stripe with their real logos" loading="lazy" /></div>
   </section>
 
   <section class="world black">
     <div class="say"><h2>The rest of a personal agent</h2></div>
     <div class="two watch">
-      <div><div class="shot rise"><img src="/welcome/img/vault-logos.webp" width="1100" height="932" alt="The Vault with saved logins for Figma, GitHub, Linear, Notion, Stripe and Vercel" loading="lazy" /></div><h3>A vault for its logins</h3><p>A Bot can fill in a website's password without ever reading it.</p></div>
+      <div><div class="shot rise"><img src="/welcome/img/vault-logos.webp" width="1100" height="932" alt="The Vault with saved logins for Figma, GitHub, Linear, Notion, Stripe and Vercel" loading="lazy" /></div><h3>A vault for its logins</h3><p>Powered by secure requests from T3 Code. A Bot can fill in a website's password without ever reading it.</p></div>
       <div><div class="shot rise"><img src="/welcome/img/browser.webp" width="1500" height="626" alt="Inbox opening t3.codes in its own browser and reading the headline" loading="lazy" /></div><h3>A browser of its own</h3><p>It opens a real page, reads it, and you can watch it work.</p></div>
     </div>
   </section>
 
   <section class="world night">
     <div class="say">
-      <h2>It runs your other threads</h2>
-      <p>You talk to one Bot. It starts real T3 threads and subagents, each with its own shape, and keeps track of them so you don't have to.</p>
+      <h2>It runs your other threads and other machines</h2>
+      <p>Powered by T3 Code MCP. You talk to one Bot, and it starts real T3 threads and subagents, each with its own shape, here or on another machine.</p>
     </div>
     <div class="kids watch">
       <div class="shot rise"><img src="/welcome/img/rows.webp" width="520" height="700" alt="T3 Code's sidebar with Ship working and the three threads it started: Make search case-insensitive, Fix dates a month ahead and Fix 3-way split losing a cent" loading="lazy" /></div>
       <div class="col">
-        <div class="shot rise"><img src="/welcome/img/lineage.webp" width="620" height="680" alt="Ship's lineage with two subagents in different shapes: Review the fixes and Draft the changelog" loading="lazy" /></div>
+        <div class="shot rise"><img src="/welcome/img/lineage.webp" width="620" height="410" alt="Ship's lineage with two subagents in different shapes: Review the fixes and Draft the changelog" loading="lazy" /></div>
       </div>
     </div>
     <div class="say" style="margin-top:clamp(28px,5vh,56px);margin-bottom:0">
       <p class="note-big">A subagent reviewed the work and found a real crash, so Ship sent it back.</p>
-      <div class="shot rise" style="margin-top:16px"><img src="/welcome/img/crash.webp" width="1130" height="140" alt="Bugs are committed and reviewed; the review found a crash in the search fix, so I'm sending that back before drafting replies." loading="lazy" /></div>
+      <div class="shot rise" style="margin-top:16px"><img src="/welcome/img/crash.webp" width="1140" height="140" alt="Bugs are committed and reviewed; the review found a crash in the search fix, so I'm sending that back before drafting replies." loading="lazy" /></div>
     </div>
   </section>
 
@@ -274,12 +265,12 @@ footer a { text-decoration: underline; }
 
   <section class="world amber">
     <div class="say">
-      <h2>It asks before it sends</h2>
-      <p>The question shows up on your phone and in T3 Code at once, because it's the same thread. Nothing leaves until you say so.</p>
+      <h2>Still a T3 thread</h2>
+      <p>The question shows up on your phone and in T3 Code at once, because it's the same thread.</p>
     </div>
     <div class="ask watch">
       <div class="shot rise"><img src="/welcome/img/t3.webp" width="1600" height="1258" alt="T3 Code showing the Ship thread, three new threads in the sidebar, and the question: All 3 bugs fixed, tests pass. Send the 7 replies?" loading="lazy" /></div>
-      <div class="phone rise"><img src="/welcome/img/ask.webp" width="780" height="1260" alt="The same question on a phone, with Send and Not yet side by side" loading="lazy" /></div>
+      <div class="phone rise"><img src="/welcome/img/ask.webp" width="780" height="748" alt="A question on a phone, with small Send and Not yet buttons side by side" loading="lazy" /></div>
     </div>
   </section>
 
@@ -288,7 +279,7 @@ footer a { text-decoration: underline; }
       <h2>On the Claude and Codex subs you already have</h2>
       <p>Threebot doesn't sell you AI. Your Bots use the plans you already pay for, and you can change the model whenever you like.</p>
     </div>
-    <div class="phone rise watch" style="margin:clamp(36px,6vh,64px) auto 0"><img src="/welcome/img/model.webp" width="780" height="1688" alt="The model picker on a Bot, listing Claude Opus, Sonnet, Fable and Haiku" loading="lazy" /></div>
+    <div class="shot model rise watch"><img src="/welcome/img/model-sheet.webp" width="840" height="1336" alt="Threebot's model selector with Codex and Claude, the model list, reasoning and fast mode" loading="lazy" /></div>
   </section>
 
   <section class="world black" id="faq">
@@ -305,7 +296,7 @@ footer a { text-decoration: underline; }
 
   <section class="world amber">
     <div class="end">
-      <div class="ball" aria-hidden="true"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></div>
+      <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
       <h2>Give your thread a face</h2>
       <a class="btn post" href="https://github.com/RokaSwK/threebot" rel="noopener">Get it on GitHub</a>
       <span class="btn off pre">On GitHub soon</span>
@@ -324,28 +315,11 @@ footer a { text-decoration: underline; }
   // The GitHub links turn on by themselves once the repository is public.
   fetch("https://api.github.com/repos/RokaSwK/threebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
   const watched = document.querySelectorAll(".watch");
-  if (reduced || !("IntersectionObserver" in window)) {
-    watched.forEach((el) => el.classList.add("in"));
-    const size = document.getElementById("sky").clientWidth;
-    document.querySelectorAll(".moon").forEach((moon, i) => { const a = i * 1.047, r = size * .34; moon.style.setProperty("--x", `${(Math.cos(a) * r).toFixed(1)}px`); moon.style.setProperty("--y", `${(Math.sin(a) * r * .42).toFixed(1)}px`); });
-    return;
-  }
+  if (reduced || !("IntersectionObserver" in window)) { watched.forEach((el) => el.classList.add("in")); return; }
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) if (entry.isIntersecting) { entry.target.classList.add("in"); seen.unobserve(entry.target); }
   }, { rootMargin: "0px 0px -12% 0px", threshold: .12 });
   watched.forEach((el) => seen.observe(el));
-  // Real logos go round the ball, the way its moons do.
-  const moons = [...document.querySelectorAll(".moon")], sky = document.getElementById("sky");
-  const orbit = (now) => {
-    const size = sky.clientWidth, t = now / 1000;
-    moons.forEach((moon, i) => {
-      const a = t * .55 + i * 1.047, r = size * (.27 + (i % 3) * .07), x = Math.cos(a) * r, y = Math.sin(a) * r * .42;
-      moon.style.setProperty("--x", `${(x * .976 + y * .216).toFixed(1)}px`); moon.style.setProperty("--y", `${(y * .976 - x * .216).toFixed(1)}px`);
-      moon.style.setProperty("--s", (.86 + .18 * Math.sin(a)).toFixed(3)); moon.style.setProperty("--z", Math.sin(a) > 0 ? 2 : 0);
-    });
-    requestAnimationFrame(orbit);
-  };
-  requestAnimationFrame(orbit);
   // Every face looks at you.
   let frame = 0;
   addEventListener("pointermove", (e) => {
@@ -361,5 +335,6 @@ footer a { text-decoration: underline; }
   setTimeout(blink, 2200);
 })();
 </script>
+<script src="/welcome/img/ball.js" defer></script>
 </body>
 </html>

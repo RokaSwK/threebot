@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && npm run build:ball && vite build",
+    "build:ball": "rolldown src/landing/ball.ts --file public/welcome/img/ball.js --format iife --minify",
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
