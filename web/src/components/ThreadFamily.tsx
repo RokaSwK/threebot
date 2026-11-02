@@ -14,6 +14,7 @@ const HANDBACK_NOTE = /^This agent's report was delivered to you as a message\b/
 export const SubagentRow = memo(function SubagentRow({ bot, parentThreadId, item, card = false }: { bot: Bot; parentThreadId: string; item: TurnItem; card?: boolean }) {
   const update = useApp((s) => s.threadData[parentThreadId]?.subagents?.[item.subagentId]);
   const agent = update && update.updatedAt >= item.updatedAt ? { ...item, ...update } : item;
+  const modelName = useApp((s) => s.providers.flatMap((provider) => provider.models).find((model) => model.slug === agent.model)?.name);
   const target = subagentTarget(agent);
   const childTitle = useApp(s => target?.kind === "local" ? s.threads[target.threadId]?.title : undefined);
   const status = useApp(s => agentStatus({ thread: target?.kind === "local" ? s.threads[target.threadId] : undefined, fallback: agent.status, updatedAt: agent.updatedAt }));
@@ -32,7 +33,7 @@ export const SubagentRow = memo(function SubagentRow({ bot, parentThreadId, item
   const description = typeof agent.progress === "string" && ["pending", "running", "waiting"].includes(status) ? agent.progress : result;
   return <div><ThreadRow bot={bot} target={target} shape={identity.shape} color={identity.color} title={agent.title || childTitle || "Subagent"} status={status} card={card} description={description} />
     {(cancellable || agent.model || delivery.state) && <div className="flex flex-wrap items-center gap-3 px-3 pb-2 text-[12px] text-muted">
-      {typeof agent.model === "string" && <span>{agent.model}</span>}
+      {typeof agent.model === "string" && <span>{modelName ?? agent.model}</span>}
       {typeof delivery.state === "string" && <span>Result {delivery.state}</span>}
       {cancellable && stopTarget && <button disabled={action.disabled} onClick={() => void action.send({ type: "subagent.stop", threadId: parentThreadId, ...stopTarget })}>Stop task</button>}
     </div>}

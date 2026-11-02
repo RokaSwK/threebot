@@ -22,7 +22,7 @@ function AppIcon({ name, src }: { name: string; src?: string | null }) {
   const sources = [src, domain && siteIconUrl(domain)].filter((value): value is string => Boolean(value));
   const [failed, setFailed] = useState(0);
   const logo = sources[failed];
-  return <span data-app-name={name} className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-card text-[13px] font-medium">{logo ? <img src={logo} alt="" loading="lazy" className="size-6 object-contain" onError={() => setFailed((count) => count + 1)} /> : name.slice(0, 1).toUpperCase()}</span>;
+  return <span data-app-name={name} className={`grid size-9 shrink-0 place-items-center overflow-hidden rounded-xl text-[13px] font-medium ${logo ? "bg-white" : "bg-card"}`}>{logo ? <img src={logo} alt="" loading="lazy" className="size-6 object-contain" onError={() => setFailed((count) => count + 1)} /> : name.slice(0, 1).toUpperCase()}</span>;
 }
 
 export function ConnectApps({ onClose = () => openDialog(null), onBack, initialUrl }: { onClose?: () => void; onBack?: () => void; initialUrl?: string } = {}) {

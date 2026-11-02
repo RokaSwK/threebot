@@ -8,7 +8,7 @@ import path from "node:path";
 import sharp from "sharp";
 
 const DOMAIN = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-const MAX_PAGE = 512 * 1024, MAX_ICON = 1024 * 1024, MAX_HOPS = 3, TIMEOUT = 5000;
+const MAX_PAGE = 512 * 1024, MAX_ICON = 1024 * 1024, MAX_HOPS = 3, TIMEOUT = 8000;
 const FOUND_FOR = 30 * 864e5, MISSING_FOR = 864e5;
 const RASTER = /^image\/(png|jpeg|webp|gif|avif)\b/, ICO = /^image\/(x-icon|vnd\.microsoft\.icon)\b/, SVG = /^image\/svg\+xml\b/;
 
@@ -91,13 +91,16 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
   }
 
   async function find(domain) {
-    const page = await fetchPublic(`https://${domain}/`, MAX_PAGE).catch(() => null);
+    // A slow or unreachable site isn't a site without a logo, so only an answer gets remembered.
+    let unsure = false;
+    const attempt = (run) => run().catch(() => { unsure = true; return null; });
+    const page = await attempt(() => fetchPublic(`https://${domain}/`, MAX_PAGE));
     const links = page && /html/.test(page.type) ? iconLinks(page.bytes.toString("utf8"), page.url) : [];
     for (const url of [...links.slice(0, 4), new URL("/favicon.ico", page?.url ?? `https://${domain}/`)]) {
-      const icon = await fetchPublic(url, MAX_ICON).then((result) => result && toIcon(result)).catch(() => null);
-      if (icon) return icon;
+      const icon = await attempt(() => fetchPublic(url, MAX_ICON).then((result) => result && toIcon(result)));
+      if (icon) return { icon };
     }
-    return null;
+    return { unsure };
   }
 
   async function load(domain) {
@@ -107,9 +110,11 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
     if (cached && Date.now() - cached.info.mtimeMs < (cached.entry.type ? FOUND_FOR : MISSING_FOR)) {
       return cached.entry.type ? { type: cached.entry.type, bytes: Buffer.from(cached.entry.data, "base64") } : null;
     }
-    const icon = await find(domain);
-    await mkdir(dir, { recursive: true });
-    await writeFile(file, JSON.stringify(icon ? { type: icon.type, data: icon.bytes.toString("base64") } : {}));
+    const { icon = null, unsure } = await find(domain);
+    if (icon || !unsure) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(file, JSON.stringify(icon ? { type: icon.type, data: icon.bytes.toString("base64") } : {}));
+    }
     return icon;
   }
 

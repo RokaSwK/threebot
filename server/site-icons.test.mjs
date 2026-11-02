@@ -56,3 +56,11 @@ test("files that aren't images are not served as logos", async () => withDir(asy
   const fetcher = async () => reply("<script>alert(1)</script>", "text/html");
   assert.equal(await createSiteIcons({ dir, fetcher, resolve: publicDns }).get("example.com"), null);
 }));
+
+test("a site that fails to answer is tried again instead of being remembered as having no logo", async () => withDir(async (dir) => {
+  let calls = 0;
+  const fetcher = async (url) => { calls++; if (calls <= 2) throw new Error("timed out"); return url.pathname === "/" ? reply("<html></html>", "text/html") : reply(png, "image/png"); };
+  const icons = createSiteIcons({ dir, fetcher, resolve: publicDns });
+  assert.equal(await icons.get("example.com"), null);
+  assert.equal((await icons.get("example.com")).type, "image/png");
+}));

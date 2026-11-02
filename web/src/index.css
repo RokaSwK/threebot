@@ -452,8 +452,8 @@ button {
 .apps-section-title > span { margin-left: auto; color: var(--fg-muted); font-size: 12px; font-weight: 400; }
 .apps-row { display: flex; align-items: center; gap: 12px; min-height: 70px; }
 .apps-row-main { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; text-align: left; padding-block: 8px; }
-.apps-row-main > span:first-child { width: 38px; height: 38px; background: transparent; border-radius: 8px; }
-.apps-row-main img { width: 36px; height: 36px; }
+.apps-row-main > span:first-child { width: 38px; height: 38px; border-radius: 10px; }
+.apps-row-main img { width: 26px; height: 26px; }
 .apps-row-copy { display: block; flex: 1; min-width: 0; }
 .apps-row-copy > span { display: block; font-size: 16px; }
 .apps-row-copy small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; color: var(--fg-muted); line-height: 18px; margin-top: 2px; }
@@ -463,8 +463,8 @@ button {
 .apps-search { position: absolute; bottom: max(18px, env(safe-area-inset-bottom)); left: 18px; right: 18px; display: flex; align-items: center; gap: 8px; height: 44px; padding-inline: 14px; border: 1px solid var(--border-strong); border-radius: 30px; background: var(--bg-card); box-shadow: 0 0 0 8px var(--bg-elevated); color: var(--fg-muted); }
 .apps-search input { background: transparent; outline: none; min-width: 0; flex: 1; font-size: 15px; }
 .apps-detail { display: flex; flex: 1; flex-direction: column; align-items: center; padding: 16px 22px 28px; min-height: 0; }
-.apps-detail > span:first-child { width: 60px; height: 60px; background: transparent; }
-.apps-detail > span:first-child img { width: 56px; height: 56px; }
+.apps-detail > span:first-child { width: 60px; height: 60px; border-radius: 14px; }
+.apps-detail > span:first-child img { width: 42px; height: 42px; }
 .apps-detail h2 { font-size: 23px; font-weight: 600; margin: 12px 0; }
 .apps-detail > p { font-size: 15px; color: var(--fg-muted); line-height: 23px; text-align: center; width: 100%; }
 .apps-detail-action { margin-top: auto; padding-top: 28px; }
@@ -629,7 +629,6 @@ button {
 .settings-home [role="switch"] span, .settings-content [role="switch"] span { translate: none; }
 
 
-.dark [data-app-name="Notion"] img { filter: invert(1); }
 .apps-detail > p { text-align: left; }
 .apps-account-detail fieldset { background: var(--bg-card); border: 0; padding: 0 16px 12px; border-radius: 18px; }
 .apps-account-detail fieldset legend { font-size: 12px; padding-top: 8px; }
