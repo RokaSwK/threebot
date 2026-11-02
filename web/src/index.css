@@ -288,9 +288,9 @@ button {
 .bubble { max-width: min(80%, 560px); }
 
 /* Shared surfaces follow the supplied phone references; desktop keeps its three columns. */
-[data-palette="pingbot"] { --accent: #5b55e0; --pill: #4f46c8; --pill-fg: #ffffff; --pill-soft: #4f46c81a; --bubble-user: #4f46c8; }
-.dark[data-palette="pingbot"] { --accent: #8c8ef2; --pill: #8c8ef2; --pill-fg: #121020; --pill-soft: #8c8ef224; }
-.dark[data-palette="pingbot"] {
+[data-palette="midnight"] { --accent: #5b55e0; --pill: #4f46c8; --pill-fg: #ffffff; --pill-soft: #4f46c81a; --bubble-user: #4f46c8; }
+.dark[data-palette="midnight"] { --accent: #8c8ef2; --pill: #8c8ef2; --pill-fg: #121020; --pill-soft: #8c8ef224; }
+.dark[data-palette="midnight"] {
   --bg-sidebar: #121020;
   --bg-chat: #121020;
   --bg-details: #191628;
@@ -411,7 +411,7 @@ button {
 .bot-event .bot-mention { font-weight: 400; }
 .bot-exchange .bubble { max-width: 100%; }
 @media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
-  .dark[data-palette="pingbot"] { --bg-chat: #121020; --bg-details: #121020; --bg-sidebar: #0e0c17; --bg-elevated: #211d33; --bg-card: #1b1830; --bg-card-inner: #1f1b30; }
+  .dark[data-palette="midnight"] { --bg-chat: #121020; --bg-details: #121020; --bg-sidebar: #0e0c17; --bg-elevated: #211d33; --bg-card: #1b1830; --bg-card-inner: #1f1b30; }
   .sidebar-header { height: 60px; padding-inline: 16px; }
   .sidebar-header > button { width: 36px; height: 36px; }
   .pinned-bots { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 95px)); justify-content: center; gap: 12px 4px; padding-top: 10px; }

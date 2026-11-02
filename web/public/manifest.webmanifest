@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Pingbot",
-  "short_name": "Pingbot",
-  "description": "The thread that runs your threads.",
+  "name": "Treebot",
+  "short_name": "Treebot",
+  "description": "Your Bot is a T3 thread.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

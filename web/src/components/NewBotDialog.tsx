@@ -11,7 +11,7 @@ export { AvatarPicker } from "./AvatarEditor";
 export function NewBotDialog() {
   const bots = useApp((s) => s.bots);
   const first = Object.keys(bots).length === 0;
-  const [name, setName] = useState(first ? "Pingbot" : "");
+  const [name, setName] = useState(first ? "Treebot" : "");
   const [avatar, setAvatar] = useState<AvatarDraft>({ ...DEFAULT_AVATAR });
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState(false);

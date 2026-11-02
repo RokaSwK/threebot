@@ -3,319 +3,262 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Pingbot: the thread that runs your threads</title>
-<meta name="description" content="The thread that runs your threads. Pingbot turns T3 Code into someone you can message, on your own machine and subscriptions." />
-<meta name="theme-color" content="#000000" />
-<meta property="og:title" content="Pingbot" />
-<meta property="og:description" content="The thread that runs your threads. Personal agents on T3 Code, on your own subscriptions." />
+<title>Treebot: your Bot is a T3 thread</title>
+<meta name="description" content="Treebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have." />
+<meta name="theme-color" content="#FFAF38" />
+<meta property="og:title" content="Treebot" />
+<meta property="og:description" content="Your Bot is a T3 thread. Personal agents on T3 Code, on the subscriptions you already have." />
 <meta property="og:type" content="website" />
-<meta property="og:image" content="/welcome/img/desktop-hero-dark.webp" />
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='%234f46c8'/%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%234f46c8' stroke-opacity='.35' stroke-width='2'/%3E%3C/svg%3E" />
-<link rel="preload" href="/welcome/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="preload" href="/welcome/img/desktop-hero-dark.webp" as="image" />
+<meta property="og:image" content="https://bot.swk.tools/welcome/img/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="icon" href="/welcome/img/ball.webp" type="image/webp" />
+<link rel="preload" href="/welcome/fonts/rubik.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/welcome/img/ball.webp" as="image" />
 <style>
-@font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("/welcome/fonts/inter-latin.woff2") format("woff2"); }
-:root {
-  --bg: #000000; --bg-2: #0d0d10; --bg-3: #17171b;
-  --fg: #f5f5f7; --muted: #a2a4ab; --faint: #6f7178;
-  --line: rgba(255, 255, 255, .09); --line-2: rgba(255, 255, 255, .16);
-  --accent: #A97EFE; --accent-soft: #1d1730;
-  --ease: cubic-bezier(.2, .7, .2, 1);
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-}
+@font-face { font-family: "Rubik"; font-style: normal; font-weight: 300 900; font-display: swap; src: url("/welcome/fonts/rubik.woff2") format("woff2"); }
+:root { --amber: #FFAF38; --pink: #FF5EB1; --night: #2b2263; --ink: #000; --paper: #fff; --mx: 0; --my: 0; --ease: cubic-bezier(.2, .7, .2, 1); }
 * { box-sizing: border-box; }
-html { overflow-x: clip; scroll-behavior: smooth; scroll-padding-top: 80px; -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: hidden; }
+html { overflow-x: clip; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--amber); color: var(--ink); font: 400 18px/1.45 "Rubik", -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
 a { color: inherit; text-decoration: none; }
 h1, h2, h3, p, ul { margin: 0; }
 img { display: block; max-width: 100%; height: auto; }
-.wrap { width: min(1180px, 100% - 48px); margin-inline: auto; }
-.icon { width: 1em; height: 1em; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.post { display: none !important; }
+.public .post { display: inline-flex !important; }
+.public p.post, .public span.post { display: inline !important; }
+.public .pre { display: none !important; }
 
 /* Nav */
-.nav { position: sticky; top: 0; z-index: 30; border-bottom: 1px solid transparent; transition: background .25s, border-color .25s, backdrop-filter .25s; }
-.nav.stuck { background: rgba(0, 0, 0, .8); border-color: var(--line); backdrop-filter: saturate(1.4) blur(16px); -webkit-backdrop-filter: saturate(1.4) blur(16px); }
-.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
-.brand { display: inline-flex; align-items: center; gap: 9px; margin-right: auto; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
-.mark { position: relative; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); flex: none; }
-.mark::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--accent); opacity: .35; }
-.mark.live::after { animation: ping 2.4s var(--ease) infinite; }
-@keyframes ping { 0% { transform: scale(.7); opacity: .6; } 70%, 100% { transform: scale(1.6); opacity: 0; } }
-.nav-link { font-size: 14px; font-weight: 500; color: var(--muted); transition: color .15s; }
-.nav-link:hover { color: var(--fg); }
+.nav { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; gap: 22px; padding: 20px clamp(20px, 3vw, 40px); }
+.brand { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
+.brand img { width: 34px; height: 34px; }
+.nav a:not(.brand):not(.btn) { font-weight: 500; font-size: 16px; }
 
 /* Buttons */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 48px; padding-inline: 24px; border-radius: 999px; background: var(--fg); color: #000; font-size: 15.5px; font-weight: 500; letter-spacing: -.005em; transition: transform .2s var(--ease), background .2s; }
-.btn:hover { background: #dcdce0; }
-.btn:active { transform: scale(.98); }
-.btn.sm { height: 38px; padding-inline: 16px; font-size: 14px; }
-.btn.ghost { background: var(--bg-3); color: var(--fg); }
-.btn.ghost:hover { background: var(--bg-3); }
+.btn { display: inline-flex; align-items: center; justify-content: center; height: 56px; padding-inline: 28px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 18px; font-weight: 500; transition: transform .2s var(--ease); }
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: scale(.97); }
+.btn.line { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
+.btn.off { background: transparent; color: inherit; opacity: .62; box-shadow: inset 0 0 0 2px currentColor; pointer-events: none; }
+.btn.sm { height: 42px; padding-inline: 18px; font-size: 15px; }
+.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+
+/* The ball, with eyes that are alive */
+.ball { position: relative; width: var(--size, 300px); aspect-ratio: 1; flex: none; }
+.ball img { width: 100%; }
+.pill { position: absolute; top: 35%; width: 8.7%; height: 24%; border-radius: 999px; background: #fff; transform: translate(calc(var(--mx) * 26%), calc(var(--my) * 7%)) scaleY(var(--open, 1)); transition: transform .14s ease-out; }
+.pill.l { left: 33.6%; } .pill.r { left: 57.7%; }
 
 /* Hero */
-.hero { position: relative; padding: 88px 0 0; text-align: center; }
-.hero::before { content: ""; position: absolute; left: 0; right: 0; top: -120px; width: min(1100px, 100%); height: 760px; margin-inline: auto; z-index: -1; pointer-events: none;
-  background: radial-gradient(closest-side at 50% 40%, rgba(79, 70, 200, .14), rgba(79, 70, 200, 0) 70%); }
-.chip { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px 0 13px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--bg-3); font-size: 13.5px; font-weight: 500; color: var(--fg); transition: border-color .2s, color .2s; }
-.chip:hover { color: var(--fg); border-color: rgba(11, 11, 12, .28); }
-.chip b { font-weight: 600; color: var(--fg); }
-.chip .icon { width: 13px; height: 13px; opacity: .7; }
-h1 { margin: 26px auto 0; max-width: 980px; font-size: clamp(46px, 7.6vw, 80px); line-height: 1.02; font-weight: 600; letter-spacing: -.04em; text-wrap: balance; }
-h1 .mark { display: inline-block; width: .56em; height: .56em; margin: 0 .08em 0 .04em; vertical-align: -.02em; }
-h1 .mark::after { inset: -.11em; border-width: .05em; opacity: .3; }
-.lede { max-width: 660px; margin: 24px auto 0; font-size: clamp(17px, 2.1vw, 19.5px); line-height: 1.5; color: var(--muted); text-wrap: pretty; }
-.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 32px; }
-.note { margin-top: 16px; font-size: 13px; color: var(--faint); }
+.hero { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100svh; padding: 92px 22px 56px; text-align: center; }
+.hero .ball { --size: min(31vh, 300px); animation: pop .9s var(--ease) both; }
+@keyframes pop { 0% { transform: scale(.2) translateY(60px); } 55% { transform: scale(1.1, .9); } 75% { transform: scale(.96, 1.05); } 100% { transform: none; } }
+h1 { margin-top: 14px; max-width: 12.5em; font-size: clamp(50px, min(9vw, 13.5vh), 132px); line-height: .98; font-weight: 600; letter-spacing: -.035em; text-wrap: balance; }
+.lede { max-width: 640px; margin: 22px auto 28px; font-size: clamp(19px, 2vw, 23px); line-height: 1.35; text-wrap: pretty; }
+.note { margin-top: 14px; font-size: 15px; opacity: .72; }
 
-.rise { opacity: 0; transform: translateY(16px); animation: rise .8s var(--ease) forwards; }
-.rise.d1 { animation-delay: .08s; } .rise.d2 { animation-delay: .16s; } .rise.d3 { animation-delay: .24s; } .rise.d4 { animation-delay: .32s; } .rise.d5 { animation-delay: .5s; }
-@keyframes rise { to { opacity: 1; transform: none; } }
+/* Worlds */
+.world { position: relative; overflow: clip; padding: clamp(80px, 12vh, 136px) clamp(18px, 3vw, 40px); }
+.pink { background: var(--pink); }
+.amber { background: var(--amber); }
+.night { background: var(--night) url(/welcome/img/sky.webp) center / cover no-repeat; color: #fff; }
+.black { background: #000; color: #fff; }
+.say { max-width: 980px; margin: 0 auto clamp(36px, 6vh, 64px); text-align: center; }
+h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; letter-spacing: -.03em; text-wrap: balance; }
+.say p { max-width: 640px; margin: 18px auto 0; font-size: clamp(18px, 1.8vw, 22px); line-height: 1.38; text-wrap: pretty; }
 
-/* Product frames */
-.stage { position: relative; max-width: 1180px; margin: 64px auto 0; }
-.frame { position: relative; border-radius: 18px; border: 1px solid var(--line-2); background: #000; overflow: hidden; box-shadow: 0 1px 0 rgba(255, 255, 255, .6) inset, 0 40px 100px -30px rgba(26, 20, 80, .45), 0 10px 30px -14px rgba(11, 11, 12, .3); }
-.frame img { width: 100%; }
-.phone { position: relative; width: 300px; padding: 11px; border-radius: 48px; background: #0f0e18; box-shadow: 0 30px 70px -20px rgba(11, 11, 12, .55), 0 0 0 1px rgba(255, 255, 255, .06) inset; }
-.phone img { width: 100%; border-radius: 38px; }
-.stage .phone { position: absolute; right: -22px; bottom: -56px; width: 270px; display: none; }
-@media (min-width: 1000px) { .stage .phone { display: block; } }
+/* A face: two eyes around the real thing */
+.face { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; width: min(1320px, 100%); margin-inline: auto; }
+.eye { justify-self: center; display: block; width: clamp(38px, 12.5vw, 190px); aspect-ratio: .52; border-radius: 50% / 38%; background: currentColor; transform: translate(calc(var(--mx) * 3.4vw), calc(var(--my) * 2vw)) scaleY(var(--open, 1)); transition: transform .14s ease-out; }
+.pink .eye, .amber .eye { color: #000; }
+.night .eye { color: #fff; }
+.phone { position: relative; width: clamp(214px, 25vw, 340px); border-radius: clamp(30px, 3.2vw, 44px); background: #000; box-shadow: 0 0 0 7px #000, 0 0 0 9px #2c2c2e; overflow: hidden; }
+.phone img { width: 100%; }
 
-/* Sections */
-section { padding: 128px 0 0; }
-.kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--accent); }
-.kicker::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-h2 { margin-top: 14px; font-size: clamp(34px, 4.6vw, 50px); line-height: 1.06; font-weight: 600; letter-spacing: -.035em; text-wrap: balance; }
-.sub { max-width: 600px; margin-top: 16px; font-size: 18px; line-height: 1.55; color: var(--muted); text-wrap: pretty; }
-.center { text-align: center; }
-.center .sub { margin-inline: auto; }
+/* Same thread, two apps */
+.duo { position: relative; width: min(1180px, 100%); margin: 0 auto; }
+.win { width: 84%; border-radius: clamp(12px, 1.4vw, 20px); background: #000; overflow: hidden; box-shadow: 0 0 0 2px #000; }
+.duo .phone { position: absolute; right: 0; bottom: -7%; width: 25%; }
 
-.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 64px; align-items: center; }
-.points { display: flex; flex-direction: column; gap: 18px; margin-top: 34px; padding: 0; list-style: none; }
-.points li { display: grid; grid-template-columns: 40px 1fr; gap: 16px; align-items: start; }
-.points i { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); font-style: normal; }
-.points b { display: block; font-weight: 600; letter-spacing: -.01em; }
-.points span { color: var(--muted); }
-.split .phone { margin-inline: auto; }
+/* Real threads */
+.proof { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 16px; align-items: center; width: clamp(300px, 62vw, 920px); }
+.shot { border-radius: clamp(12px, 1.4vw, 20px); background: #000; overflow: hidden; box-shadow: 0 0 0 2px #2c2c2e; }
+.shot img { width: 100%; }
 
-/* Bento */
-.bento { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 16px; margin-top: 48px; }
-.card { position: relative; display: flex; flex-direction: column; grid-column: span 3; min-height: 420px; padding: 28px 28px 0; border: 1px solid var(--line); border-radius: 26px; background: var(--bg-2); overflow: hidden; transition: transform .35s var(--ease), box-shadow .35s var(--ease); }
-.card:hover { transform: translateY(-3px); box-shadow: 0 24px 60px -30px rgba(11, 11, 12, .35); }
-.card.wide { grid-column: span 6; min-height: 0; }
-.card h3 { font-size: 21px; line-height: 1.2; font-weight: 600; letter-spacing: -.02em; }
-.card p { margin-top: 8px; max-width: 460px; color: var(--muted); text-wrap: pretty; }
-.card .art { position: relative; display: flex; flex: 1; flex-direction: column; justify-content: flex-end; margin-top: 26px; }
-.card .art:has(.pad) { justify-content: center; padding-bottom: 28px; }
-.card .shot { border-radius: 16px 16px 0 0; border: 1px solid rgba(255, 255, 255, .08); border-bottom: 0; background: #121020; overflow: hidden; box-shadow: 0 20px 50px -24px rgba(11, 11, 12, .5); }
-.card .shot img { width: 100%; }
-.card .phone { width: 250px; margin: 0 auto -200px; }
-.card .phone img { border-radius: 32px; }
-.card.wide .art { display: flex; justify-content: center; margin-bottom: 0; }
-.card.wide .shot { width: min(820px, 100%); }
-.card .shot.pad { padding: 16px; border-radius: 18px; border-bottom: 1px solid rgba(255, 255, 255, .08); }
-
-/* Bring your own plan */
-.plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.plan { display: flex; flex-direction: column; justify-content: center; min-height: 92px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--bg-2); font-weight: 600; letter-spacing: -.01em; }
-.plan small { margin-top: 3px; font: 400 12.5px var(--mono); color: var(--faint); }
-.checks { display: flex; flex-direction: column; gap: 12px; margin: 28px 0 0; padding: 0; list-style: none; color: var(--muted); }
-.checks li { display: flex; align-items: center; gap: 10px; }
-.checks .icon { color: var(--accent); }
+/* What else */
+.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin-inline: auto; }
+.strip .phone { width: 100%; box-shadow: 0 0 0 5px #000, 0 0 0 7px #2c2c2e; }
+.strip h3 { margin-top: 22px; font-size: 22px; font-weight: 600; letter-spacing: -.015em; }
+.strip p { margin-top: 4px; font-size: 16px; color: #b9bac0; text-wrap: pretty; }
 
 /* FAQ */
-.faq { max-width: 760px; margin: 40px auto 0; border-top: 1px solid var(--line-2); }
-details { border-bottom: 1px solid var(--line-2); }
-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 2px; font-size: 17px; font-weight: 500; letter-spacing: -.01em; cursor: pointer; list-style: none; }
+.faq { max-width: 780px; margin: 0 auto; border-top: 1px solid rgba(255, 255, 255, .22); }
+details { border-bottom: 1px solid rgba(255, 255, 255, .22); }
+summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 2px; font-size: 20px; font-weight: 500; cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
-summary::after { content: "+"; font-size: 24px; font-weight: 300; line-height: 1; color: var(--faint); transition: transform .25s var(--ease); }
+summary::after { content: "+"; font-size: 28px; font-weight: 300; line-height: 1; transition: transform .25s var(--ease); }
 details[open] summary::after { transform: rotate(45deg); }
-details p { padding: 0 2px 22px; max-width: 640px; color: var(--muted); }
+details p { padding: 0 2px 22px; max-width: 660px; color: #c9cad0; }
+details a { text-decoration: underline; }
 
-/* Close */
-.end { margin-top: 128px; padding: 104px 24px; border-radius: 32px; text-align: center; color: #fff; background: radial-gradient(80% 120% at 50% 0%, rgba(140, 142, 242, .55), rgba(18, 16, 32, 0) 60%), #121020; }
-.end h2 { color: #fff; }
-.end p { max-width: 440px; margin: 14px auto 28px; color: rgba(242, 240, 251, .68); font-size: 18px; }
-.end .btn { background: #fff; color: #121020; }
-.end .btn:hover { background: #ebe9ff; }
-footer { padding: 40px 0 48px; font-size: 13.5px; color: var(--faint); }
-footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
-footer a { color: var(--muted); }
-footer a:hover { color: var(--fg); }
+/* End */
+.end { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+.end .ball { --size: clamp(150px, 20vw, 230px); }
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 26px clamp(20px, 3vw, 40px) 30px; background: var(--amber); font-size: 15px; }
+footer a { text-decoration: underline; }
 
-/* Reveal */
-.reveal { opacity: 0; transform: translateY(20px); transition: opacity .8s var(--ease), transform .8s var(--ease); }
-.reveal.in { opacity: 1; transform: none; }
+/* Faces wake up as they scroll in */
+.face .eye { --open: .05; }
+.face.in .eye { --open: var(--blink, 1); }
+.rise { opacity: 0; transform: translateY(46px) scale(.97); transition: opacity .55s var(--ease), transform .7s var(--ease); }
+.in .rise, .rise.in { opacity: 1; transform: none; }
 
-@media (max-width: 900px) {
-  .wrap { width: min(1180px, 100% - 40px); }
-  .hero { padding-top: 56px; }
-  .stage { margin-top: 44px; }
-  .frame { border-radius: 14px; }
-  section { padding-top: 96px; }
-  .split { grid-template-columns: minmax(0, 1fr); gap: 44px; }
-  .split .phone { width: 280px; }
-  .bento { grid-template-columns: minmax(0, 1fr); }
-  .card, .card.wide { grid-column: auto; min-height: 0; padding: 24px 22px 0; }
-  .card .phone { width: 230px; margin-bottom: -170px; }
-  .end { margin-top: 96px; padding: 72px 20px; border-radius: 24px; }
-  .nav-link { display: none; }
+@media (max-width: 760px) {
+  .nav a:not(.brand):not(.btn) { display: none; }
+  .btn { height: 52px; font-size: 17px; }
+  .face { grid-template-columns: auto auto auto; justify-content: center; gap: 12px; }
+  .eye { width: clamp(30px, 10vw, 44px); }
+  .phone { width: min(60vw, 250px); }
+  .proof { grid-template-columns: minmax(0, 1fr); width: min(66vw, 300px); }
+  .duo .phone { position: relative; right: auto; bottom: auto; width: 58%; margin: -22% 0 0 auto; }
+  .win { width: 100%; }
+  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rise, .reveal { opacity: 1; transform: none; animation: none; transition: none; }
-  .mark.live::after { animation: none; }
   html { scroll-behavior: auto; }
+  .hero .ball { animation: none; }
+  .rise { opacity: 1; transform: none; transition: none; }
+  .eye, .pill { transition: none; }
+  .face .eye { --open: 1; }
 }
 </style>
 </head>
 <body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
-  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></symbol>
-  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
-  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
-  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></symbol>
-  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
-</defs></svg>
-
 <nav class="nav" aria-label="Main">
-  <div class="wrap">
-    <a class="brand" href="#top"><span class="mark"></span>Pingbot</a>
-    <a class="nav-link" href="#how">How it works</a>
-    <a class="nav-link" href="#faq">FAQ</a>
-    <a class="btn sm" href="https://github.com/RokaSwK/pingbot" rel="noopener">GitHub</a>
-  </div>
+  <a class="brand" href="#top"><img src="/welcome/img/ball.webp" width="34" height="34" alt="" />Treebot</a>
+  <a href="#same">How it works</a>
+  <a href="#faq">FAQ</a>
+  <a href="/login?next=%2F">Sign in</a>
+  <a class="btn sm post" href="https://github.com/RokaSwK/treebot" rel="noopener">GitHub</a>
 </nav>
 
 <main id="top">
   <header class="hero">
-    <div class="wrap">
-      <a class="chip rise" href="https://t3.codes/" rel="noopener"><span>Built on <b>T3 Code</b></span><svg class="icon"><use href="#i-arrow"/></svg></a>
-      <h1 class="rise d1">The thread that runs <span class="mark live" aria-hidden="true"></span>your threads.</h1>
-      <p class="lede rise d2">Pingbot turns T3 Code into someone you can message. One long-lived thread starts your other threads, keeps its own memory and brings you a short answer. On your machine, on the subscriptions you already pay for.</p>
-      <div class="cta rise d3">
-        <a class="btn" href="https://github.com/RokaSwK/pingbot" rel="noopener">Get it on GitHub</a>
-        <a class="btn ghost" href="#how">See how it works</a>
-      </div>
-      <p class="note rise d4">Free and self-hosted. Needs T3 Code.</p>
-      <div class="stage rise d5">
-        <div class="frame"><img src="/welcome/img/desktop-hero-dark.webp" width="2880" height="1800" alt="Pingbot on a laptop: a Morning agent lists what needs attention today, and a routine is set up from the chat" fetchpriority="high" /></div>
-        <div class="phone"><img src="/welcome/img/phone-money-dark.webp" width="1236" height="2745" alt="Pingbot on a phone: the Money agent asks whether to dispute a €49 charge" loading="lazy" /></div>
-      </div>
+    <div class="ball" aria-hidden="true"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></div>
+    <h1>Your Bot is a T3 thread</h1>
+    <p class="lede">Treebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have.</p>
+    <div class="cta">
+      <a class="btn post" href="https://github.com/RokaSwK/treebot" rel="noopener">Get it on GitHub</a>
+      <a class="btn pre" href="#same">See how it works</a>
+      <span class="btn off pre">On GitHub soon</span>
     </div>
+    <p class="note">Free and self-hosted. Needs T3 Code.</p>
   </header>
 
-  <section id="how">
-    <div class="wrap split">
-      <div class="reveal">
-        <p class="kicker">How it works</p>
-        <h2>Stop tending threads.</h2>
-        <p class="sub">Talk to one long-lived thread. It starts the others, follows them, and brings you back the short version.</p>
-        <ul class="points">
-          <li><i><svg class="icon"><use href="#i-book"/></svg></i><div><b>Works down the morning</b><span>A routine reads what came in, opens a thread per bug and groups the duplicates.</span></div></li>
-          <li><i><svg class="icon"><use href="#i-chat"/></svg></i><div><b>Remembers your way of doing things</b><span>It keeps its own notes, so you never explain twice.</span></div></li>
-          <li><i><svg class="icon"><use href="#i-bell"/></svg></i><div><b>Asks before it sends</b><span>Replies and anything else public wait for your yes.</span></div></li>
-        </ul>
-      </div>
-      <div class="phone reveal"><img src="/welcome/img/phone-morning-dark.webp" width="1236" height="2745" alt="A phone conversation with the Morning agent: two things to deal with today, then a routine set up with one sentence" loading="lazy" /></div>
+  <section class="world amber" id="same">
+    <div class="say">
+      <h2>Still a T3 thread</h2>
+      <p>Message it from your phone and the same thread is open in T3 Code, with the same question waiting. There's nothing to sync.</p>
+    </div>
+    <div class="duo watch">
+      <div class="win rise"><img src="/welcome/img/t3.webp" width="1600" height="1269" alt="T3 Code showing the Ship thread, three new threads in the sidebar, and the question: All 3 bugs fixed, tests pass. Send the 7 replies?" loading="lazy" /></div>
+      <div class="phone rise"><img src="/welcome/img/ask.webp" width="780" height="1688" alt="The same question on a phone, with Send and Not yet buttons" loading="lazy" /></div>
     </div>
   </section>
 
-  <section>
-    <div class="wrap">
-      <div class="reveal">
-        <p class="kicker">What it does</p>
-        <h2>Not a role. A thread.</h2>
-        <p class="sub">There are no job titles to set up. A Bot is a normal T3 Code thread with memory, routines and a face. Open any of it in T3 Code whenever you like.</p>
-      </div>
-      <div class="bento">
-        <article class="card reveal">
-          <h3>One agent, or a few</h3>
-          <p>Pin the ones you talk to most. Group the rest however your life is organised.</p>
-          <div class="art"><div class="phone"><img src="/welcome/img/phone-home-dark.webp" width="1236" height="2745" alt="Pingbot's home screen with Morning and Money pinned, and Trips and Side project in sections" loading="lazy" /></div></div>
-        </article>
-        <article class="card reveal">
-          <h3>It has a face</h3>
-          <p>The ball's weather shows what it's doing: a storm, an aurora, a moon when it's asleep. Pick another shape if you prefer.</p>
-          <div class="art"><div class="shot"><img src="/welcome/img/crop-new-bot.webp" alt="Creating a new Bot: a grid of character shapes and colours to choose from" loading="lazy" /></div></div>
-        </article>
-        <article class="card reveal">
-          <h3>It asks before it acts</h3>
-          <p>When something matters, it stops and checks with you. One tap, and it carries on.</p>
-          <div class="art"><div class="shot pad"><img src="/welcome/img/crop-question-dark.webp" alt="A question card in chat: Dispute the €49 charge? with the options Yes, dispute it and Leave it" loading="lazy" /></div></div>
-        </article>
-        <article class="card reveal">
-          <h3>Make it a habit</h3>
-          <p>Ask for something once, then put it on a schedule. Routines run whether or not you're around.</p>
-          <div class="art"><div class="shot pad"><img src="/welcome/img/crop-routines-dark.webp" alt="The Routines panel showing Weekly recap, every Sunday at 6:00 PM, switched on" loading="lazy" /></div></div>
-        </article>
-        <article class="card wide reveal">
-          <h3>Everything it's ever done, one search away</h3>
-          <p>Messages, Bots, routines, files and connected apps, all from one box.</p>
-          <div class="art"><div class="shot"><img src="/welcome/img/crop-search.webp" alt="Searching for lisbon finds the Trips agent's hotel request" loading="lazy" /></div></div>
-        </article>
-      </div>
+  <section class="world night">
+    <div class="say">
+      <h2>On the Claude and Codex subs you already have</h2>
+      <p>Treebot doesn't sell you AI. Your Bots use the plans you already pay for, and you can change the model whenever you like.</p>
+    </div>
+    <div class="face watch"><i class="eye"></i><div class="phone rise"><img src="/welcome/img/model.webp" width="780" height="1688" alt="The model picker on a Bot, listing Claude Opus, Sonnet, Fable and Haiku" loading="lazy" /></div><i class="eye"></i></div>
+  </section>
+
+  <section class="world pink">
+    <div class="say">
+      <h2>One for your money</h2>
+      <p>It read the statement, found the gym charging twice, and asked before doing anything about it.</p>
+    </div>
+    <div class="face watch"><i class="eye"></i><div class="phone rise"><img src="/welcome/img/money.webp" width="780" height="1688" alt="Chat with a Money Bot: Gym charged you €39 twice in October. Want a refund?" loading="lazy" /></div><i class="eye"></i></div>
+  </section>
+
+  <section class="world amber">
+    <div class="say">
+      <h2>One for your trips</h2>
+      <p>Each Bot has its own memory, so this one already knows you like small hotels and trains.</p>
+    </div>
+    <div class="face watch"><i class="eye"></i><div class="phone rise"><img src="/welcome/img/trips.webp" width="780" height="1688" alt="Chat with a Trips Bot asking which hotel to pick for a weekend in Porto" loading="lazy" /></div><i class="eye"></i></div>
+  </section>
+
+  <section class="world night">
+    <div class="say">
+      <h2>One for your repo</h2>
+      <p>Ship read eight reports, found three bugs and started a T3 thread for each. They were fixed, tested and committed before it asked you anything, and no reply went out until you said yes.</p>
+    </div>
+    <div class="face watch"><i class="eye"></i><div class="proof rise"><div class="shot"><img src="/welcome/img/rows.webp" width="510" height="524" alt="T3 Code's sidebar with Ship waiting for input and three threads it started: Fix dates a month ahead, Fix case-sensitive search and Fix split losing a cent" loading="lazy" /></div><div class="shot"><img src="/welcome/img/fix.webp" width="1200" height="589" alt="One of those threads reporting: I fixed the split bug and committed it, and the tests pass" loading="lazy" /></div></div><i class="eye"></i></div>
+  </section>
+
+  <section class="world black">
+    <div class="say"><h2>The rest of a personal agent</h2></div>
+    <div class="strip">
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/routines.webp" width="780" height="1688" alt="A routine: Morning feedback triage, weekdays at 8:00 AM" loading="lazy" /></div><h3>Routines</h3><p>Ask once, then put it on a schedule.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/vault.webp" width="780" height="1688" alt="The Vault with two saved logins" loading="lazy" /></div><h3>A vault</h3><p>Bots can fill website passwords without reading them.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/apps.webp" width="780" height="1688" alt="Connect apps: Gmail, Google Calendar, Linear, GitHub, Slack and Notion" loading="lazy" /></div><h3>Your apps</h3><p>Connect the tools it should work with.</p></div>
+      <div class="watch"><div class="phone rise"><img src="/welcome/img/details.webp" width="780" height="1688" alt="A Bot's page with its face, routines, library, computer and model" loading="lazy" /></div><h3>A face</h3><p>You can tell what it's doing just by looking at it.</p></div>
     </div>
   </section>
 
-  <section>
-    <div class="wrap split">
-      <div class="reveal">
-        <p class="kicker">Bring your own plan</p>
-        <h2>Pingbot doesn't sell you AI.</h2>
-        <p class="sub">It runs on T3 Code, so your agents use the subscriptions you already have. Switch models whenever you like. Nothing is resold.</p>
-        <ul class="checks">
-          <li><svg class="icon"><use href="#i-check"/></svg>Runs on a machine you own</li>
-          <li><svg class="icon"><use href="#i-check"/></svg>Change the model mid-conversation</li>
-          <li><svg class="icon"><use href="#i-check"/></svg>Installs on your phone as an app</li>
-        </ul>
-      </div>
-      <div class="plans reveal">
-        <div class="plan">Claude Code<small>your subscription</small></div>
-        <div class="plan">Codex<small>your subscription</small></div>
-        <div class="plan">OpenCode<small>your keys</small></div>
-        <div class="plan">Cursor<small>your subscription</small></div>
-      </div>
+  <section class="world black" id="faq">
+    <div class="say"><h2>Good questions</h2></div>
+    <div class="faq">
+      <details><summary>What is Treebot?</summary><p>An app that gives a T3 Code thread a face, a memory and a place on your phone. You message it like a person, and it runs your other threads for you.</p></details>
+      <details><summary>How is it different from T3 Code?</summary><p>T3 Code is where threads run. Treebot sits on top of it and keeps things small: one or two Bots you message about your repo, your money or your trips.</p></details>
+      <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the Claude or Codex plan you already use with T3 Code. Treebot has no account of its own.</p></details>
+      <details><summary>Where does it run?</summary><p>On your own machine or server. Your Bots, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
+      <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: clone the <a href="https://github.com/RokaSwK/treebot" rel="noopener">repository</a> and follow the README.</p></details>
+      <details><summary>Is this made by the T3 Code team?</summary><p>No. Treebot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
     </div>
   </section>
 
-  <section id="faq">
-    <div class="wrap">
-      <div class="center reveal"><p class="kicker">FAQ</p><h2>Good questions.</h2></div>
-      <div class="faq reveal">
-        <details><summary>What is Pingbot?</summary><p>A messaging app for T3 Code. One long-lived thread becomes an agent you can text, and it runs your other threads for you. It keeps its own memory and can run things on a schedule.</p></details>
-        <details><summary>How is it different from T3 Code?</summary><p>T3 Code is built for running many coding agents at once. Pingbot sits on top of it and keeps things small: one or two agents you talk to about everyday things.</p></details>
-        <details><summary>Where does it run?</summary><p>On your own machine or server. Your agents, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
-        <details><summary>Can I use it?</summary><p>Yes, if you run T3 Code. It's free and open source: clone the <a href="https://github.com/RokaSwK/pingbot" rel="noopener">repository</a> and follow the README.</p></details>
-        <details><summary>Is this made by the T3 Code team?</summary><p>No. Pingbot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
-      </div>
-      <div class="end reveal">
-        <h2>Ready when you are.</h2>
-        <p>Your agents are one message away.</p>
-        <a class="btn" href="https://github.com/RokaSwK/pingbot" rel="noopener">Get it on GitHub</a>
-      </div>
+  <section class="world amber">
+    <div class="end">
+      <div class="ball" aria-hidden="true"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></div>
+      <h2>Give your thread a face</h2>
+      <a class="btn post" href="https://github.com/RokaSwK/treebot" rel="noopener">Get it on GitHub</a>
+      <span class="btn off pre">On GitHub soon</span>
     </div>
   </section>
 </main>
 
 <footer>
-  <div class="wrap">
-    <span>Pingbot</span>
-    <span>An independent project, built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</span>
-  </div>
+  <span>Treebot. An independent project, built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</span>
+  <span>Screens are real Bot runs on sample data.</span>
 </footer>
 
 <script>
 (() => {
-  const nav = document.querySelector(".nav");
-  const onScroll = () => nav.classList.toggle("stuck", scrollY > 8);
-  addEventListener("scroll", onScroll, { passive: true }); onScroll();
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const items = document.querySelectorAll(".reveal");
-  if (reduced || !("IntersectionObserver" in window)) { items.forEach((item) => item.classList.add("in")); return; }
+  const root = document.documentElement, reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // The GitHub links turn on by themselves once the repository is public.
+  fetch("https://api.github.com/repos/RokaSwK/treebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
+  const watched = document.querySelectorAll(".watch");
+  if (reduced || !("IntersectionObserver" in window)) { watched.forEach((el) => el.classList.add("in")); return; }
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) if (entry.isIntersecting) { entry.target.classList.add("in"); seen.unobserve(entry.target); }
-  }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
-  items.forEach((item) => seen.observe(item));
+  }, { rootMargin: "0px 0px -12% 0px", threshold: .12 });
+  watched.forEach((el) => seen.observe(el));
+  // Every face looks at you.
+  let frame = 0;
+  addEventListener("pointermove", (e) => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; root.style.setProperty("--mx", (e.clientX / innerWidth - .5).toFixed(3)); root.style.setProperty("--my", (e.clientY / innerHeight - .5).toFixed(3)); });
+  }, { passive: true });
+  // And blinks.
+  const blink = () => {
+    root.style.setProperty("--open", ".08"); root.style.setProperty("--blink", ".08");
+    setTimeout(() => { root.style.setProperty("--open", "1"); root.style.setProperty("--blink", "1"); }, 120);
+    setTimeout(blink, 2400 + Math.random() * 3200);
+  };
+  setTimeout(blink, 2200);
 })();
 </script>
 </body>

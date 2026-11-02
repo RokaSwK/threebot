@@ -40,18 +40,18 @@ test('the landing page is served by itself and shares nothing with the app', { t
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /text\/html/);
       const html = await response.text();
-      assert.match(html, /<title>Pingbot:/);
+      assert.match(html, /<title>Treebot:/);
       assert.doesNotMatch(html, /\/assets\//, 'public page must not load the app bundle');
     }
     // The page's own pictures and font are public too; nothing else under the path is.
-    const image = await fetch(fixture.url + '/welcome/img/desktop-hero-dark.webp');
+    const image = await fetch(fixture.url + '/welcome/img/ball.webp');
     assert.equal(image.status, 200);
     assert.equal(image.headers.get('content-type'), 'image/webp');
-    const font = await fetch(fixture.url + '/welcome/fonts/inter-latin.woff2');
+    const font = await fetch(fixture.url + '/welcome/fonts/rubik.woff2');
     assert.equal(font.status, 200);
     assert.equal(font.headers.get('content-type'), 'font/woff2');
     // Cloudflare leaves this whole path public, so nothing from the app may answer under it.
-    for (const route of ['/welcome/anything', '/welcome/..%2findex.html', '/welcome/..%2Fsw.js', '/welcome/..%5cindex.html', '/welcome/..%2fapi/bots', '/welcome/%2e%2e%2fassets/x.js', '/welcome%2f..%2findex.html', '/welcome/img/..%2f..%2findex.html', '/welcome/img/%2e%2e/index.html', '/welcome/img/../index.html', '/welcome/fonts/x/y.woff2']) {
+    for (const route of ['/welcome/img/gone.webp', '/welcome/fonts/gone.woff2', '/welcome/anything', '/welcome/..%2findex.html', '/welcome/..%2Fsw.js', '/welcome/..%5cindex.html', '/welcome/..%2fapi/bots', '/welcome/%2e%2e%2fassets/x.js', '/welcome%2f..%2findex.html', '/welcome/img/..%2f..%2findex.html', '/welcome/img/%2e%2e/index.html', '/welcome/img/../index.html', '/welcome/fonts/x/y.woff2']) {
       const response = await fetch(fixture.url + route);
       assert.equal(response.status, 404, route);
       assert.doesNotMatch(await response.text(), /\/assets\/|BOT_BUILD|caches\.open/, route);

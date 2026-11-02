@@ -1,8 +1,8 @@
 {
-  "name": "pingbot",
+  "name": "treebot",
   "version": "0.1.0",
   "private": true,
-  "description": "The thread that runs your threads. Personal agents on T3 Code, on your own subscriptions.",
+  "description": "Your Bot is a T3 thread. Personal agents on T3 Code, on your own subscriptions.",
   "license": "MIT",
   "engines": { "node": ">=22.13" },
   "scripts": {

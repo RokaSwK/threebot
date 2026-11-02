@@ -1,4 +1,4 @@
-/* Pingbot's own look: a messaging app, not a console. Loaded after every other stylesheet. */
+/* Treebot's own look: a messaging app, not a console. Loaded after every other stylesheet. */
 
 /* Chat header: the agent's name with what it is doing underneath. */
 .chat-header { background: var(--bg-chat); border-bottom: 1px solid var(--border); }

@@ -26,7 +26,7 @@ export type ThreadMeta = { reactions: Record<string, string[]>; voiceCalls: { at
 export type Settings = {
   userName: string;
   theme: "system" | "light" | "dark";
-  palette: "amoled" | "pingbot" | "t3" | "t3-chat" | "grove" | "ocean" | "ember" | "iris";
+  palette: "amoled" | "midnight" | "t3" | "t3-chat" | "grove" | "ocean" | "ember" | "iris";
   accent: "bot" | "black";
   timezone: string;
   autoReview: boolean;

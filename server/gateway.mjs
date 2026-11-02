@@ -25,7 +25,7 @@ import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImag
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resolveThreadLink = createThreadLinkResolver();
-const dataRoot = process.env.PINGBOT_HOME ?? path.join(homedir(), ".pingbot");
+const dataRoot = process.env.TREEBOT_HOME ?? path.join(homedir(), ".treebot");
 const cfg = {
   port: Number(process.env.PORT ?? 3780),
   host: process.env.HOST ?? "127.0.0.1",
@@ -497,6 +497,8 @@ const server = http.createServer(async (req, res) => {
     // the only thing that answers there, even for encoded paths that climb out of it.
     const landingAsset = /^\/welcome\/(img|fonts)\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p);
     if (/^\/welcome(\/|\\|%2f|%5c)/i.test(p) && p !== "/welcome/" && !landingAsset) return send(res, 404, "not found");
+    // A missing landing file must not fall through to the app shell.
+    if (landingAsset && !existsSync(path.join(cfg.staticDir, p))) return send(res, 404, "not found");
     if (p === "/api/login" && req.method === "POST") {
       const ip = clientIp(req);
       if (loginBlocked(ip)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });

@@ -317,7 +317,7 @@ function Updates() {
       <H>Updates</H>
       {state.kind === "error" && <EnvironmentError retry={retry} />}
       <Group>
-        <Row title="Pingbot" desc="Version 0.1.0" />
+        <Row title="Treebot" desc="Version 0.1.0" />
         <Row title="T3 Code" desc={state.kind === "loading" ? "Loading…" : state.kind === "ready" ? `Server ${state.value.serverVersion} · protocol ${state.value.protocol}` : "Unavailable"}>
           <BotIcon size={15} className="shrink-0 text-muted" />
         </Row>

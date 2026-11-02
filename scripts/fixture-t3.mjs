@@ -22,7 +22,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
   const samples = samplesFor(scenario);
   const landing = scenario === 'landing' ? landingData() : null;
   const projects = samples.map((bot) => ({ id: `project-${bot.slug}`, title: bot.name,
-    workspaceRoot: landing ? `/Users/sam/Pingbot/${bot.slug}` : path.join(root, 'bots', bot.slug), defaultModelSelection: MODEL, createdAt: STAMP, updatedAt: STAMP }));
+    workspaceRoot: landing ? `/Users/sam/Treebot/${bot.slug}` : path.join(root, 'bots', bot.slug), defaultModelSelection: MODEL, createdAt: STAMP, updatedAt: STAMP }));
   const makeThread = (slug, child = false) => ({ id: `thread-${slug}${child ? '-child' : ''}`,
     projectId: `project-${slug}`, title: child ? (landing?.child.title ?? 'Sample child review') : samples.find((bot) => bot.slug === slug).name,
     status: 'idle', activeRunId: null, latestRunId: null, modelSelection: MODEL, runtimeMode: 'auto',
