@@ -1,0 +1,30 @@
+.voice-dock {
+  position: absolute; z-index: 20; top: 72px; left: 50%; width: min(calc(100% - 32px), 560px); transform: translateX(-50%);
+  padding: 14px 14px 8px 18px; border: 1px solid var(--border-strong); border-radius: 36px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+}
+.voice-dock-bar { display: flex; align-items: center; gap: 10px; }
+.voice-dock-wave { display: flex; flex: 1; min-width: 0; height: 40px; align-items: center; justify-content: space-between; overflow: hidden; padding-inline: 2px; }
+.voice-dock-wave > span { flex: none; width: 4px; height: 4px; border-radius: 99px; background: var(--fg-faint); }
+.voice-dock[data-phase="listening"] .voice-dock-wave > span,
+.voice-dock[data-phase="speaking"] .voice-dock-wave > span { background: var(--fg-muted); animation: voice-wave 900ms ease-in-out infinite; }
+.voice-dock[data-phase="thinking"] .voice-dock-wave > span,
+.voice-dock[data-phase="sending"] .voice-dock-wave > span { animation: voice-pulse 1200ms ease-in-out infinite; }
+@keyframes voice-wave { 50% { height: 18px; } }
+@keyframes voice-pulse { 50% { opacity: .35; } }
+.voice-dock-button, .voice-dock-hangup { display: grid; flex: none; width: 40px; height: 40px; place-items: center; border-radius: 999px; }
+.voice-dock-button { border: 1px solid var(--border-strong); color: var(--fg); }
+.voice-dock-button[aria-pressed="true"] { color: var(--bg-chat); background: var(--fg); }
+.voice-dock-hangup { color: #fff; background: var(--danger); }
+.voice-dock-heard { margin: 8px 4px 2px; font-size: 14px; line-height: 20px; color: var(--fg-muted); overflow-wrap: anywhere; }
+.voice-dock-heard[data-error="true"] { color: var(--danger); }
+.voice-dock-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px 4px 4px; font-size: 14px; }
+.voice-dock-panel label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.voice-dock-panel select { min-width: 0; max-width: 70%; height: 36px; padding-inline: 10px; border-radius: 10px; color: var(--fg); background: var(--bg-hover); }
+.voice-dock-panel [role="group"] { display: flex; gap: 6px; }
+.voice-dock-panel [role="group"] button { flex: 1; height: 36px; border-radius: 10px; background: var(--bg-hover); }
+.voice-dock-panel [role="group"] button[aria-pressed="true"] { color: var(--pill-fg); background: var(--pill); }
+.voice-dock-handle { display: block; width: 44px; height: 4px; margin: 6px auto 0; border-radius: 99px; background: var(--fg-faint); }
+@media (prefers-reduced-motion: reduce) {
+  .voice-dock .voice-dock-wave > span { animation: none !important; }
+}

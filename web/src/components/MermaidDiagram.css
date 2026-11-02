@@ -1,0 +1,30 @@
+.mermaid-card { width: 100%; max-width: 100%; min-width: 0; margin: 8px 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card-inner); color: var(--fg); }
+.mermaid-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--border); color: var(--fg-muted); font: 12px/20px var(--font-sans, system-ui); }
+.mermaid-toolbar > span { margin-right: auto; }
+.mermaid-toolbar button, .mermaid-status button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 2px 7px; border-radius: 7px; cursor: pointer; color: inherit; font: inherit; }
+.mermaid-toolbar button:hover, .mermaid-status button:hover, .mermaid-toolbar button[aria-pressed="true"] { background: var(--bg-hover); color: var(--fg); }
+.mermaid-toolbar button:focus-visible, .mermaid-status button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mermaid-canvas { display: block; width: 100%; text-align: left; cursor: zoom-in; box-sizing: border-box; max-width: 100%; min-width: 0; overflow-x: auto; overscroll-behavior-x: contain; padding: 12px; }
+.mermaid-canvas svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.mermaid-status { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; padding: 14px 12px; color: var(--fg-muted); font-size: 12px; }
+.mermaid-copy-error { padding: 0 12px 10px; color: var(--danger); font-size: 12px; }
+.md .mermaid-source, .mermaid-source { box-sizing: border-box; max-width: 100%; margin: 0; padding: 12px; overflow-x: auto; border: 0; border-radius: 0; background: var(--bg-card); white-space: pre; font: 12px/1.6 var(--font-mono, monospace); }
+.rich-math { font-size: 1em; }
+.rich-math-display { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding: 2px 0; }
+.rich-math-display .katex-display { margin: 8px 0; }
+.rich-math-literal { overflow-wrap: anywhere; }
+@media (pointer: coarse) { .mermaid-toolbar button, .mermaid-status button { min-width: 36px; min-height: 36px; } }
+
+.mermaid-canvas:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.mermaid-preview { width: min(1100px, calc(100vw - 32px)); height: 90dvh; }
+.mermaid-preview-tools { display: flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; padding: 6px; }
+.mermaid-preview-tools button { min-width: 40px; min-height: 40px; border-radius: 999px; padding: 6px 12px; background: var(--bg-card); font-size: 16px; }
+.mermaid-preview-tools button:disabled { opacity: .35; }
+.mermaid-preview-stage { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; }
+.mermaid-preview-drawing { margin: 0 auto; }
+.mermaid-preview-drawing svg { display: block; width: 100%; max-width: none !important; height: auto; }
+@media (max-width: 760px) {
+  .bot-modal-backdrop > [data-bot-modal].mermaid-preview { max-width: 100vw; position: fixed; inset: 0; width: 100%; height: 100dvh; max-height: 100dvh !important; border: 0; border-radius: 0; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+}
+
+.dark .mermaid-canvas { background: var(--bg-app); }

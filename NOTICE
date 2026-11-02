@@ -1,0 +1,33 @@
+Third-party notices
+
+Pingbot is an independent project. It is not affiliated with or endorsed by T3 Tools Inc. T3 and T3 Code are their marks.
+
+server/t3-artwork/ holds artwork from T3 Code's Nightly app icon, used under the same license.
+
+The model picker in web/src/components/model-picker/, web/src/components/ModelPicker.tsx,
+web/src/lib/modelTraits.ts and web/src/lib/modelPicker.ts is adapted from T3 Code
+(MIT, github.com/pingdotgg/t3code v0.1.5), Copyright (c) 2026 T3 Tools Inc., under the license below.
+
+----
+
+MIT License
+
+Copyright (c) 2026 T3 Tools Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

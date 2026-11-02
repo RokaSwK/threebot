@@ -1,0 +1,84 @@
+/* Pingbot's own look: a messaging app, not a console. Loaded after every other stylesheet. */
+
+/* Chat header: the agent's name with what it is doing underneath. */
+.chat-header { background: var(--bg-chat); border-bottom: 1px solid var(--border); }
+.chat-title { height: auto; min-height: 36px; border: 0; background: transparent; backdrop-filter: none; align-items: center; }
+.chat-title-text { display: flex; flex-direction: column; justify-content: center; line-height: 1.2; text-align: left; }
+.chat-title-name { font-weight: 500; }
+.chat-status { margin-top: 1px; }
+.chat-header .chat-back,
+.chat-header .chat-computer { border: 0; background: transparent; }
+
+/* Messages: soft raised cards with generous corners. */
+.chat-view .bubble { border-radius: 22px; }
+.chat-view .md.bubble, .chat-view .stack-left > .bubble { background: var(--bg-elevated); box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 0 0 1px var(--border); }
+.chat-view .stack-left > .bubble:last-child { border-bottom-left-radius: 8px; }
+.chat-view [data-message-body="plain"].bubble { border-bottom-right-radius: 8px; }
+.chat-view .bubble { font-size: 15px; line-height: 23px; padding: 10px 15px; }
+.question-card { border-radius: 24px; background: var(--bg-elevated); box-shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 0 0 1px var(--border); }
+.question-options { gap: 8px; }
+.question-options[data-layout="row"] { flex-direction: row; flex-wrap: wrap; }
+.question-options[data-layout="row"] .question-option { flex: 1 1 0; min-width: max-content; }
+.question-options[data-layout="row"] + .question-custom-trigger { margin-top: 4px; }
+.question-option { min-height: 46px; justify-content: center; border-radius: 999px; background: var(--bg-card); padding-inline: 16px; text-align: center; }
+.question-option:hover:not(:disabled) { background: var(--bg-active); }
+.question-option:first-child:not([aria-pressed="true"]) { background: var(--pill); color: var(--pill-fg); }
+.question-option:first-child:not([aria-pressed="true"]) .question-option-description { color: inherit; opacity: .8; }
+.question-option:first-child:hover:not(:disabled) { filter: brightness(1.08); }
+.question-option-badge { display: none; }
+.question-option-copy { text-align: center; }
+
+/* Writing row: one pill, like sending a message. */
+.composer-shell { border-radius: 28px; }
+.composer-controls { flex-wrap: nowrap; align-items: flex-end; gap: 6px; padding: 7px; }
+.composer-controls textarea { order: 0; flex: 1 1 auto; padding-inline: 8px; }
+.composer-controls .composer-dictate { margin-left: 0; }
+.composer-controls > button, .composer-controls button[aria-label="Composer actions"] { border-radius: 999px; }
+
+/* Lists and panels. */
+.bot-row { border-radius: 16px; }
+.bot-details .rounded-2xl { border-radius: 18px; }
+.details-model .flex > div { min-width: 0; }
+
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .mobile-home .sidebar-header { height: 76px; padding: 14px 16px 18px; justify-content: flex-end; gap: 10px; }
+  .mobile-home .sidebar-header > button { width: 42px; height: 42px; border: 0; background: var(--bg-card); color: var(--fg); }
+  .mobile-home .mobile-account { color: var(--fg-muted); }
+  .mobile-home .bot-list { padding: 76px 0 96px; }
+
+  /* Pinned agents are cards rather than large centred avatars. */
+  .mobile-home .pinned-bots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 8px 16px 14px; justify-content: stretch; }
+  .mobile-home .pinned-bots > div:only-child { grid-column: 1 / -1; }
+  .mobile-home .pinned-bot { width: 100%; flex-direction: row; justify-content: flex-start; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 22px; background: var(--bg-card); }
+  .mobile-home .pinned-bot > span:first-child { display: flex; }
+  .mobile-home .pinned-bot > span:last-child { min-width: 0; padding: 0; text-align: left; font-size: 16px; line-height: 20px; font-weight: 500; }
+  .mobile-home .pinned-bot > span:first-child > span:last-child:not(:first-child) { top: -1px; right: -1px; width: 10px; height: 10px; }
+  .mobile-home .pinned-bot .pinned-main-label { display: block; font-size: 12.5px; line-height: 16px; font-weight: 400; color: var(--fg-muted); }
+
+  .mobile-home .bot-section-title { height: 34px; padding: 10px 18px 0; align-items: flex-start; font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--fg-faint); }
+  .mobile-home .section-chevron { width: 15px; height: 15px; margin-left: auto; opacity: .7; }
+  .mobile-home .bot-list > .mb-2 { margin-bottom: 8px; }
+  .mobile-home .bot-row { min-height: 72px; gap: 12px; padding: 8px 18px; border-radius: 0; }
+  .mobile-home .bot-row-name { font-size: 16.5px; font-weight: 500; }
+  .mobile-home .bot-row-time { font-size: 13px; }
+  .mobile-home .bot-row-preview { font-size: 14.5px; line-height: 20px; }
+
+  /* Search moves to the top; creating a Bot takes the thumb position. */
+  .mobile-home-toolbar { justify-content: space-between; }
+  .mobile-new-bot { display: flex; height: 46px; align-items: center; gap: 8px; padding-inline: 18px 20px; border-radius: 999px; background: var(--pill); color: var(--pill-fg); font-size: 15.5px; font-weight: 600; }
+
+  .chat-header { height: 64px; padding: 10px 8px; gap: 2px; background: var(--bg-chat); }
+  .chat-title { padding-left: 2px; }
+  .chat-title > span:last-child { font-size: inherit; }
+  .chat-title-name { font-size: 17px; font-weight: 500; }
+  .chat-status { font-size: 12.5px; }
+  .chat-view .bubble { font-size: 16.5px; line-height: 23px; padding: 10px 15px; border-radius: 22px; }
+  .chat-view .stack-left > .bubble:last-child { border-bottom-left-radius: 8px; }
+  .chat-view [data-message-body="plain"].bubble { border-bottom-right-radius: 8px; }
+  .composer-shell { border-radius: 28px; }
+  .composer-controls { padding: 6px; gap: 6px; }
+  .composer-controls textarea { min-height: 36px; padding: 6px 8px; font-size: 16px; }
+  .composer-controls > button,
+  .composer-controls button[aria-label="Composer actions"],
+  .composer-controls .composer-stop > button { width: 36px; height: 36px; }
+}

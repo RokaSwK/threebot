@@ -1,0 +1,4 @@
+/* Color only: tokenization and theme changes must not change code geometry. */
+.md-code-block pre { white-space: pre; }
+.md-code-block .code-token { color: var(--code-light, inherit); }
+.dark .md-code-block .code-token { color: var(--code-dark, inherit); }

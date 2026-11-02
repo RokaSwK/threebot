@@ -1,0 +1,54 @@
+/* Raster evidence and derivations: docs/parity/home-avatar-geometry.md.
+   Native font metrics and Android safe-area origins remain unmeasured.
+   Keep desktop values and typography; normalize full-page y to the Back control. */
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .bot-modal-backdrop > .edit-bot-sheet,
+  .bot-modal-backdrop > .avatar-editor-sheet { border-radius: 0; }
+  .edit-bot-sheet .bot-modal-header,
+  .avatar-editor-sheet .bot-modal-header { position: relative; height: 76px; min-height: 76px; padding: 16px 18px; }
+  .edit-bot-sheet .bot-modal-title,
+  .avatar-editor-sheet .bot-modal-title { position: absolute; left: 50%; transform: translateX(-50%); flex: none; }
+  .edit-bot-sheet .bot-modal-header > button:last-child,
+  .avatar-editor-sheet .bot-modal-header > button:last-child { margin-left: auto; }
+  .edit-bot-sheet .edit-bot-body { padding: 2.267px 24px 24px; }
+  .edit-bot-sheet .edit-bot-avatar { display: flex; width: 96.8px; height: 96.8px; margin: 0 auto; }
+  .edit-bot-avatar > span:first-child { width: 96.8px !important; height: 96.8px !important; }
+  .edit-bot-avatar > span:first-child > svg,
+  .edit-bot-avatar > span:first-child > img { width: 100% !important; height: 100% !important; }
+  .edit-bot-sheet .edit-bot-label { margin: 21.286px 18px 8px; }
+  .edit-bot-sheet label.edit-bot-label { margin-top: 21.076px; }
+  .edit-bot-sheet .edit-bot-name,
+  .edit-bot-sheet .edit-bot-appearance { height: 54.095px; min-height: 54.095px; border: 1.143px solid var(--border); padding-block: 0; }
+
+  .avatar-editor-sheet .avatar-editor { padding: 3.238px 24px 24px; }
+  .avatar-editor-sheet .avatar-mobile-tabs { height: 38.095px; margin-bottom: 22.667px; }
+  .avatar-editor-sheet .avatar-tabs button { padding-block: 0; height: 38.095px; }
+  .avatar-editor-sheet .avatar-editor-preview { height: 120.952px; padding: 0 0 24.152px; }
+  .avatar-editor-sheet .avatar-editor-preview > span { width: 96.8px !important; height: 96.8px !important; }
+  .avatar-editor-sheet .avatar-editor-preview svg,
+  .avatar-editor-sheet .avatar-editor-preview img { width: 100%; height: 100%; }
+  .avatar-editor-sheet .avatar-editor-card { border-width: 1.143px; }
+  .dark .avatar-editor-sheet .avatar-editor-card { background: var(--bg-card); }
+  .avatar-editor-sheet .avatar-editor-card:has(.avatar-photo-actions) { background: transparent; }
+  .dark .avatar-editor-sheet .avatar-editor-card:has(.avatar-photo-actions) { background: transparent; }
+  .avatar-editor-sheet .avatar-picker { padding-top: 23.143px; padding-bottom: 21.714px; }
+  .avatar-editor-sheet .avatar-shapes { row-gap: 18.095px; }
+  .avatar-editor-sheet .avatar-shapes .avatar-choice { width: 42.095px; height: 42.095px; }
+  .avatar-editor-sheet .avatar-picker .avatar-colors { width: 325.029px; max-width: 100%; margin: 33.429px auto 0; row-gap: 17.905px; }
+  .avatar-editor-sheet .avatar-colors button { width: 26.286px; height: 26.286px; }
+  .avatar-editor-sheet .avatar-reset { position: relative; height: 52.571px; border: 0; padding: 0 18.286px; }
+  .avatar-editor-sheet .avatar-reset::before { content: ""; position: absolute; top: 0; left: 18.286px; right: 0; height: 1.143px; background: var(--border); }
+  .avatar-editor-sheet .avatar-photo-actions { border-width: 1.143px; }
+  .avatar-editor-sheet .avatar-photo-actions button { height: 51.81px; padding-block: 0; }
+  .avatar-editor-sheet .avatar-photo-actions button + button { position: relative; border-top: 0; }
+  .avatar-editor-sheet .avatar-photo-actions button + button::before { content: ""; position: absolute; top: 0; left: 52.19px; right: 0; height: .762px; background: var(--border); }
+  .dark .avatar-editor-sheet .avatar-photo-actions button + button::before { background: #332e4a; }
+  .avatar-editor-sheet .avatar-upload-hint { padding-inline: 18.286px; }
+
+  /* The creation sheet has a measurable top edge at raster y=136. */
+  .new-bot-sheet .new-bot-preview { padding-top: 16.952px; }
+  .new-bot-preview > button { display: flex; }
+  .new-bot-sheet .new-bot-name { margin-top: 67.048px; }
+  .new-bot-sheet .avatar-picker .avatar-colors { width: 342.857px; margin-top: 30.857px; row-gap: 17.905px; }
+  .new-bot-sheet .avatar-colors button { width: 26.286px; height: 26.286px; }
+}

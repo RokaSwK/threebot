@@ -1,0 +1,127 @@
+/* All dialogs are portaled to body so transformed details panes cannot offset them. */
+.bot-modal-backdrop {
+  --dialog-top: max(16px, env(safe-area-inset-top, 0px));
+  --dialog-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  --dialog-left: max(16px, env(safe-area-inset-left, 0px));
+  --dialog-right: max(16px, env(safe-area-inset-right, 0px));
+  box-sizing: border-box;
+  height: 100dvh;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  padding: var(--dialog-top) var(--dialog-right) var(--dialog-bottom) var(--dialog-left);
+  overflow: hidden;
+}
+.bot-modal-backdrop > [data-bot-modal] {
+  max-width: min(100%, calc(100vw - var(--dialog-left) - var(--dialog-right)));
+  max-height: min(90vh, calc(100dvh - var(--dialog-top) - var(--dialog-bottom)));
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.bot-modal-header > button { flex-shrink: 0; }
+.vault-sheet .bot-modal-header { min-height: 56px; }
+.dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.dialog-footer { flex-shrink: 0; flex-wrap: wrap; }
+.avatar-picker { min-width: 0; }
+.avatar-shapes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, 44px);
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 356px;
+  margin-inline: auto;
+}
+.settings-row { flex-wrap: wrap; }
+.settings-row > :first-child { flex-basis: 160px; }
+.settings-row > input, .settings-row > select { min-width: 0; max-width: 100%; }
+.settings-row > select { text-overflow: ellipsis; }
+.settings-rule-text { overflow-wrap: anywhere; }
+.settings-rule-actions { opacity: 1; }
+@media (hover: hover) and (pointer: fine) {
+  .settings-rule-actions { opacity: 0; }
+  .group:hover .settings-rule-actions, .group:focus-within .settings-rule-actions { opacity: 1; }
+}
+@media (max-height: 480px) {
+  .bot-modal-backdrop > [data-bot-modal] { margin-block: 0; }
+}
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .bot-modal-backdrop > .settings-modal {
+    position: static;
+    inset: auto;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    margin: 0;
+    border-radius: 18px;
+  }
+  .settings-modal .settings-content {
+    padding: 12px 16px max(24px, env(safe-area-inset-bottom, 0px));
+    min-width: 0;
+  }
+  .settings-modal .settings-header { display: flex; }
+  .settings-modal .settings-header button { position: static; inset: auto; display: grid; flex-shrink: 0; }
+  .settings-modal .settings-content input { max-width: 100%; }
+  .settings-modal .settings-home { padding-top: 4px; }
+  .settings-modal .settings-content h2 { text-align: left; }
+  .settings-modal .settings-row { gap: 10px; }
+  .settings-modal .settings-row > :first-child { flex-basis: 140px; }
+  .settings-rule-editor { flex-wrap: wrap; justify-content: flex-end; }
+  .settings-rule-editor textarea { flex-basis: 100%; }
+  .settings-rule-actions { min-width: 44px; min-height: 44px; }
+  .bot-modal-backdrop > [data-bot-modal] { margin-block: 0; }
+}
+
+.bot-mobile-only-header { display: none; }
+/* Sheets on phones. Desktop dialogs remain centered. */
+.bot-modal-dismiss { order: 5; }
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .bot-modal-backdrop {
+    --dialog-top: env(safe-area-inset-top, 0px);
+    --dialog-bottom: 0px;
+    --dialog-left: 0px;
+    --dialog-right: 0px;
+    padding: var(--dialog-top) 0 0;
+    align-items: stretch;
+  }
+  .bot-modal-backdrop > [data-bot-modal], .bot-modal-backdrop > .settings-modal {
+    position: static;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    margin: 0 !important;
+    border: 0;
+    border-radius: 22px 22px 0 0;
+    background: var(--bg-elevated);
+    box-shadow: none;
+    overflow: hidden;
+  }
+  .bot-mobile-only-header { display: flex; }
+  .bot-modal-header {
+    min-height: 76px;
+    padding: 16px 18px;
+    gap: 14px;
+    border: 0;
+  }
+  .bot-modal-header .bot-modal-dismiss, .bot-modal-header > button:first-child {
+    width: 44px;
+    height: 44px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-strong);
+    color: var(--fg);
+  }
+  .bot-modal-dismiss { order: -1; }
+  .bot-modal-header:has(> button[aria-label="Back"]) .bot-modal-dismiss { display: none; }
+  .bot-modal-title { font-size: 17px; font-weight: 500; }
+  .bot-modal-header > button[aria-label="Back"] { order: -2; }
+  .settings-modal .settings-content { padding: 8px 16px max(24px, env(safe-area-inset-bottom)); }
+  .settings-modal .settings-home { padding-top: 10px; }
+  .settings-modal .settings-nav { display: none; }
+  .settings-modal .settings-content input { max-width: 100%; }
+  .settings-modal .settings-content h2 { text-align: left; }
+}
+
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .dark .bot-modal-backdrop > [data-bot-modal] { background: var(--bg-details); }
+  .dark .bot-modal-backdrop > [data-bot-modal].connect-apps-sheet:not(.connect-app-detail) { background: var(--bg-chat); }
+}

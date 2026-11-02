@@ -1,0 +1,158 @@
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  /* Keep the flex sizing chain bounded by the chat column, not its contents. */
+  .chat-view,
+  .chat-scroller,
+  .chat-messages,
+  .chat-composer,
+  .composer-shell,
+  .composer-controls {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .chat-view,
+  .chat-scroller {
+    inline-size: 100%;
+  }
+
+  .chat-scroller {
+    overflow-x: hidden;
+    overscroll-behavior-x: none;
+  }
+
+  .chat-messages,
+  .chat-file-content,
+  .bot-exchange {
+    overflow-wrap: anywhere;
+  }
+
+  .chat-messages > *,
+  .chat-messages :where(.flex, .inline-flex, .flex-1),
+  .chat-view .stack-left,
+  .chat-view .bubble,
+  .chat-attachments,
+  .chat-attachment,
+  .chat-peer {
+    min-inline-size: 0;
+  }
+
+  .chat-view .stack-left,
+  .chat-attachments,
+  .chat-attachment,
+  .chat-pending-attachment {
+    max-inline-size: 100%;
+  }
+
+  .chat-view .bubble,
+  .chat-attachment {
+    overflow-wrap: anywhere;
+  }
+
+  .chat-view :where(img, video, iframe) {
+    max-inline-size: 100%;
+  }
+
+  .chat-view .chat-attachment-image {
+    max-inline-size: min(260px, 100%);
+  }
+
+  /* Large content scrolls within its block while prose and inline code wrap. */
+  .chat-view .md :where(pre, table) {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-x: auto;
+    overflow-wrap: normal;
+    word-break: normal;
+    overscroll-behavior-x: contain;
+  }
+
+  .chat-view .md pre,
+  .chat-view .md pre code {
+    white-space: pre;
+  }
+
+  .chat-view .md pre code {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  /* The page card's desktop pop-out button otherwise sits beyond the column. */
+  .chat-view [aria-label="Open full screen"] {
+    top: 4px;
+    right: 4px;
+    opacity: 1;
+    background: var(--bg-elevated);
+  }
+
+  .chat-composer textarea {
+    min-inline-size: 0;
+  }
+
+  .composer-controls > :first-child,
+  .composer-controls > :last-child {
+    flex-shrink: 0;
+  }
+
+  .chat-composer .composer-model {
+    max-inline-size: 45%;
+  }
+
+  .chat-composer .composer-model > button {
+    min-inline-size: 0;
+    flex-shrink: 1;
+    overflow: hidden;
+  }
+
+  .chat-composer .composer-model > button > span {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-pending-attachment > button {
+    display: grid;
+  }
+
+  .chat-attachment-menu > button {
+    min-block-size: 44px;
+  }
+}
+
+.chat-reply-chip {
+  max-width: 75%; margin: 0 0 4px; padding: 4px 12px; overflow: hidden;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  font-size: 13px; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-muted);
+}
+.composer-reply { display: flex; align-items: center; gap: 8px; margin: 10px 10px 0; padding: 4px 8px 4px 12px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; line-height: 20px; color: var(--fg-muted); }
+.composer-reply > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.composer-reply > button { display: grid; flex: none; width: 24px; height: 24px; place-items: center; }
+.composer-controls[data-expanded="true"] { flex-wrap: wrap; }
+.composer-controls[data-expanded="true"] textarea { order: -1; flex: 1 0 100%; padding-inline: 10px; }
+.composer-controls[data-expanded="true"] .composer-dictate { margin-left: auto; }
+.chat-voice-call { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 16px 0 4px; font-size: 14px; color: var(--fg-muted); }
+.chat-voice-call > span { color: var(--fg-faint); }
+
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .chat-attachment-menu { width: 240px; padding: 8px; border-radius: 24px; bottom: 48px; }
+  .chat-attachment-menu > button { height: 48px; min-block-size: 48px; gap: 14px; padding-inline: 12px; font-size: 17px; }
+  .chat-attachment-menu > button > svg { width: 20px; height: 20px; }
+  .composer-reply { font-size: 15px; }
+}
+
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .chat-header .chat-back, .chat-title, .chat-header .chat-computer { height: 44px; }
+  .chat-header .chat-back, .chat-header .chat-computer { width: 44px; }
+  .chat-title { padding-left: 10px; }
+  .chat-title > span:last-child { font-size: 18px; }
+  .chat-view .bubble { font-size: 18px; line-height: 24px; }
+  .composer-controls { padding: 5px; }
+  .composer-controls textarea { min-height: 32px; padding-block: 5px; }
+  .composer-controls > button, .composer-controls button[aria-label="Composer actions"] { width: 30px; height: 30px; }
+  .composer-controls button[aria-label="Composer actions"] svg { width: 22px; height: 22px; }
+  .composer-dictate svg { width: 18px; height: 18px; }
+  .composer-controls button[title="Start voice chat"] svg { width: 20px; height: 20px; }
+}
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .composer-controls .composer-stop { flex-shrink: 0; }
+  .composer-controls .composer-stop > button { width: 30px; height: 30px; }
+}

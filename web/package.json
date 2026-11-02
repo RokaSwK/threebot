@@ -1,0 +1,46 @@
+{
+  "name": "bot-web",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "vite",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "dompurify": "^3.4.17",
+    "katex": "^0.19.1",
+    "lucide-react": "^1.64.0",
+    "mermaid": "^12.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math-extended": "^6.1.1",
+    "shiki": "^4.5.0",
+    "unicode-emoji-json": "^0.9.0",
+    "zustand": "^5.0.16"
+  },
+  "overrides": {
+    "micromark-extension-math-extended": {
+      "katex": "$katex"
+    }
+  },
+  "devDependencies": {
+    "@babel/parser": "^8.0.10",
+    "@babel/traverse": "^8.0.10",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "happy-dom": "^21.0.4",
+    "jsdom": "^30.1.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}

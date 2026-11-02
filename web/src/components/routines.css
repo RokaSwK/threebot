@@ -1,0 +1,5 @@
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .routine-detail-back { display: none; }
+  .routine-page .details-header { height: 68px; padding: 8px 18px; }
+  .routine-page .details-back { width: 43.429px; height: 43.429px; }
+}
