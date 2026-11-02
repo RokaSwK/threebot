@@ -5,6 +5,7 @@ import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
 import { toast, useApp } from "../store";
 import { addressLines, contactSummary, exportUrl, siteDomain, siteUrl, vaultApi, type ContactInput, type LoginInput, type VaultContact, type VaultItem, type VaultLogin } from "../lib/vault";
 import { parseVaultCsv, type CsvImport } from "../lib/vaultCsv";
+import { siteIconUrl } from "../lib/siteIcons";
 
 // Settings › Vault: tabs with counts, search, New item, a list of logins and
 // contact info, and a dialog per item. Passwords are fetched only to reveal or copy them.
@@ -167,9 +168,11 @@ function Empty({ icon, children }: { icon: ReactNode; children: ReactNode }) {
 }
 
 export function SiteIcon({ domain, size = 32 }: { domain: string; size?: number }) {
+  const [broken, setBroken] = useState("");
+  const logo = domain && broken !== domain;
   return (
     <span className="grid shrink-0 place-items-center overflow-hidden rounded-lg bg-card-inner text-muted ring-1 ring-line" style={{ width: size, height: size, fontSize: size * 0.42 }}>
-      {domain ? domain[0].toUpperCase() : <KeyRound size={size * 0.45} />}
+      {logo ? <img src={siteIconUrl(domain)} alt="" loading="lazy" className="object-contain" style={{ width: size * 0.68, height: size * 0.68 }} onError={() => setBroken(domain)} /> : domain ? domain[0].toUpperCase() : <KeyRound size={size * 0.45} />}
     </span>
   );
 }

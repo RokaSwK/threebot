@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { renderAgentsMd, mergeManaged } from "./bot-template.mjs";
+import { createSiteIcons, normalizeDomain } from "./site-icons.mjs";
 import { startProvisioner } from "./provisioner.mjs";
 import { archivedBotIdentities } from "./bot-identities.mjs";
 import { createMainBotRegistry } from "./main-bot.mjs";
@@ -191,6 +192,7 @@ const DEFAULT_SETTINGS = {
   defaultModel: null,
 };
 const settingsPath = path.join(appDir, "settings.json");
+const siteIcons = createSiteIcons({ dir: path.join(appDir, "site-icons") });
 async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...(await readJson(settingsPath, {})) };
 }
@@ -578,6 +580,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/thread-previews" && req.method === "POST") {
       requireJson(req);
       return send(res, 200, { previews: await threadPreviews((await readBody(req))?.stamps) }, { "cache-control": "no-store" });
+    }
+    if (p === "/api/site-icon" && req.method === "GET") {
+      if (!normalizeDomain(url.searchParams.get("domain"))) return send(res, 400, { error: "invalid domain" });
+      const icon = await siteIcons.get(url.searchParams.get("domain"));
+      if (!icon) return send(res, 404, { error: "no icon" }, { "cache-control": "private, max-age=86400" });
+      return send(res, 200, icon.bytes, { "content-type": icon.type, "cache-control": "private, max-age=604800", "content-security-policy": "default-src 'none'", "x-content-type-options": "nosniff" });
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
     if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, await threadMeta.get(url.searchParams.get("thread")), { "cache-control": "no-store" });

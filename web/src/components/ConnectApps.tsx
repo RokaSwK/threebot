@@ -5,6 +5,7 @@ import { SkillsDialog } from "./SkillsDialog";
 import { watchProviderData } from "../lib/providerData";
 import { parseSkills, type ProviderSkill } from "../lib/skillsApi";
 import { openDialog, useApp } from "../store";
+import { appDomain, siteIconUrl } from "../lib/siteIcons";
 import { executorApi, executorConnectionConfirmed as confirmed, type CatalogEntry, type ExecutorAccount, type ExecutorApp, type ExecutorConnection, type ExecutorRequirement, type ExecutorStatus } from "../lib/executor";
 
 type View = { kind: "catalog"; entry: CatalogEntry } | { kind: "list" } | { kind: "app"; app: ExecutorApp } | { kind: "connection"; connection: ExecutorConnection; app: ExecutorApp | null; reconnect?: ExecutorAccount };
@@ -17,8 +18,11 @@ const message = (error: unknown) => error instanceof Error ? error.message : "Co
 const CATALOG_PAGE_SIZE = 30;
 
 function AppIcon({ name, src }: { name: string; src?: string | null }) {
-  const [broken, setBroken] = useState(false);
-  return <span data-app-name={name} className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-card text-[13px] font-medium">{src && !broken ? <img src={src} alt="" loading="lazy" className="size-6 object-contain" onError={() => setBroken(true)} /> : name[0]?.toUpperCase()}</span>;
+  const domain = appDomain(name);
+  const sources = [src, domain && siteIconUrl(domain)].filter((value): value is string => Boolean(value));
+  const [failed, setFailed] = useState(0);
+  const logo = sources[failed];
+  return <span data-app-name={name} className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-xl bg-card text-[13px] font-medium">{logo ? <img src={logo} alt="" loading="lazy" className="size-6 object-contain" onError={() => setFailed((count) => count + 1)} /> : name.slice(0, 1).toUpperCase()}</span>;
 }
 
 export function ConnectApps({ onClose = () => openDialog(null), onBack, initialUrl }: { onClose?: () => void; onBack?: () => void; initialUrl?: string } = {}) {
