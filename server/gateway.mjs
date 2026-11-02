@@ -485,7 +485,8 @@ async function serveStatic(req, res, urlPath) {
   if (!stat || stat.isDirectory()) { file = path.join(cfg.staticDir, "index.html"); stat = await fs.stat(file).catch(() => null); }
   if (!stat) return send(res, 404, "web app not built");
   const ext = path.extname(file);
-  const cache = file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache";
+  // Cloudflare only answers Safari's range requests for a video it's allowed to cache.
+  const cache = file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : ext === ".mp4" ? "public, max-age=86400" : "no-cache";
   const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache };
   // Safari won't play a video unless it can ask for pieces of it.
   const range = ext === ".mp4" && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
