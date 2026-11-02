@@ -475,7 +475,7 @@ async function proxyT3(req, res, t3Path, target = { baseUrl: cfg.t3Url, token })
 }
 
 // ---------- static ----------
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json" };
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
 async function serveStatic(req, res, urlPath) {
   const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
   // The public landing page is the one route outside the single-page app.
@@ -486,7 +486,16 @@ async function serveStatic(req, res, urlPath) {
   if (!stat) return send(res, 404, "web app not built");
   const ext = path.extname(file);
   const cache = file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache";
-  res.writeHead(200, { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache });
+  const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache };
+  // Safari won't play a video unless it can ask for pieces of it.
+  const range = ext === ".mp4" && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  if (range) {
+    const start = Number(range[1]), end = Math.min(range[2] ? Number(range[2]) : stat.size - 1, stat.size - 1);
+    if (start > end) { res.writeHead(416, { "content-range": `bytes */${stat.size}` }); return res.end(); }
+    res.writeHead(206, { ...headers, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${stat.size}`, "content-length": end - start + 1 });
+    return res.end((await fs.readFile(file)).subarray(start, end + 1));
+  }
+  res.writeHead(200, ext === ".mp4" ? { ...headers, "accept-ranges": "bytes" } : headers);
   res.end(await fs.readFile(file));
 }
 

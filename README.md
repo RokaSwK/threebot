@@ -4,7 +4,7 @@
 
 <p align="center"><b>Your Bot is a T3 thread.</b><br />Personal agents on T3 Code, on your own subscriptions.</p>
 
-![A Bot on the phone, between its own eyes](docs/assets/hero.webp)
+![The ball looking over the Threebot desktop app](docs/assets/hero.webp)
 
 You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot. It keeps its own memory and routines, it starts and steers your other threads, and it brings you a short answer on your phone.
 
