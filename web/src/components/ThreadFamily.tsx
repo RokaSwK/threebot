@@ -5,16 +5,15 @@ import { Avatar } from "./Avatar";
 import { botReferenceKey, conversationStatus, loadThreadFamily, selectThread, useApp } from "../store";
 import { agentStatus, localAncestors, sameTaskBot, subagentStatus, subagentTarget, supplementSubagents, threadIdentity, threadLink, variantShape, type ThreadTarget } from "../lib/threadFamily";
 import type { Bot, TurnItem } from "../lib/types";
-import { record, useWorkCommand } from "../lib/runtimeApi";
+import { useWorkCommand } from "../lib/runtimeApi";
 import { WorkFeedback } from "./QueuedWork";
 
 // Claude's placeholder when a subagent's report went to the parent as a message. Not a result.
 const HANDBACK_NOTE = /^This agent's report was delivered to you as a message\b/;
 
-export const SubagentRow = memo(function SubagentRow({ bot, parentThreadId, item, card = false }: { bot: Bot; parentThreadId: string; item: TurnItem; card?: boolean }) {
+export const SubagentRow = memo(function SubagentRow({ bot, parentThreadId, item }: { bot: Bot; parentThreadId: string; item: TurnItem }) {
   const update = useApp((s) => s.threadData[parentThreadId]?.subagents?.[item.subagentId]);
   const agent = update && update.updatedAt >= item.updatedAt ? { ...item, ...update } : item;
-  const modelName = useApp((s) => s.providers.flatMap((provider) => provider.models).find((model) => model.slug === agent.model)?.name);
   const target = subagentTarget(agent);
   const childTitle = useApp(s => target?.kind === "local" ? s.threads[target.threadId]?.title : undefined);
   const status = useApp(s => agentStatus({ thread: target?.kind === "local" ? s.threads[target.threadId] : undefined, fallback: agent.status, updatedAt: agent.updatedAt }));
@@ -25,42 +24,33 @@ export const SubagentRow = memo(function SubagentRow({ bot, parentThreadId, item
   const identity = target?.kind === "local" && threads[target.threadId]
     ? threadIdentity(bot, target.threadId, threads)
     : { shape: variantShape(parent.shape, target ? target.kind === "remote" ? `${target.environmentId}:${target.threadId}` : target.threadId : item.subagentId || item.id), color: parent.color };
-  const delivery = record(agent.completionDelivery);
   const subagentId = typeof item.subagentId === "string" ? item.subagentId : update?.id;
   const stopTarget = typeof agent.runId === "string" && subagentId ? { runId: agent.runId, subagentId } : null;
   const cancellable = !archived && ["pending", "running", "waiting"].includes(status) && stopTarget !== null;
   const result = typeof agent.result === "string" && agent.result && !HANDBACK_NOTE.test(agent.result) ? agent.result : undefined;
   const description = typeof agent.progress === "string" && ["pending", "running", "waiting"].includes(status) ? agent.progress : result;
-  return <div><ThreadRow bot={bot} target={target} shape={identity.shape} color={identity.color} title={agent.title || childTitle || "Subagent"} status={status} card={card} description={description} />
-    {(cancellable || agent.model || delivery.state) && <div className="flex flex-wrap items-center gap-3 px-3 pb-2 text-[12px] text-muted">
-      {typeof agent.model === "string" && <span>{modelName ?? agent.model}</span>}
-      {typeof delivery.state === "string" && <span>Result {delivery.state}</span>}
-      {cancellable && stopTarget && <button disabled={action.disabled} onClick={() => void action.send({ type: "subagent.stop", threadId: parentThreadId, ...stopTarget })}>Stop task</button>}
-    </div>}
-    {card && result && <details className="px-3 pb-2 text-[12px] text-muted"><summary>Task result</summary><p className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere]">{result}</p></details>}
+  return <div><ThreadRow bot={bot} target={target} shape={identity.shape} color={identity.color} title={agent.title || childTitle || "Subagent"} status={status} description={description} />
+    {cancellable && stopTarget && <div className="px-3 pb-1.5 text-[12px] text-muted"><button disabled={action.disabled} onClick={() => void action.send({ type: "subagent.stop", threadId: parentThreadId, ...stopTarget })}>Stop task</button></div>}
+    {!target && result && <details className="px-3 pb-1.5 text-[12px] text-muted"><summary>Task result</summary><p className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere]">{result}</p></details>}
     <div className="px-3 pb-1"><WorkFeedback action={action} /></div>
   </div>;
-}, (previous, next) => previous.item === next.item && previous.parentThreadId === next.parentThreadId && previous.card === next.card && sameTaskBot(previous.bot, next.bot));
+}, (previous, next) => previous.item === next.item && previous.parentThreadId === next.parentThreadId && sameTaskBot(previous.bot, next.bot));
 
-function ThreadRow({ bot, target, shape, color, avatarImage, title, status, current = false, card = false, description }: {
-  bot: Bot; target: ThreadTarget | null; shape: string; color: string; avatarImage?: string | null; title: string; status: string; current?: boolean; card?: boolean; description?: string;
+function ThreadRow({ bot, target, shape, color, avatarImage, title, status, current = false, description }: {
+  bot: Bot; target: ThreadTarget | null; shape: string; color: string; avatarImage?: string | null; title: string; status: string; current?: boolean; description?: string;
 }) {
   const working = ["pending", "preparing", "starting", "running", "queued"].includes(status);
   const content = <>
-    <Avatar shape={shape} color={color} picture={avatarImage} size={34} state={status === "failed" ? "failed" : working ? "working" : status === "waiting" ? "waiting" : "idle"} />
+    <Avatar shape={shape} color={color} picture={avatarImage} size={24} state={status === "failed" ? "failed" : working ? "working" : status === "waiting" ? "waiting" : "idle"} />
     <span className="min-w-0 flex-1">
-      <span className={clsx("text-[14px] leading-5 font-medium [overflow-wrap:anywhere]", card ? "line-clamp-2" : "block truncate")} title={title}>{title}</span>
-      <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
-        <span className={clsx("inline-flex items-center gap-1.5", status === "completed" ? "text-success" : status === "failed" ? "text-danger" : status === "waiting" ? "text-attention" : "")}><span aria-hidden="true" className={clsx("size-1.5 shrink-0 rounded-full bg-current", working && "animate-pulse")} />{subagentStatus(status)}</span>
-        {target?.kind === "remote" && <span className="min-w-0 truncate" title={target.label}>{target.label}</span>}
-        {current && <span>This conversation</span>}
-      </span>
-      {description && <span className="mt-1 line-clamp-2 text-[12px] text-muted [overflow-wrap:anywhere]">{description}</span>}
-      {card && target && <span className="mt-2 block text-[12px] text-muted">Open chat</span>}
+      <span className="block truncate text-[14px] leading-5" title={title}>{title}</span>
+      {description && <span className="block truncate text-[12px] leading-4 text-muted" title={description}>{description}</span>}
     </span>
-    {target && (target.kind === "remote" ? <ArrowUpRight size={15} className="shrink-0 text-muted" /> : <ChevronRight size={15} className="shrink-0 text-muted" />)}
+    {target?.kind === "remote" && <span className="max-w-24 min-w-0 truncate text-[12px] text-muted" title={target.label}>{target.label}</span>}
+    <span className={clsx("inline-flex shrink-0 items-center gap-1.5 text-[12px]", status === "completed" ? "text-success" : status === "failed" ? "text-danger" : status === "waiting" ? "text-attention" : "text-muted")}><span aria-hidden="true" className={clsx("size-1.5 shrink-0 rounded-full bg-current", working && "animate-pulse")} />{subagentStatus(status)}</span>
+    {target && (target.kind === "remote" ? <ArrowUpRight size={14} className="shrink-0 text-muted" /> : <ChevronRight size={14} className="shrink-0 text-muted" />)}
   </>;
-  const className = clsx("flex min-h-14 w-full min-w-0 items-center gap-3 rounded-[14px] px-3 py-3 text-left", current ? "bg-active" : target ? "hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" : "");
+  const className = clsx("flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-[12px] px-2.5 py-1.5 text-left", current ? "bg-active" : target ? "hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" : "");
   return target ? <a className={className} href={target.kind === "local" ? `?bot=${encodeURIComponent(botReferenceKey(bot))}&thread=${encodeURIComponent(target.threadId)}` : threadLink(target)} target={target.kind === "remote" ? "_blank" : undefined} rel={target.kind === "remote" ? "noreferrer" : undefined} aria-current={current ? "page" : undefined} onClick={(e) => {
     if (target.kind === "local" && e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) { e.preventDefault(); selectThread(bot, target.threadId); }
   }} title={target.kind === "remote" ? `Open ${title} on ${target.label}` : `Open ${title}`} data-thread-id={target.threadId} data-subagent-status={status} data-avatar-shape={shape} data-avatar-color={color}>{content}</a>

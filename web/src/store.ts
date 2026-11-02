@@ -20,9 +20,7 @@ export type Dialog = null | "new-bot" | "settings" | "search" | "connect-apps" |
 export type SearchFilter = "All" | "Messages" | "Bots" | "Routines" | "Files" | "Apps";
 export type SearchSession = { query: string; filter: SearchFilter; index: number; scrollTop: number };
 
-export type ModelFavorite = { provider: string; model: string };
 
-const FAVORITES_KEY = "bot.modelFavorites";
 const PREVIEWS_KEY = "bot.previews";
 function loadPreviews(): Record<string, ThreadPreview> {
   try {
@@ -30,14 +28,6 @@ function loadPreviews(): Record<string, ThreadPreview> {
     return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, ThreadPreview> : {};
   } catch {
     return {};
-  }
-}
-function loadFavorites(): ModelFavorite[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? "[]");
-    return Array.isArray(v) ? v.filter((f) => typeof f?.provider === "string" && typeof f?.model === "string") : [];
-  } catch {
-    return [];
   }
 }
 
@@ -63,7 +53,6 @@ type State = {
   /** T3's per-provider hidden models and model order (`server.getConfig().settings`). */
   providerModelPreferences: ProviderModelPreferences;
   /** Model picker favorites, kept in this browser. */
-  modelFavorites: ModelFavorite[];
   tasks: ScheduledTask[];
   threadData: Record<string, ThreadData>;
   selected: string | null;
@@ -102,7 +91,6 @@ export const useApp = create<State>(() => ({
   threadMeta: {},
   providers: [],
   providerModelPreferences: {},
-  modelFavorites: loadFavorites(),
   tasks: [],
   threadData: {},
   selected: localStorage.getItem("bot.selected"),
@@ -506,14 +494,6 @@ export function defaultModel(s = get()): ModelSelection | null {
   return first ? { instanceId: first.instanceId, model: (first.models.find((m) => m.isDefault) ?? first.models[0]).slug } : null;
 }
 
-export function toggleModelFavorite(provider: string, model: string) {
-  const favorites = get().modelFavorites;
-  const next = favorites.some((f) => f.provider === provider && f.model === model)
-    ? favorites.filter((f) => !(f.provider === provider && f.model === model))
-    : [...favorites, { provider, model }];
-  set({ modelFavorites: next });
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
-}
 
 export function runtimeMode(s = get()) {
   return s.settings?.autoReview === false ? "full-access" : "auto";

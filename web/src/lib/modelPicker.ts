@@ -1,42 +1,7 @@
 // Adapted from T3 Code (MIT, github.com/pingdotgg/t3code v0.1.5):
-// apps/web/src/components/chat/modelPickerKeys.ts, modelPickerSearch.ts, apps/web/src/modelOrdering.ts,
-// apps/web/src/modelSelection.ts and packages/shared/src/searchRanking.ts.
-// Model picker list keys, ordering (hidden models, model order, favorites) and search ranking.
+// apps/web/src/components/chat/modelPickerSearch.ts, apps/web/src/modelOrdering.ts and
+// packages/shared/src/searchRanking.ts. T3's model ordering and search ranking.
 import type { ProviderModel } from "./types";
-
-// ---------- keys ----------
-
-const MODEL_KEY_PREFIX = "model:";
-const LEGACY_SECTION_KEY_PREFIX = "legacy-models:";
-
-export function modelPickerModelKey(instanceId: string, slug: string): string {
-  return `${MODEL_KEY_PREFIX}${instanceId.length}:${instanceId}${slug}`;
-}
-
-export function parseModelPickerModelKey(key: string): { instanceId: string; slug: string } | null {
-  if (!key.startsWith(MODEL_KEY_PREFIX)) return null;
-  const encoded = key.slice(MODEL_KEY_PREFIX.length);
-  const separatorIndex = encoded.indexOf(":");
-  if (separatorIndex === -1) return null;
-  const lengthText = encoded.slice(0, separatorIndex);
-  if (!/^\d+$/.test(lengthText)) return null;
-  const length = Number(lengthText);
-  const value = encoded.slice(separatorIndex + 1);
-  if (!Number.isSafeInteger(length) || length > value.length) return null;
-  return { instanceId: value.slice(0, length), slug: value.slice(length) };
-}
-
-export function modelPickerLegacySectionKey(instanceId: string): string {
-  return `${LEGACY_SECTION_KEY_PREFIX}${instanceId}`;
-}
-
-export function parseModelPickerLegacySectionKey(key: string): string | null {
-  return key.startsWith(LEGACY_SECTION_KEY_PREFIX) ? key.slice(LEGACY_SECTION_KEY_PREFIX.length) : null;
-}
-
-export function providerModelKey(instanceId: string, slug: string): string {
-  return `${instanceId}:${slug}`;
-}
 
 // ---------- ordering ----------
 
@@ -55,21 +20,6 @@ export function applyModelPreferences(models: ReadonlyArray<ProviderModel>, pref
       (a, b) =>
         (order.get(a.slug) ?? Infinity) - (order.get(b.slug) ?? Infinity) || (original.get(a.slug) ?? Infinity) - (original.get(b.slug) ?? Infinity),
     );
-}
-
-export function sortProviderModelItems<T extends { instanceId: string; slug: string }>(
-  items: ReadonlyArray<T>,
-  options: { favoriteModelKeys: ReadonlySet<string>; groupFavorites: boolean; instanceOrder: ReadonlyArray<string> },
-): T[] {
-  const instanceOrder = rank(options.instanceOrder);
-  const original = rank(items.map((item) => providerModelKey(item.instanceId, item.slug)));
-  const favorite = (item: T) => (options.favoriteModelKeys.has(providerModelKey(item.instanceId, item.slug)) ? 0 : 1);
-  return items.toSorted(
-    (a, b) =>
-      (options.groupFavorites ? favorite(a) - favorite(b) : 0) ||
-      (instanceOrder.get(a.instanceId) ?? Infinity) - (instanceOrder.get(b.instanceId) ?? Infinity) ||
-      (original.get(providerModelKey(a.instanceId, a.slug)) ?? Infinity) - (original.get(providerModelKey(b.instanceId, b.slug)) ?? Infinity),
-  );
 }
 
 // ---------- search ----------

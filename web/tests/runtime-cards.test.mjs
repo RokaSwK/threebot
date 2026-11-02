@@ -15,14 +15,16 @@ globalThis.MessageChannel = class extends MessageChannel { constructor() { super
 const window = new Window({ url: "http://runtime-cards.test" });
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "IntersectionObserver"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+globalThis.getComputedStyle = (element) => window.getComputedStyle(element);
 const src = new URL("../src/", import.meta.url).pathname;
 const bundle = await build({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "runtime-cards-test-entry", resolveId: (id) => id.endsWith("virtual:runtime-cards-tests") ? "\0runtime-cards-tests" : undefined,
     load: (id) => id === "\0runtime-cards-tests" ? `
-      export { createElement, act } from "react";
+      export { createElement, act, useState } from "react";
       export { createRoot } from "react-dom/client";
       export { ApprovalCard, QuestionCard, SecretCard, SubagentCard } from ${JSON.stringify(`${src}components/Cards.tsx`)};
+      export { ModelPicker } from ${JSON.stringify(`${src}components/ModelPicker.tsx`)};
       export { buildEntries } from ${JSON.stringify(`${src}lib/transcript.ts`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined }],
@@ -33,7 +35,7 @@ assert.ok(entry);
 const testDir = await mkdtemp(join(tmpdir(), "bot-runtime-cards-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entry.code);
-const { createElement: h, act, createRoot, ApprovalCard, QuestionCard, SecretCard, SubagentCard, buildEntries, useApp, t3 } = await import(pathToFileURL(testEntry).href);
+const { createElement: h, act, useState, createRoot, ApprovalCard, QuestionCard, SecretCard, SubagentCard, ModelPicker, buildEntries, useApp, t3 } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 let root, host, calls, transport, questionViews;
 beforeEach(() => {
@@ -88,7 +90,7 @@ for (const status of ['running', 'completed', 'cancelled', 'failed', 'interrupte
   assert.equal(link.dataset.subagentStatus, status);
   assert.equal(link.dataset.avatarColor, 'teal');
   assert.notEqual(link.dataset.avatarShape, 'blob');
-  assert.match(host.textContent, /From Parent Bot/); assert.match(host.textContent, /Open chat/);
+  assert.doesNotMatch(host.textContent, /From Parent Bot|Open chat|claude-/);
   assert.match(link.getAttribute('href'), /bot=parent&thread=child/);
   await click(link); assert.equal(useApp.getState().selectedThreadId, 'child');
   assert.equal(calls.filter(call => call.tag === 'orchestration.getThreadFamily').length, 1);
@@ -102,7 +104,7 @@ test('remote child cards open the exact machine and live subagent updates replac
   const link = host.querySelector('a');
   assert.equal(link.dataset.subagentStatus, 'completed');
   assert.equal(link.getAttribute('href'), '/api/thread-link?environmentId=machine&threadId=remote-child');
-  assert.equal(link.target, '_blank'); assert.match(host.textContent, /Other Mac/); assert.match(host.textContent, /Open chat/);
+  assert.equal(link.target, '_blank'); assert.match(host.textContent, /Other Mac/);
 });
 
 for (const [status, label] of [["expired", "Expired"], ["cancelled", "Cancelled"], ["resolved", "Resolved"]]) test(`approval ${status} is truthful and non-actionable`, async () => {
@@ -124,6 +126,45 @@ test("approval presents only provider choices and sends their existing decisions
 for (const kind of ["approval", "question"]) test(`${kind} not_resumable request has no response controls`, async () => {
   const value = fixtures[kind](); value.request.responseCapability = { type: "not_resumable", reason: "Example session ended" }; await render(kind, value);
   assert.equal([...document.querySelectorAll("button,input")].filter((el) => !el.disabled).length, 0); assert.match(document.body.textContent, /Unavailable/); assert.equal(calls.length, 0);
+});
+
+test("the model selector lists T3's models and writes T3 selections", async () => {
+  const effort = { id: "effort", label: "Reasoning", type: "select", options: [{ id: "low", label: "Low" }, { id: "high", label: "High" }], currentValue: "low" };
+  const fast = { id: "fastMode", label: "Fast Mode", type: "boolean", currentValue: false };
+  const providers = [
+    { instanceId: "claude", driver: "claudeAgent", displayName: "Claude", enabled: true, status: "ready", models: [{ slug: "opus", name: "Claude Opus", capabilities: { optionDescriptors: [effort, fast] } }, { slug: "hidden", name: "Claude Hidden" }, { slug: "sonnet", name: "Claude Sonnet", capabilities: { optionDescriptors: [effort] } }] },
+    { instanceId: "codex", driver: "codex", displayName: "Codex", enabled: true, status: "ready", models: [{ slug: "gpt", name: "GPT-6.1 Sol" }] },
+  ];
+  useApp.setState({ providers, providerModelPreferences: { claude: { hiddenModels: ["hidden"], modelOrder: [] } } });
+  const seen = [];
+  const View = () => { const [value, setValue] = useState({ instanceId: "claude", model: "opus", options: [{ id: "effort", value: "low" }] }); return h(ModelPicker, { value, onChange: (next) => { seen.push(next); setValue(next); } }); };
+  await act(async () => root.render(h(View)));
+  assert.match(host.querySelector(".model-trigger").textContent, /Opus.*Low/);
+  await click(host.querySelector(".model-trigger"));
+  assert.deepEqual([...document.querySelectorAll(".model-row")].map((row) => row.textContent), ["Claude Opus", "Claude Sonnet"]);
+  await click(button("High"));
+  assert.deepEqual(seen.at(-1), { instanceId: "claude", model: "opus", options: [{ id: "effort", value: "high" }, { id: "fastMode", value: false }] });
+  await click(document.querySelector('[role="switch"]'));
+  assert.deepEqual(seen.at(-1).options.find((option) => option.id === "fastMode"), { id: "fastMode", value: true });
+  await click([...document.querySelectorAll(".model-row")].find((row) => row.textContent === "Claude Sonnet"));
+  assert.deepEqual(seen.at(-1), { instanceId: "claude", model: "sonnet", options: [{ id: "effort", value: "high" }] });
+  await click([...document.querySelectorAll(".model-tab")].find((tab) => tab.textContent.includes("Codex")));
+  await click([...document.querySelectorAll(".model-row")].find((row) => row.textContent.includes("GPT-6.1 Sol")));
+  assert.deepEqual(seen.at(-1), { instanceId: "codex", model: "gpt", options: [] });
+});
+
+test("short choices are pills in a row with what they mean underneath", async () => {
+  const value = fixtures.question(); value.item.questions = [{ ...question, options: [{ label: "Send", description: "Send it now" }, { label: "Not yet", description: "Hold it" }] }]; await render("question", value);
+  assert.equal(document.querySelector(".question-options").dataset.layout, "row");
+  assert.equal(document.querySelector(".question-option-notes").textContent, "Send it now · Hold it");
+  assert.equal(document.querySelectorAll(".question-option .question-option-description").length, 0);
+});
+
+test("many choices stack and keep their descriptions on each row", async () => {
+  const value = fixtures.question(); value.item.questions = [{ ...question, options: ["One", "Two", "Three", "Four"].map((label) => ({ label, description: `About ${label}` })) }]; await render("question", value);
+  assert.equal(document.querySelector(".question-options").dataset.layout, "stack");
+  assert.equal(document.querySelectorAll(".question-option .question-option-description").length, 4);
+  assert.ok(!document.querySelector(".question-option-notes"));
 });
 
 test("question submits option value rather than display label", async () => {

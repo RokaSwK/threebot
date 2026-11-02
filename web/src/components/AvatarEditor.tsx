@@ -81,7 +81,7 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
   </div>;
   return <div className="avatar-editor" onPaste={e => { const file = Array.from(e.clipboardData.files).find(f => f.type.startsWith("image/")); if (file) { e.preventDefault(); void load(file); } }}>
     <div className="avatar-mobile avatar-mobile-tabs">{tabs}</div>
-    <div className={clsx("avatar-editor-preview", !value.avatarImage && value.shape !== "t3" && PICKER_SHAPES.includes(value.shape) && "avatar-preview-tilt")} aria-label="Avatar preview"><Avatar shape={value.shape} color={value.color} picture={value.avatarImage} size={112} /></div>
+    <div className="avatar-editor-preview" aria-label="Avatar preview"><Avatar shape={value.shape} color={value.color} picture={value.avatarImage} size={112} /></div>
     <div className="avatar-editor-card">
       <div className="avatar-desktop avatar-card-header">{tabs}<button type="button" disabled={disabled} onClick={reset}>Reset</button></div>
       {tab === "bot" ? <AvatarPicker shape={value.shape} color={value.color} disabled={disabled} onChange={(shape, color) => onChange({ shape, color, avatarImage: null })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>

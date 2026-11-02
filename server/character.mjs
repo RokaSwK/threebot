@@ -28,8 +28,8 @@ const lobes = (count, depth, phase = 0, sharpness = 1) => (a) => 1 - depth + dep
 // Measured from the top of the shape: a notch, two lobes, then in to a soft point.
 const heart = (a) => {
   const x = Math.abs(Math.atan2(Math.cos(a), -Math.sin(a))) / Math.PI;
-  if (x < 0.3) return 0.74 + 0.27 * Math.sin((x / 0.3) * (Math.PI / 2));
-  return 1.01 - 0.28 * Math.sin(((x - 0.3) / 0.7) * Math.PI) ** 0.8 + 0.1 * Math.max(0, (x - 0.86) / 0.14);
+  if (x < 0.3) return 0.6 + 0.42 * Math.sin((x / 0.3) * (Math.PI / 2)) ** 0.8;
+  return 1.02 - 0.3 * Math.sin(((x - 0.3) / 0.7) * Math.PI) ** 0.8 + 0.12 * Math.max(0, (x - 0.86) / 0.14);
 };
 const SILHOUETTES = {
   ball: () => 1,
@@ -41,9 +41,9 @@ const SILHOUETTES = {
   hex: polygon(6, 0, 0.14),
   gem: polygon(4, 0, 0.12),
   wedge: polygon(3, -Math.PI / 2, 0.16),
-  drop: (a) => 0.7 + 0.3 * ((1 + Math.sin(a)) / 2) ** 0.7 + 0.22 * ((1 - Math.sin(a)) / 2) ** 6,
+  drop: (a) => 0.72 + 0.26 * ((1 + Math.sin(a)) / 2) ** 0.7 + 0.46 * ((1 - Math.sin(a)) / 2) ** 9,
   cloud: lobes(6, 0.15, Math.PI / 6, 0.7),
-  flower: lobes(6, 0.26, Math.PI / 2, 1),
+  flower: lobes(6, 0.26, Math.PI, 1),
   clover: lobes(4, 0.3, 0, 0.8),
   star: lobes(5, 0.4, Math.PI / 2, 1.3),
   spark: lobes(4, 0.46, 0, 1.3),

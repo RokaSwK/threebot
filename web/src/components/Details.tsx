@@ -117,7 +117,7 @@ function ModelSection({ bot, threadId }: { bot: Bot; threadId: string | null }) 
   const change = (selection: ModelSelection) => (threadId && threadId !== bot.mainThreadId
     ? t3.dispatch({ type: "thread.model-selection.set", threadId, modelSelection: selection })
     : setBotModel(bot.slug, selection)).catch((error: unknown) => toast(error instanceof Error ? error.message : "Couldn't change the model"));
-  return <div className="details-model"><Section title="Model"><div className="flex min-h-11 items-center rounded-2xl bg-card px-2.5 py-1.5"><ModelPicker value={model} onChange={change} side="bottom" align="start" /></div></Section></div>;
+  return <div className="details-model"><Section title="Model"><div className="flex min-h-11 items-center rounded-2xl bg-card px-2.5 py-1.5"><ModelPicker value={model} onChange={change} /></div></Section></div>;
 }
 
 function AvatarDialog({ bot, onClose }: { bot: Bot; onClose: () => void }) {

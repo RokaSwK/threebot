@@ -52,9 +52,9 @@
 .question-card .question-navigation { min-height: 32px; padding-inline: 14px; }
 .question-card > [role="status"], .question-card > [role="alert"] { padding-inline: 0; }
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
-  .question-card { width: 90%; max-width: 560px; padding: 14px; border-radius: 22px; }
-  .question-card-title { font-size: 17px; line-height: 23px; }
-  .question-card-header { margin-bottom: 12px; }
+  .question-card { width: 100%; max-width: 560px; padding: 12px 14px; border-radius: 18px; }
+  .question-card-title { font-size: 16px; line-height: 22px; font-weight: 500; }
+  .question-card-header { margin-bottom: 10px; }
   .question-hint { margin-bottom: 10px; font-size: 17px; line-height: 24px; }
   .question-option { min-height: 40px; gap: 10px; padding-block: 8px; }
   .question-option-badge { width: 24px; height: 24px; border-radius: 8px; font-size: 13px; }

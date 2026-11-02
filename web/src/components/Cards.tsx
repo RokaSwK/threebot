@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { Check, Clock, ExternalLink, FileText, KeyRound, Lock, Monitor, Pencil, Send, ShieldAlert, Square, Sparkles, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { SubagentRow } from "./ThreadFamily";
-import { sameTaskBot, threadIdentity } from "../lib/threadFamily";
+import { sameTaskBot } from "../lib/threadFamily";
 import { Pill, Spinner } from "./ui";
 import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, useApp } from "../store";
 import type { Entry } from "../lib/transcript";
@@ -197,6 +197,8 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
   const multiple = questions.length > 1;
   const showFooter = (multiple && (pending || resolved)) || (pending && q.multiSelect === true);
   const last = activeStep === questions.length - 1;
+  const row = q.options.length <= 3 && q.options.every((option) => option.label.length <= 24);
+  const notes = q.options.map((option) => option.description).filter(Boolean).join(" · ");
 
   return (
     <section className={clsx("question-card fade-up", resolved && "question-card-answered")} aria-label={resolved ? "Answered question" : "Question"} data-question-status={status}>
@@ -209,14 +211,14 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
       {pending && q.multiSelect && <p className="question-hint">Choose all that apply</p>}
       {takeOver && <div className="pb-2"><Pill onClick={() => openDialog({ kind: "computer", slug: bot.slug })} className="w-full"><Monitor size={14} /> Take over</Pill></div>}
       {resolved && <div className="question-answer-summary"><span>Your answer</span><p>{values.map(value => q.options.find(option => (option.value ?? option.label) === value)?.label ?? value).join(", ")}</p></div>}
-      {/* Choices sit side by side unless there are many of them or they need the room. */}
-      <div className="question-options" data-layout={q.options.length <= 3 && q.options.every((option) => option.label.length <= 28 && (option.description?.length ?? 0) <= (q.options.length === 2 ? 72 : 36)) ? "row" : "stack"}>
+      {/* Short choices are small pills in a row, with what they mean in one quiet line underneath. */}
+      <div className="question-options" data-layout={row ? "row" : "stack"}>
         {q.options.map((option, index) => {
           const value = option.value ?? option.label;
           if (resolved && !chosen(value)) return null;
           return <button type="button" key={value} disabled={response.disabled} aria-pressed={chosen(value)} onClick={() => choose(value)} className="question-option">
             <span className="question-option-badge">{String.fromCharCode(65 + index)}</span>
-            <span className="question-option-copy"><span className="question-option-label">{option.label}</span>{option.description && !resolved && <span className="question-option-description">{option.description}</span>}</span>
+            <span className="question-option-copy"><span className="question-option-label">{option.label}</span>{!row && option.description && !resolved && <span className="question-option-description">{option.description}</span>}</span>
           </button>;
         })}
         {customValues.map((value, index) => <p key={index} className="question-custom-answer">{value}</p>)}
@@ -227,6 +229,7 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
             </form>
           : <button type="button" disabled={response.disabled} onClick={revealCustom} className="question-custom-trigger">Something else</button>)}
       </div>
+      {row && pending && notes && <p className="question-option-notes">{notes}</p>}
       {showFooter && <div className="question-card-footer">
         {multiple && <div role="status" className="question-progress" aria-label={`Question ${activeStep + 1} of ${questions.length}`}><span className="question-step-label">Step {activeStep + 1} of {questions.length}</span>{questions.map((question, index) => <span key={question.id} aria-hidden="true" className="question-progress-dot" data-active={index === activeStep} />)}</div>}
         <div className="question-navigation-actions">
@@ -299,14 +302,7 @@ function SecretRequestCard({ entry, threadId }: SecretProps) {
 
 // ---------- subagent ----------
 export const SubagentCard = memo(function SubagentCard({ entry, bot, threadId }: { entry: Extract<Entry, { kind: "subagent" }>; bot: Bot; threadId: string }) {
-  const name = useApp(s => s.threads[threadId]?.title);
-  const parent = threadIdentity(bot, threadId, useApp.getState().threads);
-  return (
-    <CardShell>
-      <div className="flex min-w-0 items-center gap-1.5 px-2.5 pt-1 pb-2 text-[12px] text-muted"><span className="shrink-0">Subagent</span><span aria-hidden="true">·</span><Avatar shape={parent.shape} color={parent.color} picture={parent.avatarImage} size={16} /><span className="truncate" title={`From ${parent.name}`}>From {threadId === bot.mainThreadId ? bot.name : name || parent.name}</span></div>
-      <div className="rounded-[13px] bg-card-inner"><SubagentRow bot={bot} parentThreadId={threadId} item={entry.item} card /></div>
-    </CardShell>
-  );
+  return <div className="subagent-card fade-up w-full max-w-[560px]"><SubagentRow bot={bot} parentThreadId={threadId} item={entry.item} /></div>;
 }, (previous, next) => previous.entry.item === next.entry.item && previous.threadId === next.threadId && sameTaskBot(previous.bot, next.bot));
 
 // ---------- file ----------

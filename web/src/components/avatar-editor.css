@@ -22,13 +22,6 @@
 .avatar-choice[aria-pressed="true"] { outline: 2px solid var(--border-strong); outline-offset: 0; }
 .avatar-choice[aria-pressed="true"], .avatar-colors button[aria-pressed="true"] { outline-color: #666; }
 .avatar-choice svg, .avatar-editor-preview svg { width: 100% !important; height: 100% !important; }
-.avatar-choice:not(:last-child) > span { transform: rotate(-23deg) scale(var(--tile-scale, 1)); }
-.avatar-preview-tilt > span { transform: rotate(-20deg); }
-.avatar-choice[data-shape="cloud"], .avatar-choice[data-shape="tablet"], .avatar-choice[data-shape="wedge"] { --tile-scale: 1.12; }
-.avatar-choice[data-shape="squircle"], .avatar-choice[data-shape="clover"] { --tile-scale: .9; }
-.avatar-choice[data-shape="spark"], .avatar-choice[data-shape="star"] { --tile-scale: 1.25; }
-.avatar-choice[data-shape="heart"] { --tile-scale: 1.2; }
-.avatar-choice[data-shape="flower"] { --tile-scale: 1.08; }
 .avatar-choice:hover { background: var(--bg-hover); }
 .avatar-picker .avatar-colors { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 26px 0; margin: 46px 12px 0; }
 .avatar-colors button { width: 44px; height: 44px; border-radius: 50%; grid-column: span 2; justify-self: center; }

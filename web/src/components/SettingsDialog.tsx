@@ -183,7 +183,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
           <Select label="Timezone" value={s.timezone || ""} onChange={(v) => save({ timezone: v })} options={[["", "Computer default"], ...tzs.map((z): [string, string] => [z, z])]} />
         </Row>
         <Row title="Default model" desc="Used for new Bots. Each Bot can switch in its details.">
-          <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} align="end" />
+          <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
         </Row>
       </Group>}
     </>
