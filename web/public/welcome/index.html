@@ -61,6 +61,7 @@ img { display: block; max-width: 100%; height: auto; }
 h1 { margin-top: 14px; max-width: 12.5em; font-size: clamp(50px, min(9vw, 13.5vh), 132px); line-height: .98; font-weight: 600; letter-spacing: -.035em; text-wrap: balance; }
 .lede { max-width: 640px; margin: 22px auto 28px; font-size: clamp(19px, 2vw, 23px); line-height: 1.35; text-wrap: pretty; }
 .note { margin-top: 14px; font-size: 15px; opacity: .72; }
+.note a { text-decoration: underline; }
 
 /* Worlds */
 .world { position: relative; overflow: clip; padding: clamp(80px, 12vh, 136px) clamp(18px, 3vw, 40px); }
@@ -162,9 +163,8 @@ footer a { text-decoration: underline; }
 <body>
 <nav class="nav" aria-label="Main">
   <a class="brand" href="#top"><img src="/welcome/img/ball.webp" width="34" height="34" alt="" />Threebot</a>
-  <a href="#film">Watch the film</a>
   <a href="#faq">FAQ</a>
-  <a href="/login?next=%2F">Sign in</a>
+  <a href="https://t3.codes/" rel="noopener">T3 Code</a>
   <a class="btn sm post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a>
 </nav>
 
@@ -176,10 +176,10 @@ footer a { text-decoration: underline; }
     <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the Claude and Codex subscriptions you already have.</p>
     <div class="cta">
       <a class="btn post" href="https://github.com/RokaSwK/threebot" rel="noopener">Get it on GitHub</a>
-      <a class="btn pre" href="#film">Watch the film</a>
+      <a class="btn line" href="https://t3.codes/" rel="noopener">t3.codes</a>
       <span class="btn off pre">On GitHub soon</span>
     </div>
-    <p class="note">Free and self-hosted. Needs T3 Code.</p>
+    <p class="note">Free and self-hosted. Built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</p>
   </header>
 
   <section class="world amber" id="film">
@@ -298,6 +298,17 @@ footer a { text-decoration: underline; }
     <div class="shot model rise watch"><img src="/welcome/img/model-sheet.webp" width="840" height="1336" alt="Threebot's model selector with Codex and Claude, the model list, reasoning and fast mode" loading="lazy" /></div>
   </section>
 
+  <section class="world pink" id="credits">
+    <div class="say" style="margin-bottom:clamp(20px,3vh,32px)">
+      <h2>Built on T3 Code</h2>
+      <p>Threebot stands on T3 Code. The threads, subagents, routines, browser, secure requests and MCP tools are all theirs. It's open source, made by T3 Tools and its contributors. Thank you.</p>
+    </div>
+    <div class="cta">
+      <a class="btn" href="https://t3.codes/" rel="noopener">t3.codes</a>
+      <a class="btn line" href="https://github.com/pingdotgg/t3code" rel="noopener">T3 Code on GitHub</a>
+    </div>
+  </section>
+
   <section class="world black" id="faq">
     <div class="say"><h2>Good questions</h2></div>
     <div class="faq">
@@ -321,8 +332,8 @@ footer a { text-decoration: underline; }
 </main>
 
 <footer>
-  <span>Threebot. An independent project, built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</span>
-  <span>Screens are real Bot runs on sample data.</span>
+  <span>Threebot is an independent project, built on <a href="https://t3.codes/" rel="noopener">T3 Code</a> (<a href="https://github.com/pingdotgg/t3code" rel="noopener">GitHub</a>). Apps through <a href="https://executor.sh/" rel="noopener">Executor</a>.</span>
+  <span>Screens are real Bot runs on sample data. Film music: "House Vibes" by Alejandro Magaña, Mixkit.</span>
 </footer>
 
 <script>

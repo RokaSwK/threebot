@@ -1,7 +1,8 @@
 // The real ball on the public landing page: click for its next state, hover to push the clouds.
 import { createCharacter } from "../lib/character";
 
-const STATES = ["happy", "sleeping", "orbit", "radar", "humming", "spawning", "writing", "sending", "receiving", "alerting", "celebrate", "laughing"];
+// Only states where the whole ball stays on screen. The folded ones shrink it to a dot.
+const STATES = ["sleeping", "angry", "happy", "surprised", "laughing", "humming", "scared", "curious", "proud", "suspicious", "excited", "sad"];
 type Ball = { element: HTMLElement; character: ReturnType<typeof createCharacter>; visible: boolean };
 
 function mount(element: HTMLElement): Ball {

@@ -4,17 +4,31 @@
 
 <p align="center"><b>Your Bot is a T3 thread.</b><br />Personal agents on T3 Code, on your own subscriptions.</p>
 
+<p align="center"><a href="https://bot.swk.tools/"><b>Website</b></a> · <a href="https://t3.codes">T3 Code</a></p>
+
 ![The ball looking over the Threebot desktop app](docs/assets/hero.webp)
 
-You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot. It keeps its own memory and routines, it starts and steers your other threads, and it brings you a short answer on your phone.
-
-A morning with a Bot looks like this:
-
-- A routine reads your overnight feedback at 8:00.
-- It starts a real T3 thread for each bug, groups the duplicates and drafts the replies.
-- It pings you: three fixed, twelve duplicates, forty replies ready. Send them?
+You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot with a face, a memory and a place on your phone. It does what a personal assistant does, faster, and runs your other threads for you.
 
 Nothing new to pay for. Threebot doesn't resell AI; your Bots use the subscriptions T3 Code already has.
+
+| First the Bot | Then its thread, with the same face |
+|---|---|
+| ![Create New Bot](web/public/welcome/img/create.webp) | ![The same icon in T3 Code's sidebar](web/public/welcome/img/thread.webp) |
+
+| The desktop app | It asks on your phone |
+|---|---|
+| ![Ship's chat, subagents and details](web/public/welcome/img/desktop.webp) | ![A question with small Send and Not yet buttons](web/public/welcome/img/ask.webp) |
+
+| Connect your apps | A vault for its logins |
+|---|---|
+| ![Connect apps with real logos](web/public/welcome/img/connect.webp) | ![The Vault](web/public/welcome/img/vault-logos.webp) |
+
+| Routines | Choose the model |
+|---|---|
+| ![Do this every weekday at 8](web/public/welcome/img/routine-chat.webp) | ![Threebot's model selector](web/public/welcome/img/model-sheet.webp) |
+
+The screens are real runs on sample data.
 
 ## What's in it
 
@@ -34,14 +48,18 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 
 - **A messaging app.** An installable PWA built for phones, with notifications, search and themes.
 - **Memory.** Each Bot keeps its own notes, plus facts shared by all your Bots.
-- **Vault.** Encrypted logins Bots can type into a site without reading the password.
-- **Connected apps.** Gmail, GitHub, Slack and the rest through [Executor](https://executor.sh), if you run it.
+- **Vault.** Encrypted logins Bots can type into a site without reading the password, powered by secure requests from T3 Code.
+- **Connected apps.** Gmail, GitHub, Slack and the rest, powered by [Executor](https://executor.sh), if you run it.
 - **Approvals.** A Bot asks first before anything that leaves your machine or can't be undone.
 - **A face.** The ball's weather tells you what it's doing: storms, aurora, a moon when it's asleep.
 
 ## Run it
 
-You need Node 22.13 or newer and T3 Code running on the same machine.
+You need:
+
+- Node 22.13 or newer
+- [T3 Code](https://t3.codes) running on the same machine, with Claude or Codex signed in
+- The `t3` command from T3 Code, to issue a token
 
 ```sh
 git clone https://github.com/RokaSwK/threebot.git
@@ -69,4 +87,10 @@ npm run check   # web tests, build, server tests, fixture and asset checks
 
 Early, and built around one person's daily use. It tracks T3 Code Nightly, whose API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
 
-Threebot is an independent project, not affiliated with or endorsed by T3 Tools Inc. MIT licensed; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+## Credits
+
+Threebot stands on [T3 Code](https://t3.codes) ([GitHub](https://github.com/pingdotgg/t3code)), made by T3 Tools Inc. and [its contributors](https://github.com/pingdotgg/t3code/graphs/contributors). The threads, subagents, scheduled tasks, browser, secure requests and MCP tools are all theirs. Thank you.
+
+Connected apps run through [Executor](https://executor.sh). The type is [Rubik](https://fonts.google.com/specimen/Rubik). The film's music is "House Vibes" by Alejandro Magaña from [Mixkit](https://mixkit.co), with sound effects from Pixabay, made with [HyperFrames](https://hyperframes.heygen.com). The full list, including every open source library, is in [NOTICE](NOTICE).
+
+Threebot is an independent project, not affiliated with or endorsed by T3 Tools Inc. MIT licensed; see [LICENSE](LICENSE).

@@ -2,11 +2,30 @@ Third-party notices
 
 Threebot is an independent project. It is not affiliated with or endorsed by T3 Tools Inc. T3 and T3 Code are their marks.
 
-server/t3-artwork/ holds artwork from T3 Code's Nightly app icon, used under the same license.
+Thanks to the people whose work this stands on.
 
-The model picker in web/src/components/model-picker/, web/src/components/ModelPicker.tsx,
-web/src/lib/modelTraits.ts and web/src/lib/modelPicker.ts is adapted from T3 Code
-(MIT, github.com/pingdotgg/t3code v0.1.5), Copyright (c) 2026 T3 Tools Inc., under the license below.
+T3 Code (https://t3.codes, https://github.com/pingdotgg/t3code)
+  Threebot runs on T3 Code. Threads, subagents, scheduled tasks, the browser, secure requests and
+  the MCP tools all come from it. Made by T3 Tools Inc. and its contributors.
+  server/t3-artwork/ holds artwork from T3 Code's Nightly app icon, used under the license below.
+  web/src/lib/modelTraits.ts, web/src/lib/modelPicker.ts and
+  web/src/components/ProviderInstanceIcon.tsx are adapted from T3 Code (MIT, v0.1.5),
+  Copyright (c) 2026 T3 Tools Inc., under the license below.
+
+Executor (https://executor.sh)
+  Connected apps run through Executor when you set it up.
+
+Rubik (https://fonts.google.com/specimen/Rubik)
+  web/public/welcome/fonts/rubik.woff2. Copyright The Rubik Project Authors, SIL Open Font License 1.1.
+
+The launch film (web/public/welcome/img/film.mp4)
+  Music: "House Vibes" by Alejandro Magaña, from Mixkit. Sound effects from Pixabay.
+  Made with HyperFrames. Everything on screen is a real capture with sample data.
+
+Open source libraries
+  React, Zustand, lucide-react, react-markdown, remark-gfm, KaTeX, Mermaid, Shiki, DOMPurify, clsx,
+  sharp, ws, linkedom and Vite, each under its own license. See web/package.json and
+  server/package.json.
 
 ----
 
