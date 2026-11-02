@@ -1,6 +1,6 @@
 # Architecture
 
-Treebot is a messaging app on top of T3 Code. T3 Code and Executor are the backend. Our code is the web app plus a thin gateway that stores nothing but small JSON files.
+Threebot is a messaging app on top of T3 Code. T3 Code and Executor are the backend. Our code is the web app plus a thin gateway that stores nothing but small JSON files.
 
 ```
 browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bearer──>  t3 serve :3773
@@ -23,7 +23,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 
 | Concept | Where it lives |
 |---|---|
-| Bot | T3 project at `$TREEBOT_HOME/bots/<slug>`. Name = project title. |
+| Bot | T3 project at `$THREEBOT_HOME/bots/<slug>`. Name = project title. |
 | Bot's conversation | One main T3 thread per project (`mainThreadId` in `bot.json`). |
 | Avatar, label, section, pinned, hidden, primary, notifications | `bots/<slug>/.bot/bot.json` |
 | Sections order, theme, accent, timezone, Auto-review, rules | `bots/.botapp/settings.json` |
@@ -56,7 +56,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 
 Logins, API tokens and contact info shared by all Bots (Settings › Vault). Bots fill website passwords without ever seeing them.
 
-- **Storage** (`server/vault.mjs`): one AES-256-GCM encrypted JSON file, `VAULT_FILE` (default `$TREEBOT_HOME/vault.enc`). Key: 32 random bytes in `VAULT_KEY_FILE` (default `$TREEBOT_HOME/.vault-key`, mode 600), created only together with a new vault; an existing vault whose key is missing stays locked instead of being replaced. File format: `{"format":"bot-vault","version":1,"cipher":"aes-256-gcm","iv","tag","data"}` (base64; AAD `bot-vault:v1`), plaintext `{items, updatedAt}`. Writes are serialized and atomic (temp file, fsync, rename). Back up the key and the file together.
+- **Storage** (`server/vault.mjs`): one AES-256-GCM encrypted JSON file, `VAULT_FILE` (default `$THREEBOT_HOME/vault.enc`). Key: 32 random bytes in `VAULT_KEY_FILE` (default `$THREEBOT_HOME/.vault-key`, mode 600), created only together with a new vault; an existing vault whose key is missing stays locked instead of being replaced. File format: `{"format":"bot-vault","version":1,"cipher":"aes-256-gcm","iv","tag","data"}` (base64; AAD `bot-vault:v1`), plaintext `{items, updatedAt}`. Writes are serialized and atomic (temp file, fsync, rename). Back up the key and the file together.
 - **App API** (behind the normal login): `GET /api/vault` (no passwords), `GET /api/vault/:id?reveal=1`, `POST /api/vault`, `PUT /api/vault/:id` (password kept unless sent), `DELETE /api/vault/:id`, `POST /api/vault/import` (`{items}`, parsed in the browser), `GET /api/vault/export.csv` (logins, Chrome format `name,url,username,password,note`, importable by any password manager) and `GET /api/vault/export.csv?type=contact` (`label,name,email,phone,street,apt,city,state,zip,country,kind,note`; the importer reads this back). Writes require `content-type: application/json`.
 - **CSV import** (`web/src/lib/vaultCsv.ts`): 1Password, Chrome/Edge, Safari/Apple Passwords, Firefox, Bitwarden (logins only), LastPass (secure notes skipped), and the contact export above. A login with the same domain and username as a saved one is updated.
 - **Bot tools** (`server/vault-mcp.mjs`): MCP server `bot` at `POST /mcp/bot` (Streamable HTTP, JSON responses). Bearer `BOT_MCP_TOKEN`, or a random token in `.bot-mcp-token` next to the vault key. Only local callers: requests with Cloudflare/forwarding headers or from non-loopback addresses are refused. Every Bot folder gets it in `.mcp.json` and `.codex/config.toml` (`tool_timeout_sec = 960`) next to `executor`. Tools: `vault_list`, `vault_fill_password`, `vault_fill_username`, `vault_save_login`, `vault_secret_file`, `vault_save_contact`; all take the Bot's main `threadId`.

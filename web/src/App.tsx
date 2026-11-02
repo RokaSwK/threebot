@@ -104,7 +104,7 @@ function useTitleBadge() {
   const threads = useApp((s) => s.threads);
   useEffect(() => {
     const n = Object.values(bots).filter((b) => !b.hidden && ["unread", "waiting"].includes(botStatus(b))).length;
-    document.title = n ? `(${n}) Treebot` : "Treebot";
+    document.title = n ? `(${n}) Threebot` : "Threebot";
   }, [bots, threads]);
 }
 
@@ -296,7 +296,7 @@ function Welcome() {
           <Avatar shape="sparkle" color="teal" size={56} />
           <Avatar shape="clover" color="orange" size={56} />
         </div>
-        <h1 className="mt-6 text-[26px] font-medium tracking-tight">Treebot</h1>
+        <h1 className="mt-6 text-[26px] font-medium tracking-tight">Threebot</h1>
         <p className="mt-2 max-w-[360px] text-[14px] text-muted">Your personal agents.</p>
         <Pill className="mt-6 h-10 px-5 text-[14px]" onClick={() => openDialog("new-bot")}>
           Meet your first Bot
@@ -324,7 +324,7 @@ function Login() {
         className="flex w-[300px] flex-col items-center"
       >
         <Avatar shape="sphere" color="white" size={64} state="happy" />
-        <h1 className="mt-5 text-[22px] font-medium">Treebot</h1>
+        <h1 className="mt-5 text-[22px] font-medium">Threebot</h1>
         <p className="mt-1 text-[13.5px] text-muted">Your personal agents.</p>
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="mt-6 h-10 w-full rounded-full border border-line bg-transparent px-4 text-[14px] outline-none focus:border-line-strong" />
         {error && <div className="mt-2 text-[12.5px] text-danger">{error}</div>}
@@ -340,7 +340,7 @@ function AccessLogin() {
   // The installed worker answers normal navigations from its cache, so only /login reaches Cloudflare.
   return <div className="grid h-full place-items-center bg-app"><div className="flex w-full max-w-[340px] flex-col items-center px-5 text-center">
     <Avatar shape="sphere" color="black" size={64} state="sleeping" />
-    <h1 className="mt-5 text-[22px] font-medium">Treebot</h1>
+    <h1 className="mt-5 text-[22px] font-medium">Threebot</h1>
     <p className="mt-2 text-[13.5px] text-muted">Your session ended. Sign in again with your account.</p>
     <a href={`login?next=${encodeURIComponent(location.pathname + location.search)}`} className="mt-5 flex h-10 w-full items-center justify-center rounded-full bg-pill px-4 text-[14px] font-medium text-pill-fg">Sign in with Cloudflare</a>
   </div></div>;

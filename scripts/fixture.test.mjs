@@ -40,7 +40,7 @@ test('the landing page is served by itself and shares nothing with the app', { t
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /text\/html/);
       const html = await response.text();
-      assert.match(html, /<title>Treebot:/);
+      assert.match(html, /<title>Threebot:/);
       assert.doesNotMatch(html, /\/assets\//, 'public page must not load the app bundle');
     }
     // The page's own pictures and font are public too; nothing else under the path is.

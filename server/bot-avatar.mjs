@@ -23,6 +23,8 @@ export function renderBotAvatar(bot) {
   const key = special ? shape : `${shape}:${fill}`;
   if (icons.has(key)) return icons.get(key);
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  // Without this a browser won't draw the file as an image, and T3 falls back to initials.
+  svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   const character = new Character(svg, { shape: special ? "ball" : shape, state: "idle", inkFlat: fill, eyeColor: "#ffffff", sizePx: 64, paused: "hold-pose", random: () => 0.5 });
   if (special) decorateT3Avatar(svg, character.parts()).holdFrame();
   else cutoutEyes(svg, character.parts());

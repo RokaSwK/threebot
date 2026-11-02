@@ -209,8 +209,8 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
       {pending && q.multiSelect && <p className="question-hint">Choose all that apply</p>}
       {takeOver && <div className="pb-2"><Pill onClick={() => openDialog({ kind: "computer", slug: bot.slug })} className="w-full"><Monitor size={14} /> Take over</Pill></div>}
       {resolved && <div className="question-answer-summary"><span>Your answer</span><p>{values.map(value => q.options.find(option => (option.value ?? option.label) === value)?.label ?? value).join(", ")}</p></div>}
-      {/* Short choices sit side by side; options with explanations, or more than three, stack. */}
-      <div className="question-options" data-layout={q.options.length <= 3 && q.options.every((option) => !option.description && option.label.length <= 24) ? "row" : "stack"}>
+      {/* Choices sit side by side unless there are many of them or they need the room. */}
+      <div className="question-options" data-layout={q.options.length <= 3 && q.options.every((option) => option.label.length <= 28 && (option.description?.length ?? 0) <= (q.options.length === 2 ? 72 : 36)) ? "row" : "stack"}>
         {q.options.map((option, index) => {
           const value = option.value ?? option.label;
           if (resolved && !chosen(value)) return null;

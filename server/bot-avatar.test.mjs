@@ -119,3 +119,9 @@ test('picker silhouettes and colors render', () => {
   }
   assert.equal(paths.size, 13);
 });
+
+test("every Bot icon is a standalone SVG a browser can draw as an image", () => {
+  for (const bot of [{ shape: "t3", color: "violet" }, { shape: "ball", color: "teal" }, { shape: "star", color: "white" }]) {
+    assert.match(renderBotAvatar(bot), /^<svg[^>]*\sxmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
+  }
+});

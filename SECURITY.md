@@ -1,6 +1,6 @@
 # Security
 
-Treebot drives agents with access to your machine and accounts, so please report vulnerabilities privately through GitHub's "Report a vulnerability" on this repository, not in a public issue.
+Threebot drives agents with access to your machine and accounts, so please report vulnerabilities privately through GitHub's "Report a vulnerability" on this repository, not in a public issue.
 
 Worth knowing:
 

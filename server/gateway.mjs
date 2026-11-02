@@ -25,7 +25,7 @@ import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImag
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resolveThreadLink = createThreadLinkResolver();
-const dataRoot = process.env.TREEBOT_HOME ?? path.join(homedir(), ".treebot");
+const dataRoot = process.env.THREEBOT_HOME ?? path.join(homedir(), ".threebot");
 const cfg = {
   port: Number(process.env.PORT ?? 3780),
   host: process.env.HOST ?? "127.0.0.1",

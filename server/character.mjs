@@ -1,4 +1,4 @@
-// The Treebot character: one SVG body, two eyes and a layer of effects, all drawn from
+// The Threebot character: one SVG body, two eyes and a layer of effects, all drawn from
 // numbers each frame. Works in a browser and under linkedom on the server, where it only
 // ever renders a still frame. Nothing here reads the clock: callers advance it with step().
 const NS = "http://www.w3.org/2000/svg";
@@ -142,7 +142,7 @@ export class Character {
     this.current = pose(state);
     this.rect = null;
     this.rectAge = 1;
-    const id = `treebot-${++serial}`;
+    const id = `threebot-${++serial}`;
     svg.setAttribute("viewBox", `${fixed(CENTER - VIEW_HALF)} ${fixed(CENTER - VIEW_HALF)} ${fixed(VIEW_HALF * 2)} ${fixed(VIEW_HALF * 2)}`);
     this.setSize(sizePx);
     svg.style?.setProperty("--fg", inkFlat);

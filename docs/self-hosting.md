@@ -1,6 +1,6 @@
 # Self-hosting
 
-Treebot is one Node process next to a T3 Code server. It keeps everything in `TREEBOT_HOME` (default `~/.treebot`).
+Threebot is one Node process next to a T3 Code server. It keeps everything in `THREEBOT_HOME` (default `~/.threebot`).
 
 ## Keep a Bot running
 
@@ -8,10 +8,10 @@ Bots only run while T3 Code and the gateway do, so run both as services on a mac
 
 ```ini
 [Unit]
-Description=Treebot
+Description=Threebot
 
 [Service]
-WorkingDirectory=%h/treebot
+WorkingDirectory=%h/threebot
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 
@@ -35,7 +35,7 @@ Set the `EXECUTOR_*` values in `.env` to use [Executor](https://executor.sh), se
 
 ## Back up
 
-Back up `TREEBOT_HOME`. It holds your Bots, memory and the encrypted Vault. `vault.enc` is useless without `.vault-key`, so keep the key somewhere separate and safe.
+Back up `THREEBOT_HOME`. It holds your Bots, memory and the encrypted Vault. `vault.enc` is useless without `.vault-key`, so keep the key somewhere separate and safe.
 
 ## Updating
 
@@ -44,4 +44,4 @@ git pull
 npm run setup
 ```
 
-Then restart the gateway. Treebot tracks T3 Code Nightly, so update both together.
+Then restart the gateway. Threebot tracks T3 Code Nightly, so update both together.

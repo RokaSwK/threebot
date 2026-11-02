@@ -1,12 +1,12 @@
-<p align="center"><img src="docs/assets/treebot.png" width="128" alt="The Treebot ball" /></p>
+<p align="center"><img src="docs/assets/threebot.png" width="128" alt="The Threebot ball" /></p>
 
-<h1 align="center">Treebot</h1>
+<h1 align="center">Threebot</h1>
 
 <p align="center"><b>Your Bot is a T3 thread.</b><br />Personal agents on T3 Code, on your own subscriptions.</p>
 
 ![A Bot on the phone, between its own eyes](docs/assets/hero.webp)
 
-You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Treebot turns one long-lived T3 thread into someone you can message: a Bot. It keeps its own memory and routines, it starts and steers your other threads, and it brings you a short answer on your phone.
+You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot. It keeps its own memory and routines, it starts and steers your other threads, and it brings you a short answer on your phone.
 
 A morning with a Bot looks like this:
 
@@ -14,13 +14,13 @@ A morning with a Bot looks like this:
 - It starts a real T3 thread for each bug, groups the duplicates and drafts the replies.
 - It pings you: three fixed, twelve duplicates, forty replies ready. Send them?
 
-Nothing new to pay for. Treebot doesn't resell AI; your Bots use the subscriptions T3 Code already has.
+Nothing new to pay for. Threebot doesn't resell AI; your Bots use the subscriptions T3 Code already has.
 
 ## What's in it
 
 **On top of T3 Code**
 
-| In Treebot | In T3 Code |
+| In Threebot | In T3 Code |
 |---|---|
 | A Bot | A long-lived thread in its own project |
 | Subagents | T3 subagents and delegated threads |
@@ -30,7 +30,7 @@ Nothing new to pay for. Treebot doesn't resell AI; your Bots use the subscriptio
 
 Everything stays a normal T3 thread, so you can open any of it in T3 Code at any time.
 
-**Added by Treebot**
+**Added by Threebot**
 
 - **A messaging app.** An installable PWA built for phones, with notifications, search and themes.
 - **Memory.** Each Bot keeps its own notes, plus facts shared by all your Bots.
@@ -44,18 +44,18 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 You need Node 22.13 or newer and T3 Code running on the same machine.
 
 ```sh
-git clone https://github.com/RokaSwK/treebot.git
-cd treebot
+git clone https://github.com/RokaSwK/threebot.git
+cd threebot
 npm run setup
 
 cp .env.example .env
-t3 auth session issue --ttl 30d --label treebot --token-only   # paste into T3_TOKEN
+t3 auth session issue --ttl 30d --label threebot --token-only   # paste into T3_TOKEN
 npm start
 ```
 
 Open <http://127.0.0.1:3780> and create your first Bot. If T3 Code isn't on port 3773, set `T3_URL` in `.env`.
 
-Treebot listens on `127.0.0.1` by default, with no sign-in. Before exposing it to other devices, read [docs/self-hosting.md](docs/self-hosting.md).
+Threebot listens on `127.0.0.1` by default, with no sign-in. Before exposing it to other devices, read [docs/self-hosting.md](docs/self-hosting.md).
 
 ## How it works
 
@@ -69,4 +69,4 @@ npm run check   # web tests, build, server tests, fixture and asset checks
 
 Early, and built around one person's daily use. It tracks T3 Code Nightly, whose API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
 
-Treebot is an independent project, not affiliated with or endorsed by T3 Tools Inc. MIT licensed; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Threebot is an independent project, not affiliated with or endorsed by T3 Tools Inc. MIT licensed; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

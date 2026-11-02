@@ -7,7 +7,7 @@ import { renderBotAvatar } from "./bot-avatar.mjs";
 import { T3Client, loadToken } from "./t3rpc.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const botsRoot = process.env.BOTS_ROOT ?? `${process.env.HOME}/.treebot/bots`;
+const botsRoot = process.env.BOTS_ROOT ?? `${process.env.HOME}/.threebot/bots`;
 const client = new T3Client({
   baseUrl: process.env.T3_URL ?? "http://127.0.0.1:3773",
   token: loadToken(process.env.T3_TOKEN_FILE ?? path.join(here, ".t3-token")),

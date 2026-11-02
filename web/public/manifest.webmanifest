@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Treebot",
-  "short_name": "Treebot",
+  "name": "Threebot",
+  "short_name": "Threebot",
   "description": "Your Bot is a T3 thread.",
   "start_url": "/",
   "scope": "/",
