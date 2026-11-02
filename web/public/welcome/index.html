@@ -95,7 +95,12 @@ h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; lett
 .sleep .stack { display: grid; gap: clamp(14px, 2vw, 24px); }
 .sleep .panel { width: min(68%, 460px); justify-self: end; }
 
-.wide { width: min(1120px, 100%); margin-inline: auto; }
+/* Real logos in the ball's real orbit */
+.apps { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 4vw, 64px); width: min(1240px, 100%); margin-inline: auto; }
+.sky { position: relative; aspect-ratio: 1; }
+.sky > img { width: 100%; }
+.moon { position: absolute; left: 50%; top: 50%; width: 15%; aspect-ratio: 1; margin: -7.5%; padding: 2.4%; border-radius: 28%; background: #fff; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--s, 1)); z-index: var(--z, 1); }
+.moon img { width: 100%; }
 
 /* Subagents */
 .kids { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin-inline: auto; }
@@ -138,11 +143,11 @@ footer a { text-decoration: underline; }
 @media (max-width: 760px) {
   .nav a:not(.brand):not(.btn) { display: none; }
   .btn { height: 52px; font-size: 17px; }
-  .pair, .two, .sleep, .kids, .ask { grid-template-columns: minmax(0, 1fr); }
+  .pair, .two, .sleep, .apps, .kids, .ask { grid-template-columns: minmax(0, 1fr); }
   .pair { justify-items: center; }
   .pair .shot:first-child { width: min(76%, 320px); }
   .arrow { transform: rotate(90deg); }
-  .sleep .sleeper { width: min(72%, 300px); justify-self: center; }
+  .sleep .sleeper, .apps .sky { width: min(72%, 300px); justify-self: center; }
   .sleep .panel { width: 82%; justify-self: center; }
   .phone { width: min(64vw, 260px); }
 }
@@ -178,7 +183,7 @@ footer a { text-decoration: underline; }
   </header>
 
   <section class="world amber" id="film">
-    <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=3" type="video/mp4" /></video></div>
+    <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=4" type="video/mp4" /></video></div>
   </section>
 
   <section class="world amber" id="same">
@@ -223,7 +228,18 @@ footer a { text-decoration: underline; }
       <h2>Connect your apps</h2>
       <p>Powered by Executor. Gmail, Calendar, Linear, GitHub, Slack, Notion, Stripe: connect the ones a Bot should work with.</p>
     </div>
-    <div class="shot wide rise watch"><img src="/welcome/img/connect.webp" width="1400" height="754" alt="Connect apps showing Gmail, Google Calendar, Linear, GitHub, Slack, Notion and Stripe with their real logos" loading="lazy" /></div>
+    <div class="apps watch">
+      <div class="sky rise" id="sky" aria-hidden="true">
+        <img src="/welcome/img/planet.webp" width="720" height="720" alt="" loading="lazy" />
+        <i class="moon"><img src="/welcome/img/logo-gmail.webp" width="96" height="96" alt="" loading="lazy" /></i>
+        <i class="moon"><img src="/welcome/img/logo-linear.webp" width="96" height="96" alt="" loading="lazy" /></i>
+        <i class="moon"><img src="/welcome/img/logo-github.webp" width="96" height="96" alt="" loading="lazy" /></i>
+        <i class="moon"><img src="/welcome/img/logo-slack.webp" width="96" height="96" alt="" loading="lazy" /></i>
+        <i class="moon"><img src="/welcome/img/logo-notion.webp" width="96" height="96" alt="" loading="lazy" /></i>
+        <i class="moon"><img src="/welcome/img/logo-stripe.webp" width="96" height="96" alt="" loading="lazy" /></i>
+      </div>
+      <div class="shot rise"><img src="/welcome/img/connect.webp" width="1400" height="754" alt="Connect apps showing Gmail, Google Calendar, Linear, GitHub, Slack, Notion and Stripe with their real logos" loading="lazy" /></div>
+    </div>
   </section>
 
   <section class="world black">
@@ -315,11 +331,28 @@ footer a { text-decoration: underline; }
   // The GitHub links turn on by themselves once the repository is public.
   fetch("https://api.github.com/repos/RokaSwK/threebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
   const watched = document.querySelectorAll(".watch");
-  if (reduced || !("IntersectionObserver" in window)) { watched.forEach((el) => el.classList.add("in")); return; }
+  if (reduced || !("IntersectionObserver" in window)) {
+    watched.forEach((el) => el.classList.add("in"));
+    const size = document.getElementById("sky").clientWidth;
+    document.querySelectorAll(".moon").forEach((moon, i) => { const a = i * 1.047, r = size * .34; moon.style.setProperty("--x", `${(Math.cos(a) * r).toFixed(1)}px`); moon.style.setProperty("--y", `${(Math.sin(a) * r * .42).toFixed(1)}px`); });
+    return;
+  }
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) if (entry.isIntersecting) { entry.target.classList.add("in"); seen.unobserve(entry.target); }
   }, { rootMargin: "0px 0px -12% 0px", threshold: .12 });
   watched.forEach((el) => seen.observe(el));
+  // Real logos go round the ball, the way its moons do.
+  const moons = [...document.querySelectorAll(".moon")], sky = document.getElementById("sky");
+  const orbit = (now) => {
+    const size = sky.clientWidth, t = now / 1000;
+    moons.forEach((moon, i) => {
+      const a = t * .55 + i * 1.047, r = size * (.27 + (i % 3) * .07), x = Math.cos(a) * r, y = Math.sin(a) * r * .42;
+      moon.style.setProperty("--x", `${(x * .976 + y * .216).toFixed(1)}px`); moon.style.setProperty("--y", `${(y * .976 - x * .216).toFixed(1)}px`);
+      moon.style.setProperty("--s", (.86 + .18 * Math.sin(a)).toFixed(3)); moon.style.setProperty("--z", Math.sin(a) > 0 ? 2 : 0);
+    });
+    requestAnimationFrame(orbit);
+  };
+  requestAnimationFrame(orbit);
   // Every face looks at you.
   let frame = 0;
   addEventListener("pointermove", (e) => {
