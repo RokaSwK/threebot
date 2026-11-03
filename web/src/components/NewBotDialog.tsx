@@ -34,7 +34,7 @@ export function NewBotDialog() {
     <Modal onClose={close} title="Create New Bot" className="new-bot-sheet w-[440px]">
       <div className="dialog-body">
         <div className="new-bot-preview flex flex-col items-center px-5 pt-5">
-          <button type="button" aria-label="Edit Bot avatar" onClick={() => setPicker(true)}><Avatar {...avatar} picture={avatar.avatarImage} size={184} state="idle" /></button>
+          <button type="button" aria-label="Edit Bot avatar" onClick={() => setPicker(true)}><Avatar {...avatar} picture={avatar.avatarImage} definition={avatar.avatarDefinition} size={184} state="idle" /></button>
           <input
             aria-label="Name your Bot"
             value={name}
@@ -44,7 +44,7 @@ export function NewBotDialog() {
             className="new-bot-name mt-4 h-10 w-full rounded-xl border border-line bg-transparent text-center text-[14px] outline-none placeholder:text-faint focus:border-line-strong"
           />
         </div>
-        <AvatarPicker shape={avatar.shape} color={avatar.color} disabled={busy} onChange={(shape, color) => setAvatar({ shape, color, avatarImage: null })} />
+        <AvatarPicker shape={avatar.shape} color={avatar.color} disabled={busy} onChange={(shape, color) => setAvatar({ shape, color, avatarImage: null, avatarDefinition: shape === avatar.shape ? avatar.avatarDefinition : null })} />
       </div>
       <div className="dialog-footer flex items-center gap-2 border-t border-line px-3 py-3">
         <Pill onClick={create} disabled={!name.trim() || busy}>
@@ -60,7 +60,7 @@ export function RenameBotDialog({ slug }: { slug: string }) {
   const bot = useApp((s) => s.bots[slug]);
   const [name, setName] = useState(bot?.name ?? "");
   const [busy, setBusy] = useState(false);
-  const [avatar, setAvatar] = useState<AvatarDraft>({ shape: bot?.shape ?? DEFAULT_AVATAR.shape, color: bot?.color ?? DEFAULT_AVATAR.color, avatarImage: bot?.avatarImage });
+  const [avatar, setAvatar] = useState<AvatarDraft>({ shape: bot?.shape ?? DEFAULT_AVATAR.shape, color: bot?.color ?? DEFAULT_AVATAR.color, avatarImage: bot?.avatarImage, avatarDefinition: bot?.avatarDefinition });
   const [picker, setPicker] = useState(false);
   const close = () => openDialog(null);
   if (!bot) return null;
@@ -78,7 +78,7 @@ export function RenameBotDialog({ slug }: { slug: string }) {
   return (
     <Modal onClose={close} onBack={close} title="Edit Bot" className="edit-bot-sheet w-[380px]" headerActions={<Pill onClick={save} disabled={busy || !name.trim()}>Done</Pill>}>
       <div className="edit-bot-body dialog-body p-4">
-        <button type="button" className="edit-bot-avatar relative mx-auto mb-5 block" aria-label="Edit Bot avatar" onClick={() => setPicker(true)}><Avatar {...avatar} picture={avatar.avatarImage} size={88} /><span className="absolute -right-2 -bottom-2 grid size-10 place-items-center rounded-full border border-line bg-elevated"><Pencil size={20} /></span></button>
+        <button type="button" className="edit-bot-avatar relative mx-auto mb-5 block" aria-label="Edit Bot avatar" onClick={() => setPicker(true)}><Avatar {...avatar} picture={avatar.avatarImage} definition={avatar.avatarDefinition} size={88} /><span className="absolute -right-2 -bottom-2 grid size-10 place-items-center rounded-full border border-line bg-elevated"><Pencil size={20} /></span></button>
         <label className="edit-bot-label block text-muted" htmlFor="edit-bot-name">Name</label>
         <input id="edit-bot-name" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} autoComplete="off" className="edit-bot-name h-10 w-full rounded-xl border border-line bg-transparent px-3 text-[14px] outline-none focus:border-line-strong" />
         <p className="edit-bot-label text-muted">Appearance</p>

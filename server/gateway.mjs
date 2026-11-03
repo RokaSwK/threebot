@@ -22,6 +22,9 @@ import { executorConfiguration, executorMcpDefinition, publicExecutorConfigurati
 import { createExecutorClient } from "./executor-client.mjs";
 import { createThreadMeta, createThreadPreviews } from "./thread-meta.mjs";
 import { createRoutineHistoryRoutes } from "./routine-history.mjs";
+import { objectAvatarPatch } from "./object-avatars.mjs";
+import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
+import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -128,7 +131,12 @@ const verifyAccess = createAccessVerifier({
   emails: (process.env.CF_ACCESS_EMAILS ?? "").split(","),
 });
 
+const originPolicy = { allowed: allowedOrigins(), allowLoopback: !verifyAccess };
+const exposure = exposureConfig();
+const publicPortClosed = (req) => exposure.landingOnly && !onTailnet(req, exposure);
 async function authed(req) {
+  // Tailscale identity is the only way in on this port, and it counts nowhere else.
+  if (onTailnet(req, exposure)) return tailnetUserAllowed(req, exposure);
   const jar = cookies(req);
   if (verifyAccess) {
     const accessToken = accessTokenFrom(req, jar);
@@ -211,7 +219,7 @@ const listBots = () => mainBots.list();
 const saveBot = async (slug, patch) => {
   const bot = await getBot(slug);
   if (!bot) throw Object.assign(new Error("Bot not found"), { status: 404 });
-  return mainBots.save(slug, await avatarImagePatch(bot, patch));
+  return mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(patch)));
 };
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
@@ -265,6 +273,7 @@ async function writeAgentsMd(bot, settings) {
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
 }
 async function createBot(input) {
+  input = objectAvatarPatch(input);
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
   const base = slugify(input.name ?? "bot");
   let slug = base, n = 2;
@@ -283,6 +292,7 @@ async function createBot(input) {
     label: input.label ?? "",
     shape: input.shape ?? "sphere",
     color: input.color ?? "teal",
+    ...(input.avatarDefinition ? { avatarDefinition: input.avatarDefinition } : {}),
     ...(picture ? { avatarImage: await storeAvatarImage({ workspaceRoot: dir, slug }, picture) } : {}),
     section: input.section ?? null,
     pinned: Boolean(input.pinned),
@@ -511,6 +521,16 @@ const server = http.createServer(async (req, res) => {
     if (/^\/welcome(\/|\\|%2f|%5c)/i.test(p) && p !== "/welcome/" && !landingAsset) return send(res, 404, "not found");
     // A missing landing file must not fall through to the app shell.
     if (landingAsset && !existsSync(path.join(cfg.staticDir, p))) return send(res, 404, "not found");
+    // Landing-only mode: the app isn't here at all. Bots still reach their local tool server.
+    if (publicPortClosed(req)) {
+      if (p === "/mcp/bot" && !req.headers["cf-ray"]) return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
+      if (!["GET", "HEAD"].includes(req.method) || !landingPath(p)) return send(res, 404, "not found");
+      return await serveStatic(req, res, p === "/" ? "/welcome/" : p);
+    }
+    // Cookies travel on cross-site requests, so changes must also come from this app's own pages.
+    if ((p.startsWith("/api/") || p.startsWith("/t3/")) && !["GET", "HEAD"].includes(req.method) && !sameOriginRequest(req, originPolicy)) {
+      return send(res, 403, { error: "cross-site request refused" });
+    }
     if (p === "/api/login" && req.method === "POST") {
       const ip = clientIp(req);
       if (loginBlocked(ip)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
@@ -539,7 +559,7 @@ const server = http.createServer(async (req, res) => {
       return await proxyT3(req, res, route.path + url.search, await resolveEnvironment(route.environmentId));
     }
 
-    if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null });
+    if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN) && !onTailnet(req, exposure), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null });
     if (p === "/api/thread-link" && req.method === "GET") {
       const environmentId = url.searchParams.get("environmentId") ?? "";
       const threadId = url.searchParams.get("threadId") ?? "";
@@ -670,6 +690,16 @@ function proxyPreviewStream(req, socket, head, url, environment) {
 // ---------- T3 WebSocket proxy ----------
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", async (req, socket, head) => {
+  if (publicPortClosed(req)) {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    return socket.destroy();
+  }
+  // Browsers let any website open a WebSocket here and attach the Access cookie.
+  if (!sameOriginRequest(req, originPolicy)) {
+    console.warn(`refused cross-site WebSocket from ${String(req.headers.origin ?? "unknown").slice(0, 120)}`);
+    socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+    return socket.destroy();
+  }
   const url = new URL(req.url, "http://x");
   let route;
   try { route = environmentPath(url.pathname); } catch { socket.end("HTTP/1.1 400 Bad Request\r\n\r\n"); return; }
@@ -710,6 +740,12 @@ const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBo
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
 
+if (exposure.tailnetPort) {
+  if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");
+  const tailnetServer = http.createServer((req, res) => server.emit("request", req, res));
+  tailnetServer.on("upgrade", (req, socket, head) => server.emit("upgrade", req, socket, head));
+  tailnetServer.listen(exposure.tailnetPort, cfg.host, () => console.log(`tailnet listener on ${cfg.host}:${exposure.tailnetPort}`));
+}
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });

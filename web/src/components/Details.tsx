@@ -6,6 +6,7 @@ import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
 import { Library } from "./Library";
 import { ThreadFamily } from "./ThreadFamily";
+import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
@@ -97,6 +98,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
+            {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
             {threadId && threadId !== bot.mainThreadId && bot.mainThreadId && <Pill variant="soft" className="mb-4" onClick={() => bot.mainThreadId && selectThread(bot, bot.mainThreadId)}>Back to {bot.name}</Pill>}
             {!archived && <div className={showRoutines ? "" : "profile-routines"}><DetailsTab bot={bot} tasks={tasks} onOpenRoutine={setRoutine} onCreate={() => routineChat("Set up a routine")} routinesOnly={showRoutines} /></div>}
           </>}
@@ -121,7 +123,7 @@ function ModelSection({ bot, threadId }: { bot: Bot; threadId: string | null }) 
 }
 
 function AvatarDialog({ bot, onClose }: { bot: Bot; onClose: () => void }) {
-  return <AvatarEditorDialog initial={{ shape: bot.shape, color: bot.color, avatarImage: bot.avatarImage }} onSave={draft => updateBot(bot.slug, draft)} onClose={onClose} />;
+  return <AvatarEditorDialog initial={{ shape: bot.shape, color: bot.color, avatarImage: bot.avatarImage, avatarDefinition: bot.avatarDefinition }} onSave={draft => updateBot(bot.slug, draft)} onClose={onClose} />;
 }
 
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {

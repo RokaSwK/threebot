@@ -44,4 +44,24 @@ git pull
 npm run setup
 ```
 
-Then restart the gateway. Threebot tracks T3 Code Nightly, so update both together.
+Then restart the gateway. Threebot needs T3 Code 0.1.6 or later and is tested on stable releases, so update both together.
+
+## Keep the app off the public internet
+
+Threebot can drive agents on your machines, so don't leave it open to the internet if you can avoid it. Tailscale gives you a private address with HTTPS, so the app works as a PWA:
+
+```sh
+# in .env
+TAILNET_PORT=3781
+TAILNET_USERS=you@example.com
+```
+
+```sh
+tailscale serve --bg --https=8443 http://127.0.0.1:3781
+```
+
+Only `tailscale serve` should reach that port. It sets the signed-in user on each request, and the gateway accepts no other login there. Then open `https://<machine>.<tailnet>.ts.net:8443`.
+
+If a public host also points at the gateway, `PUBLIC_LANDING_ONLY=true` reduces that port to the landing page. Bots keep their local tool server.
+
+If you serve the app from another address, list it in `ALLOWED_ORIGINS`. The gateway refuses WebSockets and changes that come from any other site.

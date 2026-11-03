@@ -131,6 +131,7 @@
 .composer-controls[data-expanded="true"] .composer-dictate { margin-left: auto; }
 .chat-voice-call { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 16px 0 4px; font-size: 14px; color: var(--fg-muted); }
 .chat-voice-call > span { color: var(--fg-faint); }
+.chat-model-switch { margin: 14px 0 2px; font-size: 12px; color: var(--fg-faint); text-align: center; }
 
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
   .chat-attachment-menu { width: 240px; padding: 8px; border-radius: 24px; bottom: 48px; }

@@ -51,7 +51,7 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 - **Vault.** Encrypted logins Bots can type into a site without reading the password, powered by secure requests from T3 Code.
 - **Connected apps.** Gmail, GitHub, Slack and the rest, powered by [Executor](https://executor.sh), if you run it.
 - **Approvals.** A Bot asks first before anything that leaves your machine or can't be undone.
-- **A face.** The ball's weather tells you what it's doing: storms, aurora, a moon when it's asleep.
+- **A face.** The ball's weather tells you what it's doing: storms, aurora, a moon when it's asleep. Prefer an object? Pick one of 22 from [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar) by Dominik Scholz, or ask your Bot to draw itself.
 
 ## Run it
 
@@ -85,7 +85,7 @@ npm run check   # web tests, build, server tests, fixture and asset checks
 
 ## Status
 
-Early, and built around one person's daily use. It tracks T3 Code Nightly, whose API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
+Early, and built around one person's daily use. It needs T3 Code 0.1.6 or later. T3's API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
 
 ## Credits
 

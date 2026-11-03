@@ -6,6 +6,8 @@ export type Bot = {
   shape: string;
   color: string;
   avatarImage?: string | null;
+  /** The Bot's own object look, for `shape: "object:<its id>"`. Unvalidated until read through objectAvatars. */
+  avatarDefinition?: unknown;
   section: string | null;
   pinned: boolean;
   hidden: boolean;
@@ -73,7 +75,7 @@ export type ThreadShell = {
   pendingRuntimeRequest: { id: string; kind: string; blocking: boolean } | null;
   latestVisibleMessage: { id: string; role: string; text: string; updatedAt: string } | null;
   latestUserMessageAt: string | null;
-  lineage: { parentThreadId: string | null; relationshipToParent: string | null; rootThreadId: string };
+  lineage: { parentThreadId: string | null; relationshipToParent: string | null; rootThreadId: string; sideChat?: boolean };
   archivedAt: string | null;
   /** Settlement is an inbox lifecycle, independent of the latest run outcome. */
   settledOverride?: "settled" | "active" | null;
@@ -138,6 +140,7 @@ export type Run = {
   startedAt: string | null;
   completedAt: string | null;
   modelSelection: ModelSelection;
+  userMessageId?: string;
 };
 
 export type RuntimeRequest = {
@@ -205,4 +208,4 @@ export type ScheduledTask = {
 };
 
 export type SnoozePreset = { kind: "after"; minutes: number } | { kind: "at"; day: "today" | "tomorrow" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"; time: string };
-export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean };
+export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean };

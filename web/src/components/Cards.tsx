@@ -12,6 +12,7 @@ import type { Bot } from "../lib/types";
 import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
 import { finishQuestionDraft, questionDraft } from "../lib/questionDrafts";
 import "./RequestCards.css";
+import "./AutomatedCard.css";
 import "./PageCard.css";
 
 export function DateSep({ label }: { label: string }) {
@@ -37,6 +38,29 @@ export function EventLine({ entry }: { entry: Extract<Entry, { kind: "event" }> 
       {entry.strong && <span className="text-fg">{entry.strong}</span>}
     </div>
   );
+}
+
+export function AutomatedCard({ entry }: { entry: Extract<Entry, { kind: "automated" }> }) {
+  const { message, fromBot } = entry;
+  return <div className="automated-card fade-up">
+    <div className="automated-head">
+      {fromBot ? <Avatar shape={fromBot.shape} color={fromBot.color} picture={fromBot.avatarImage} size={20} /> : <Clock size={15} aria-hidden="true" />}
+      <span className="automated-title">{message.summary}</span>
+      <span className="automated-from">From {message.from}</span>
+    </div>
+    {message.issues.length > 0 && <ul className="automated-issues">
+      {message.issues.map((issue) => <li key={issue.id} data-level={issue.level} title={issue.detail}>
+        <span className="automated-dot" aria-hidden="true" />
+        <span className="automated-issue">{issue.title}</span>
+        {issue.state && <span className="automated-state">{issue.state}</span>}
+        <span className="sr-only">{issue.level}</span>
+      </li>)}
+    </ul>}
+    <details className="automated-details">
+      <summary>Instructions</summary>
+      <div className="automated-body">{message.text}</div>
+    </details>
+  </div>;
 }
 
 function CardShell({ children, className }: { children: React.ReactNode; className?: string }) {

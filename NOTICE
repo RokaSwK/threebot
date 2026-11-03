@@ -12,6 +12,10 @@ T3 Code (https://t3.codes, https://github.com/pingdotgg/t3code)
   web/src/components/ProviderInstanceIcon.tsx are adapted from T3 Code (MIT, v0.1.5),
   Copyright (c) 2026 T3 Tools Inc., under the license below.
 
+Open Bot Avatar (https://github.com/DominikScholz/open-bot-avatar)
+  Object avatars use the open-bot-avatar package. server/object-avatars.json holds its example and
+  gallery definitions. Copyright (c) 2026 Dominik Scholz, MIT License.
+
 Executor (https://executor.sh)
   Connected apps run through Executor when you set it up.
 
@@ -24,7 +28,7 @@ The launch film (web/public/welcome/img/film.mp4)
 
 Open source libraries
   React, Zustand, lucide-react, react-markdown, remark-gfm, KaTeX, Mermaid, Shiki, DOMPurify, clsx,
-  sharp, ws, linkedom and Vite, each under its own license. See web/package.json and
+  sharp, ws, linkedom, open-bot-avatar and Vite, each under its own license. See web/package.json and
   server/package.json.
 
 ----

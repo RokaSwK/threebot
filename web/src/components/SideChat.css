@@ -1,0 +1,29 @@
+/* Docked to the right of the conversation on desktop, a sheet over it on the phone. */
+.side-chat-sheet { position: absolute; inset: 0 0 0 auto; z-index: 30; display: flex; width: min(440px, 100%); min-height: 0; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg-chat); box-shadow: var(--shadow-pop); animation: side-chat-in 180ms cubic-bezier(.2, .8, .2, 1); }
+.side-chat-bar { display: flex; min-height: 52px; flex-shrink: 0; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); padding: 6px 8px 6px 14px; }
+.side-chat-heading { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.side-chat-title { overflow: hidden; font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
+.side-chat-hint { overflow: hidden; font-size: 11px; color: var(--fg-muted); text-overflow: ellipsis; white-space: nowrap; }
+.side-chat-back, .side-chat-delete { flex-shrink: 0; min-height: 32px; border-radius: 999px; padding: 0 11px; font-size: 12.5px; }
+.side-chat-back { background: var(--bg-hover); }
+.side-chat-back:disabled { color: var(--fg-faint); }
+.side-chat-delete { color: var(--danger); }
+.side-chat-body { display: flex; min-height: 0; flex: 1; }
+.side-chat-body .chat-view { background: transparent; }
+
+.side-chat-pill-row { display: flex; flex-shrink: 0; justify-content: center; padding: 0 20px 8px; }
+.side-chat-pill { display: flex; max-width: min(100%, 360px); align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-elevated); padding: 5px 12px; font-size: 12.5px; }
+.side-chat-pill-state { flex-shrink: 0; color: var(--fg-muted); }
+.side-chat-row { display: flex; min-height: 40px; width: 100%; align-items: center; gap: 8px; border-radius: 12px; padding: 0 10px; font-size: 13px; text-align: left; }
+.side-chat-row > .truncate { min-width: 0; flex: 1; }
+.side-chat-row:hover { background: var(--bg-hover); }
+
+@keyframes side-chat-in { from { opacity: 0; transform: translateX(16px); } }
+
+@media (max-width: 768px) {
+  .side-chat-sheet { inset: max(44px, env(safe-area-inset-top)) 0 0 0; width: 100%; border-top: 1px solid var(--border); border-left: 0; border-radius: 18px 18px 0 0; animation-name: side-chat-up; }
+  .side-chat-bar { border-radius: 18px 18px 0 0; }
+  @keyframes side-chat-up { from { opacity: 0; transform: translateY(24px); } }
+}
+
+@media (prefers-reduced-motion: reduce) { .side-chat-sheet { animation: none; } }

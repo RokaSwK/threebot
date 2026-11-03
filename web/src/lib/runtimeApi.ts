@@ -6,6 +6,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { automatedMessage } from "./automatedMessage";
 import { t3, uuid, type StreamHandle } from "./t3";
 
 // The v0.1.5 projection is returned directly by RPC, wrapped by the stream.
@@ -34,6 +35,10 @@ export type WorkMessage = {
   id: string;
   text: string;
   attachments: { name: string }[];
+  createdBy?: string;
+  creationSource?: string;
+  scheduledTaskId?: string;
+  senderThreadId?: string;
 };
 export type PlanStep = { id: string; text: string; status: string };
 export type WorkPlan = {
@@ -161,6 +166,10 @@ function decodeMessage(value: unknown): WorkMessage | null {
         attachments: rows(r.attachments).map((a) => ({
           name: text(record(a).name) || "Attachment",
         })),
+        createdBy: text(r.createdBy) || undefined,
+        creationSource: text(r.creationSource) || undefined,
+        scheduledTaskId: text(r.scheduledTaskId) || undefined,
+        senderThreadId: text(r.senderThreadId) || undefined,
       }
     : null;
 }
@@ -413,6 +422,24 @@ export function queuedWork(state: WorkState) {
         state.messages.find((message) => message.id === run.userMessageId) ??
         null,
     }));
+}
+export type QueuedSender = { kind: "routine" | "agent" | "server"; label: string; text: string };
+/** Null for your own messages. Anything else folds to one line naming where it came from. */
+export function queuedSender(
+  message: WorkMessage | null,
+  names: { routine: (id: string) => string | undefined; thread: (id: string) => string | undefined },
+): QueuedSender | null {
+  if (!message) return null;
+  if (message.scheduledTaskId)
+    return { kind: "routine", label: names.routine(message.scheduledTaskId) ?? "Routine", text: message.text };
+  const automated = automatedMessage(message);
+  if (automated) return { kind: "agent", label: automated.from, text: automated.text };
+  if (message.senderThreadId || (message.createdBy === "agent" && message.creationSource !== "server")) {
+    const prefix = /^From ([^:\n]{1,60}):\s*/.exec(message.text);
+    const named = message.senderThreadId ? names.thread(message.senderThreadId) : undefined;
+    return { kind: "agent", label: named ?? prefix?.[1] ?? "Another thread", text: prefix ? message.text.slice(prefix[0].length) : message.text };
+  }
+  return message.createdBy === "agent" ? { kind: "server", label: "T3 Code", text: message.text } : null;
 }
 export const activeWork = (state: WorkState) =>
   state.runs.findLast((run) =>
