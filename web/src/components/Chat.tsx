@@ -9,6 +9,8 @@ import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, P
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
 import { RichMarkdown } from "./RichMarkdown";
+import { BoardItemChip } from "./Projects";
+import { parseItemLink } from "../lib/projects";
 import { ChatMessageActions } from "./ChatMessageActions";
 import { ChatAttachmentList } from "./ChatAttachments";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
@@ -329,6 +331,8 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
     return <a className="md-link" href={reference.environmentId ? threadLink({ kind: "remote", ...reference, environmentId: reference.environmentId, label: "T3 Code" }) : undefined} target="_blank" rel="noreferrer">{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}</a>;
   }
   if (href?.startsWith("bot:")) return <>{children}</>;
+  const boardItem = href ? parseItemLink(href) : null;
+  if (boardItem) return <BoardItemChip id={boardItem}>{children}</BoardItemChip>;
   const path = href && workspace ? workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath) : null;
   if (path && workspace) return <button className="text-left underline" onClick={() => workspace.openFile(path)}>{children}</button>;
   // Unresolved local paths must never become browser URLs pointing at host files.

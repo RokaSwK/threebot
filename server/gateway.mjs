@@ -25,6 +25,9 @@ import { createRoutineHistoryRoutes } from "./routine-history.mjs";
 import { objectAvatarPatch } from "./object-avatars.mjs";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
+import { createProjects } from "./projects.mjs";
+import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
+import { createProjectRoutes } from "./projects-routes.mjs";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +68,9 @@ if (!botMcpToken) {
   await fs.writeFile(botMcpTokenPath, botMcpToken + "\n", { mode: 0o600 });
 }
 const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
+// The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
+const projects = createProjects({ file: path.join(appDir, "projects.json") });
+const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
 const threadPreviews = createThreadPreviews({
@@ -420,7 +426,13 @@ const botTools = createBotTools({
   secretsDir: cfg.t3SecretsDir,
   tokenDir: path.join(path.dirname(cfg.vaultKeyFile), "bot-secrets"),
   log: (line) => console.log(line),
+  extra: {
+    tools: PROJECT_TOOLS,
+    call: createProjectTools({ projects, appUrl, log: (line) => console.log(line) }),
+    instructions: "Also the user's Projects board (projects_* tools): their projects, to-dos, machines, what runs where, repos and links, shown live on their Projects page.",
+  },
 });
+const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 
 async function vaultRoutes(req, res, p, url) {
   if (p === "/api/vault" && req.method === "GET") {
@@ -618,6 +630,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, icon.bytes, { "content-type": icon.type, "cache-control": "private, max-age=604800", "content-security-policy": "default-src 'none'", "x-content-type-options": "nosniff" });
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
+    if (await projectRoutes.handle(req, res, url)) return;
     if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, await threadMeta.get(url.searchParams.get("thread")), { "cache-control": "no-store" });
     if (p === "/api/thread-meta/reactions" && req.method === "POST") {
       requireJson(req);

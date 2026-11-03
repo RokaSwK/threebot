@@ -118,7 +118,10 @@ function toolJson(value) {
  * @param deps.tokenDir       private directory for vault_secret_file's files, emptied on start
  * @param deps.log            (line) => void, never given secrets
  */
-export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS }) {
+/**
+ * `extra` adds more tools to the same server (the Projects board): { tools, call(name, args, { botFor }) }.
+ */
+export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra = null }) {
   // Files from an earlier run have no timer left to delete them.
   const ready = tokenDir ? fs.rm(tokenDir, { recursive: true, force: true }).then(() => fs.mkdir(tokenDir, { recursive: true, mode: 0o700 })).catch(() => {}) : Promise.resolve();
 
@@ -260,15 +263,16 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "bot", title: "Bot", version: "0.1.0" },
-          instructions: "The user's Vault: saved logins, API tokens and contact info. You never see website passwords; fill them into your browser tab with vault_fill_password. To save a new one, ask with T3's request_secret (delivery \"file\"), then vault_save_login.",
+          instructions: "The user's Vault: saved logins, API tokens and contact info. You never see website passwords; fill them into your browser tab with vault_fill_password. To save a new one, ask with T3's request_secret (delivery \"file\"), then vault_save_login." + (extra?.instructions ? ` ${extra.instructions}` : ""),
         });
       }
       case "ping":
         return reply({});
       case "tools/list":
-        return reply({ tools: TOOLS });
+        return reply({ tools: [...TOOLS, ...(extra?.tools ?? [])] });
       case "tools/call": {
         const name = msg.params?.name;
+        if (extra?.tools.some((t) => t.name === name)) return reply(await extra.call(name, msg.params?.arguments ?? {}, { botFor }));
         if (!TOOLS.some((t) => t.name === name)) return isNotification ? null : { jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool: ${name}` } };
         return reply(await callTool(name, msg.params?.arguments ?? {}));
       }

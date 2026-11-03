@@ -73,6 +73,9 @@ type State = {
   searchResultRevision: number;
   settingsPane: string;
   toast: string | null;
+  /** The Projects page replaces the chat while it's open; projectItemId is the item shown in it. */
+  page: "projects" | null;
+  projectItemId: string | null;
   /** The Vault without passwords (null until loaded). */
   vault: VaultItem[] | null;
 };
@@ -113,6 +116,8 @@ export const useApp = create<State>(() => ({
   searchResultRevision: 0,
   settingsPane: "general",
   toast: null,
+  page: null,
+  projectItemId: null,
   vault: null,
 }));
 
@@ -168,6 +173,7 @@ async function initialize() {
     const route = new URLSearchParams(location.search);
     const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
     if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
+    if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
     if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
     set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
     if (!runtimeStarted) {
@@ -516,14 +522,14 @@ export function runtimeMode(s = get()) {
 
 // ---------- actions ----------
 export function select(slug: string | null) {
-  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null });
+  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null });
   if (slug) localStorage.setItem("bot.selected", slug);
   const bot = slug ? get().bots[slug] : null;
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
 }
 
 export function selectThread(bot: Bot, threadId: string, fromSearch = false) {
-  set({ selected: botReferenceKey(bot), selectedThreadId: threadId === bot.mainThreadId ? null : threadId, exchangeBotSlug: null, ...(fromSearch ? { dialog: null, searchResultRevision: get().searchResultRevision + 1 } : {}) });
+  set({ selected: botReferenceKey(bot), selectedThreadId: threadId === bot.mainThreadId ? null : threadId, exchangeBotSlug: null, page: null, projectItemId: null, ...(fromSearch ? { dialog: null, searchResultRevision: get().searchResultRevision + 1 } : {}) });
   threadClient(threadId).dispatch({ type: "thread.visit", threadId: threadTarget(threadId).threadId, visitedAt: new Date().toISOString() }).catch(() => {});
   loadThreadFamily(threadId);
 }
@@ -576,6 +582,11 @@ export function setColumnWidth({ column, width, persist = true }: { column: Colu
   const next = columnWidth(column, width);
   set(column === "sidebar" ? { sidebarWidth: next } : { detailsWidth: next });
   if (persist) localStorage.setItem(`bot.${column}.width`, String(next));
+}
+
+/** Open the Projects page, optionally on one item. */
+export function openProjects(itemId: string | null = null) {
+  set({ page: "projects", projectItemId: itemId, exchangeBotSlug: null, dialog: null });
 }
 
 export function openDialog(dialog: Dialog) {
