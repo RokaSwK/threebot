@@ -108,6 +108,16 @@ export class VoiceSession {
 
   private get ended() { return this.state.phase === "ended"; }
 
+  setLang(lang: string) {
+    this.deps.lang = lang;
+    if (this.recognition && this.state.phase === "listening") {
+      const rec = this.recognition;
+      this.recognition = null;
+      rec.abort();
+      this.listen();
+    }
+  }
+
   start(reply: string | null) {
     this.latestReply = reply;
     this.startedAt = Date.now();
@@ -125,7 +135,7 @@ export class VoiceSession {
     this.recognition = recognition;
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = this.deps.lang ?? "";
+    recognition.lang = this.deps.lang || defaultVoiceLang();
     recognition.onresult = (event) => {
       const results = Array.from(event.results);
       finalText = results.filter((result) => result.isFinal).map((result) => result[0].transcript).join(" ").trim();
@@ -135,7 +145,7 @@ export class VoiceSession {
     recognition.onerror = (event) => {
       if (event.error === "no-speech" || event.error === "aborted") return;
       failed = true;
-      this.update({ phase: "error", error: BLOCKED.has(event.error) ? "Allow microphone access to use voice chat." : event.error === "audio-capture" ? "The microphone isn't available. Hang up and try again." : "Voice recognition stopped. Hang up and try again." });
+      this.update({ phase: "error", error: BLOCKED.has(event.error) ? "Allow microphone access to use voice chat." : event.error === "audio-capture" ? "The microphone isn't available. Hang up and try again." : `Voice error: ${event.error}. Hang up and try again.` });
     };
     recognition.onend = () => {
       if (this.recognition !== recognition) return;
@@ -230,17 +240,44 @@ export function browserRecognition(): (() => RecognitionLike) | null {
 }
 
 export const VOICE_SETTINGS_KEY = "bot.voice";
-export type VoiceSettings = { voice: string | null; rate: number };
+export const VOICE_SETTINGS_EVENT = "bot-voice-settings-changed";
+export type VoiceSettings = { voice: string | null; rate: number; lang: string };
+
+export function defaultVoiceLang(): string {
+  if (typeof navigator !== "undefined" && navigator.language) {
+    if (navigator.language.toLowerCase().startsWith("es")) {
+      return navigator.language;
+    }
+  }
+  return "es-419";
+}
 
 export function readVoiceSettings(): VoiceSettings {
+  const fallbackLang = defaultVoiceLang();
   try {
     const value: unknown = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) ?? "null");
     if (value && typeof value === "object") {
-      const { voice, rate } = value as Partial<VoiceSettings>;
-      return { voice: typeof voice === "string" ? voice : null, rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1 };
+      const { voice, rate, lang } = value as Partial<VoiceSettings>;
+      return {
+        voice: typeof voice === "string" ? voice : null,
+        rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1,
+        lang: typeof lang === "string" && lang ? lang : fallbackLang,
+      };
     }
   } catch { /* Storage may be unavailable or hold an older value. */ }
-  return { voice: null, rate: 1 };
+  return { voice: null, rate: 1, lang: fallbackLang };
+}
+
+export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {
+  const current = readVoiceSettings();
+  const next: VoiceSettings = { ...current, ...patch };
+  try {
+    localStorage.setItem(VOICE_SETTINGS_KEY, JSON.stringify(next));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(VOICE_SETTINGS_EVENT, { detail: next }));
+    }
+  } catch { /* Storage may be unavailable */ }
+  return next;
 }
 
 export function browserSpeak(settings: () => VoiceSettings, text: string, done: () => void) {
@@ -252,9 +289,15 @@ export function browserSpeak(settings: () => VoiceSettings, text: string, done: 
     const chunk = chunks.shift();
     if (chunk === undefined) return done();
     const utterance = new SpeechSynthesisUtterance(chunk);
-    const { voice, rate } = settings();
+    const { voice, rate, lang } = settings();
     utterance.rate = rate;
-    utterance.voice = synth.getVoices().find((item) => item.voiceURI === voice) ?? null;
+    const effectiveLang = lang || defaultVoiceLang();
+    utterance.lang = effectiveLang;
+    const voices = synth.getVoices();
+    const chosenVoice = voices.find((item) => item.voiceURI === voice);
+    const langPrefix = effectiveLang.split("-")[0].toLowerCase();
+    const matchingLangVoice = voices.find((item) => item.lang.toLowerCase().startsWith(langPrefix));
+    utterance.voice = chosenVoice ?? matchingLangVoice ?? null;
     utterance.onend = next;
     utterance.onerror = next;
     synth.speak(utterance);

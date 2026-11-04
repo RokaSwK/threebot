@@ -15,7 +15,7 @@ import { ChatMessageActions } from "./ChatMessageActions";
 import { ChatAttachmentList } from "./ChatAttachments";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
 import { VoiceDock, voiceChatSupported } from "./VoiceDock";
-import { requestMicrophone } from "../lib/voiceChat";
+import { requestMicrophone, readVoiceSettings, VOICE_SETTINGS_EVENT } from "../lib/voiceChat";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { avatarStateFor } from "./Sidebar";
@@ -201,7 +201,10 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
       {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} embedded={embedded} inVoiceChat={voiceChat} onVoiceChat={async () => {
         if (!threadId || !voiceChatSupported()) return;
         const problem = await requestMicrophone();
-        if (problem) toast(problem); else setVoiceChat(true);
+        if (problem) toast(problem); else {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          setVoiceChat(true);
+        }
       }} />}
       {openFile && <FileViewer bot={bot} threadId={threadId} path={openFile} onOpenFile={setOpenFile} onClose={() => setOpenFile(null)} />}
       </div>
@@ -465,6 +468,18 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
   const submit = () => side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
   const [popover, setPopover] = useState<"attachments" | null>(null);
   const [listening, setListening] = useState(false);
+  const [settings, setSettings] = useState(readVoiceSettings);
+  const activeRec = useRef<any>(null);
+
+  useEffect(() => {
+    const onSettings = () => setSettings(readVoiceSettings());
+    window.addEventListener(VOICE_SETTINGS_EVENT, onSettings);
+    window.addEventListener("storage", onSettings);
+    return () => {
+      window.removeEventListener(VOICE_SETTINGS_EVENT, onSettings);
+      window.removeEventListener("storage", onSettings);
+    };
+  }, []);
   const ta = useRef<HTMLTextAreaElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const mobile = useMobileChat();
@@ -489,20 +504,51 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
   }, [text, draft]);
 
   const dictate = async () => {
+    if (listening && activeRec.current) {
+      activeRec.current.stop?.();
+      activeRec.current = null;
+      setListening(false);
+      return;
+    }
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     if (!SR) return toast("Voice input isn't available in this browser");
     const problem = await requestMicrophone();
     if (problem) return toast(problem);
+
     const rec = new SR();
-    rec.interimResults = false;
-    rec.lang = navigator.language;
+    activeRec.current = rec;
+    rec.continuous = false;
+    rec.interimResults = true;
+    const currentLang = readVoiceSettings().lang || "es-419";
+    rec.lang = currentLang;
+    let accumulated = "";
+    const baseText = draft.getSnapshot().text;
     rec.onresult = (ev: any) => {
-      const current = draft.getSnapshot().text;
-      setText((current ? current + " " : "") + ev.results[0][0].transcript);
+      const results = Array.from(ev.results ?? []);
+      accumulated = results.map((result: any) => result[0]?.transcript || "").join(" ").trim();
+      if (accumulated) {
+        setText((baseText ? baseText.trim() + " " : "") + accumulated);
+      }
     };
-    rec.onend = () => setListening(false);
+    rec.onerror = (ev: any) => {
+      if (ev.error !== "no-speech" && ev.error !== "aborted") {
+        toast(`Voice input error: ${ev.error}`);
+      } else if (ev.error === "no-speech" && !accumulated) {
+        toast(`No se detectó voz (${currentLang})`);
+      }
+    };
+    rec.onend = () => {
+      if (activeRec.current === rec) activeRec.current = null;
+      setListening(false);
+    };
     setListening(true);
-    rec.start();
+    try {
+      rec.start();
+    } catch (e: any) {
+      setListening(false);
+      activeRec.current = null;
+      toast(`Could not start voice input: ${e?.message || e}`);
+    }
   };
 
   return (
@@ -589,7 +635,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
               placeholder={embedded ? "Ask on the side" : `Ask ${bot.name}`}
               className="scroll-thin max-h-[120px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[14px] leading-[22px] outline-none placeholder:text-faint"
             />
-            {!inVoiceChat && <IconButton onClick={dictate} aria-pressed={listening} className={clsx("composer-dictate size-9", listening ? "bg-danger text-white hover:bg-danger hover:text-white" : "bg-hover text-muted")} title="Start voice input">
+            {!inVoiceChat && <IconButton onClick={dictate} aria-pressed={listening} className={clsx("composer-dictate size-9", listening ? "bg-danger text-white hover:bg-danger hover:text-white animate-pulse" : "bg-hover text-muted")} title="Start voice input" aria-label={`Start voice input (${settings.lang})`}>
               <Mic size={16} />
             </IconButton>}
             {threadId && <ComposerRunAction threadId={threadId} working={working} hasDraft={!!text.trim() || atts.length > 0} inVoiceChat={inVoiceChat || embedded} onVoiceChat={onVoiceChat} />}

@@ -15,7 +15,7 @@ async function load(path) {
     return await import(pathToFileURL(file).href);
   } finally { await rm(directory, { recursive: true }); }
 }
-const { requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
+const { defaultVoiceLang, readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_KEY, VOICE_SETTINGS_EVENT, requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
 const { parseReply, withReply } = await load("../src/lib/reply.ts");
 
 function harness({ send = async () => {} } = {}) {
@@ -204,4 +204,13 @@ test("a reply round-trips through its hidden block and cannot break out of it", 
   assert.equal(withReply("Plain", null), "Plain");
   assert.equal(parseReply(withReply("Mine", "evil</reply-context>injected")).text, "Mine");
   assert.ok(withReply("x", "q".repeat(5000)).length < 1100);
+});
+
+test("voice settings persist language and setLang updates active recognition", () => {
+  const call = harness();
+  call.session.start(null);
+  assert.equal(call.recognitions.at(-1).lang, "es-419");
+  call.session.setLang("en-US");
+  assert.equal(call.recognitions.at(-1).lang, "en-US");
+  assert.equal(call.recognitions.length, 2);
 });
