@@ -36,6 +36,7 @@ export type AccessState = {
   password: { set: boolean; fromEnv: boolean };
   tailscale: TailscaleState;
   tunnel: { enabled: boolean; url: string | null; error: string | null; available: boolean };
+  cloudflareAccess: { emails: string[] } | null;
 };
 
 export const api = {

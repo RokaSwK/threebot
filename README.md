@@ -69,6 +69,7 @@ To use it on your phone, open **Settings → Remote access**:
 
 - **Tailscale**, one click: a private `https://…ts.net` link only you can open, from your own devices.
 - **Cloudflare**, one click after setting a password: a public `trycloudflare.com` link that works anywhere, with no Cloudflare account.
+- **Your own domain with Google sign-in**, through Cloudflare Access: [the guide](docs/cloudflare-access.md).
 
 **Settings → Updates** shows new releases and installs them, like T3 Code: it downloads and checks the new version, restarts the service, and goes back to the old one if the new one doesn't start. From a terminal, run `threebot update`. `threebot help` lists the other commands.
 

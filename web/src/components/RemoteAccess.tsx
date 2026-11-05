@@ -5,6 +5,7 @@ import { toast } from "../store";
 import { Group, H, Row } from "./SettingsParts";
 import { IconButton, Pill, Spinner } from "./ui";
 
+const ACCESS_GUIDE = "https://github.com/RokaSwK/threebot/blob/main/docs/cloudflare-access.md";
 const message = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
 
 async function copy(text: string) {
@@ -66,6 +67,11 @@ export function RemoteAccessPane() {
       <Row title="Tailscale" desc={tsDesc}>
         {tsAction}
         {!ts.enabled && !ts.fromEnv && <IconButton type="button" onClick={() => void act("check", api.access)} aria-label="Check again" title="Check again" className="size-8"><RefreshCw size={14} /></IconButton>}
+      </Row>
+    </Group>
+    <Group title="Your own domain · Google sign-in">
+      <Row title="Cloudflare Access" desc={state.cloudflareAccess ? `On. ${state.cloudflareAccess.emails.join(", ")} can sign in with Google on your domain.` : "Put Threebot on your own domain and sign in with Google instead of a password. Takes about 15 minutes in Cloudflare and Google."}>
+        {!state.cloudflareAccess && <Link href={ACCESS_GUIDE}>Guide</Link>}
       </Row>
     </Group>
     <Group title="Public link · Cloudflare">

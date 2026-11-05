@@ -48,7 +48,7 @@ The password set in the app is stored as an scrypt hash in `access.json`; `BOT_P
 The default is `HOST=127.0.0.1` with no sign-in, which is only safe on your own machine. Anyone who reaches an unprotected gateway can drive your agents. Pick one before exposing it:
 
 - **A private network.** Serve it over Tailscale or similar, so only your devices can reach it.
-- **Cloudflare Access.** Put a Cloudflare Tunnel in front, and set `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` and `CF_ACCESS_EMAILS`. The gateway checks the Access token on every request.
+- **Cloudflare Access, for example with Google sign-in.** Put a Cloudflare Tunnel in front, and set `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` and `CF_ACCESS_EMAILS`. The gateway checks the Access token on every request. [Sign in with Google through Cloudflare](cloudflare-access.md) walks through it.
 - **A password.** Set `BOT_PASSWORD`, and use HTTPS in front of it.
 
 Installing the app and receiving notifications on a phone need HTTPS.
