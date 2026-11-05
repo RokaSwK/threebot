@@ -277,6 +277,21 @@ export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings 
   return next;
 }
 
+type VoiceLike = { voiceURI: string; lang: string; default: boolean };
+/** The saved voice, else the browser's default voice when it speaks the language, else one for the
+ * same region (en-GB, not the first English voice listed), else any for the same language. */
+export function pickVoice<T extends VoiceLike>(voices: readonly T[], saved: string | null, lang: string): T | null {
+  const tag = (value: string) => value.replace("_", "-").toLowerCase();
+  const want = tag(lang);
+  const base = want.split("-")[0];
+  const sameBase = (voice: T) => tag(voice.lang).split("-")[0] === base;
+  return voices.find((voice) => voice.voiceURI === saved)
+    ?? voices.find((voice) => voice.default && sameBase(voice) && (tag(voice.lang) === want || !want.includes("-")))
+    ?? voices.find((voice) => tag(voice.lang) === want)
+    ?? voices.find(sameBase)
+    ?? null;
+}
+
 export function browserSpeak(settings: () => VoiceSettings, text: string, done: () => void) {
   const synth = window.speechSynthesis;
   const chunks = speechChunks(text);
@@ -288,13 +303,8 @@ export function browserSpeak(settings: () => VoiceSettings, text: string, done: 
     const utterance = new SpeechSynthesisUtterance(chunk);
     const { voice, rate, lang } = settings();
     utterance.rate = rate;
-    const effectiveLang = voiceLang({ lang });
-    utterance.lang = effectiveLang;
-    const voices = synth.getVoices();
-    const chosenVoice = voices.find((item) => item.voiceURI === voice);
-    const langPrefix = effectiveLang.split("-")[0].toLowerCase();
-    const matchingLangVoice = voices.find((item) => item.lang.toLowerCase().startsWith(langPrefix));
-    utterance.voice = chosenVoice ?? matchingLangVoice ?? null;
+    utterance.lang = voiceLang({ lang });
+    utterance.voice = pickVoice(synth.getVoices(), voice, utterance.lang);
     utterance.onend = next;
     utterance.onerror = next;
     synth.speak(utterance);
