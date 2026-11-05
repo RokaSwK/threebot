@@ -1,7 +1,7 @@
 // Bot gateway: serves the web app, guards it with a password, proxies T3 Code,
 // and reads/writes the small JSON files that describe Bots. No database.
 import http from "node:http";
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -24,6 +24,7 @@ import { createThreadMeta, createThreadPreviews } from "./thread-meta.mjs";
 import { createRoutineHistoryRoutes } from "./routine-history.mjs";
 import { objectAvatarPatch } from "./object-avatars.mjs";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
+import { safeEqual } from "./safe-equal.mjs";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
 import { createProjects } from "./projects.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
@@ -100,7 +101,7 @@ function validSession(raw) {
   const i = raw.lastIndexOf(".");
   const v = raw.slice(0, i), sig = raw.slice(i + 1);
   const expected = sign(v);
-  if (sig.length !== expected.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false;
+  if (!safeEqual(sig, expected)) return false;
   return Number(v.split(".")[1]) > Date.now();
 }
 function cookies(req) {
@@ -547,7 +548,7 @@ const server = http.createServer(async (req, res) => {
       const ip = clientIp(req);
       if (loginBlocked(ip)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
       const { password } = await readBody(req, 4096);
-      const ok = !cfg.password || (typeof password === "string" && password.length === cfg.password.length && timingSafeEqual(Buffer.from(password), Buffer.from(cfg.password)));
+      const ok = !cfg.password || safeEqual(password, cfg.password);
       if (!ok) {
         loginFailed(ip);
         console.warn(`failed login from ${ip}`);
