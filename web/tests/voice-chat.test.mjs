@@ -213,6 +213,8 @@ test("setLang switches a call that is listening to the new language", () => {
   call.session.setLang("en-US");
   assert.equal(call.recognitions.at(-1).lang, "en-US");
   assert.equal(call.recognitions.length, 2);
+  call.session.setLang("en-US");
+  assert.equal(call.recognitions.length, 2, "the same language again does not restart listening");
 });
 
 test("the voice language follows the browser until one is chosen", () => {

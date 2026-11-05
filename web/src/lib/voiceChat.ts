@@ -109,6 +109,7 @@ export class VoiceSession {
   private get ended() { return this.state.phase === "ended"; }
 
   setLang(lang: string) {
+    if (lang === this.deps.lang) return;
     this.deps.lang = lang;
     if (this.recognition && this.state.phase === "listening") {
       const rec = this.recognition;

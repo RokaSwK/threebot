@@ -63,6 +63,9 @@ export function VoiceDock({ bot, threadId, observation, onEnd }: { bot: Bot; thr
     };
   }, [bot.slug, threadId]);
   useEffect(() => { session.current?.observe(observation); }, [observation]);
+  // Follows a language chosen here, in Settings, or in another tab.
+  const lang = voiceLang(settings);
+  useEffect(() => { session.current?.setLang(lang); }, [lang]);
   useEffect(() => {
     const synth = window.speechSynthesis;
     if (!synth) return;
@@ -75,9 +78,8 @@ export function VoiceDock({ bot, threadId, observation, onEnd }: { bot: Bot; thr
   const change = (patch: Partial<VoiceSettings>) => {
     const next = saveVoiceSettings(patch);
     settingsRef.current = next;
-    if ("lang" in patch && session.current) session.current.setLang(voiceLang(next));
   };
-  const language = voiceLang(settings).split("-")[0].toLowerCase();
+  const language = lang.split("-")[0].toLowerCase();
   const choices = voices.filter((voice) => voice.lang.toLowerCase().startsWith(language) || voice.voiceURI === settings.voice);
   const active = state.phase === "listening" || state.phase === "speaking";
 
@@ -95,7 +97,7 @@ export function VoiceDock({ bot, threadId, observation, onEnd }: { bot: Bot; thr
     {(state.heard || state.error) && <p className="voice-dock-heard" data-error={!!state.error}>{state.error ?? state.heard}</p>}
     {panel && <div className="voice-dock-panel">
       <label>Language<select value={settings.lang} onChange={(event) => change({ lang: event.target.value, voice: null })}>{voiceLanguageOptions().map(([code, label]) => <option key={code} value={code}>{label}</option>)}</select></label>
-      <label>Voice<select value={settings.voice ?? ""} onChange={(event) => change({ voice: event.target.value || null })}><option value="">Default ({voiceLang(settings)})</option>{choices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label>
+      <label>Voice<select value={settings.voice ?? ""} onChange={(event) => change({ voice: event.target.value || null })}><option value="">Default ({lang})</option>{choices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name}</option>)}</select></label>
       <div role="group" aria-label="Speed">{SPEEDS.map((rate) => <button key={rate} type="button" aria-pressed={settings.rate === rate} onClick={() => change({ rate })}>{rate}×</button>)}</div>
     </div>}
     <span className="voice-dock-handle" aria-hidden="true" />

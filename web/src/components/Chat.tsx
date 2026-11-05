@@ -510,11 +510,20 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
     rec.lang = currentLang;
     let accumulated = "";
     const baseText = draft.getSnapshot().text;
+    let written = baseText;
     rec.onresult = (ev: any) => {
+      // Typing or sending while listening wins: stop rather than overwrite the draft or refill it.
+      if (draft.getSnapshot().text !== written) {
+        if (activeRec.current === rec) activeRec.current = null;
+        rec.abort?.();
+        setListening(false);
+        return;
+      }
       const results = Array.from(ev.results ?? []);
       accumulated = results.map((result: any) => result[0]?.transcript || "").join(" ").trim();
       if (accumulated) {
-        setText((baseText ? baseText.trim() + " " : "") + accumulated);
+        written = (baseText ? baseText.trim() + " " : "") + accumulated;
+        setText(written);
       }
     };
     rec.onerror = (ev: any) => {
