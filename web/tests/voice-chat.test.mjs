@@ -15,7 +15,7 @@ async function load(path) {
     return await import(pathToFileURL(file).href);
   } finally { await rm(directory, { recursive: true }); }
 }
-const { defaultVoiceLang, readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_KEY, VOICE_SETTINGS_EVENT, requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
+const { defaultVoiceLang, voiceLang, readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_KEY, VOICE_SETTINGS_EVENT, requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
 const { parseReply, withReply } = await load("../src/lib/reply.ts");
 
 function harness({ send = async () => {} } = {}) {
@@ -209,8 +209,15 @@ test("a reply round-trips through its hidden block and cannot break out of it", 
 test("voice settings persist language and setLang updates active recognition", () => {
   const call = harness();
   call.session.start(null);
-  assert.equal(call.recognitions.at(-1).lang, "es-419");
+  assert.equal(call.recognitions.at(-1).lang, defaultVoiceLang(), "with no saved choice, it listens in the browser's language");
   call.session.setLang("en-US");
   assert.equal(call.recognitions.at(-1).lang, "en-US");
   assert.equal(call.recognitions.length, 2);
+});
+
+test("the voice language follows the browser until one is chosen", () => {
+  assert.equal(defaultVoiceLang(), navigator.language || "en-US");
+  assert.notEqual(defaultVoiceLang(), "es-419", "an English browser isn't switched to Spanish");
+  assert.equal(voiceLang({ lang: "" }), defaultVoiceLang());
+  assert.equal(voiceLang({ lang: "es-ES" }), "es-ES");
 });

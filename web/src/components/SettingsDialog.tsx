@@ -14,8 +14,8 @@ import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useAp
 import { api, signOutTarget } from "../lib/api";
 import { t3http } from "../lib/t3";
 import type { ModelSelection, Settings } from "../lib/types";
-import { readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_EVENT } from "../lib/voiceChat";
-import { VOICE_LANGUAGES } from "./VoiceDock";
+import { saveVoiceSettings } from "../lib/voiceChat";
+import { useVoiceSettings, voiceLanguageOptions } from "./VoiceDock";
 
 const PANES = [
   { id: "general", label: "General", icon: <Gear size={15} /> },
@@ -100,16 +100,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   const timezone = s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const rules = s.rules.alwaysAsk.length + s.rules.allowWithoutAsking.length;
   const [signingOut, setSigningOut] = useState(false);
-  const [voiceSettings, setVoiceSettings] = useState(readVoiceSettings);
-  useEffect(() => {
-    const onSettings = () => setVoiceSettings(readVoiceSettings());
-    window.addEventListener(VOICE_SETTINGS_EVENT, onSettings);
-    window.addEventListener("storage", onSettings);
-    return () => {
-      window.removeEventListener(VOICE_SETTINGS_EVENT, onSettings);
-      window.removeEventListener("storage", onSettings);
-    };
-  }, []);
+  const voiceSettings = useVoiceSettings();
   const usagePeak = useUsagePeak();
   const update = useUpdateNotice();
   const signOut = async () => {
@@ -134,7 +125,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
     <Group title="Voice">
       <Row title="Voice language" desc="Used for dictation and voice calls.">
         <select aria-label="Voice language" value={voiceSettings.lang} onChange={(e) => saveVoiceSettings({ lang: e.target.value, voice: null })} className="h-8 rounded-lg border border-line bg-elevated px-2 text-[13px] outline-none">
-          {VOICE_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+          {voiceLanguageOptions().map(([code, label]) => <option key={code} value={code}>{label}</option>)}
         </select>
       </Row>
     </Group>
@@ -164,16 +155,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
   const save = useContext(SettingsSave);
   const [name, setName] = useState(s.userName);
   useEffect(() => setName(s.userName), [s.userName]);
-  const [voiceSettings, setVoiceSettings] = useState(readVoiceSettings);
-  useEffect(() => {
-    const onSettings = () => setVoiceSettings(readVoiceSettings());
-    window.addEventListener(VOICE_SETTINGS_EVENT, onSettings);
-    window.addEventListener("storage", onSettings);
-    return () => {
-      window.removeEventListener(VOICE_SETTINGS_EVENT, onSettings);
-      window.removeEventListener("storage", onSettings);
-    };
-  }, []);
+  const voiceSettings = useVoiceSettings();
   const knownTimezones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
   const tzs = [...new Set([s.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone, "UTC", ...knownTimezones])].filter(Boolean);
   const saveName = async () => {
@@ -199,7 +181,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
       </Group>}
       {!accountOnly && <Group title="Voice">
         <Row title="Voice language" desc="Used for dictation and voice calls.">
-          <Select label="Voice language" value={voiceSettings.lang} onChange={(lang) => saveVoiceSettings({ lang, voice: null })} options={VOICE_LANGUAGES.map((l) => [l.code, l.label])} />
+          <Select label="Voice language" value={voiceSettings.lang} onChange={(lang) => saveVoiceSettings({ lang, voice: null })} options={voiceLanguageOptions()} />
         </Row>
       </Group>}
     </>

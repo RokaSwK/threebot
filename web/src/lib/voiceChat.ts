@@ -243,17 +243,14 @@ export const VOICE_SETTINGS_KEY = "bot.voice";
 export const VOICE_SETTINGS_EVENT = "bot-voice-settings-changed";
 export type VoiceSettings = { voice: string | null; rate: number; lang: string };
 
+/** The browser's language. A saved language only overrides it. */
 export function defaultVoiceLang(): string {
-  if (typeof navigator !== "undefined" && navigator.language) {
-    if (navigator.language.toLowerCase().startsWith("es")) {
-      return navigator.language;
-    }
-  }
-  return "es-419";
+  return (typeof navigator !== "undefined" && navigator.language) || "en-US";
 }
+/** The language to listen and speak in: the saved one, or the browser's. */
+export const voiceLang = (settings: Pick<VoiceSettings, "lang">) => settings.lang || defaultVoiceLang();
 
 export function readVoiceSettings(): VoiceSettings {
-  const fallbackLang = defaultVoiceLang();
   try {
     const value: unknown = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) ?? "null");
     if (value && typeof value === "object") {
@@ -261,11 +258,11 @@ export function readVoiceSettings(): VoiceSettings {
       return {
         voice: typeof voice === "string" ? voice : null,
         rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1,
-        lang: typeof lang === "string" && lang ? lang : fallbackLang,
+        lang: typeof lang === "string" ? lang : "",
       };
     }
   } catch { /* Storage may be unavailable or hold an older value. */ }
-  return { voice: null, rate: 1, lang: fallbackLang };
+  return { voice: null, rate: 1, lang: "" };
 }
 
 export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {
@@ -291,7 +288,7 @@ export function browserSpeak(settings: () => VoiceSettings, text: string, done: 
     const utterance = new SpeechSynthesisUtterance(chunk);
     const { voice, rate, lang } = settings();
     utterance.rate = rate;
-    const effectiveLang = lang || defaultVoiceLang();
+    const effectiveLang = voiceLang({ lang });
     utterance.lang = effectiveLang;
     const voices = synth.getVoices();
     const chosenVoice = voices.find((item) => item.voiceURI === voice);
