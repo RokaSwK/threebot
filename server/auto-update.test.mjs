@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { MAX_WAIT_MS, busyBotThreads, createAutoUpdateStore, createAutoUpdater } from "./auto-update.mjs";
+import { MAX_WAIT_MS, PENDING_MS, busyBotThreads, createAutoUpdateStore, createAutoUpdater } from "./auto-update.mjs";
 
 const file = () => path.join(mkdtempSync(path.join(tmpdir(), "tb-auto-")), "auto-update.json");
 const bots = [{ slug: "alpha", projectId: "project-alpha", mainThreadId: "thread-alpha" }];
@@ -101,4 +101,18 @@ test("an updater that fails before switching is reported and not retried", async
   assert.equal((await updater.status()).notice.kind, "failed");
   await updater.consider(found());
   assert.deepEqual(installs, ["0.2.0"]);
+});
+
+test("an update that never restarts the gateway (Linux can't see the updater exit) is given up after a while", async () => {
+  let t = 0;
+  const installs = [];
+  const updater = createAutoUpdater({ store: createAutoUpdateStore(file()), version: "0.1.0", now: () => t, isBusy: async () => [], install: async (v) => { installs.push(v); } });
+  await updater.setAuto(true);
+  await updater.consider(found("0.2.0"));
+  t = PENDING_MS - 1; await updater.consider(found("0.2.1"));
+  assert.deepEqual(installs, ["0.2.0"], "no second update while one is running");
+  t = PENDING_MS; await updater.consider(found("0.2.1"));
+  const { notice } = await updater.status();
+  assert.deepEqual([notice.kind, notice.version], ["failed", "0.2.0"]);
+  assert.deepEqual(installs, ["0.2.0", "0.2.1"], "the stuck one is skipped and the newer release goes ahead");
 });

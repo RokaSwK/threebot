@@ -5,6 +5,8 @@
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 
+/** An update that hasn't restarted us by then failed (on Linux the gateway can't see the updater exit). */
+export const PENDING_MS = 30 * 60 * 1000;
 /** How long a release waits for Bots to go quiet before the automatic update stops waiting for it. */
 export const MAX_WAIT_MS = 24 * 60 * 60 * 1000;
 const BUSY = new Set(["preparing", "queued", "starting", "running", "waiting"]);
@@ -48,7 +50,7 @@ export function createAutoUpdateStore(file) {
  * once it's running; `onExit` from the gateway reports an updater that ended while this process lives,
  * which only happens when it failed before swapping. `isBusy()` resolves to the busy Bot threads.
  */
-export function createAutoUpdater({ store, version, isBusy, install, installed = (v) => false, now = Date.now, maxWaitMs = MAX_WAIT_MS, log = () => {} }) {
+export function createAutoUpdater({ store, version, isBusy, install, installed = () => false, now = Date.now, maxWaitMs = MAX_WAIT_MS, log = () => {} }) {
   let lastCheckedAt = null, running = false;
 
   /** On start-up: an update this gateway's predecessor began either worked (we run its version) or didn't. */
@@ -71,7 +73,8 @@ export function createAutoUpdater({ store, version, isBusy, install, installed =
   async function consider(result) {
     if (!result?.checkedAt || result.checkedAt === lastCheckedAt) return;
     lastCheckedAt = result.checkedAt;
-    const s = await store.read();
+    let s = await store.read();
+    if (s.pending && now() - Date.parse(s.pending.at) >= PENDING_MS) { await failed(s.pending.to, new Error("it didn't finish")); s = await store.read(); }
     if (!s.auto || running || s.pending) return;
     if (result.error || !result.updateAvailable || !result.latest) return;
     const target = result.latest.version, url = result.latest.url;

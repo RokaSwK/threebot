@@ -189,13 +189,14 @@ const remoteAccess = createRemoteAccess({
 let updating = null;
 /**
  * Settings → Updates, and the automatic update: hand the update to `threebot update`, which swaps versions
- * and restarts this service. `onExit` hears about an updater that ended while this gateway still runs.
+ * and restarts this service. The automatic update passes the `target` it decided on, and `onExit` to hear
+ * about an updater that ended while this gateway still runs (macOS: on Linux systemd-run returns at once).
  */
-async function startSelfUpdate({ onExit } = {}) {
+async function startSelfUpdate({ target, onExit } = {}) {
   if (!selfUpdating) {
     throw Object.assign(new Error("This copy can't update itself. Install Threebot with the installer and run it as a service, or update it with `git pull` and `npm run setup`."), { status: 409 });
   }
-  const { updateAvailable, latest, error } = await checkUpdates({ force: true });
+  const { updateAvailable, latest, error } = target ? { updateAvailable: true, latest: { version: target } } : await checkUpdates({ force: true });
   if (error) throw Object.assign(new Error(error), { status: 502 });
   if (!updateAvailable) return { started: false, version };
   if (updating) return { started: true, version: latest.version };
@@ -211,7 +212,7 @@ async function startSelfUpdate({ onExit } = {}) {
   child.unref();
   await out.close();
   updating = { version: latest.version, startedAt: Date.now() };
-  child.on("exit", (code) => { updating = null; onExit?.(latest.version, code); });
+  child.on("exit", (code) => { updating = null; if (process.platform !== "linux") onExit?.(latest.version, code); });
   return { started: true, version: latest.version };
 }
 
@@ -231,8 +232,7 @@ const autoUpdate = createAutoUpdater({
   store: createAutoUpdateStore(path.join(appDir, "auto-update.json")),
   version, isBusy: busyThreads, installed: versionInstalled(runtimePaths(dataRoot).versions), log: (line) => console.log(line),
   install: async (target) => {
-    const started = await startSelfUpdate({ onExit: (v, code) => void autoUpdate.failed(v, new Error(`the updater exited (${code}) without switching`)) });
-    if (!started.started) throw new Error(`${target} is no longer offered`);
+    await startSelfUpdate({ target, onExit: (v, code) => void autoUpdate.failed(v, new Error(`the updater exited (${code}) without switching`)) });
   },
 });
 const passwordRequired = async () => Boolean(cfg.password) || (await remoteAccess.hasPassword());
