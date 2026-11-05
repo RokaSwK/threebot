@@ -175,7 +175,7 @@ test("the mobile mic starts real dictation only on an explicit tap", async () =>
 
 test("desktop has no model controls in the writing row either", async () => {
   window.happyDOM.setWindowSize({ width: 1200, height: 900 });
-  await render();
+  await render({ key: "desktop" });
   assert.equal(host.querySelector('.composer-controls [aria-label="Opus 5.5"]'), null);
   assert.equal(host.querySelector('.composer-controls [aria-label="Effort: Medium"]'), null);
   await click(actions());
@@ -239,5 +239,39 @@ test("goal commands use separate turns even when the regular composer would Stee
   assert.equal(sends[0].command.dispatchMode.type, "queue_after_active");
   assert.equal(sends[0].command.text, "/goal A small objective");
   await runtime.act(async () => sends[0].resolve({ sequence: 1 }));
+  assert.equal(textarea().value, "");
+});
+
+test("mobile Enter key does not submit, while Ctrl+Enter or desktop Enter submits", async () => {
+  await render();
+  await type("Mobile draft text");
+  await runtime.act(async () => {
+    textarea().dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  assert.equal(sends.length, 0, "mobile Enter does not send");
+
+  await runtime.act(async () => {
+    textarea().dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  assert.equal(sends.length, 1, "Ctrl+Enter sends the message");
+  assert.equal(sends[0].command.text, "Mobile draft text");
+  await runtime.act(async () => sends[0].resolve({ sequence: 1 }));
+  assert.equal(textarea().value, "");
+
+  // Desktop Enter behavior
+  window.happyDOM.setWindowSize({ width: 1200, height: 900 });
+  await render({ key: "desktop" });
+  await type("Desktop draft text");
+  await runtime.act(async () => {
+    textarea().dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+  });
+  assert.equal(sends.length, 1, "Shift+Enter does not send");
+
+  await runtime.act(async () => {
+    textarea().dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+  assert.equal(sends.length, 2, "desktop Enter sends");
+  assert.equal(sends[1].command.text, "Desktop draft text");
+  await runtime.act(async () => sends[1].resolve({ sequence: 2 }));
   assert.equal(textarea().value, "");
 });

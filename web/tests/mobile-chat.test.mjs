@@ -132,12 +132,14 @@ test("the real composer renders mobile tap protection while retaining each threa
   const child = render(h(Composer, { bot, threadId: "child", working: true }));
   assert.match(main, /<textarea[^>]*readOnly=""[^>]*>A saved main draft<\/textarea>/);
   assert.match(child, /<textarea[^>]*readOnly=""[^>]*>A saved child draft<\/textarea>/);
+  assert.match(main, /enterkeyhint="enter"/i);
   assert.ok(queries.every((query) => query === MOBILE_CHAT_QUERY));
   assert.match(MOBILE_CHAT_QUERY, /max-width: 760px/);
   assert.match(MOBILE_CHAT_QUERY, /pointer: coarse/);
   globalThis.window = { matchMedia: () => ({ matches: false }) };
   const desktop = render(h(Composer, { bot, threadId: "main", working: false }));
   assert.doesNotMatch(desktop, /<textarea[^>]*readOnly/);
+  assert.doesNotMatch(desktop, /enterkeyhint/i);
   assert.match(desktop, />A saved main draft<\/textarea>/);
 });
 
