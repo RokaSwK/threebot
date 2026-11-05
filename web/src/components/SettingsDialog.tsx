@@ -14,6 +14,8 @@ import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useAp
 import { api, signOutTarget } from "../lib/api";
 import { t3http } from "../lib/t3";
 import type { ModelSelection, Settings } from "../lib/types";
+import { saveVoiceSettings } from "../lib/voiceChat";
+import { useVoiceSettings, voiceLanguageOptions } from "./VoiceDock";
 
 const PANES = [
   { id: "general", label: "General", icon: <Gear size={15} /> },
@@ -98,6 +100,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   const timezone = s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const rules = s.rules.alwaysAsk.length + s.rules.allowWithoutAsking.length;
   const [signingOut, setSigningOut] = useState(false);
+  const voiceSettings = useVoiceSettings();
   const usagePeak = useUsagePeak();
   const update = useUpdateNotice();
   const signOut = async () => {
@@ -118,6 +121,13 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <Row title="Set Time Zone Automatically" desc="Use this device’s time zone in Bot settings."><Switch checked={!s.timezone} onChange={(auto) => save({ timezone: auto ? "" : timezone })} label="Set Time Zone Automatically" /></Row>
       <SettingsHomeLink title="Time Zone" detail={timezone} disabled={!s.timezone} onClick={() => pane("timezone")} />
       <SettingsHomeLink title="Bot Computer" onClick={() => pane("computer")} />
+    </Group>
+    <Group title="Voice">
+      <Row title="Voice language" desc="Used for dictation and voice calls.">
+        <select aria-label="Voice language" value={voiceSettings.lang} onChange={(e) => saveVoiceSettings({ lang: e.target.value, voice: null })} className="h-8 rounded-lg border border-line bg-elevated px-2 text-[13px] outline-none">
+          {voiceLanguageOptions().map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+        </select>
+      </Row>
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
     <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
@@ -145,6 +155,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
   const save = useContext(SettingsSave);
   const [name, setName] = useState(s.userName);
   useEffect(() => setName(s.userName), [s.userName]);
+  const voiceSettings = useVoiceSettings();
   const knownTimezones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
   const tzs = [...new Set([s.timezone, Intl.DateTimeFormat().resolvedOptions().timeZone, "UTC", ...knownTimezones])].filter(Boolean);
   const saveName = async () => {
@@ -167,6 +178,11 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
           <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
         </Row>
         <BackupModelRow />
+      </Group>}
+      {!accountOnly && <Group title="Voice">
+        <Row title="Voice language" desc="Used for dictation and voice calls.">
+          <Select label="Voice language" value={voiceSettings.lang} onChange={(lang) => saveVoiceSettings({ lang, voice: null })} options={voiceLanguageOptions()} />
+        </Row>
       </Group>}
     </>
   );

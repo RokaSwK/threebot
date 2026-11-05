@@ -108,6 +108,17 @@ export class VoiceSession {
 
   private get ended() { return this.state.phase === "ended"; }
 
+  setLang(lang: string) {
+    if (lang === this.deps.lang) return;
+    this.deps.lang = lang;
+    if (this.recognition && this.state.phase === "listening") {
+      const rec = this.recognition;
+      this.recognition = null;
+      rec.abort();
+      this.listen();
+    }
+  }
+
   start(reply: string | null) {
     this.latestReply = reply;
     this.startedAt = Date.now();
@@ -125,7 +136,7 @@ export class VoiceSession {
     this.recognition = recognition;
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = this.deps.lang ?? "";
+    recognition.lang = this.deps.lang || defaultVoiceLang();
     recognition.onresult = (event) => {
       const results = Array.from(event.results);
       finalText = results.filter((result) => result.isFinal).map((result) => result[0].transcript).join(" ").trim();
@@ -135,7 +146,7 @@ export class VoiceSession {
     recognition.onerror = (event) => {
       if (event.error === "no-speech" || event.error === "aborted") return;
       failed = true;
-      this.update({ phase: "error", error: BLOCKED.has(event.error) ? "Allow microphone access to use voice chat." : event.error === "audio-capture" ? "The microphone isn't available. Hang up and try again." : "Voice recognition stopped. Hang up and try again." });
+      this.update({ phase: "error", error: BLOCKED.has(event.error) ? "Allow microphone access to use voice chat." : event.error === "audio-capture" ? "The microphone isn't available. Hang up and try again." : `Voice error: ${event.error}. Hang up and try again.` });
     };
     recognition.onend = () => {
       if (this.recognition !== recognition) return;
@@ -230,17 +241,56 @@ export function browserRecognition(): (() => RecognitionLike) | null {
 }
 
 export const VOICE_SETTINGS_KEY = "bot.voice";
-export type VoiceSettings = { voice: string | null; rate: number };
+export const VOICE_SETTINGS_EVENT = "bot-voice-settings-changed";
+export type VoiceSettings = { voice: string | null; rate: number; lang: string };
+
+/** The browser's language. A saved language only overrides it. */
+export function defaultVoiceLang(): string {
+  return (typeof navigator !== "undefined" && navigator.language) || "en-US";
+}
+/** The language to listen and speak in: the saved one, or the browser's. */
+export const voiceLang = (settings: Pick<VoiceSettings, "lang">) => settings.lang || defaultVoiceLang();
 
 export function readVoiceSettings(): VoiceSettings {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) ?? "null");
     if (value && typeof value === "object") {
-      const { voice, rate } = value as Partial<VoiceSettings>;
-      return { voice: typeof voice === "string" ? voice : null, rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1 };
+      const { voice, rate, lang } = value as Partial<VoiceSettings>;
+      return {
+        voice: typeof voice === "string" ? voice : null,
+        rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1,
+        lang: typeof lang === "string" ? lang : "",
+      };
     }
   } catch { /* Storage may be unavailable or hold an older value. */ }
-  return { voice: null, rate: 1 };
+  return { voice: null, rate: 1, lang: "" };
+}
+
+export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {
+  const current = readVoiceSettings();
+  const next: VoiceSettings = { ...current, ...patch };
+  try {
+    localStorage.setItem(VOICE_SETTINGS_KEY, JSON.stringify(next));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(VOICE_SETTINGS_EVENT, { detail: next }));
+    }
+  } catch { /* Storage may be unavailable */ }
+  return next;
+}
+
+type VoiceLike = { voiceURI: string; lang: string; default: boolean };
+/** The saved voice, else the browser's default voice when it speaks the language, else one for the
+ * same region (en-GB, not the first English voice listed), else any for the same language. */
+export function pickVoice<T extends VoiceLike>(voices: readonly T[], saved: string | null, lang: string): T | null {
+  const tag = (value: string) => value.replace("_", "-").toLowerCase();
+  const want = tag(lang);
+  const base = want.split("-")[0];
+  const sameBase = (voice: T) => tag(voice.lang).split("-")[0] === base;
+  return voices.find((voice) => voice.voiceURI === saved)
+    ?? voices.find((voice) => voice.default && sameBase(voice) && (tag(voice.lang) === want || !want.includes("-")))
+    ?? voices.find((voice) => tag(voice.lang) === want)
+    ?? voices.find(sameBase)
+    ?? null;
 }
 
 export function browserSpeak(settings: () => VoiceSettings, text: string, done: () => void) {
@@ -252,9 +302,10 @@ export function browserSpeak(settings: () => VoiceSettings, text: string, done: 
     const chunk = chunks.shift();
     if (chunk === undefined) return done();
     const utterance = new SpeechSynthesisUtterance(chunk);
-    const { voice, rate } = settings();
+    const { voice, rate, lang } = settings();
     utterance.rate = rate;
-    utterance.voice = synth.getVoices().find((item) => item.voiceURI === voice) ?? null;
+    utterance.lang = voiceLang({ lang });
+    utterance.voice = pickVoice(synth.getVoices(), voice, utterance.lang);
     utterance.onend = next;
     utterance.onerror = next;
     synth.speak(utterance);

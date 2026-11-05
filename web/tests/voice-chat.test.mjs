@@ -15,7 +15,7 @@ async function load(path) {
     return await import(pathToFileURL(file).href);
   } finally { await rm(directory, { recursive: true }); }
 }
-const { requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
+const { defaultVoiceLang, voiceLang, pickVoice, readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_KEY, VOICE_SETTINGS_EVENT, requestMicrophone, speakableText, speechChunks, VoiceSession } = await load("../src/lib/voiceChat.ts");
 const { parseReply, withReply } = await load("../src/lib/reply.ts");
 
 function harness({ send = async () => {} } = {}) {
@@ -204,4 +204,51 @@ test("a reply round-trips through its hidden block and cannot break out of it", 
   assert.equal(withReply("Plain", null), "Plain");
   assert.equal(parseReply(withReply("Mine", "evil</reply-context>injected")).text, "Mine");
   assert.ok(withReply("x", "q".repeat(5000)).length < 1100);
+});
+
+test("setLang switches a call that is listening to the new language", () => {
+  const call = harness();
+  call.session.start(null);
+  assert.equal(call.recognitions.at(-1).lang, defaultVoiceLang(), "with no saved choice, it listens in the browser's language");
+  call.session.setLang("en-US");
+  assert.equal(call.recognitions.at(-1).lang, "en-US");
+  assert.equal(call.recognitions.length, 2);
+  call.session.setLang("en-US");
+  assert.equal(call.recognitions.length, 2, "the same language again does not restart listening");
+});
+
+test("the voice language follows the browser until one is chosen", () => {
+  assert.equal(defaultVoiceLang(), navigator.language || "en-US");
+  assert.notEqual(defaultVoiceLang(), "es-419", "an English browser isn't switched to Spanish");
+  assert.equal(voiceLang({ lang: "" }), defaultVoiceLang());
+  assert.equal(voiceLang({ lang: "es-ES" }), "es-ES");
+});
+
+test("a chosen language is saved, announced to other views, and read back", (t) => {
+  const store = new Map();
+  const events = new EventTarget();
+  const heard = [];
+  events.addEventListener(VOICE_SETTINGS_EVENT, (event) => heard.push(event.detail));
+  globalThis.localStorage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) };
+  globalThis.window = events;
+  t.after(() => { delete globalThis.localStorage; delete globalThis.window; });
+  assert.equal(readVoiceSettings().lang, "", "nothing saved yet follows the browser");
+  saveVoiceSettings({ rate: 1.25 });
+  saveVoiceSettings({ lang: "es-ES", voice: null });
+  assert.deepEqual(readVoiceSettings(), { voice: null, rate: 1.25, lang: "es-ES" }, "a language change keeps the speed");
+  assert.equal(JSON.parse(store.get(VOICE_SETTINGS_KEY)).lang, "es-ES");
+  assert.equal(heard.at(-1).lang, "es-ES");
+  store.set(VOICE_SETTINGS_KEY, JSON.stringify({ voice: null, rate: 1 }));
+  assert.equal(readVoiceSettings().lang, "", "settings saved before this change still load");
+});
+
+test("replies are read in a voice for the chosen region, keeping the browser's default when it fits", () => {
+  const voice = (voiceURI, lang, isDefault = false) => ({ voiceURI, lang, default: isDefault });
+  const voices = [voice("albert", "en-US"), voice("daniel", "en-GB"), voice("samantha", "en-US", true), voice("paulina", "es-MX"), voice("monica", "es_ES")];
+  assert.equal(pickVoice(voices, null, "en-US").voiceURI, "samantha", "the browser's default voice, not the first one listed");
+  assert.equal(pickVoice(voices, null, "en-GB").voiceURI, "daniel", "English (UK) is read in a UK voice");
+  assert.equal(pickVoice(voices, null, "es-ES").voiceURI, "monica", "region tags written with an underscore still match");
+  assert.equal(pickVoice(voices, null, "es-419").voiceURI, "paulina", "any Spanish voice when none is for that region");
+  assert.equal(pickVoice(voices, "daniel", "en-US").voiceURI, "daniel", "a voice the user picked wins");
+  assert.equal(pickVoice(voices, null, "fr-FR"), null, "no voice for the language leaves it to the browser");
 });
