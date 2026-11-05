@@ -8,7 +8,7 @@
 
 ![The ball looking over the Threebot desktop app](docs/assets/hero.webp)
 
-You already have [T3 Code](https://github.com/pingdotgg/t3code) and the Claude or Codex plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot with a face, a memory and a place on your phone. It does what a personal assistant does, faster, and runs your other threads for you.
+You already have [T3 Code](https://github.com/pingdotgg/t3code) and the AI plan behind it. Threebot turns one long-lived T3 thread into someone you can message: a Bot with a face, a memory and a place on your phone. It does what a personal assistant does, faster, and runs your other threads for you.
 
 Nothing new to pay for. Threebot doesn't resell AI; your Bots use the subscriptions T3 Code already has.
 
@@ -59,7 +59,7 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 You need:
 
 - Node 22.13 or newer
-- [T3 Code](https://t3.codes) running on the same machine, with Claude or Codex signed in
+- [T3 Code](https://t3.codes) running on the same machine, with a provider signed in
 - The `t3` command from T3 Code, to issue a token
 
 ```sh
@@ -75,6 +75,8 @@ npm start
 Open <http://127.0.0.1:3780> and create your first Bot. If T3 Code isn't on port 3773, set `T3_URL` in `.env`.
 
 Threebot listens on `127.0.0.1` by default, with no sign-in. Before exposing it to other devices, read [docs/self-hosting.md](docs/self-hosting.md).
+
+A Bot is a T3 thread, so it runs on whatever T3 Code runs: Claude, Codex, Cursor, Grok Build, OpenCode, Antigravity, Muse Code, Pi, fx, ACP agents such as Hermes, and local models. Threebot is tested on Claude and Codex. On other providers a Bot's memory and messaging tools may not be available yet.
 
 ## How it works
 
