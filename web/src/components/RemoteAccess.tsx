@@ -1,0 +1,150 @@
+import { useEffect, useState } from "react";
+import { Copy, ExternalLink, RefreshCw } from "lucide-react";
+import { api, type AccessState, type SystemInfo } from "../lib/api";
+import { toast } from "../store";
+import { Group, H, Row } from "./SettingsParts";
+import { IconButton, Pill, Spinner } from "./ui";
+
+const message = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
+
+async function copy(text: string) {
+  try { await navigator.clipboard.writeText(text); toast("Link copied"); } catch { toast(text); }
+}
+
+function Link({ href, children }: { href: string; children: React.ReactNode }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 rounded-full bg-hover px-3 py-1.5 text-[13px] hover:bg-active">{children}<ExternalLink size={13} aria-hidden="true" /></a>;
+}
+
+function Address({ url }: { url: string }) {
+  return <span className="mt-1 flex min-w-0 items-center gap-1.5">
+    <a href={url} target="_blank" rel="noopener noreferrer" className="min-w-0 truncate text-accent underline-offset-2 hover:underline">{url}</a>
+    <IconButton type="button" onClick={() => void copy(url)} aria-label="Copy link" title="Copy link" className="size-7 shrink-0"><Copy size={14} /></IconButton>
+  </span>;
+}
+
+/** Settings → Remote access: the one-click Tailscale and Cloudflare setups. */
+export function RemoteAccessPane() {
+  const [state, setState] = useState<AccessState | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+
+  const load = async () => {
+    try { setState(await api.access()); setError(""); } catch (e) { setError(message(e)); }
+  };
+  useEffect(() => { void load(); }, []);
+
+  const act = async (name: string, run: () => Promise<AccessState>) => {
+    setBusy(name);
+    try { setState(await run()); setError(""); }
+    catch (e) { setError(message(e)); void load(); }
+    finally { setBusy(null); }
+  };
+
+  if (!state) return <><H>Remote access</H>{error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : <div role="status" className="grid h-24 place-items-center"><Spinner /></div>}</>;
+  const ts = state.tailscale, tunnel = state.tunnel;
+
+  let tsDesc: React.ReactNode, tsAction: React.ReactNode = null;
+  if (ts.fromEnv) tsDesc = "Set up in .env (TAILNET_PORT).";
+  else if (!ts.installed) { tsDesc = "Tailscale isn't installed on this machine."; tsAction = <Link href="https://tailscale.com/download">Get Tailscale</Link>; }
+  else if (ts.needsLogin) { tsDesc = "Tailscale is signed out on this machine."; tsAction = ts.authUrl ? <Link href={ts.authUrl}>Sign in</Link> : <span className="text-[12.5px] text-muted">Open Tailscale and sign in</span>; }
+  else if (!ts.running) tsDesc = "Tailscale isn't running on this machine. Start it, then check again.";
+  else if (!ts.https) { tsDesc = "HTTPS certificates are off for your tailnet. Threebot needs them to work as an app on your phone."; tsAction = <Link href="https://login.tailscale.com/admin/dns">Turn on HTTPS</Link>; }
+  else if (ts.enabled && ts.url) {
+    tsDesc = <>{ts.serving === false ? "Tailscale isn't serving this link right now. Turn it off and on again." : `Only ${ts.users.join(", ")} can open it, from devices on your tailnet.`}<Address url={ts.url} /></>;
+    tsAction = <Pill variant="soft" disabled={busy !== null} onClick={() => void act("tailscale", () => api.tailscale(false))}>{busy === "tailscale" ? "Turning off…" : "Turn off"}</Pill>;
+  } else {
+    tsDesc = `A private https link that only ${ts.login ?? "you"} can open, from devices on your tailnet.`;
+    tsAction = <Pill disabled={busy !== null} onClick={() => void act("tailscale", () => api.tailscale(true))}>{busy === "tailscale" ? "Setting up…" : "Turn on"}</Pill>;
+  }
+
+  return <>
+    <H>Remote access</H>
+    <p className="mb-5 text-[13px] leading-5 text-muted">Open Threebot on your phone and other computers. Tailscale keeps it private to your own devices. A Cloudflare link works from anywhere and asks for a password.</p>
+    {error && <p role="alert" className="mb-4 text-[13px] text-danger">{error}</p>}
+    <Group title="Private · Tailscale">
+      <Row title="Tailscale" desc={tsDesc}>
+        {tsAction}
+        {!ts.enabled && !ts.fromEnv && <IconButton type="button" onClick={() => void act("check", api.access)} aria-label="Check again" title="Check again" className="size-8"><RefreshCw size={14} /></IconButton>}
+      </Row>
+    </Group>
+    <Group title="Public link · Cloudflare">
+      <Row title="Password" desc={state.password.fromEnv ? "Set by BOT_PASSWORD in .env." : state.password.set ? "Set. Changing it signs out every other device." : "Anyone with a public link sees the sign-in page first, so set a password before turning one on."}>
+        {!state.password.fromEnv && <form className="flex shrink-0 items-center gap-2" onSubmit={(e) => { e.preventDefault(); const value = password; setPassword(""); void act("password", () => api.setPassword(value)); }}>
+          <input type="password" autoComplete="new-password" aria-label={state.password.set ? "New password" : "Password"} placeholder={state.password.set ? "New password" : "Password"} minLength={8} required value={password} onChange={(e) => setPassword(e.target.value)} className="h-8 w-40 rounded-lg border border-line bg-elevated px-2.5 text-[13px] outline-none" />
+          <Pill type="submit" variant="soft" disabled={busy !== null || password.length < 8}>{busy === "password" ? "Saving…" : "Save"}</Pill>
+        </form>}
+      </Row>
+      <Row title="Cloudflare link" desc={(tunnel.url ? undefined : tunnel.error ?? "A trycloudflare.com link with no account needed. It changes each time Threebot restarts.")}>
+        {tunnel.enabled
+          ? <Pill variant="soft" disabled={busy !== null} onClick={() => void act("tunnel", () => api.tunnel(false))}>{busy === "tunnel" ? "Turning off…" : "Turn off"}</Pill>
+          : <Pill disabled={busy !== null || !state.password.set} title={state.password.set ? undefined : "Set a password first"} onClick={() => void act("tunnel", () => api.tunnel(true))}>{busy === "tunnel" ? (tunnel.available ? "Starting…" : "Downloading cloudflared…") : "Turn on"}</Pill>}
+      </Row>
+      {tunnel.url && <div className="border-t border-line px-4 py-3 text-[12.5px] text-muted">Anyone with this link sees the sign-in page.<Address url={tunnel.url} /></div>}
+    </Group>
+  </>;
+}
+
+/** "0.2.0" when a newer release is out, for the Settings home row. */
+export function useUpdateNotice() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => { api.system().then((s) => setVersion(s.updateAvailable ? s.latest?.version ?? null : null)).catch(() => {}); }, []);
+  return version;
+}
+
+/** Settings → Updates: the same flow as T3 Code's, through `threebot update` on the server. */
+export function UpdatesPane({ t3 }: { t3: React.ReactNode }) {
+  const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState<string | null>(null);
+
+  const check = async (force: boolean) => {
+    setChecking(true);
+    try { setInfo(await api.system(force)); setError(""); } catch (e) { setError(message(e)); }
+    finally { setChecking(false); }
+  };
+  useEffect(() => { void check(false); }, []);
+
+  const update = async () => {
+    setError("");
+    try {
+      const { started, version } = await api.startUpdate();
+      if (!started) return void check(true);
+      setUpdating(version);
+      // The gateway restarts on the new version; reload once it answers with it.
+      const end = Date.now() + 4 * 60 * 1000;
+      while (Date.now() < end) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try { if ((await api.health()).version === version) { location.reload(); return; } } catch { /* restarting */ }
+      }
+      setUpdating(null);
+      setError("The update didn't finish. Threebot keeps running the version it had; its log is in ~/.threebot/logs/update.log.");
+    } catch (e) { setUpdating(null); setError(message(e)); }
+  };
+
+  const latest = info?.latest;
+  let desc = "Checking…";
+  if (info) {
+    if (updating) desc = `Updating to ${updating}. Threebot restarts and this page reloads.`;
+    else if (info.updateAvailable && latest) desc = `Version ${info.version}. Version ${latest.version} is available.`;
+    else if (info.error) desc = `Version ${info.version}. Couldn't check for updates: ${info.error}`;
+    else desc = `Version ${info.version}. Up to date.`;
+  }
+  const canUpdate = info?.installed && info.service;
+
+  return <>
+    <H>Updates</H>
+    {error && <p role="alert" className="mb-4 text-[13px] text-danger">{error}</p>}
+    <Group>
+      <Row title="Threebot" desc={desc}>
+        {updating ? <Spinner /> : info?.updateAvailable && canUpdate
+          ? <Pill onClick={() => void update()}>Update</Pill>
+          : <IconButton type="button" disabled={checking} onClick={() => void check(true)} aria-label="Check for updates" title="Check for updates" className="size-8">{checking ? <Spinner /> : <RefreshCw size={14} />}</IconButton>}
+      </Row>
+      {t3}
+    </Group>
+    {info?.updateAvailable && latest && !canUpdate && <p className="mb-3 text-[12.5px] leading-5 text-muted">{info.installed ? <>Run <code>threebot update</code> on the server to install it.</> : <>This copy runs from a git checkout. Update it with <code>git pull &amp;&amp; npm run setup</code>, then restart it.</>}</p>}
+    {latest && <p className="text-[12.5px] text-muted"><a href={latest.url} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">What's new in {latest.version}</a></p>}
+  </>;
+}

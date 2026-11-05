@@ -56,11 +56,25 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 
 ## Run it
 
-You need:
+You need [T3 Code](https://t3.codes) on the same machine, with a provider signed in, and Node 22.13 or newer.
 
-- Node 22.13 or newer
-- [T3 Code](https://t3.codes) running on the same machine, with a provider signed in
-- The `t3` command from T3 Code, to issue a token
+```sh
+curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh
+threebot up
+```
+
+The installer downloads the latest [release](https://github.com/RokaSwK/threebot/releases), checks it against the release's SHA-256 sums and installs it in `~/.threebot`. `threebot up` asks T3 Code for a token, starts Threebot as a background service (launchd on macOS, systemd on Linux) and prints its address, <http://127.0.0.1:3780>. Open it and create your first Bot.
+
+To use it on your phone, open **Settings → Remote access**:
+
+- **Tailscale**, one click: a private `https://…ts.net` link only you can open, from your own devices.
+- **Cloudflare**, one click after setting a password: a public `trycloudflare.com` link that works anywhere, with no Cloudflare account.
+
+**Settings → Updates** shows new releases and installs them, like T3 Code: it downloads and checks the new version, restarts the service, and goes back to the old one if the new one doesn't start. From a terminal, run `threebot update`. `threebot help` lists the other commands.
+
+Threebot listens on `127.0.0.1` by default, with no sign-in. [docs/self-hosting.md](docs/self-hosting.md) covers the other ways to expose it.
+
+### From source
 
 ```sh
 git clone https://github.com/RokaSwK/threebot.git
@@ -72,9 +86,7 @@ t3 auth session issue --ttl 30d --label threebot --token-only   # paste into T3_
 npm start
 ```
 
-Open <http://127.0.0.1:3780> and create your first Bot. If T3 Code isn't on port 3773, set `T3_URL` in `.env`.
-
-Threebot listens on `127.0.0.1` by default, with no sign-in. Before exposing it to other devices, read [docs/self-hosting.md](docs/self-hosting.md).
+If T3 Code isn't on port 3773, set `T3_URL` in `.env`. A checkout updates with `git pull && npm run setup`.
 
 A Bot is a T3 thread, so it runs on whatever T3 Code runs: Claude, Codex, Cursor, Grok Build, OpenCode, Antigravity, Muse Code, Pi, fx, ACP agents such as Hermes, and local models. Threebot is tested on Claude and Codex. On other providers a Bot's memory and messaging tools may not be available yet.
 

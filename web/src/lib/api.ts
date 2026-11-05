@@ -30,8 +30,23 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+export type SystemInfo = { version: string; installed: boolean; service: boolean; latest: { version: string; url: string; notes: string; publishedAt: string | null } | null; updateAvailable: boolean; error: string | null };
+export type TailscaleState = { installed: boolean; running?: boolean; needsLogin?: boolean; state?: string; authUrl: string | null; dnsName?: string | null; https?: boolean; login?: string | null; enabled: boolean; fromEnv: boolean; users: string[]; url?: string; serving?: boolean; error?: string };
+export type AccessState = {
+  password: { set: boolean; fromEnv: boolean };
+  tailscale: TailscaleState;
+  tunnel: { enabled: boolean; url: string | null; error: string | null; available: boolean };
+};
+
 export const api = {
   session,
+  system: (check = false) => req<SystemInfo>(`/api/system${check ? "?check=1" : ""}`),
+  startUpdate: () => req<{ started: boolean; version: string }>("/api/system/update", { method: "POST", body: "{}" }),
+  health: () => req<{ ok: boolean; version: string }>("/api/health"),
+  access: () => req<AccessState>("/api/access"),
+  setPassword: (password: string | null) => req<AccessState>("/api/access/password", { method: "PUT", body: JSON.stringify({ password }) }),
+  tailscale: (on: boolean) => req<AccessState>("/api/access/tailscale", { method: "POST", body: JSON.stringify({ on }) }),
+  tunnel: (on: boolean) => req<AccessState>("/api/access/tunnel", { method: "POST", body: JSON.stringify({ on }) }),
   login: (password: string) => req("/api/login", { method: "POST", body: JSON.stringify({ password }) }),
   logout: () => req("/api/logout"),
   config: (signal?: AbortSignal) => req<{ botsRoot: string; accessLogout?: boolean; executorUrl?: string | null }>("/api/config", { signal }),

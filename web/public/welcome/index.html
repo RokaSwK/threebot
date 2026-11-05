@@ -42,6 +42,14 @@ img { display: block; max-width: 100%; height: auto; }
 .btn.off { background: transparent; color: inherit; opacity: .62; box-shadow: inset 0 0 0 2px currentColor; pointer-events: none; }
 .btn.sm { height: 42px; padding-inline: 18px; font-size: 15px; }
 .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+/* The one-line installer, with a copy button */
+.install { display: none; align-items: center; gap: 4px; max-width: min(100%, 800px); margin-top: 18px; padding: 6px 6px 6px 18px; border-radius: 999px; background: rgba(0, 0, 0, .07); font: 500 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; }
+.public .install { display: inline-flex; }
+.install code { min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.install code::-webkit-scrollbar { display: none; }
+.install button { flex: none; height: 34px; padding-inline: 14px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; font: 500 14px/1 inherit; font-family: inherit; cursor: pointer; }
+.install-note { display: none; margin-top: 10px; font-size: 15px; opacity: .8; }
+.public .install-note { display: block; }
 
 /* The ball, with eyes that are alive */
 .ball { position: relative; display: block; width: var(--size, 300px); aspect-ratio: 1; flex: none; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
@@ -189,10 +197,12 @@ footer a { text-decoration: underline; }
     <h1>Your Bot is a T3 thread</h1>
     <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
     <div class="cta">
-      <a class="btn post" href="https://github.com/RokaSwK/threebot" rel="noopener">Get it on GitHub</a>
+      <a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a>
       <a class="btn line" href="https://t3.codes/" rel="noopener">t3.codes</a>
       <span class="btn off pre">On GitHub soon</span>
     </div>
+    <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
+    <p class="install-note">Then run <code>threebot up</code>. It connects to T3 Code and starts in the background.</p>
     <p class="note">Free and self-hosted. Built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</p>
   </header>
 
@@ -321,7 +331,7 @@ footer a { text-decoration: underline; }
       <details><summary>How is it different from T3 Code?</summary><p>T3 Code is where threads run. Threebot sits on top of it and keeps things small: one or two Bots for each part of your life, each with its own thread, running the others.</p></details>
       <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the provider you already use with T3 Code, or on your own local models. Threebot has no account of its own.</p></details>
       <details><summary>Where does it run?</summary><p>On your own machine or server. Your Bots, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
-      <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: clone the <a href="https://github.com/RokaSwK/threebot" rel="noopener">repository</a> and follow the README.</p></details>
+      <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: install it with the one-line installer at the top of this page, or from the <a href="https://github.com/RokaSwK/threebot" rel="noopener">repository</a>. Settings then gets it onto your phone through Tailscale or a Cloudflare link in one click.</p></details>
       <details><summary>Is this made by the T3 Code team?</summary><p>No. Threebot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
     </div>
   </section>
@@ -330,8 +340,9 @@ footer a { text-decoration: underline; }
     <div class="end">
       <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
       <h2>Give your thread a face</h2>
-      <a class="btn post" href="https://github.com/RokaSwK/threebot" rel="noopener">Get it on GitHub</a>
+      <div class="cta"><a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a><a class="btn line post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a></div>
       <span class="btn off pre">On GitHub soon</span>
+      <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
     </div>
   </section>
 </main>
@@ -346,6 +357,14 @@ footer a { text-decoration: underline; }
   const root = document.documentElement, reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   // The GitHub links turn on by themselves once the repository is public.
   fetch("https://api.github.com/repos/RokaSwK/threebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
+  for (const box of document.querySelectorAll("[data-install]")) {
+    const button = box.querySelector("[data-copy]");
+    button.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(box.querySelector("code").textContent); button.textContent = "Copied"; }
+      catch { getSelection().selectAllChildren(box.querySelector("code")); button.textContent = "Press ⌘C"; }
+      setTimeout(() => { button.textContent = "Copy"; }, 1800);
+    });
+  }
   const watched = document.querySelectorAll(".watch");
   if (reduced || !("IntersectionObserver" in window)) {
     watched.forEach((el) => el.classList.add("in"));

@@ -1,13 +1,15 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Bot as BotIcon, Sun, Moon, ChevronRight, Download, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Bot as BotIcon, Sun, Moon, ChevronRight, Download, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
 import { ModelPicker } from "./ModelPicker";
 import { VaultPane } from "./Vault";
 import { ConnectApps } from "./ConnectApps";
 import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
+import { Group, H, Row } from "./SettingsParts";
+import { RemoteAccessPane, UpdatesPane, useUpdateNotice } from "./RemoteAccess";
 import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
 import { t3http } from "../lib/t3";
@@ -19,6 +21,7 @@ const PANES = [
   { id: "computer", label: "Computer", icon: <Monitor size={15} /> },
   { id: "permissions", label: "Permissions", icon: <Shield size={15} /> },
   { id: "vault", label: "Vault", icon: <Vault size={15} /> },
+  { id: "access", label: "Remote access", icon: <Globe size={15} /> },
   { id: "updates", label: "Updates", icon: <Download size={15} /> },
 ];
 
@@ -75,7 +78,8 @@ export function SettingsDialog() {
                 {pane === "computer" && <Computer />}
                 {pane === "permissions" && <Permissions s={settings} />}
                 {pane === "vault" && <VaultPane />}
-                {pane === "updates" && <Updates />}
+                {pane === "access" && <RemoteAccessPane />}
+                {pane === "updates" && <UpdatesPane t3={<T3Version />} />}
                 {pane === "usage" && <UsagePanel />}
                 {pane === "appearance" && <Appearance s={settings} />}
               </fieldset>}
@@ -95,6 +99,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   const rules = s.rules.alwaysAsk.length + s.rules.allowWithoutAsking.length;
   const [signingOut, setSigningOut] = useState(false);
   const usagePeak = useUsagePeak();
+  const update = useUpdateNotice();
   const signOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
@@ -115,38 +120,14 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <SettingsHomeLink title="Bot Computer" onClick={() => pane("computer")} />
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
-    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" onClick={() => pane("updates")} /></Group>
+    <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
+    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update} available` : undefined} onClick={() => pane("updates")} /></Group>
     <Group><SettingsHomeLink title={signingOut ? "Signing out…" : "Sign Out"} disabled={signingOut} onClick={() => void signOut()} /></Group>
   </div>;
 }
 
 function SettingsHomeLink({ title, description, detail, onClick, disabled = false }: { title: string; description?: string; detail?: string; disabled?: boolean; onClick: () => void }) {
   return <button disabled={disabled} onClick={onClick} className="settings-home-row flex w-full items-center gap-3 border-b border-line px-4 py-4 text-left last:border-0 hover:bg-hover"><span className="min-w-0 flex-1"><span className="block text-[17px]">{title}</span>{description && <span className="mt-1 block text-[13px] leading-5 text-muted">{description}</span>}</span>{detail && <span className="min-w-0 truncate text-[14px] text-muted">{detail}</span>}<ChevronRight size={18} className="shrink-0 text-muted" /></button>;
-}
-
-function H({ children }: { children: React.ReactNode }) {
-  return <h2 className="mb-5 text-[18px] font-medium">{children}</h2>;
-}
-
-function Group({ title, children }: { title?: string; children: React.ReactNode }) {
-  return (
-    <div className="settings-group mb-6">
-      {title && <div className="mb-2 text-[12.5px] text-muted">{title}</div>}
-      <div className="overflow-hidden rounded-2xl border border-line bg-card/50">{children}</div>
-    </div>
-  );
-}
-
-function Row({ title, desc, children }: { title: string; desc?: string; children?: React.ReactNode }) {
-  return (
-    <div className="settings-row flex items-center gap-4 border-b border-line px-4 py-3.5 last:border-0">
-      <div className="min-w-0 flex-1">
-        <div className="text-[13.5px]">{title}</div>
-        {desc && <div className="mt-0.5 text-[12.5px] text-muted">{desc}</div>}
-      </div>
-      {children}
-    </div>
-  );
 }
 
 function Select<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: readonly (readonly [T, string])[] }) {
@@ -322,19 +303,12 @@ function Computer() {
   );
 }
 
-function Updates() {
+function T3Version() {
   const { state, retry } = useEnvironment();
-  return (
-    <>
-      <H>Updates</H>
-      {state.kind === "error" && <EnvironmentError retry={retry} />}
-      <Group>
-        <Row title="Threebot" desc="Version 0.1.0" />
-        <Row title="T3 Code" desc={state.kind === "loading" ? "Loading…" : state.kind === "ready" ? `Server ${state.value.serverVersion} · protocol ${state.value.protocol}` : "Unavailable"}>
-          <BotIcon size={15} className="shrink-0 text-muted" />
-        </Row>
-      </Group>
-      <p className="text-[12.5px] text-muted">Updates are managed on the server.</p>
-    </>
-  );
+  return <>
+    {state.kind === "error" && <EnvironmentError retry={retry} />}
+    <Row title="T3 Code" desc={state.kind === "loading" ? "Loading…" : state.kind === "ready" ? `Server ${state.value.serverVersion} · protocol ${state.value.protocol}` : "Unavailable"}>
+      <BotIcon size={15} className="shrink-0 text-muted" />
+    </Row>
+  </>;
 }

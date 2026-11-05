@@ -2,9 +2,26 @@
 
 Threebot is one Node process next to a T3 Code server. It keeps everything in `THREEBOT_HOME` (default `~/.threebot`).
 
-## Keep a Bot running
+## Install, run and update
 
-Bots only run while T3 Code and the gateway do, so run both as services on a machine that stays on. A systemd user unit for the gateway:
+The installer and the `threebot` command work like T3 Code's `install.sh` and `t3`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh
+threebot up            # token from T3 Code, background service, address
+threebot status        # version, service, remote access
+threebot update        # newest release; rolls back if it doesn't start
+threebot rollback      # the version before the last update
+```
+
+- **Releases** are GitHub release assets: `threebot-<version>.tar.gz` and `SHA256SUMS`. Pushing a `v<version>` tag that matches `package.json` builds and publishes them (`.github/workflows/release.yml`). Tags with a `-` are previews, which `threebot update --preview` installs.
+- **Layout:** `~/.threebot/runtime/versions/<version>` holds each installed version, `runtime/current` links to the one running, and `runtime/previous` to the one before. `~/.local/bin/threebot` runs `current`.
+- **Service:** launchd agent `tools.threebot.gateway` on macOS, systemd user unit `threebot.service` on Linux. Both run `threebot serve`, which reads `~/.threebot/.env`. Logs are in `~/.threebot/logs/`. On a headless Linux server, run `loginctl enable-linger $USER` so it keeps running after you log out.
+- **Installer settings:** `THREEBOT_VERSION`, `THREEBOT_HOME`, `THREEBOT_INSTALL_BIN_DIR` and `THREEBOT_RELEASE_BASE_URL` (a mirror holding `v<version>/` folders).
+
+## Keep a Bot running from a checkout
+
+Bots only run while T3 Code and the gateway do, so run both as services on a machine that stays on. `node server/cli.mjs up` installs the same service for a checkout. Or write your own; a systemd user unit for the gateway:
 
 ```ini
 [Unit]
@@ -20,6 +37,13 @@ WantedBy=default.target
 ```
 
 ## Reaching it from your phone
+
+**Settings → Remote access** sets these up in one click, and so do `threebot tailscale on` and `threebot tunnel on`:
+
+- **Tailscale.** Threebot opens its Tailscale listener on `PORT + 1` and runs `tailscale serve --bg --https=<port>` on the first free port of 443, 8443, 8444, 8445 and 9443, leaving routes it didn't make alone. Only the Tailscale user this machine is signed in as gets in. Your tailnet needs [HTTPS certificates](https://login.tailscale.com/admin/dns) turned on. Turning it off removes only Threebot's route.
+- **Cloudflare quick tunnel.** `cloudflared tunnel --protocol http2 --url http://127.0.0.1:<PORT>` gives a public `https://*.trycloudflare.com` link, with no account. It only starts once the app has a password, and the link changes each time Threebot restarts. If `cloudflared` isn't installed, Threebot downloads the same pinned version T3 Code uses, checked against its SHA-256, into `~/.threebot/tools/`. For a fixed address on your own domain, use a named tunnel with Cloudflare Access instead (below).
+
+The password set in the app is stored as an scrypt hash in `access.json`; `BOT_PASSWORD` in `.env` takes its place if set. Changing it signs every other device out.
 
 The default is `HOST=127.0.0.1` with no sign-in, which is only safe on your own machine. Anyone who reaches an unprotected gateway can drive your agents. Pick one before exposing it:
 
@@ -38,6 +62,8 @@ Set the `EXECUTOR_*` values in `.env` to use [Executor](https://executor.sh), se
 Back up `THREEBOT_HOME`. It holds your Bots, memory and the encrypted Vault. `vault.enc` is useless without `.vault-key`, so keep the key somewhere separate and safe.
 
 ## Updating
+
+Installed copies update from **Settings → Updates** or with `threebot update`. A checkout updates with:
 
 ```sh
 git pull
