@@ -212,8 +212,8 @@ function watchThread(rpc, threadId) {
 }
 
 test('basic protocol remains unchanged and interaction handlers are opt-in', { timeout: 15000 }, async () => {
-  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library or landing/);
-  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library or landing/);
+  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing or latest-t3/);
+  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing or latest-t3/);
   const fake = await startFakeT3('/unused');
   const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
   try {
@@ -656,4 +656,26 @@ test('repeatable Vault values survive real gateway restart and invalid arrays do
     await fixture.restart();
     assert.deepEqual((await fixture.request('/api/vault/'+contact.body.id)).body.emails,['second@example.invalid','first@example.invalid']);
   } finally {await fixture.close();}
+});
+
+test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'latest-t3' });
+  const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+  const first = (tag, payload) => new Promise((resolve) => { const handle = rpc.stream(tag, payload, (value) => { handle.cancel(); resolve(value); }); });
+  try {
+    await rpc.connect();
+    assert.equal((await rpc.call('server.getConfig')).environment.capabilities.threadForceStop, true);
+    const { tasks } = await first('scheduledTasks.subscribe', {});
+    assert.deepEqual(tasks.map((task) => task.schedule.type), ['once', 'fixed_time']);
+    assert.match(tasks[1].blockedByPolicy, /Example Org/);
+    const shell = (await first('orchestration.subscribeShell', {})).snapshot;
+    assert.ok(shell.projects.find((p) => p.id === 'project-gamma').archivedAt);
+    assert.equal(shell.threads.find((t) => t.id === 'thread-alpha-child').pendingRuntimeRequest.kind, 'command');
+    await assert.rejects(rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha', requestId: 'fixture-child-approval', decision: 'accept' }), /child thread/);
+    await rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha-child', requestId: 'fixture-child-approval', decision: 'accept' });
+    assert.deepEqual(await rpc.call('orchestration.forceStopThread', { threadId: 'thread-beta', runId: 'fixture-run-stuck' }), { outcome: 'killed', sharedWithThreadIds: [] });
+    await rpc.call('projects.mutate', { type: 'project.update', commandId: 'unarchive', projectId: 'project-gamma', archived: false });
+    const inspect = await (await fetch(`http://127.0.0.1:${fixture.t3Port}/fixture/interactions`)).json();
+    assert.equal(inspect.request, 'resolved'); assert.equal(inspect.decision, 'accept'); assert.equal(inspect.run, 'interrupted'); assert.equal(inspect.gammaArchived, false);
+  } finally { rpc.close(); await fixture.close(); }
 });

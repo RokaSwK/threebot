@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { LANDING_SAMPLES, landingData, seedInteractions, validateScenario } from './fixture-scenarios.mjs';
+import { LANDING_SAMPLES, landingData, seedInteractions, seedLatestT3, validateScenario } from './fixture-scenarios.mjs';
 const require = createRequire(new URL('../server/package.json', import.meta.url));
 const { WebSocketServer } = require('ws');
 
@@ -109,8 +109,9 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
     }
     var landingInteractions = { requests, inspect: () => ({ fixtureOnly: true, scenario: 'landing', liveDelivery: false }), armFailure: () => false, respond: () => null };
   }
-  const interactions = scenario === 'interactions' ? seedInteractions({ threads, items, stamp: STAMP }) : landing ? landingInteractions : null;
   const runs = new Map(threads.map(thread => [thread.id, []]));
+  const latest = scenario === 'latest-t3' ? seedLatestT3({ threads, items, runs, projects, model: MODEL, stamp: STAMP }) : null;
+  const interactions = scenario === 'interactions' ? seedInteractions({ threads, items, stamp: STAMP }) : landing ? landingInteractions : latest;
   const receipts = new Map();
   const subscriptions = new Map();
   let nextAttachment = 0;
@@ -124,6 +125,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
     for (const [ws, subs] of subscriptions) for (const [id, sub] of subs) {
       if (sub.tag === 'orchestration.subscribeShell') chunk(ws, id, { kind: 'snapshot', snapshot: { projects, threads: threads.filter((t) => !t.archivedAt) } });
       if (sub.tag === 'orchestration.subscribeThread') chunk(ws, id, { kind: 'snapshot', projection: projection(sub.threadId) });
+      if (sub.tag === 'scheduledTasks.subscribe' && latest) chunk(ws, id, { tasks: latest.tasks });
     }
   };
   const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
@@ -201,7 +203,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
         const response = interactions?.respond(tag, payload);
         if (response) {
           if (response.error) return fail(ws, id, response.error);
-          exit(ws, id, tag === 'secrets.answerRequest' ? null : { sequence: ++sequence });
+          exit(ws, id, 'value' in response ? response.value : tag === 'secrets.answerRequest' ? null : { sequence: ++sequence });
           publish();
           return;
         }
@@ -209,7 +211,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
           subs.set(id, { tag });
           return chunk(ws, id, { kind: 'snapshot', snapshot: { projects, threads: threads.filter((t) => !t.archivedAt) } });
         }
-        if (tag === 'scheduledTasks.subscribe') { subs.set(id, { tag }); return chunk(ws, id, { tasks: landing?.tasks ?? [] }); }
+        if (tag === 'scheduledTasks.subscribe') { subs.set(id, { tag }); return chunk(ws, id, { tasks: landing?.tasks ?? latest?.tasks ?? [] }); }
         if (tag === 'orchestration.getThreadProjection') {
           if (!items.has(payload.threadId)) return fail(ws, id, 'Unknown fixture thread');
           return exit(ws, id, projection(payload.threadId));
@@ -219,7 +221,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
           subs.set(id, { tag, threadId: payload.threadId });
           return chunk(ws, id, { kind: 'snapshot', projection: projection(payload.threadId) });
         }
-        if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
+        if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ? { environment: { capabilities: latest.capabilities } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
         if (tag === 'orchestration.getThreadFamily') return exit(ws, id, { threads: threads.filter((thread) => thread.lineage.rootThreadId === threads.find((t) => t.id === payload.threadId)?.lineage.rootThreadId) });
         if (tag === 'orchestration.getArchivedShellSnapshot') return exit(ws, id, { snapshotSequence: sequence, projects, threads: threads.filter((t) => t.archivedAt) });
         if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt.localeCompare(a.settledAt) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
@@ -232,6 +234,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
           const project = projects.find((p) => p.id === payload.projectId);
           if (!project) return fail(ws, id, 'Unknown fixture project');
           for (const key of ['title', 'faviconPath', 'projectIcon', 'defaultModelSelection']) if (key in payload) project[key] = payload[key];
+          if (typeof payload.archived === 'boolean') project.archivedAt = payload.archived ? (project.archivedAt ?? new Date().toISOString()) : null;
           publish();
           return exit(ws, id, { sequence: ++sequence });
         }
