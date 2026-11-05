@@ -1,4 +1,4 @@
-// Minimal T3 Code (v0.1.5, orchestration protocol 2) client.
+// Minimal T3 Code client (orchestration protocol 2; checked against v0.1.5 through 0.1.8).
 // Transport: Effect RPC over WebSocket, JSON serialization, one message per frame.
 // Uses Node's built-in WebSocket (Node >= 22) and fetch; no dependencies.
 import { readFileSync } from "node:fs";

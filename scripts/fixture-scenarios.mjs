@@ -20,7 +20,7 @@ export const INTERACTION_IDS = {
 };
 
 export function validateScenario(scenario) {
-  if (!['basic', 'interactions', 'executor', 'library', 'landing'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library or landing.');
+  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing or latest-t3.');
 }
 
 // A believable personal setup for product screenshots. Everything here is invented;
@@ -284,6 +284,75 @@ export function seedInteractions({ threads, items, stamp }) {
       count.accepted++;
       updateShell();
       return { ok: true };
+    },
+  };
+}
+
+// Shapes added in T3 Code 0.1.6–0.1.8, so the app can be checked without a real T3:
+// a child waiting on an approval, a Stop the agent ignored, one-time and policy-blocked
+// routines, and a Bot whose project was archived in T3 Code. Synthetic data only.
+export const LATEST_T3_IDS = { childApproval: 'fixture-child-approval', stuckRun: 'fixture-run-stuck', once: 'fixture-routine-once', blocked: 'fixture-routine-blocked' };
+export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
+  const requests = new Map(threads.map(({ id }) => [id, []]));
+  const ordinal = (threadId) => Math.max(0, ...items.get(threadId).map((item) => item.ordinal)) + 1;
+  const base = (threadId, type, extra) => ({ id: `${threadId}-latest-${ordinal(threadId)}`, threadId, ordinal: ordinal(threadId), type,
+    runId: null, status: 'completed', title: null, startedAt: stamp, completedAt: stamp, updatedAt: stamp, parentItemId: null, ...extra });
+  projects.find((p) => p.id === 'project-gamma').archivedAt = stamp;
+
+  const child = threads.find((t) => t.id === 'thread-alpha-child');
+  const approval = base(child.id, 'approval_request', { requestId: LATEST_T3_IDS.childApproval, requestKind: 'command', status: 'waiting', completedAt: null,
+    title: 'Delete the generic build folder', reason: 'Synthetic decision only. No command executes.', prompt: 'rm -rf ./generic-build',
+    options: [{ decision: 'accept', label: 'Allow once' }, { decision: 'decline', label: 'Deny' }] });
+  items.get(child.id).push(approval);
+  const request = { id: LATEST_T3_IDS.childApproval, kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'fixture-session' }, createdAt: stamp, resolvedAt: null };
+  requests.get(child.id).push(request);
+  child.pendingRuntimeRequest = { id: request.id, kind: 'command', blocking: true };
+
+  const beta = threads.find((t) => t.id === 'thread-beta');
+  const run = { id: LATEST_T3_IDS.stuckRun, ordinal: 1, status: 'running', requestedAt: stamp, startedAt: stamp, completedAt: null, modelSelection: model };
+  runs.get(beta.id).push(run);
+  Object.assign(beta, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: stamp });
+  items.get(beta.id).push(base(beta.id, 'run_interrupt_request', { runId: run.id, message: 'Stop', unresponsiveAt: stamp }));
+
+  const task = (id, title, schedule, extra = {}) => ({ id, title, prompt: `Generic routine: ${title}`, enabled: false, schedule, projectId: 'project-alpha', threadId: 'thread-alpha',
+    workspaceStrategy: { type: 'root' }, modelSelection: model, runtimeMode: 'auto', interactionMode: 'default', nextRunAt: null, lastRunAt: null, lastRunStatus: null, lastRunError: null, runCount: 0, ...extra });
+  const tasks = [
+    task(LATEST_T3_IDS.once, 'Send the generic reminder once', { type: 'once', runAt: '2026-12-01T08:30:00.000Z' }),
+    task(LATEST_T3_IDS.blocked, 'Generic weekday check', { type: 'fixed_time', timeOfDay: '09:00', weekdays: [1, 2, 3, 4, 5] }, { enabled: true, blockedByPolicy: 'Scheduled tasks are turned off by Example Org.' }),
+  ];
+  const calls = [];
+  return {
+    requests, tasks,
+    capabilities: { sideChats: true, threadForceStop: true },
+    inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma').archivedAt, tasks: tasks.map(({ id, enabled }) => ({ id, enabled })), calls }),
+    armFailure: () => false,
+    respond(tag, payload) {
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'runtime-request.respond' && payload.requestId === request.id) {
+        if (payload.threadId !== child.id) return { error: 'This approval belongs to the child thread.' };
+        if (request.status !== 'pending') return { error: 'Fixture approval already answered.' };
+        Object.assign(request, { status: 'resolved', decision: payload.decision, resolvedAt: new Date().toISOString() });
+        Object.assign(approval, { status: payload.decision === 'decline' ? 'cancelled' : 'completed', completedAt: request.resolvedAt, updatedAt: request.resolvedAt });
+        child.pendingRuntimeRequest = null;
+        calls.push({ tag, threadId: payload.threadId, decision: payload.decision });
+        return { ok: true };
+      }
+      if (tag === 'orchestration.forceStopThread') {
+        if (payload?.threadId !== beta.id || payload.runId !== run.id) return { error: 'Fixture force stop needs the stuck run.' };
+        const at = new Date().toISOString();
+        Object.assign(run, { status: 'interrupted', completedAt: at });
+        Object.assign(beta, { status: 'interrupted', activityRunStatus: null, activeRunId: null, updatedAt: at });
+        items.get(beta.id).push(base(beta.id, 'run_interrupt_result', { runId: run.id, scopeId: 'fixture', files: [] }));
+        calls.push({ tag, threadId: payload.threadId, runId: payload.runId });
+        return { ok: true, value: { outcome: 'killed', sharedWithThreadIds: [] } };
+      }
+      if (tag === 'scheduledTasks.setEnabled') {
+        const found = tasks.find((t) => t.id === payload?.id);
+        if (!found || typeof payload.enabled !== 'boolean') return { error: 'Unknown fixture routine.' };
+        found.enabled = payload.enabled;
+        calls.push({ tag, id: found.id, enabled: found.enabled });
+        return { ok: true, value: { task: found }, tasks: true };
+      }
+      return null;
     },
   };
 }

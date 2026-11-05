@@ -35,6 +35,7 @@ import { QueuedWork, WorkFeedback } from "./QueuedWork";
 import { PlanMessage, PlanItemMessage } from "./PlanMessage";
 import { GoalCard } from "./GoalCard";
 import { TaskChanges } from "./TaskChanges";
+import { ChildApprovals, ForceStop } from "./RunControls";
 import { useChatScroll } from "../lib/chatScroll";
 import "../mobile-chat.css";
 
@@ -173,6 +174,8 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
             </div>
           ))}
           {threadId && <ConversationWork threadId={threadId} readOnly={archived} />}
+          {threadId && !archived && <ChildApprovals bot={bot} threadId={threadId} />}
+          {threadId && <ForceStop threadId={threadId} items={items} readOnly={archived} />}
           {working && (
             <div className="fade-up flex items-center gap-2 py-2 pl-1 text-[13px]">
               <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={20} state={/^(Thinking|Mulling|Putting)/.test(phrase) ? "thinking" : "working"} />
