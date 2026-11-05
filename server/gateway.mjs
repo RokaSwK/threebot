@@ -27,7 +27,8 @@ import { objectAvatarPatch } from "./object-avatars.mjs";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
 import { safeEqual } from "./safe-equal.mjs";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mjs";
-import { channelFor, createUpdateChecker, currentVersion, installedRuntime, startUpdateChecks } from "./release.mjs";
+import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks } from "./release.mjs";
+import { busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled } from "./auto-update.mjs";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
 import { createProjects } from "./projects.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
@@ -152,9 +153,7 @@ const exposure = exposureConfig();
 const envTailnet = exposure.tailnetPort > 0;
 const version = currentVersion();
 const checkUpdates = createUpdateChecker({ version });
-// Copies that can update themselves check on their own, so the sidebar's update button shows without
-// anyone opening Settings. The checker answers from its stored result until a check is due.
-if (installedRuntime() && process.env.THREEBOT_SERVICE === "1") startUpdateChecks(checkUpdates);
+const selfUpdating = installedRuntime() && process.env.THREEBOT_SERVICE === "1";
 let tailnetServer = null;
 // Open WebSockets outlive the cookie or listener that let them in, so access changes close them.
 const upgraded = new Set();
@@ -188,12 +187,16 @@ const remoteAccess = createRemoteAccess({
   home: dataRoot, localPort: cfg.port, urlFile: path.join(appDir, "tunnel-url"), exposure, envPassword: cfg.password, envTailnet, openTailnet, closeTailnet,
 });
 let updating = null;
-/** Settings → Updates: hand the update to `threebot update`, which swaps versions and restarts this service. */
-async function startSelfUpdate() {
-  if (!installedRuntime() || process.env.THREEBOT_SERVICE !== "1") {
+/**
+ * Settings → Updates, and the automatic update: hand the update to `threebot update`, which swaps versions
+ * and restarts this service. The automatic update passes the `target` it decided on, and `onExit` to hear
+ * about an updater that ended while this gateway still runs (macOS: on Linux systemd-run returns at once).
+ */
+async function startSelfUpdate({ target, onExit } = {}) {
+  if (!selfUpdating) {
     throw Object.assign(new Error("This copy can't update itself. Install Threebot with the installer and run it as a service, or update it with `git pull` and `npm run setup`."), { status: 409 });
   }
-  const { updateAvailable, latest, error } = await checkUpdates({ force: true });
+  const { updateAvailable, latest, error } = target ? { updateAvailable: true, latest: { version: target } } : await checkUpdates({ force: true });
   if (error) throw Object.assign(new Error(error), { status: 502 });
   if (!updateAvailable) return { started: false, version };
   if (updating) return { started: true, version: latest.version };
@@ -209,9 +212,29 @@ async function startSelfUpdate() {
   child.unref();
   await out.close();
   updating = { version: latest.version, startedAt: Date.now() };
-  child.on("exit", () => { updating = null; });
+  child.on("exit", (code) => { updating = null; if (process.platform !== "linux") onExit?.(latest.version, code); });
   return { started: true, version: latest.version };
 }
+
+/** The Bot threads a restart would interrupt, from one look at T3's thread list. */
+async function busyThreads() {
+  const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
+  let stream;
+  const threads = await withTimeout(new Promise((resolve, reject) => {
+    stream = client.stream("orchestration.subscribeShell", { omitIdleSubagents: true }, (event) => {
+      if (event.kind === "snapshot") resolve(event.snapshot?.threads ?? []);
+    });
+    stream.done.then(() => reject(new Error("T3 ended the thread list")), reject);
+  }), 15000, "T3 timed out").finally(() => { try { stream?.cancel(); } catch {} });
+  return busyBotThreads(threads, await listBots());
+}
+const autoUpdate = createAutoUpdater({
+  store: createAutoUpdateStore(path.join(appDir, "auto-update.json")),
+  version, isBusy: busyThreads, installed: versionInstalled(runtimePaths(dataRoot).versions), log: (line) => console.log(line),
+  install: async (target) => {
+    await startSelfUpdate({ target, onExit: (v, code) => void autoUpdate.failed(v, new Error(`the updater exited (${code}) without switching`)) });
+  },
+});
 const passwordRequired = async () => Boolean(cfg.password) || (await remoteAccess.hasPassword());
 async function passwordMatches(password) {
   if (cfg.password) return safeEqual(password, cfg.password);
@@ -692,7 +715,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/system" && req.method === "GET") {
       const updates = await checkUpdates({ force: url.searchParams.get("check") === "1" });
-      return send(res, 200, { version, installed: installedRuntime(), service: process.env.THREEBOT_SERVICE === "1", ...updates });
+      return send(res, 200, { version, installed: installedRuntime(), service: process.env.THREEBOT_SERVICE === "1", ...updates, ...(await autoUpdate.status()) });
+    }
+    if (p === "/api/system/auto-update" && req.method === "PUT") {
+      const { auto } = await readBody(req, 4096);
+      if (typeof auto !== "boolean") return send(res, 400, { error: "auto must be true or false" });
+      await autoUpdate.setAuto(auto);
+      return send(res, 200, await autoUpdate.status());
+    }
+    if (p === "/api/system/update-notice" && req.method === "DELETE") {
+      await autoUpdate.dismiss(url.searchParams.get("at"));
+      return send(res, 200, await autoUpdate.status());
     }
     if (p === "/api/system/update" && req.method === "POST") return send(res, 202, await startSelfUpdate());
     if (p === "/api/access" && req.method === "GET") return send(res, 200, { ...(await remoteAccess.status()), cloudflareAccess: verifyAccess ? { emails: accessEmails } : null });
@@ -872,6 +905,12 @@ if (envTailnet) {
 // Tailscale and Cloudflare links switched on in Settings come back with the gateway.
 remoteAccess.boot().catch((e) => console.error("remote access", e));
 for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { remoteAccess.stop(); process.exit(0); });
+// An update this gateway's predecessor started either worked or rolled back; record which for the app.
+await autoUpdate.settle().catch((error) => console.error("auto-update: couldn't read its state", error));
+// Copies that can update themselves check on their own, so the sidebar's update button shows without
+// anyone opening Settings, and an automatic update can start. The checker answers from its stored
+// result until a check is due; the automatic update acts once per new answer.
+if (selfUpdating) startUpdateChecks(() => checkUpdates().then(autoUpdate.consider).catch((error) => console.error("auto-update failed", error)));
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });

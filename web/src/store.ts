@@ -73,6 +73,8 @@ type State = {
   searchResultRevision: number;
   settingsPane: string;
   toast: string | null;
+  /** A link shown after the toast's text, such as release notes. */
+  toastLink: { href: string; label: string } | null;
   /** The Projects page replaces the chat while it's open; projectItemId is the item shown in it. */
   page: "projects" | null;
   projectItemId: string | null;
@@ -116,6 +118,7 @@ export const useApp = create<State>(() => ({
   searchResultRevision: 0,
   settingsPane: "general",
   toast: null,
+  toastLink: null,
   page: null,
   projectItemId: null,
   vault: null,
@@ -593,9 +596,9 @@ export function openDialog(dialog: Dialog) {
   set({ dialog });
 }
 
-export function toast(msg: string) {
-  set({ toast: msg });
-  window.setTimeout(() => get().toast === msg && set({ toast: null }), msg.length > 80 ? 12_000 : 3500);
+export function toast(msg: string, link: { href: string; label: string } | null = null) {
+  set({ toast: msg, toastLink: link });
+  window.setTimeout(() => get().toast === msg && set({ toast: null, toastLink: null }), msg.length > 80 || link ? 12_000 : 3500);
 }
 
 export async function createBot(input: { name: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {

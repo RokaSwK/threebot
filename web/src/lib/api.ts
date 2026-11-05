@@ -30,7 +30,10 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export type SystemInfo = { version: string; installed: boolean; service: boolean; latest: { version: string; url: string; notes: string; publishedAt: string | null } | null; updateAvailable: boolean; error: string | null; checkedAt: string | null };
+/** What the last automatic update did, until the app has shown it once. */
+export type UpdateNotice = { kind: "updated" | "rolledBack" | "failed" | "waited"; version: string; from: string; url: string; at: string };
+export type SystemInfo = { version: string; installed: boolean; service: boolean; latest: { version: string; url: string; notes: string; publishedAt: string | null } | null; updateAvailable: boolean; error: string | null; checkedAt: string | null;
+  auto: boolean; waiting: { version: string; since: number } | null; notice: UpdateNotice | null };
 export type TailscaleState = { installed: boolean; running?: boolean; needsLogin?: boolean; state?: string; authUrl: string | null; dnsName?: string | null; https?: boolean; login?: string | null; enabled: boolean; fromEnv: boolean; users: string[]; url?: string; serving?: boolean; error?: string };
 export type AccessState = {
   password: { set: boolean; fromEnv: boolean };
@@ -42,6 +45,8 @@ export type AccessState = {
 export const api = {
   session,
   system: (check = false) => req<SystemInfo>(`/api/system${check ? "?check=1" : ""}`),
+  setAutoUpdate: (auto: boolean) => req<Pick<SystemInfo, "auto" | "waiting" | "notice">>("/api/system/auto-update", { method: "PUT", body: JSON.stringify({ auto }) }),
+  dismissUpdateNotice: (at: string) => req<unknown>(`/api/system/update-notice?at=${encodeURIComponent(at)}`, { method: "DELETE" }),
   startUpdate: () => req<{ started: boolean; version: string }>("/api/system/update", { method: "POST", body: "{}" }),
   health: () => req<{ ok: boolean; version: string }>("/api/health"),
   access: () => req<AccessState>("/api/access"),
