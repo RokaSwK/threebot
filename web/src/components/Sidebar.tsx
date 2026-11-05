@@ -4,7 +4,7 @@ import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown,
 import { Avatar, type AvatarState } from "./Avatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
-import { archiveThread, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
+import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
@@ -31,6 +31,7 @@ const lastActivity = (bot: Bot, s = useApp.getState()) => {
 
 export function Sidebar({ wide = false }: { wide?: boolean }) {
   const bots = useApp((s) => s.bots);
+  const projects = useApp((s) => s.projects);
   const threads = useApp((s) => s.threads);
   const previews = useApp((s) => s.previews);
   const selected = useApp((s) => s.selected);
@@ -50,7 +51,8 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
 
   const { pinned, groups, hidden } = useMemo(() => {
     const all = Object.values(bots).sort((a, b) => lastActivity(b).localeCompare(lastActivity(a)));
-    const visible = all.filter((b) => !b.hidden);
+    const off = (b: Bot) => b.hidden || archivedInT3(b, projects);
+    const visible = all.filter((b) => !off(b));
     const pinned = visible.filter((b) => b.primary || b.pinned).sort((a, b) => Number(b.primary) - Number(a.primary) || (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
     const rest = visible.filter((b) => !b.primary && !b.pinned);
     const order = [...(settings?.sections ?? [])];
@@ -58,10 +60,10 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
     const groups = order.map((name) => ({ name, bots: rest.filter((b) => b.section === name) }));
     const unassigned = rest.filter((b) => !b.section || !order.includes(b.section));
     if (unassigned.length) groups.push({ name: groups.length ? "Unassigned" : "", bots: unassigned });
-    return { pinned, groups, hidden: all.filter((b) => b.hidden) };
+    return { pinned, groups, hidden: all.filter(off) };
     // threads and previews affect ordering
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bots, threads, previews, settings?.sections]);
+  }, [bots, threads, previews, settings?.sections, projects]);
 
   // The native roster offers a way back to a waiting chat that has scrolled out of view.
   const measureAttention = () => {
@@ -148,8 +150,9 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         );
       },
     };
-    const hideItem: MenuItem = bot.hidden
-      ? { label: wide ? "Unhide" : "Show in sidebar", icon: <Eye size={14} />, onSelect: () => report(updateBot(bot.slug, { hidden: false })) }
+    const t3Archived = archivedInT3(bot, projects);
+    const hideItem: MenuItem = bot.hidden || t3Archived
+      ? { label: wide ? "Unhide" : "Show in sidebar", icon: <Eye size={14} />, onSelect: () => report((async () => { if (t3Archived) await unarchiveBotProject(bot); if (bot.hidden) await updateBot(bot.slug, { hidden: false }); })()) }
       : { label: wide ? "Hide" : "Hide from sidebar", danger: wide, icon: <EyeOff size={14} />, onSelect: () => bot.primary ? openDialog({ kind: "main-bot", intent: { kind: "hide", slug: bot.slug } }) : report(updateBot(bot.slug, { hidden: true, pinned: false })) };
     const deleteItem: MenuItem = { label: "Delete", icon: <Trash2 size={14} />, danger: true, onSelect: () => bot.primary && Object.keys(bots).length > 1 ? openDialog({ kind: "main-bot", intent: { kind: "delete", slug: bot.slug } }) : openDialog({ kind: "delete-bot", slug: bot.slug }) };
     if (wide) {

@@ -113,6 +113,9 @@ export type ProjectShell = {
   title: string;
   workspaceRoot: string;
   defaultModelSelection: ModelSelection | null;
+  /** Set in T3 Code; missing on older servers. */
+  pinnedAt?: string | null;
+  archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -198,6 +201,7 @@ export type ScheduledTask = {
   schedule:
     | { type: "interval"; everyMs: number }
     | { type: "fixed_time"; timeOfDay: string; weekdays?: number[] }
+    | { type: "once"; runAt: string }
     | { type: "webhook"; [k: string]: unknown };
   projectId: string;
   threadId: string | null;
@@ -205,7 +209,9 @@ export type ScheduledTask = {
   lastRunAt?: string | null;
   lastRunStatus?: string | null;
   runCount?: number;
+  /** Why T3 won't run this task at all, such as an administrator's policy. */
+  blockedByPolicy?: string;
 };
 
 export type SnoozePreset = { kind: "after"; minutes: number } | { kind: "at"; day: "today" | "tomorrow" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"; time: string };
-export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean };
+export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean; threadForceStop: boolean };

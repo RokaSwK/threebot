@@ -126,3 +126,19 @@ test('editing an open routine closes the detail and does not mount a technical e
  assert.ok(!errors.mock.calls.some(call=>String(call.arguments[0]).includes('same key')));
  assert.match(chatDraft(b,b.mainThreadId).getSnapshot().text,/Edit your routine/);
 });
+
+test('one-time routines from T3 0.1.7+ parse, read as a date and keep working controls',async()=>{
+ const task={...original,schedule:{type:'once',runAt:'2026-11-20T09:30:00+01:00'},blockedByPolicy:undefined};
+ assert.deepEqual(r.parseSchedule(task.schedule),task.schedule);
+ for(const schedule of [{type:'once',runAt:'2026-11-20T09:30'},{type:'once',runAt:'soon+01:00'},{type:'once'}])assert.throws(()=>r.parseSchedule(schedule));
+ const text=r.scheduleText(task,'Europe/Madrid');assert.match(text,/^Once, /);assert.match(text,/9:30|09:30/);assert.match(text,/2026/);assert.doesNotMatch(text,/webhook/);
+ await render(h(RoutineRow,{task,onOpen(){}}));assert.match(host.textContent,/Paused · Once, /);
+ await click(document.querySelector('[role="switch"]'));assert.deepEqual(calls.at(-1),{tag:'scheduledTasks.setEnabled',payload:{id:task.id,enabled:true}});assert.equal(document.querySelector('[role="alert"]'),null);
+ const input=r.routineInput({task,bot,title:task.title,prompt:task.prompt,schedule:task.schedule,commandId:'once'});assert.deepEqual(input.schedule,task.schedule);
+});
+test('a routine an administrator policy blocks says why',async()=>{
+ const task={...original,enabled:true,blockedByPolicy:'Webhooks are turned off by Example Org.'};
+ assert.equal(r.parseRoutineTask(task).blockedByPolicy,task.blockedByPolicy);
+ await render(h(RoutineRow,{task,onOpen(){}}));assert.match(host.textContent,/Blocked · Weekdays/);
+ await render(h(RoutineDetail,{task,onBack(){},onEdit(){}}));assert.match(host.textContent,/This routine can’t run: Webhooks are turned off by Example Org\./);
+});

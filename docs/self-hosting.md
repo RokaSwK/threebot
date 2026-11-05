@@ -16,7 +16,7 @@ threebot rollback      # the version before the last update
 
 - **Releases** are GitHub release assets: `threebot-<version>.tar.gz` and `SHA256SUMS`. Pushing a `v<version>` tag that matches `package.json` builds and publishes them (`.github/workflows/release.yml`). Tags with a `-` are previews, which `threebot update --preview` installs.
 - **Layout:** `~/.threebot/runtime/versions/<version>` holds each installed version, `runtime/current` links to the one running, and `runtime/previous` to the one before. `~/.local/bin/threebot` runs `current`.
-- **Service:** launchd agent `tools.threebot.gateway` on macOS, systemd user unit `threebot.service` on Linux. Both run `threebot serve`, which reads `~/.threebot/.env`. Logs are in `~/.threebot/logs/`. On a headless Linux server, run `loginctl enable-linger $USER` so it keeps running after you log out.
+- **Service:** launchd agent `tools.threebot.gateway` on macOS, systemd user unit `threebot.service` on Linux. Both run `threebot serve`, which reads `~/.threebot/.env`. Logs are in `~/.threebot/logs/`. On a headless Linux server, run `loginctl enable-linger $USER` so it keeps running after you log out. On Linux, `t3 service protect` (T3 Code 0.1.6 or newer) also keeps the T3 server alive when a Bot's commands fill the machine's memory.
 - **Installer settings:** `THREEBOT_VERSION`, `THREEBOT_HOME`, `THREEBOT_INSTALL_BIN_DIR` and `THREEBOT_RELEASE_BASE_URL` (a mirror holding `v<version>/` folders).
 
 ## Keep a Bot running from a checkout

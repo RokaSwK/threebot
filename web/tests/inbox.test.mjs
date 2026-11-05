@@ -176,3 +176,15 @@ test('pinned mobile menu starts with read state and retains lifecycle actions in
  await click('More');
  assert.ok(labels().includes('Mark as finished')); assert.ok(labels().includes('Archive')); assert.ok(labels().includes('Rename Bot'));
 });
+
+test('a Bot whose T3 project is archived in T3 Code moves to Hidden Bots, and Unhide unarchives it',async()=>{
+ const calls=[];t3.call=async(tag,payload)=>{calls.push({tag,payload});return {sequence:1};};
+ useApp.setState({projects:{project:{id:'project',title:'Sample',workspaceRoot:'/fixture',defaultModelSelection:null,archivedAt:'2026-11-01T00:00:00Z',createdAt:'2026-01-01',updatedAt:'2026-01-01'}}});
+ await act(async()=>root.render(h(Sidebar,{wide:true})));
+ assert.match(host.textContent,/Hidden Bots 1/);
+ await click('Hidden Bots 1');assert.ok(document.querySelector('[aria-label="Chat with Sample"]'));
+ await click('Options for Sample');await click('Unhide');
+ const mutate=calls.find(c=>c.tag==='projects.mutate');assert.ok(mutate);assert.equal(mutate.payload.type,'project.update');assert.equal(mutate.payload.projectId,'project');assert.equal(mutate.payload.archived,false);
+ assert.equal(useApp.getState().projects.project.archivedAt,null);assert.doesNotMatch(host.textContent,/Hidden Bots/);
+ useApp.setState({projects:{}});
+});

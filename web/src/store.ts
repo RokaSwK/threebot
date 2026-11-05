@@ -81,7 +81,7 @@ type State = {
 };
 
 export const useApp = create<State>(() => ({
-  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false },
+  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false },
   snoozePresets: [],
   fallbackModel: null,
   sideChat: null,
@@ -223,7 +223,7 @@ async function loadProviders() {
     set({
       providers: cfg.providers.filter((p: Provider) => p.enabled && p.status === "ready"),
       providerModelPreferences: cfg.settings?.providerModelPreferences ?? {},
-      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true },
+      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true, threadForceStop: cfg.environment?.capabilities?.threadForceStop === true },
       snoozePresets: cfg.settings?.snoozePresets ?? [],
       fallbackModel: cfg.settings?.fallbackModelSelection ?? null,
     });
@@ -701,6 +701,24 @@ export async function interrupt(threadId: string) {
   const t = get().threads[threadId];
   const runId = t?.activeRunId ?? t?.latestRunId;
   if (runId) await threadClient(threadId).dispatch({ type: "run.interrupt", threadId: threadTarget(threadId).threadId, runId });
+}
+
+/** A Bot whose T3 project was archived in T3 Code. The main Bot always stays in the sidebar. */
+export function archivedInT3(bot: Bot, projects: Record<string, ProjectShell>) {
+  return !bot.primary && !!bot.projectId && !!projects[bot.projectId]?.archivedAt;
+}
+
+export async function unarchiveBotProject(bot: Bot) {
+  if (!bot.projectId) return;
+  await t3.call("projects.mutate", { type: "project.update", commandId: uuid(), projectId: bot.projectId, archived: false });
+  set((s) => { const project = bot.projectId ? s.projects[bot.projectId] : undefined; return project ? { projects: { ...s.projects, [project.id]: { ...project, archivedAt: null } } } : {}; });
+}
+
+/** For a run that ignored Stop. Passing its runId means a newer run is never hit. */
+export async function forceStopThread(threadId: string, runId: string) {
+  const result = await threadClient(threadId).call<{ outcome?: string; sharedWithThreadIds?: string[] }>("orchestration.forceStopThread", { threadId: threadTarget(threadId).threadId, runId });
+  if (result?.outcome === "releasing") toast("Stopped. The agent is still shutting down.");
+  else if (result?.outcome === "shared") toast("Stopped. The agent process kept running because other threads share it.");
 }
 
 export async function respondRequest(threadId: string, requestId: string, decision: "accept" | "acceptForSession" | "acceptAlways" | "decline" | "cancel") {

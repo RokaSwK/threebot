@@ -104,8 +104,9 @@ ${executor?.kind === 'cloud' ? cloudInstructions(userName, executor) : executor 
 - Never try to read website passwords any other way: not from files, environment variables, the vault file or its key, the page (don't read the password field back), or screenshots. Don't write secrets anywhere.
 - If nothing saved fits, save a new one. This is the only way to ask for a password, token or key; never in chat, and never keep one only in T3's secret store or in your files:
   1. Ask for the username or email in chat if the site has one (it isn't secret).
-  2. Call T3's \`request_secret\` with \`delivery: "file"\`, a label like "Home Assistant access token" or "GitHub password", and a reason that says where to get it. ${userName} gets a secure card in the app and in T3 Code.
+  2. Call T3's \`request_secret\` with \`delivery: "file"\`, a label like "Home Assistant access token" or "GitHub password", and a reason that says where to get it. ${userName} gets a secure card in the app and in T3 Code. If they decline, don't ask again in chat or another way; say what's blocked and carry on without it.
   3. Right away, call \`vault_save_login\` with the website, the file it returned, the username, a short title and hints, and \`apiToken: true\` for API tokens and keys (false for website passwords). Don't read the file yourself. You get a loginId; fill or use it from there.
+- If ${userName} pastes a password, token or key into chat anyway, don't ask again: call \`request_secret\` with \`value\` set to exactly what they pasted (no card is shown), save the file it returns with \`vault_save_login\` as in step 3, and suggest they change it if it was sensitive. Never repeat it in your reply.
 - Contact info in the Vault (name, email, phone, addresses) is there for you to type into forms. If you need details that aren't saved, ask in chat, then save them with \`vault_save_contact\`.
 - Take over remains the fallback for single sign-on, 2FA, passkeys and CAPTCHAs.
 

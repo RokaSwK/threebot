@@ -184,6 +184,7 @@ function RoutineRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void 
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
   const [error, setError] = useState("");
+  const timezone = useApp((s) => s.settings?.timezone ?? "");
   const toggle = async (enabled: boolean) => {
     if (busy.current) return;
     busy.current = true;
@@ -194,7 +195,7 @@ function RoutineRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void 
   };
   return <div className="border-b border-line last:border-0">
     <div className="flex items-center gap-3 px-3.5 py-2.5">
-      <button onClick={onOpen} className="min-w-0 flex-1 text-left hover:text-muted"><span className="block truncate text-[13.5px]">{task.title}</span><span className="block text-[12px] text-muted">{!task.enabled && "Paused · "}{scheduleText(task)}</span></button>
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left hover:text-muted"><span className="block truncate text-[13.5px]">{task.title}</span><span className="block text-[12px] text-muted">{task.blockedByPolicy ? "Blocked · " : !task.enabled && "Paused · "}{scheduleText(task, timezone)}</span></button>
       <span aria-busy={pending} className={pending ? "pointer-events-none opacity-50" : ""}><Switch checked={task.enabled} onChange={(v) => void toggle(v)} label={`${task.enabled ? "Pause" : "Resume"} ${task.title}`} /></span>
     </div>
     {error && <p role="alert" className="px-3.5 pb-2 text-[12px] text-danger">{error}</p>}
@@ -217,15 +218,16 @@ function RoutineDetail({ task, onBack, onEdit }: { task: ScheduledTask; onBack: 
   };
   return <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-6">
     <div className="routine-detail-back mb-3 flex items-center gap-2"><IconButton onClick={onBack} aria-label="Back to routines"><ArrowLeft size={16} /></IconButton><span className="text-[14px] font-medium">Routine</span></div>
-    <div className="mb-4 flex flex-col items-center gap-2 pt-2 text-center"><span className="grid size-12 place-items-center rounded-2xl bg-card text-muted"><Clock size={20} /></span><div className="max-w-full break-words text-[16px] font-medium">{task.title}</div><div className="text-[13px] text-muted">{!task.enabled && "Paused · "}{scheduleText(task)}</div></div>
+    <div className="mb-4 flex flex-col items-center gap-2 pt-2 text-center"><span className="grid size-12 place-items-center rounded-2xl bg-card text-muted"><Clock size={20} /></span><div className="max-w-full break-words text-[16px] font-medium">{task.title}</div><div className="text-[13px] text-muted">{!task.enabled && "Paused · "}{scheduleText(task, timezone)}</div></div>
     <div className="mb-5 flex flex-wrap justify-center gap-2">
       <Pill variant="soft" disabled={!!pending} onClick={() => void action("state", () => changeRoutineEnabled(task, !task.enabled))}>{pending === "state" ? "Saving…" : task.enabled ? "Pause" : "Resume"}</Pill>
       <Pill variant="soft" disabled={!!pending} onClick={onEdit}>Edit</Pill>
       {task.schedule.type !== "webhook" && <Pill disabled={!!pending || task.lastRunStatus === "running"} onClick={() => void action("test", async () => { await testRoutine(task); })}><Play size={12} fill="currentColor" />{pending === "test" || task.lastRunStatus === "running" ? "Running…" : "Test"}</Pill>}
     </div>
     {error && <p role="alert" className="mb-4 break-words text-[13px] text-danger">{error}</p>}
+    {task.blockedByPolicy && <p role="status" className="mb-4 break-words rounded-2xl bg-card px-3.5 py-3 text-[13px]">This routine can’t run: {task.blockedByPolicy}</p>}
     <Section title="Instruction"><div className="whitespace-pre-wrap break-words rounded-2xl bg-card px-3.5 py-3 text-[13.5px]">{task.prompt}</div></Section>
-    <Section title="When to run"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">{scheduleText(task)}{!task.enabled && <p className="mt-1 text-muted">{task.schedule.type === "webhook" ? "Paused. Webhook deliveries will not dispatch work." : "Paused. Scheduled runs are off; Test still dispatches work."}</p>}{task.schedule.type === "fixed_time" && <p className="mt-1 text-[12px] text-muted">Uses the T3 server’s clock and daylight saving rules. Changing your display timezone does not change this schedule.</p>}</div></Section>
+    <Section title="When to run"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">{scheduleText(task, timezone)}{!task.enabled && <p className="mt-1 text-muted">{task.schedule.type === "webhook" ? "Paused. Webhook deliveries will not dispatch work." : "Paused. Scheduled runs are off; Test still dispatches work."}</p>}{task.schedule.type === "fixed_time" && <p className="mt-1 text-[12px] text-muted">Uses the T3 server’s clock and daylight saving rules. Changing your display timezone does not change this schedule.</p>}</div></Section>
     {task.schedule.type === "webhook" && <WebhookDetails task={task} />}
     <RoutineHistory task={task} timezone={timezone} />
     {confirm ? <div className="flex flex-wrap items-center gap-2"><span className="flex-1 text-[13px]">Delete this routine?</span><Pill variant="soft" disabled={!!pending} onClick={() => setConfirm(false)}>Cancel</Pill><Pill variant="danger" disabled={!!pending} onClick={() => void action("delete", async () => { await removeRoutine(task); onBack(); })}>{pending === "delete" ? "Deleting…" : "Delete"}</Pill></div> : <button onClick={() => setConfirm(true)} className="flex min-h-10 items-center gap-2 px-1 text-[13px] text-danger hover:underline"><Trash2 size={13} /> Delete routine</button>}
