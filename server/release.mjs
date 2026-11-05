@@ -170,19 +170,45 @@ export async function prune(home = homeDir()) {
   return removed;
 }
 
-/** What the app shows in Settings → Updates. Cached so opening Settings doesn't hit GitHub each time. */
-export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlMs = 10 * 60 * 1000, version = currentVersion() } = {}) {
-  let cache = null;
-  return async function check({ force = false } = {}) {
-    if (!force && cache && Date.now() - cache.at < ttlMs) return cache.value;
-    let value;
+export const channelFor = (version) => String(version).includes("-") ? "preview" : "stable";
+
+/**
+ * What the app shows in Settings → Updates, and the footer's update button. The answer is stored and
+ * reused until it is `ttlMs` old, so any number of tabs costs one GitHub call per period; concurrent
+ * callers share one request. A failed check keeps the last good answer and waits longer each time
+ * (up to `maxBackoffMs`) before trying again. A preview install follows previews.
+ */
+export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlMs = 15 * 60 * 1000, maxBackoffMs = 2 * 60 * 60 * 1000, version = currentVersion(), now = Date.now } = {}) {
+  const channel = channelFor(version);
+  let value = { latest: null, updateAvailable: false, error: null, checkedAt: null };
+  let nextAt = 0, failures = 0, inflight = null;
+  const refresh = async () => {
+    const at = now();
     try {
-      const latest = await findRelease({ env, fetchImpl });
-      value = { latest: latest && { version: latest.version, url: latest.url, notes: latest.notes.slice(0, 4000), publishedAt: latest.publishedAt }, updateAvailable: Boolean(latest && compareVersions(latest.version, version) > 0), error: null };
+      const latest = await findRelease({ env, fetchImpl, channel });
+      value = { latest: latest && { version: latest.version, url: latest.url, notes: latest.notes.slice(0, 4000), publishedAt: latest.publishedAt }, updateAvailable: Boolean(latest && compareVersions(latest.version, version) > 0), error: null, checkedAt: new Date(at).toISOString() };
+      failures = 0;
+      nextAt = at + ttlMs;
     } catch (error) {
-      value = { latest: null, updateAvailable: false, error: error instanceof Error ? error.message : String(error) };
+      value = { ...value, error: error instanceof Error ? error.message : String(error), checkedAt: new Date(at).toISOString() };
+      nextAt = at + Math.min(ttlMs * 2 ** failures++, maxBackoffMs);
     }
-    cache = { at: Date.now(), value };
     return value;
   };
+  return async function check({ force = false } = {}) {
+    if (!force && now() < nextAt) return value;
+    return inflight ??= refresh().finally(() => { inflight = null; });
+  };
+}
+
+/**
+ * Keep a checker's stored answer fresh with nobody asking: look now, then every `everyMs`. Each look
+ * only reaches GitHub when the checker says a check is due. Returns a function that stops it.
+ */
+export function startUpdateChecks(check, { everyMs = 60 * 1000 } = {}) {
+  const tick = () => void check();
+  tick();
+  const timer = setInterval(tick, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
 import { api, type AccessState, type SystemInfo } from "../lib/api";
+import { timeAgo } from "../lib/projects";
 import { toast } from "../store";
 import { Group, H, Row } from "./SettingsParts";
 import { IconButton, Pill, Spinner } from "./ui";
@@ -91,11 +92,25 @@ export function RemoteAccessPane() {
   </>;
 }
 
-/** "0.2.0" when a newer release is out, for the Settings home row. */
+/** Cheap: the gateway answers from the result of its own 15-minute check, without asking GitHub. */
+const UPDATE_POLL_MS = 2 * 60 * 1000;
+
+/**
+ * The newer release Settings → Updates would offer, or null. `installable` says this copy can update
+ * itself from Settings (an installed runtime run as a service), which the sidebar's update button needs.
+ */
 export function useUpdateNotice() {
-  const [version, setVersion] = useState<string | null>(null);
-  useEffect(() => { api.system().then((s) => setVersion(s.updateAvailable ? s.latest?.version ?? null : null)).catch(() => {}); }, []);
-  return version;
+  const [notice, setNotice] = useState<{ version: string; installable: boolean } | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.system().then((s) => {
+      if (live) setNotice(s.updateAvailable && s.latest ? { version: s.latest.version, installable: s.installed && s.service } : null);
+    }).catch(() => { /* Offline or rate-limited: keep what we had and try again later. */ });
+    load();
+    const timer = setInterval(load, UPDATE_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
+  return notice;
 }
 
 /** Settings → Updates: the same flow as T3 Code's, through `threebot update` on the server. */
@@ -144,9 +159,12 @@ export function UpdatesPane({ t3 }: { t3: React.ReactNode }) {
     {error && <p role="alert" className="mb-4 text-[13px] text-danger">{error}</p>}
     <Group>
       <Row title="Threebot" desc={desc}>
-        {updating ? <Spinner /> : info?.updateAvailable && canUpdate
-          ? <Pill onClick={() => void update()}>Update</Pill>
-          : <IconButton type="button" disabled={checking} onClick={() => void check(true)} aria-label="Check for updates" title="Check for updates" className="size-8">{checking ? <Spinner /> : <RefreshCw size={14} />}</IconButton>}
+        {updating ? <Spinner /> : <span className="flex shrink-0 items-center gap-3">
+          {info?.checkedAt && <span className="text-[12.5px] text-muted">Last checked {timeAgo(info.checkedAt)}</span>}
+          {info?.updateAvailable && canUpdate
+            ? <Pill onClick={() => void update()}>Update</Pill>
+            : <Pill variant="soft" disabled={checking} onClick={() => void check(true)}>{checking ? "Checking…" : "Check now"}</Pill>}
+        </span>}
       </Row>
       {t3}
     </Group>

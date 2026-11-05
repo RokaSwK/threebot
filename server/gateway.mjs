@@ -27,7 +27,7 @@ import { objectAvatarPatch } from "./object-avatars.mjs";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
 import { safeEqual } from "./safe-equal.mjs";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mjs";
-import { createUpdateChecker, currentVersion, installedRuntime } from "./release.mjs";
+import { channelFor, createUpdateChecker, currentVersion, installedRuntime, startUpdateChecks } from "./release.mjs";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
 import { createProjects } from "./projects.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
@@ -152,6 +152,9 @@ const exposure = exposureConfig();
 const envTailnet = exposure.tailnetPort > 0;
 const version = currentVersion();
 const checkUpdates = createUpdateChecker({ version });
+// Copies that can update themselves check on their own, so the sidebar's update button shows without
+// anyone opening Settings. The checker answers from its stored result until a check is due.
+if (installedRuntime() && process.env.THREEBOT_SERVICE === "1") startUpdateChecks(checkUpdates);
 let tailnetServer = null;
 // Open WebSockets outlive the cookie or listener that let them in, so access changes close them.
 const upgraded = new Set();
@@ -197,7 +200,7 @@ async function startSelfUpdate() {
   const logFile = path.join(dataRoot, "logs", "update.log");
   await fs.mkdir(path.dirname(logFile), { recursive: true });
   const out = await fs.open(logFile, "a");
-  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", latest.version];
+  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", ...(channelFor(version) === "preview" ? ["--preview"] : []), latest.version];
   // systemd stops every process in the service's cgroup on restart, so the updater runs outside it.
   // systemd-run starts it with a clean environment, so pass on what the updater needs.
   const keep = ["PATH", "HOME", "THREEBOT_HOME", "THREEBOT_RELEASES_URL", "THREEBOT_RELEASE_BASE_URL"].filter((k) => process.env[k]).map((k) => `--setenv=${k}=${process.env[k]}`);
