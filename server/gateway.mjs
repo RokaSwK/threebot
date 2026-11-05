@@ -140,10 +140,11 @@ function isHttps(req) {
 }
 
 // Requests that came through Cloudflare Access with a valid token for an allowed email skip the password.
+const accessEmails = (process.env.CF_ACCESS_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
 const verifyAccess = createAccessVerifier({
   teamDomain: process.env.CF_ACCESS_TEAM_DOMAIN,
   aud: process.env.CF_ACCESS_AUD,
-  emails: (process.env.CF_ACCESS_EMAILS ?? "").split(","),
+  emails: accessEmails,
 });
 
 const originPolicy = { allowed: allowedOrigins(), allowLoopback: !verifyAccess };
@@ -636,7 +637,12 @@ const server = http.createServer(async (req, res) => {
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
     if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
 
-    if (p === "/api/session") return send(res, 200, { authenticated: await authed(req), passwordRequired: await passwordRequired(), accessLogin: Boolean(verifyAccess) });
+    if (p === "/api/session") {
+      const needsPassword = await passwordRequired();
+      // Cloudflare's login only helps requests that came through Cloudflare; on this machine or the LAN, use the password.
+      const accessLogin = Boolean(verifyAccess) && !(needsPassword && !req.headers["cf-ray"]);
+      return send(res, 200, { authenticated: await authed(req), passwordRequired: needsPassword, accessLogin });
+    }
     if (p === "/api/logout") return send(res, 200, { ok: true }, { "set-cookie": `${COOKIE}=; Path=/; Max-Age=0` });
 
     if (p.startsWith("/api/") || p.startsWith("/t3/")) {
@@ -686,7 +692,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { version, installed: installedRuntime(), service: process.env.THREEBOT_SERVICE === "1", ...updates });
     }
     if (p === "/api/system/update" && req.method === "POST") return send(res, 202, await startSelfUpdate());
-    if (p === "/api/access" && req.method === "GET") return send(res, 200, await remoteAccess.status());
+    if (p === "/api/access" && req.method === "GET") return send(res, 200, { ...(await remoteAccess.status()), cloudflareAccess: verifyAccess ? { emails: accessEmails } : null });
     if (p === "/api/access/password" && req.method === "PUT") {
       const { password } = await readBody(req, 4096);
       await remoteAccess.setPassword(password ?? null);
