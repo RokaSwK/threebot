@@ -47,18 +47,23 @@ export async function verifyPassword(password, stored) {
   return timingSafeEqual(actual, expected);
 }
 
+// A folder Node's permission model (or the OS) won't let us read counts as "not there".
+function exists(file) {
+  try { return existsSync(file); } catch { return false; }
+}
+
 // ---------- Tailscale ----------
 
 const TAILSCALE_APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 export function findOnPath(name, pathEnv = process.env.PATH ?? "") {
   for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
     const file = path.join(dir, name);
-    if (existsSync(file)) return file;
+    if (exists(file)) return file;
   }
   return null;
 }
 export function findTailscale(env = process.env) {
-  return env.TAILSCALE_PATH || findOnPath("tailscale", env.PATH) || (process.platform === "darwin" && existsSync(TAILSCALE_APP) ? TAILSCALE_APP : null);
+  return env.TAILSCALE_PATH || findOnPath("tailscale", env.PATH) || (process.platform === "darwin" && exists(TAILSCALE_APP) ? TAILSCALE_APP : null);
 }
 
 /** What `tailscale status --json` says, reduced to what the setup needs. */
@@ -141,7 +146,7 @@ export const pinnedCloudflared = (home, platform = process.platform, arch = proc
 export function findCloudflared(home, env = process.env) {
   if (env.CLOUDFLARED_PATH) return env.CLOUDFLARED_PATH;
   const pinned = pinnedCloudflared(home);
-  return existsSync(pinned) ? pinned : findOnPath("cloudflared", env.PATH);
+  return exists(pinned) ? pinned : findOnPath("cloudflared", env.PATH);
 }
 
 export async function installCloudflared(home, { fetchImpl = fetch, platform = process.platform, arch = process.arch } = {}) {

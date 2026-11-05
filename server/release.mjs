@@ -14,8 +14,11 @@ export const REPO = "RokaSwK/threebot";
 
 export const packageRoot = path.resolve(here, "..");
 export function currentVersion(root = packageRoot) {
-  try { return JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version ?? "0.0.0"; }
-  catch { return "0.0.0"; }
+  // server/package.json carries the same version (pack-release writes both), for when only server/ is readable.
+  for (const file of [path.join(root, "package.json"), path.join(root, "server", "package.json")]) {
+    try { const version = JSON.parse(readFileSync(file, "utf8")).version; if (version) return version; } catch {}
+  }
+  return "0.0.0";
 }
 
 export function homeDir(env = process.env) {
