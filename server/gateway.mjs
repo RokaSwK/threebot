@@ -152,6 +152,11 @@ const envTailnet = exposure.tailnetPort > 0;
 const version = currentVersion();
 const checkUpdates = createUpdateChecker({ version });
 let tailnetServer = null;
+// Open WebSockets outlive the cookie or listener that let them in, so access changes close them.
+const upgraded = new Set();
+function dropUpgraded(match = () => true) {
+  for (const socket of upgraded) if (match(socket)) socket.destroy();
+}
 async function openTailnet(port, users) {
   // This port trusts the Tailscale-User-Login header, so only a local `tailscale serve` may reach it.
   if (!users.length) throw new Error("The Tailscale listener needs at least one allowed user");
@@ -166,10 +171,13 @@ async function openTailnet(port, users) {
   console.log(`tailnet listener on 127.0.0.1:${port}`);
 }
 async function closeTailnet() {
-  const listener = tailnetServer;
+  const listener = tailnetServer, port = exposure.tailnetPort;
   tailnetServer = null;
   exposure.tailnetPort = 0;
-  if (listener) await new Promise((resolve) => { listener.close(() => resolve()); listener.closeAllConnections?.(); });
+  if (!listener) return;
+  // closeAllConnections leaves upgraded sockets alone, and close() waits for them.
+  dropUpgraded((socket) => socket.localPort === port);
+  await new Promise((resolve) => { listener.close(() => resolve()); listener.closeAllConnections?.(); });
 }
 const remoteAccess = createRemoteAccess({
   store: createAccessStore(path.join(appDir, "access.json")),
@@ -190,7 +198,9 @@ async function startSelfUpdate() {
   const out = await fs.open(logFile, "a");
   const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", latest.version];
   // systemd stops every process in the service's cgroup on restart, so the updater runs outside it.
-  const command = process.platform === "linux" ? ["systemd-run", "--user", "--collect", "--quiet", ...args] : args;
+  // systemd-run starts it with a clean environment, so pass on what the updater needs.
+  const keep = ["PATH", "HOME", "THREEBOT_HOME", "THREEBOT_RELEASES_URL", "THREEBOT_RELEASE_BASE_URL"].filter((k) => process.env[k]).map((k) => `--setenv=${k}=${process.env[k]}`);
+  const command = process.platform === "linux" ? ["systemd-run", "--user", "--collect", "--quiet", ...keep, ...args] : args;
   const child = spawn(command[0], command.slice(1), { detached: true, stdio: ["ignore", out.fd, out.fd], env: process.env });
   child.unref();
   await out.close();
@@ -680,8 +690,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/access/password" && req.method === "PUT") {
       const { password } = await readBody(req, 4096);
       await remoteAccess.setPassword(password ?? null);
-      // Everyone signs in again with the new password; this browser gets a fresh session now.
+      // Everyone signs in again with the new password, open connections included; this browser gets a fresh session now.
       await rotateSessionSecret();
+      dropUpgraded();
       const secure = isHttps(req) ? "; Secure" : "";
       return send(res, 200, await remoteAccess.status(), password ? { "set-cookie": `${COOKIE}=${makeSession()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 3600}${secure}` } : {});
     }
@@ -793,6 +804,8 @@ function proxyPreviewStream(req, socket, head, url, environment) {
 // ---------- T3 WebSocket proxy ----------
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", async (req, socket, head) => {
+  upgraded.add(socket);
+  socket.once("close", () => upgraded.delete(socket));
   if (publicPortClosed(req)) {
     socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
     return socket.destroy();

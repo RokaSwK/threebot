@@ -204,6 +204,9 @@ export function startQuickTunnel({ bin, localUrl, spawnImpl = spawn, timeoutMs =
 export function createRemoteAccess({ store, home, localPort, urlFile = null, exposure, envPassword = "", envTailnet = false, openTailnet, closeTailnet, tailscale = createTailscale(), tunnelBin = () => findCloudflared(home), installTunnelBin = () => installCloudflared(home), startTunnel = startQuickTunnel, log = console }) {
   let tunnel = null; // { url, stop }
   let tunnelError = null;
+  // One change at a time: two quick clicks must not start two tunnels, or drop the password mid-start.
+  let queue = Promise.resolve();
+  const serial = (fn) => (...args) => { const run = queue.then(() => fn(...args)); queue = run.catch(() => {}); return run; };
   const tailnetPort = () => exposure.tailnetPort || localPort + 1;
 
   async function hasPassword() { return Boolean(envPassword) || Boolean((await store.read()).password); }
@@ -307,5 +310,5 @@ export function createRemoteAccess({ store, home, localPort, urlFile = null, exp
     }
   }
 
-  return { status, setPassword, tailscaleOn, tailscaleOff, tunnelOn, tunnelOff, boot, verify: async (password) => verifyPassword(password, (await store.read()).password), hasPassword, stop: () => tunnel?.stop() };
+  return { status, setPassword: serial(setPassword), tailscaleOn: serial(tailscaleOn), tailscaleOff: serial(tailscaleOff), tunnelOn: serial(tunnelOn), tunnelOff: serial(tunnelOff), boot: serial(boot), verify: async (password) => verifyPassword(password, (await store.read()).password), hasPassword, stop: () => tunnel?.stop() };
 }

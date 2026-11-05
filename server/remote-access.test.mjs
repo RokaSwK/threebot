@@ -132,3 +132,25 @@ test("the quick tunnel's link is read from cloudflared's output", async () => {
   tunnel.stop();
   assert.equal(exited, null);
 });
+
+test("two quick clicks start one tunnel, and the password can't go while it starts", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "tb-race-"));
+  let starts = 0, live = 0, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const access = createRemoteAccess({
+    store: createAccessStore(path.join(dir, "access.json")), home: dir, localPort: 3780, exposure: { tailnetPort: 0, tailnetUsers: new Set() },
+    openTailnet: async () => {}, closeTailnet: async () => {}, tailscale: { status: async () => ({ installed: false }), serveConfig: async () => ({}) },
+    tunnelBin: () => "/bin/cloudflared",
+    startTunnel: async () => { starts++; live++; await gate; return { url: "https://one.trycloudflare.com", stop: () => { live--; } }; },
+    log: {},
+  });
+  await access.setPassword("long enough");
+  const first = access.tunnelOn(), second = access.tunnelOn();
+  const removal = access.setPassword(null).then(() => "removed", (error) => error.message);
+  release();
+  await Promise.all([first, second]);
+  assert.equal(starts, 1);
+  assert.match(await removal, /Turn off the Cloudflare link/);
+  await access.tunnelOff();
+  assert.equal(live, 0, "no tunnel is left running");
+});

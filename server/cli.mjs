@@ -8,7 +8,8 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { activate, compareVersions, currentVersion, findRelease, homeDir, installRelease, installedRuntime, prune, rollback, run, runtimePaths } from "./release.mjs";
 import { installService, restartService, serviceInstalled, serviceSpec, serviceSupported, uninstallService } from "./service.mjs";
-import { createAccessStore, createTailscale, findCloudflared, hashPassword, installCloudflared, MIN_PASSWORD, pickServePort, tailnetUrl } from "./remote-access.mjs";
+import { randomBytes } from "node:crypto";
+import { createAccessStore, createTailscale, findCloudflared, hashPassword, installCloudflared, MIN_PASSWORD, pickServePort, serveOwner, tailnetUrl } from "./remote-access.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `threebot ${currentVersion()}
@@ -68,6 +69,17 @@ function readEnvFile(file = envFile) {
     if (m) out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, "$2");
   }
   return out;
+}
+/** Set KEY=value lines in THREEBOT_HOME/.env, keeping everything else. */
+async function setEnv(values) {
+  let text = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
+  for (const [key, value] of Object.entries(values)) {
+    const line = `${key}=${value}`;
+    const pattern = new RegExp(`^\\s*${key}\\s*=.*$`, "m");
+    text = pattern.test(text) ? text.replace(pattern, line) : `${text}${text && !text.endsWith("\n") ? "\n" : ""}${line}\n`;
+    process.env[key] = String(value);
+  }
+  await fs.writeFile(envFile, text, { mode: 0o600 });
 }
 const settings = () => ({ ...readEnvFile(), ...Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(PORT|T3_URL|T3_TOKEN|T3_TOKEN_FILE|HOST)$/.test(k))) });
 const portOf = () => Number(settings().PORT || 3780);
@@ -136,6 +148,10 @@ HOST=127.0.0.1
 PORT=${port}
 `, { mode: 0o600 });
     say(`Wrote ${envFile}`);
+  } else {
+    // Options given on this run win over what an earlier `up` saved.
+    const changed = { ...(flags.port ? { PORT: port } : {}), ...(flags["t3-url"] ? { T3_URL: t3Url } : {}) };
+    if (Object.keys(changed).length) { await setEnv(changed); say(`Updated ${envFile}`); }
   }
 
   // A T3 token lets the gateway drive T3 Code. Reuse one, or ask the local t3 for a new one.
@@ -266,7 +282,8 @@ async function tailscaleCommand([action = "status"], { restart = true } = {}) {
     return say(saved?.enabled && state.dnsName ? `Threebot: ${tailnetUrl(state.dnsName, saved.httpsPort)}` : "Threebot: not served. Run `threebot tailscale on`.");
   }
   if (action === "off") {
-    if (saved?.httpsPort) await ts.unserve(saved.httpsPort).catch(() => {});
+    // Only remove the route if it still points at Threebot's listener.
+    if (saved?.httpsPort && serveOwner(await ts.serveConfig(), saved.httpsPort) === `http://127.0.0.1:${saved.port}`) await ts.unserve(saved.httpsPort).catch(() => {});
     await store.update({ tailscale: { ...saved, enabled: false } });
     say("Tailscale link off.");
     if (restart) await restartIfManaged();
@@ -313,7 +330,11 @@ async function passwordCommand() {
   if (first.length < MIN_PASSWORD) fail(`Use at least ${MIN_PASSWORD} characters.`);
   if (process.stdin.isTTY && (await ask("Again: ", { secret: true })) !== first) fail("The passwords don't match.");
   await accessStore().update({ password: await hashPassword(first) });
-  say("Password set. Restart Threebot to sign everyone out with it.");
+  // A new session secret signs out every device that signed in before.
+  await fs.mkdir(appDirOf(), { recursive: true });
+  await fs.writeFile(path.join(appDirOf(), "session-secret"), randomBytes(32).toString("hex"), { mode: 0o600 });
+  say("Password set. Every device signs in again with it.");
+  await restartIfManaged();
 }
 
 // Every command reads THREEBOT_HOME/.env, without overriding the real environment.
