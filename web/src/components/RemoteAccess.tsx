@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Copy, ExternalLink, RefreshCw } from "lucide-react";
-import { api, type AccessState, type SystemInfo } from "../lib/api";
+import { api, type AccessState, type SystemInfo, type UpdateNotice } from "../lib/api";
 import { timeAgo } from "../lib/projects";
 import { toast } from "../store";
 import { Group, H, Row } from "./SettingsParts";
-import { IconButton, Pill, Spinner } from "./ui";
+import { IconButton, Pill, Spinner, Switch } from "./ui";
 
 const ACCESS_GUIDE = "https://github.com/RokaSwK/threebot/blob/main/docs/cloudflare-access.md";
 const message = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
@@ -113,6 +113,31 @@ export function useUpdateNotice() {
   return notice;
 }
 
+/** The one line the app shows after an automatic update, with a link to the release's notes. */
+export function updateNoticeText(notice: UpdateNotice): { text: string; link: string } {
+  const v = `v${notice.version}`;
+  if (notice.kind === "updated") return { text: `Updated to ${v}.`, link: "What's new" };
+  if (notice.kind === "rolledBack") return { text: `${v} didn't start, so Threebot went back to v${notice.from}.`, link: `About ${v}` };
+  if (notice.kind === "failed") return { text: `Couldn't update to ${v} automatically. Update from Settings → Updates when you like.`, link: `About ${v}` };
+  return { text: `${v} is ready, but your Bots have been busy for a day. Update from Settings → Updates when they're free.`, link: "What's new" };
+}
+
+/** Shows what the last automatic update did, once: the gateway forgets it as soon as it's been shown. */
+export function useAutoUpdateNotice() {
+  useEffect(() => {
+    let live = true;
+    const load = () => api.system().then((s) => {
+      if (!live || !s.notice) return;
+      const { text, link } = updateNoticeText(s.notice);
+      toast(text, { href: s.notice.url, label: link });
+      void api.dismissUpdateNotice(s.notice.at).catch(() => {});
+    }).catch(() => { /* Offline or signed out: look again later. */ });
+    load();
+    const timer = setInterval(load, UPDATE_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
+}
+
 /** Settings → Updates: the same flow as T3 Code's, through `threebot update` on the server. */
 export function UpdatesPane({ t3 }: { t3: React.ReactNode }) {
   const [info, setInfo] = useState<SystemInfo | null>(null);
@@ -153,6 +178,14 @@ export function UpdatesPane({ t3 }: { t3: React.ReactNode }) {
     else desc = `Version ${info.version}. Up to date.`;
   }
   const canUpdate = info?.installed && info.service;
+  const setAuto = async (auto: boolean) => {
+    setInfo((i) => i && { ...i, auto });
+    try { const saved = await api.setAutoUpdate(auto); setInfo((i) => i && { ...i, ...saved }); }
+    catch (e) { setInfo((i) => i && { ...i, auto: !auto }); setError(message(e)); }
+  };
+  const autoDesc = !canUpdate ? "Needs Threebot installed with the installer and running as a service."
+    : info?.waiting ? `${info.waiting.version} is waiting for your Bots to finish what they're doing.`
+    : "Installs new releases when no Bot is working or waiting on you, and restarts Threebot.";
 
   return <>
     <H>Updates</H>
@@ -166,6 +199,9 @@ export function UpdatesPane({ t3 }: { t3: React.ReactNode }) {
             : <Pill variant="soft" disabled={checking} onClick={() => void check(true)}>{checking ? "Checking…" : "Check now"}</Pill>}
         </span>}
       </Row>
+      {info && <Row title="Update automatically" desc={autoDesc}>
+        <Switch checked={info.auto} onChange={(v) => void setAuto(v)} label="Update automatically" />
+      </Row>}
       {t3}
     </Group>
     {info?.updateAvailable && latest && !canUpdate && <p className="mb-3 text-[12.5px] leading-5 text-muted">{info.installed ? <>Run <code>threebot update</code> on the server to install it.</> : <>This copy runs from a git checkout. Update it with <code>git pull &amp;&amp; npm run setup</code>, then restart it.</>}</p>}
