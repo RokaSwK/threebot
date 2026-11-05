@@ -1,0 +1,202 @@
+/* The Projects page. Monochrome like the rest of the app; colour only marks state. */
+
+.projects-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 18px 22px;
+  align-content: start;
+}
+.projects-overview:not(.projects-grid) > * + * { margin-top: 18px; }
+.projects-span { grid-column: 1 / -1; }
+@media (max-width: 1100px) {
+  .projects-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.projects-panel {
+  container-type: inline-size;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 6px 10px 8px;
+  background: var(--bg-card);
+  min-width: 0;
+}
+
+.projects-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 4px 6px;
+  border-radius: 10px;
+  transition: background-color 0.15s;
+}
+.projects-row:hover { background: var(--bg-hover); }
+.projects-row + .projects-row { box-shadow: 0 -1px 0 var(--border); }
+.projects-row:hover + .projects-row, .projects-row:hover { box-shadow: none; }
+.projects-row-done .truncate:first-child { color: var(--fg-muted); text-decoration: line-through; text-decoration-color: var(--fg-faint); }
+.projects-row .projects-remove { opacity: 0; }
+.projects-row:hover .projects-remove, .projects-row .projects-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .projects-row .projects-remove { opacity: 1; } }
+
+.projects-check { transition: border-color 0.15s, background-color 0.15s; }
+.projects-check:active { transform: scale(0.9); }
+
+.projects-chip {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--fg-muted);
+  background: var(--pill-soft);
+}
+.projects-chip-high { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+
+.projects-meta-link:hover { color: var(--fg); text-decoration: underline; }
+
+.projects-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--fg-faint);
+}
+.projects-dot-ok { background: var(--success); }
+.projects-dot-bad { background: var(--danger); }
+.projects-dot-wait { background: var(--attention); }
+.projects-dot-off { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fg-faint); }
+.projects-dot-unknown { background: transparent; box-shadow: inset 0 0 0 1.5px var(--border-strong); }
+
+.projects-live-dot { animation: projects-pulse 2.4s ease-in-out infinite; }
+@keyframes projects-pulse { 50% { opacity: 0.35; } }
+
+.projects-progress {
+  flex-shrink: 0;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--pill-soft);
+  overflow: hidden;
+}
+.projects-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--fg); transition: width 0.4s; }
+
+.projects-run {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 0 8px 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.projects-run::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: var(--success); animation: projects-pulse 1.6s ease-in-out infinite; }
+.projects-run-waiting { background: color-mix(in srgb, var(--attention) 16%, transparent); }
+.projects-run-waiting::before { background: var(--attention); }
+
+.projects-machines {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.projects-machine {
+  container-type: inline-size;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 10px 8px;
+  background: var(--bg-card-inner);
+}
+
+.projects-quick-add { border-radius: 10px; margin-top: 2px; }
+.projects-quick-add:focus-within { background: var(--bg-hover); }
+
+/* Something a Bot (or you, elsewhere) just changed. */
+.projects-flash { animation: projects-flash 2.4s ease-out; }
+@keyframes projects-flash {
+  0%, 30% { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
+  100% { background-color: transparent; }
+}
+.projects-flash-tag {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--pill-fg);
+  background: var(--pill);
+  animation: projects-tag 2.6s ease-out forwards;
+}
+@keyframes projects-tag { 0% { opacity: 0; transform: translateY(2px); } 10%, 75% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .projects-flash, .projects-flash-tag, .projects-live-dot, .projects-run::before { animation: none; }
+}
+
+/* The item panel: a column on wide screens, the whole screen on a phone. */
+.projects-item-panel {
+  width: min(460px, 42vw);
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-details);
+}
+.projects-item-sheet {
+  width: 100%;
+  border-left: 0;
+  flex: 1;
+}
+
+.projects-props {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 2px 8px;
+  font-size: 13px;
+}
+.projects-prop { display: contents; }
+.projects-prop dt { color: var(--fg-muted); padding: 7px 4px; }
+.projects-prop dd { min-width: 0; margin: 0; }
+.projects-input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0 8px;
+  font-size: 13.5px;
+  color: var(--fg);
+  outline: none;
+}
+.projects-input:hover { background: var(--bg-hover); }
+.projects-input:focus { border-color: var(--border-strong); background: transparent; }
+select.projects-input { appearance: none; cursor: pointer; }
+input[type="date"].projects-input { color-scheme: light dark; }
+.projects-input::placeholder { color: var(--fg-faint); }
+@media (max-width: 640px) {
+  .projects-input, .projects-quick-add input, .projects-header input { font-size: 16px; }
+}
+
+.projects-title { overflow: hidden; }
+.projects-body > :first-child { margin-top: 0; }
+
+/* An item link inside a chat message. */
+.projects-chat-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  vertical-align: baseline;
+  border-radius: 999px;
+  padding: 0 8px 0 7px;
+  font-weight: 500;
+  line-height: 20px;
+  background: var(--pill-soft);
+}
+.projects-chat-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projects-chat-chip:hover { background: var(--bg-active); }
+
+/* In a narrow panel the project name next to a row gives way to the row's own title. */
+@container (max-width: 520px) { .projects-row-parent { display: none; } }
+.projects-input-empty { color: var(--fg-faint); }

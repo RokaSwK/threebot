@@ -8,10 +8,10 @@ import { ModelPicker } from "./ModelPicker";
 import { VaultPane } from "./Vault";
 import { ConnectApps } from "./ConnectApps";
 import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
-import { defaultModel, openDialog, saveSettings, toast, useApp } from "../store";
+import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
 import { t3http } from "../lib/t3";
-import type { Settings } from "../lib/types";
+import type { ModelSelection, Settings } from "../lib/types";
 
 const PANES = [
   { id: "general", label: "General", icon: <Gear size={15} /> },
@@ -185,9 +185,21 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
         <Row title="Default model" desc="Used for new Bots. Each Bot can switch in its details.">
           <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
         </Row>
+        <BackupModelRow />
       </Group>}
     </>
   );
+}
+
+function BackupModelRow() {
+  const fallback = useApp((state) => state.fallbackModel);
+  const change = (selection: ModelSelection | null) => saveFallbackModel(selection).catch((error) => toast(error instanceof Error ? error.message : "Couldn't save the backup model"));
+  return <Row title="Backup model" desc="T3 uses it for new threads when the default model is out of usage. Routines keep their own model.">
+    <div className="flex items-center gap-2">
+      <ModelPicker value={fallback} onChange={(selection) => void change(selection)} />
+      {fallback && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => void change(null)}>Turn off</button>}
+    </div>
+  </Row>;
 }
 
 function TimeZoneSettings({ s }: { s: Settings }) {

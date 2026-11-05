@@ -48,10 +48,11 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 
 - **A messaging app.** An installable PWA built for phones, with notifications, search and themes.
 - **Memory.** Each Bot keeps its own notes, plus facts shared by all your Bots.
+- **Projects.** One live board for everything you are working on: projects, to-dos, your machines and what runs on each, repos, notes and links, split into areas like work and personal. Bots read and edit it with their own tools, every change appears on your screen as it happens, and every item has a link you can hand to a Bot.
 - **Vault.** Encrypted logins Bots can type into a site without reading the password, powered by secure requests from T3 Code.
 - **Connected apps.** Gmail, GitHub, Slack and the rest, powered by [Executor](https://executor.sh), if you run it.
 - **Approvals.** A Bot asks first before anything that leaves your machine or can't be undone.
-- **A face.** The ball's weather tells you what it's doing: storms, aurora, a moon when it's asleep.
+- **A face.** The ball's weather tells you what it's doing: storms, aurora, a moon when it's asleep. Prefer an object? Pick one of 22 from [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar) by Dominik Scholz, or ask your Bot to draw itself.
 
 ## Run it
 
@@ -79,7 +80,7 @@ A Bot is a T3 thread, so it runs on whatever T3 Code runs: Claude, Codex, Cursor
 
 ## How it works
 
-The browser app talks only to a small Node gateway, and the gateway talks to T3 Code. There is no database: a Bot is a folder with its config, memory and library, plus a T3 project and thread. See [docs/architecture.md](docs/architecture.md).
+The browser app talks only to a small Node gateway, and the gateway talks to T3 Code. There is no database: a Bot is a folder with its config, memory and library, plus a T3 project and thread. The Projects board is one JSON file next to them, streamed to open pages as Server-Sent Events. See [docs/architecture.md](docs/architecture.md).
 
 ```sh
 npm run check   # web tests, build, server tests, fixture and asset checks
@@ -87,7 +88,7 @@ npm run check   # web tests, build, server tests, fixture and asset checks
 
 ## Status
 
-Early, and built around one person's daily use. It tracks T3 Code Nightly, whose API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
+Early, and built around one person's daily use. It needs T3 Code 0.1.6 or later. T3's API still moves, so expect things to break after a T3 update. Issues and pull requests are welcome.
 
 ## Credits
 

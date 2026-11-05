@@ -6,10 +6,12 @@ import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
 import { Library } from "./Library";
 import { ThreadFamily } from "./ThreadFamily";
+import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
-import { botStatus, conversationStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
+import { botStatus, conversationStatus, openDialog, selectThread, sendMessage, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
+import { drawObjectPrompt, sharedObjects } from "../lib/objectAvatars";
 import { ComputerScreen, useBotTabs } from "./Computer";
 import type { Bot, ModelSelection, ScheduledTask } from "../lib/types";
 
@@ -97,6 +99,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
+            {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
             {threadId && threadId !== bot.mainThreadId && bot.mainThreadId && <Pill variant="soft" className="mb-4" onClick={() => bot.mainThreadId && selectThread(bot, bot.mainThreadId)}>Back to {bot.name}</Pill>}
             {!archived && <div className={showRoutines ? "" : "profile-routines"}><DetailsTab bot={bot} tasks={tasks} onOpenRoutine={setRoutine} onCreate={() => routineChat("Set up a routine")} routinesOnly={showRoutines} /></div>}
           </>}
@@ -121,7 +124,13 @@ function ModelSection({ bot, threadId }: { bot: Bot; threadId: string | null }) 
 }
 
 function AvatarDialog({ bot, onClose }: { bot: Bot; onClose: () => void }) {
-  return <AvatarEditorDialog initial={{ shape: bot.shape, color: bot.color, avatarImage: bot.avatarImage }} onSave={draft => updateBot(bot.slug, draft)} onClose={onClose} />;
+  const bots = useApp((s) => s.bots);
+  const shared = useMemo(() => sharedObjects(Object.values(bots)), [bots]);
+  const draw = (description: string) => {
+    void sendMessage(bot.slug, drawObjectPrompt(description)).catch((error: unknown) => toast(error instanceof Error ? error.message : "Couldn't ask your Bot to draw it"));
+    toast(`${bot.name} is drawing it in chat`);
+  };
+  return <AvatarEditorDialog initial={{ shape: bot.shape, color: bot.color, avatarImage: bot.avatarImage, avatarDefinition: bot.avatarDefinition }} onSave={draft => updateBot(bot.slug, draft)} onClose={onClose} shared={shared} onDraw={draw} />;
 }
 
 function Section({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {

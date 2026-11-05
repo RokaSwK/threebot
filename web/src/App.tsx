@@ -8,6 +8,7 @@ import { DeleteBotDialog, NewBotDialog, RenameBotDialog } from "./components/New
 import { SearchDialog } from "./components/SearchDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
+import { ProjectsPage } from "./components/Projects";
 import { ColumnDivider } from "./components/ColumnDivider";
 import { Modal, Pill, Spinner } from "./components/ui";
 import { boot, botStatus, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, type MainBotIntent } from "./store";
@@ -117,6 +118,7 @@ function Shell() {
   const sidebarCompact = useApp((s) => s.sidebarCompact);
   const selectedThreadId = useApp((s) => s.selectedThreadId);
   const settings = useApp((s) => s.settings);
+  const page = useApp((s) => s.page);
   const bot = selected ? bots[selected] ?? historicalBots[selected] : undefined;
   const narrow = useNarrow();
   useNavigationHistory(narrow);
@@ -130,10 +132,12 @@ function Shell() {
 
   return (
     <div className="flex h-full bg-app">
-      <div className={narrow && bot ? "hidden" : "contents"}><Sidebar wide={narrow} /></div>
+      <div className={narrow && (bot || page) ? "hidden" : "contents"}><Sidebar wide={narrow} /></div>
       {!narrow && !sidebarCompact && <ColumnDivider column="sidebar" />}
-      <main className={narrow ? bot ? "flex min-w-0 flex-1 overflow-hidden" : "hidden" : "flex min-w-0 flex-1 overflow-hidden rounded-tl-[14px] border-t border-l border-line"}>
-        {bot ? (
+      <main className={narrow ? bot || page ? "flex min-w-0 flex-1 overflow-hidden" : "hidden" : "flex min-w-0 flex-1 overflow-hidden rounded-tl-[14px] border-t border-l border-line"}>
+        {page === "projects" ? (
+          <ErrorBoundary key="projects"><ProjectsPage narrow={narrow} onBack={narrow ? () => history.back() : undefined} /></ErrorBoundary>
+        ) : bot ? (
           <ErrorBoundary key={bot.slug}>
             <Chat bot={bot} threadId={selectedThreadId ?? bot.mainThreadId} onBack={narrow ? () => history.back() : undefined} />
             {detailsOpen && <div className={narrow ? "fixed inset-0 z-40 flex justify-end bg-[var(--overlay)]" : "contents"} onClick={(event) => { if (narrow && event.target === event.currentTarget) setDetailsOpen(false); }}>
@@ -178,7 +182,7 @@ function useNavigationHistory(narrow: boolean) {
         else localStorage.removeItem("bot.selected");
       }
       if (restoring) return;
-      const chatChanged = s.selected !== prev.selected || s.selectedThreadId !== prev.selectedThreadId;
+      const chatChanged = s.selected !== prev.selected || s.selectedThreadId !== prev.selectedThreadId || s.page !== prev.page || s.projectItemId !== prev.projectItemId;
       if (chatChanged || s.searchResultRevision !== prev.searchResultRevision) {
         if (narrow && s.detailsOpen) {
           restoring = true;

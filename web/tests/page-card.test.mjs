@@ -37,13 +37,14 @@ beforeEach(() => {
 afterEach(async () => { await settle(() => root.unmount()); document.body.replaceChildren(); document.body.style.overflow = ''; });
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(directory, { recursive: true }); });
 
-test('Page is an accessible whole-card opener with a noninteractive preview and title footer', async () => {
+test('Page shows inline as an interactive sandboxed frame with a corner expand button and no footer', async () => {
   await render();
   const open = openButton(); assert.ok(open); assert.equal(open.tagName, 'BUTTON'); assert.equal(open.disabled, false);
-  const preview = host.querySelector('iframe'); assert.ok(preview.closest('[inert]'));
-  assert.equal(preview.getAttribute('aria-hidden'), 'true'); assert.equal(preview.tabIndex, -1);
+  assert.ok(open.classList.contains('page-card-expand'));
+  const preview = host.querySelector('iframe'); assert.equal(preview.closest('[inert]'), null);
+  assert.equal(preview.getAttribute('aria-hidden'), null); assert.equal(preview.getAttribute('title'), 'Sample counter card');
   assert.equal(preview.getAttribute('sandbox'), 'allow-scripts');
-  assert.match(host.textContent, /Sample counter card/); assert.match(host.textContent, /Page/);
+  assert.equal(host.querySelector('.page-card-footer'), null);
   assert.equal(document.querySelector('dialog'), null);
   assert.deepEqual(calls[0].payload.resource, { _tag: 'attachment', attachmentId: 'counter-file', disposition: 'inline' });
 });

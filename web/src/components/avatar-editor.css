@@ -21,7 +21,7 @@
 .avatar-shapes .avatar-choice:nth-child(11) { grid-column: 2 / span 2; }
 .avatar-choice[aria-pressed="true"] { outline: 2px solid var(--border-strong); outline-offset: 0; }
 .avatar-choice[aria-pressed="true"], .avatar-colors button[aria-pressed="true"] { outline-color: #666; }
-.avatar-choice svg, .avatar-editor-preview svg { width: 100% !important; height: 100% !important; }
+.avatar-choice > span > svg, .avatar-editor-preview > span > svg { width: 100% !important; height: 100% !important; }
 .avatar-choice:hover { background: var(--bg-hover); }
 .avatar-picker .avatar-colors { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 26px 0; margin: 46px 12px 0; }
 .avatar-colors button { width: 44px; height: 44px; border-radius: 50%; grid-column: span 2; justify-self: center; }
@@ -53,13 +53,13 @@
   .avatar-tabs button { padding: 10px 14px; }
   .avatar-editor-preview { padding: 0 0 28px; }
   .avatar-editor-preview > span { width: 96px !important; height: 96px !important; }
-  .avatar-editor-preview svg, .avatar-editor-preview img { width: 96px; height: 96px; }
+  .avatar-editor-preview > span > svg, .avatar-editor-preview img { width: 96px; height: 96px; }
   .avatar-editor-card { border-radius: 18px; }
   .avatar-picker { padding: 22px 12px 20px; }
   .avatar-picker .avatar-shapes { gap: 14px 0; width: 300px; max-width: 100%; margin-inline: auto; }
   .avatar-shapes .avatar-choice { width: 46px; height: 46px; }
   .avatar-choice > span { width: 40px !important; height: 40px !important; }
-  .avatar-choice svg { width: 44px; height: 44px; }
+  .avatar-choice > span > svg { width: 44px; height: 44px; }
   .avatar-choice[aria-pressed="true"], .avatar-colors button[aria-pressed="true"] { outline-color: #777; }
   .avatar-shapes .avatar-choice:first-child { grid-column: 2 / span 2; }
   .avatar-shapes .avatar-choice:nth-child(5), .avatar-shapes .avatar-choice:nth-child(10) { grid-column: 1 / span 2; }
@@ -111,15 +111,58 @@
 @media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
   .new-bot-sheet .new-bot-preview { padding: 12px 16px 0; }
   .new-bot-preview > button > span { width: 112px !important; height: 112px !important; }
-  .new-bot-preview > button svg, .new-bot-preview > button img { width: 112px !important; height: 112px !important; }
+  .new-bot-preview > button > span > svg, .new-bot-preview > button img { width: 112px !important; height: 112px !important; }
   .new-bot-sheet .new-bot-name { height: 36px; margin-top: 12px; font-size: 14px; border: 1px solid var(--border); background: transparent; }
   .new-bot-sheet .avatar-picker { padding: 20px 12px 24px; }
   .new-bot-sheet .avatar-picker .avatar-shapes { width: 280px; gap: 10px 0; }
   .new-bot-sheet .avatar-shapes .avatar-choice { width: 44px; height: 44px; }
   .new-bot-sheet .avatar-choice > span { width: 40px !important; height: 40px !important; }
-  .new-bot-sheet .avatar-choice svg { width: 40px; height: 40px; }
+  .new-bot-sheet .avatar-choice > span > svg { width: 40px; height: 40px; }
   .new-bot-sheet .avatar-picker .avatar-colors { width: 240px; margin-top: 24px; gap: 14px 0; }
   .new-bot-sheet .avatar-colors button { width: 24px; height: 24px; }
   .new-bot-sheet .dialog-footer { justify-content: flex-end; border-top: 1px solid var(--border); padding: 12px; }
   .new-bot-sheet .dialog-footer > button { width: auto; height: 32px; font-size: 13px; }
 }
+
+/* Objects scroll in their own strip so the picker keeps its size. */
+.avatar-objects-title { margin: 28px 0 10px; font-size: 12.5px; color: var(--fg-muted); text-align: center; }
+.avatar-objects { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 56px); grid-auto-columns: 56px; gap: 4px; overflow-x: auto; padding: 2px; scrollbar-width: thin; }
+.avatar-object { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 16px; }
+.avatar-object:hover { background: var(--bg-hover); }
+.avatar-object[aria-pressed="true"] { outline: 2px solid #666; }
+.avatar-picker .avatar-objects + .avatar-colors { margin-top: 28px; }
+.avatar-import { margin-top: 18px; font-size: 13px; color: var(--fg-muted); }
+.avatar-import summary { cursor: pointer; text-align: center; }
+.avatar-import p { margin: 8px 0; }
+.avatar-import a { text-decoration: underline; }
+.avatar-import textarea { display: block; width: 100%; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 12px; background: transparent; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--fg); resize: vertical; }
+
+/* Desktop gets its own layout: the preview on the left, every choice visible on the right. */
+@media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
+  .bot-modal-backdrop > .avatar-editor-sheet { width: min(880px, calc(100vw - 48px)); max-width: none; }
+  .avatar-editor-sheet .avatar-editor { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 8px 20px; align-items: center; padding: 0 20px 20px; }
+  .avatar-editor-sheet .avatar-editor-preview { padding: 0; }
+  .avatar-editor-sheet .avatar-editor-preview > span { width: 176px !important; height: 176px !important; }
+  .avatar-editor-sheet .avatar-editor-preview > span > img { width: 100%; height: 100%; }
+  .avatar-editor-sheet .avatar-editor-card { border-radius: 22px; }
+  .avatar-editor-sheet .avatar-card-header { padding: 10px 12px; font-size: 15px; }
+  .avatar-editor-sheet .avatar-editor-error { grid-column: 2; padding: 0 4px; }
+  .avatar-editor-sheet .avatar-picker { padding: 14px 16px 16px; }
+  .avatar-editor-sheet .avatar-picker .avatar-shapes { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .avatar-editor-sheet .avatar-shapes .avatar-choice, .avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(11) { grid-column: auto; width: 68px; height: 68px; }
+  .avatar-editor-sheet .avatar-choice > span { width: 52px !important; height: 52px !important; }
+  .avatar-editor-sheet .avatar-objects-title { margin: 14px 0 6px; font-size: 12px; text-align: left; }
+  .avatar-objects { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); grid-template-rows: none; grid-auto-columns: auto; justify-items: center; overflow: visible; padding: 0; }
+  .avatar-object { width: 50px; height: 50px; border-radius: 14px; }
+  .avatar-object > span { width: 38px !important; height: 38px !important; }
+  .avatar-editor-sheet .avatar-picker .avatar-colors { grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 0; margin: 16px 0 0; }
+  .avatar-editor-sheet .avatar-colors button, .avatar-editor-sheet .avatar-colors button:nth-child(7) { grid-column: auto; width: 28px; height: 28px; }
+  .avatar-editor-sheet .avatar-colors button[aria-pressed="true"] { outline-offset: 3px; }
+  .avatar-editor-sheet .avatar-import { margin: 12px 16px 14px; }
+  .avatar-editor-sheet .avatar-import summary { text-align: left; }
+}
+.avatar-object-new { border: 1.5px dashed var(--border-strong); color: var(--fg-muted); }
+.avatar-object-new:hover, .avatar-object-new[aria-expanded="true"] { border-color: var(--fg-muted); color: var(--fg); }
+.avatar-object-draw { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.avatar-object-draw input { min-width: 0; flex: 1; height: 32px; padding-inline: 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-card); color: var(--fg); font-size: 13px; }
+.avatar-object-draw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

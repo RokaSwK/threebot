@@ -1,4 +1,6 @@
-import type { Bot, Run, RuntimeRequest, ScheduledTask, TurnItem } from "./types";
+import { automatedMessage, type AutomatedMessage } from "./automatedMessage";
+import { REASONING_SELECT_DESCRIPTOR_IDS } from "./modelTraits";
+import type { Bot, ModelSelection, Run, RuntimeRequest, ScheduledTask, TurnItem } from "./types";
 import { botDelivery, shortToolName } from "./botMessages";
 import { questionAnswerMessageId } from "./runtimeRequests";
 import { parseReply } from "./reply";
@@ -22,7 +24,9 @@ export type Entry =
   | { kind: "file"; id: string; path: string; item: TurnItem }
   | { kind: "image"; id: string; item: TurnItem; index: number }
   | { kind: "page"; id: string; attachmentId: string; title: string; heights: [number, number][]; height: number }
-  | { kind: "error"; id: string; message: string };
+  | { kind: "error"; id: string; message: string }
+  | { kind: "model-switch"; id: string; text: string }
+  | { kind: "automated"; id: string; at: string; fromBot: Bot | null; message: AutomatedMessage };
 
 type Ctx = {
   bot: Bot;
@@ -32,6 +36,8 @@ type Ctx = {
   /** Vault login id → its site, for "Filling vault login for …" lines. */
   vaultSites?: Record<string, string>;
   voiceCalls?: { at: string; seconds: number }[];
+  /** First message on a new model or effort → the divider above it. */
+  modelSwitches?: Map<string, string>;
 };
 
 const toolName = (i: TurnItem) => String(i.toolName ?? "");
@@ -67,6 +73,29 @@ function relPath(fileName: string, root: string) {
   return fileName.startsWith(root) ? fileName.slice(root.length).replace(/^\/+/, "") : fileName.replace(/^\.\//, "");
 }
 
+const effortOf = (selection: ModelSelection) => selection.options?.find((option) => REASONING_SELECT_DESCRIPTOR_IDS.has(option.id))?.value;
+const effortName = (value: unknown) => {
+  const effort = String(value);
+  return effort === "xhigh" ? "Extra high" : `${effort[0]?.toUpperCase() ?? ""}${effort.slice(1)}`;
+};
+
+/** Every run records its model, so this works on any T3 and for old conversations too. */
+export function modelSwitches(runs: Run[], modelName: (selection: ModelSelection) => string) {
+  const switches = new Map<string, string>();
+  const ordered = runs.filter((run) => run.status !== "queued" && run.modelSelection && run.userMessageId).sort((a, b) => a.ordinal - b.ordinal);
+  ordered.forEach((run, index) => {
+    const before = ordered[index - 1]?.modelSelection, after = run.modelSelection;
+    if (!before) return;
+    const model = before.instanceId !== after.instanceId || before.model !== after.model;
+    const from = effortOf(before), to = effortOf(after);
+    const effort = from !== undefined && to !== undefined && from !== to;
+    if (!model && !effort) return;
+    const side = (selection: ModelSelection, level: unknown) => [model ? modelName(selection) : "", effort ? effortName(level) : ""].filter(Boolean).join(" ");
+    switches.set(run.userMessageId!, `${side(before, from)} → ${side(after, to)}`);
+  });
+  return switches;
+}
+
 export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
   const sorted = [...items].sort((a, b) => a.ordinal - b.ordinal || (a.startedAt ?? "").localeCompare(b.startedAt ?? ""));
   // T3 can append the resumed message before the question's answer update.
@@ -94,10 +123,18 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
         if (answeredMessages.has(i.messageId)) break;
         if (!i.text && !(i.attachments?.length > 0)) break;
         const at = i.startedAt ?? i.updatedAt;
+        const switched = ctx.modelSwitches?.get(i.messageId);
+        if (switched) out.push({ kind: "model-switch", id: `model-${i.id}`, text: switched });
         if (i.scheduledTaskId) {
           const task = ctx.tasks.find((t) => t.id === i.scheduledTaskId);
           stamp(at, i.id);
           out.push({ kind: "event", id: i.id, icon: "routine", text: "Running routine", strong: task?.title ?? "Routine" });
+          break;
+        }
+        const automated = automatedMessage(i);
+        if (automated) {
+          stamp(at, i.id);
+          out.push({ kind: "automated", id: i.id, at, fromBot: [...ctx.botsByThread.values()].find((bot) => bot.name === automated.from) ?? null, message: automated });
           break;
         }
         const peer = i.senderThreadId ? ctx.botsByThread.get(i.senderThreadId) ?? null : null;

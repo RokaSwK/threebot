@@ -8,6 +8,7 @@ import { cutoutEyes } from "./avatar-eyes.mjs";
 import { decorateT3Avatar } from "./avatar-t3.mjs";
 import { avatarImageFile } from "./avatar-images.mjs";
 import { Character } from "./character.mjs";
+import { objectDefinition, renderObjectIcon } from "./object-avatars.mjs";
 
 const colors = { ...config.colors, ...Object.fromEntries(config.pickerColors.filter(c => c.id !== "black").map(c => [c.id, c.value])) };
 
@@ -17,6 +18,13 @@ const { document } = parseHTML("<!doctype html><html><body></body></html>");
 
 const icons = new Map();
 export function renderBotAvatar(bot) {
+  const object = objectDefinition(bot);
+  if (object) {
+    const fill = Object.hasOwn(colors, bot.color) ? colors[bot.color] : colors.teal;
+    const key = `object:${object.body.path}:${JSON.stringify(object.eyes)}:${fill}`;
+    if (!icons.has(key)) icons.set(key, renderObjectIcon(object, fill));
+    return icons.get(key);
+  }
   const special = config.specialShapes.find(avatar => avatar.id === bot.shape);
   const shape = special ? special.id : config.shapes.includes(bot.shape) || config.pickerShapes.includes(bot.shape) ? bot.shape : Object.hasOwn(config.shapeAliases, bot.shape) ? config.shapeAliases[bot.shape] : "blob";
   const fill = special ? colors[special.color] : Object.hasOwn(colors, bot.color) ? colors[bot.color] : colors.teal;

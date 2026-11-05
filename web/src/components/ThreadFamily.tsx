@@ -2,6 +2,7 @@ import { memo, useEffect } from "react";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import clsx from "clsx";
 import { Avatar } from "./Avatar";
+import { isSideChat } from "../lib/sideChats";
 import { botReferenceKey, conversationStatus, loadThreadFamily, selectThread, useApp } from "../store";
 import { agentStatus, localAncestors, sameTaskBot, subagentStatus, subagentTarget, supplementSubagents, threadIdentity, threadLink, variantShape, type ThreadTarget } from "../lib/threadFamily";
 import type { Bot, TurnItem } from "../lib/types";
@@ -64,7 +65,7 @@ export function ThreadFamily({ bot, threadId }: { bot: Bot; threadId: string }) 
   const parents = localAncestors(threadId, threads);
   const parentIds = new Set(parents.map((t) => t.id));
   const current = threads[threadId];
-  const descendants = Object.values(threads).filter((t) => t.lineage.parentThreadId === threadId);
+  const descendants = Object.values(threads).filter((t) => t.lineage.parentThreadId === threadId && !isSideChat(t));
   const items = supplementSubagents(Object.values(data[threadId]?.items ?? {}), Object.values(data[threadId]?.subagents ?? {}), threadId).filter((i) => i.type === "subagent");
   const represented = new Set(items.flatMap((i) => { const t = subagentTarget(i); return t?.kind === "local" ? [t.threadId] : []; }));
   const rows = parents.map((t) => ({ thread: t, relation: "Parent" }));

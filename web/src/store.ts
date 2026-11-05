@@ -3,7 +3,8 @@ import { api } from "./lib/api";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
-import { agentStatus } from "./lib/threadFamily";
+import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
+import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import type { Bot, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
@@ -34,6 +35,10 @@ function loadPreviews(): Record<string, ThreadPreview> {
 type State = {
   runtimeFeatures: RuntimeFeatures;
   snoozePresets: SnoozePreset[];
+  /** T3's backup for new threads when the default model is out of usage. */
+  fallbackModel: ModelSelection | null;
+  /** The side chat open beside its parent conversation. */
+  sideChat: { parentThreadId: string; threadId: string } | null;
   archiveError: string | null;
   olderSettledCursor: { settledAt: string; threadId?: string } | null;
   archivedThreads: Record<string, ThreadShell>;
@@ -68,13 +73,18 @@ type State = {
   searchResultRevision: number;
   settingsPane: string;
   toast: string | null;
+  /** The Projects page replaces the chat while it's open; projectItemId is the item shown in it. */
+  page: "projects" | null;
+  projectItemId: string | null;
   /** The Vault without passwords (null until loaded). */
   vault: VaultItem[] | null;
 };
 
 export const useApp = create<State>(() => ({
-  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false },
+  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false },
   snoozePresets: [],
+  fallbackModel: null,
+  sideChat: null,
   archiveError: null,
   olderSettledCursor: null,
   archivedThreads: {},
@@ -106,6 +116,8 @@ export const useApp = create<State>(() => ({
   searchResultRevision: 0,
   settingsPane: "general",
   toast: null,
+  page: null,
+  projectItemId: null,
   vault: null,
 }));
 
@@ -161,6 +173,7 @@ async function initialize() {
     const route = new URLSearchParams(location.search);
     const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
     if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
+    if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
     if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
     set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
     if (!runtimeStarted) {
@@ -210,8 +223,9 @@ async function loadProviders() {
     set({
       providers: cfg.providers.filter((p: Provider) => p.enabled && p.status === "ready"),
       providerModelPreferences: cfg.settings?.providerModelPreferences ?? {},
-      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true },
+      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true },
       snoozePresets: cfg.settings?.snoozePresets ?? [],
+      fallbackModel: cfg.settings?.fallbackModelSelection ?? null,
     });
 }
 
@@ -226,6 +240,10 @@ function subscribeShell() {
   shellSub = t3.stream("orchestration.subscribeShell", { omitIdleSubagents: true }, (it) => {
     if (it.kind === "snapshot") {
       const snap = it.snapshot;
+      if (isProjectEnrichment(it)) {
+        set((s) => ({ projects: { ...s.projects, ...Object.fromEntries(snap.projects.map((p: ProjectShell) => [p.id, p])) } }));
+        return;
+      }
       set((s) => ({
         projects: { ...s.projects, ...Object.fromEntries(snap.projects.map((p: ProjectShell) => [p.id, p])) },
         threads: { ...Object.fromEntries(Object.entries(s.threads).filter(([id]) => familyThreadIds.has(id) || mainThreadIds(s).has(id))), ...s.archivedThreads, ...Object.fromEntries(snap.threads.map((t: ThreadShell) => [t.id, t])) },
@@ -314,11 +332,14 @@ function subscribeTasks() {
 const ACTIVE = ["preparing", "queued", "starting", "running", "waiting"];
 function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   if (!prev) return;
-  const bot = Object.values(get().bots).find((b) => b.mainThreadId === next.id);
+  const side = isSideChat(next);
+  const ownerThreadId = side ? next.lineage.parentThreadId : next.id;
+  const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
   if (!bot || bot.notifications === false || bot.hidden) return;
   const focused = document.visibilityState === "visible" && document.hasFocus() && get().selected === bot.slug;
   if (focused || next.archivedAt || isSnoozed(next)) return;
-  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) void notify(bot, "Waiting for you");
+  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you");
+  else if (side) return;
   else if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
 }
 
@@ -501,14 +522,14 @@ export function runtimeMode(s = get()) {
 
 // ---------- actions ----------
 export function select(slug: string | null) {
-  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null });
+  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null });
   if (slug) localStorage.setItem("bot.selected", slug);
   const bot = slug ? get().bots[slug] : null;
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
 }
 
 export function selectThread(bot: Bot, threadId: string, fromSearch = false) {
-  set({ selected: botReferenceKey(bot), selectedThreadId: threadId === bot.mainThreadId ? null : threadId, exchangeBotSlug: null, ...(fromSearch ? { dialog: null, searchResultRevision: get().searchResultRevision + 1 } : {}) });
+  set({ selected: botReferenceKey(bot), selectedThreadId: threadId === bot.mainThreadId ? null : threadId, exchangeBotSlug: null, page: null, projectItemId: null, ...(fromSearch ? { dialog: null, searchResultRevision: get().searchResultRevision + 1 } : {}) });
   threadClient(threadId).dispatch({ type: "thread.visit", threadId: threadTarget(threadId).threadId, visitedAt: new Date().toISOString() }).catch(() => {});
   loadThreadFamily(threadId);
 }
@@ -563,6 +584,11 @@ export function setColumnWidth({ column, width, persist = true }: { column: Colu
   if (persist) localStorage.setItem(`bot.${column}.width`, String(next));
 }
 
+/** Open the Projects page, optionally on one item. */
+export function openProjects(itemId: string | null = null) {
+  set({ page: "projects", projectItemId: itemId, exchangeBotSlug: null, dialog: null });
+}
+
 export function openDialog(dialog: Dialog) {
   set({ dialog });
 }
@@ -572,7 +598,7 @@ export function toast(msg: string) {
   window.setTimeout(() => get().toast === msg && set({ toast: null }), msg.length > 80 ? 12_000 : 3500);
 }
 
-export async function createBot(input: { name: string; shape: string; color: string; avatarImage?: string | null; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
+export async function createBot(input: { name: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
   const model = input.model ?? defaultModel();
   if (!model) throw new Error("No agent provider is ready on T3");
   // The gateway creates the folder, the T3 project and the main thread.
@@ -792,6 +818,71 @@ export async function loadOlderDone() {
   set((s) => ({ threads: { ...s.threads, ...Object.fromEntries(page.threads.map((t) => [t.id, t])) }, olderSettledCursor: last?.settledAt ? { settledAt: last.settledAt, threadId: last.id } : s.olderSettledCursor }));
   return page.threads.length;
 }
+function threadArrives(threadId: string, timeoutMs = 10_000) {
+  if (get().threads[threadId]) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    const finish = (arrived: boolean) => { clearTimeout(timer); stop(); resolve(arrived); };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const stop = useApp.subscribe((state) => { if (state.threads[threadId]) finish(true); });
+  });
+}
+
+let sideChatStarting = false;
+/** Fork the conversation into a hidden side chat, optionally ask there, then open it beside the parent. */
+export async function startSideChat(bot: Bot, parentThreadId: string, prompt = "") {
+  if (sideChatStarting) return false;
+  if (!get().runtimeFeatures.sideChats || !canStartSideChat(get().threads[parentThreadId])) {
+    toast("Side chats aren't available in this conversation");
+    return false;
+  }
+  sideChatStarting = true;
+  const threadId = uuid();
+  // T3 keeps an empty fork when a start fails halfway, so take it back.
+  const discard = () => void t3.dispatch({ type: "thread.delete", threadId, onlyIfUnused: true }).catch(() => {});
+  try {
+    await t3.dispatch({ type: "thread.fork", createdBy: "user", creationSource: "web", sourceThreadId: parentThreadId, targetThreadId: threadId, sourcePoint: { type: "latest_stable" }, sideChat: true, title: sideChatTitle(prompt) }, { timeoutMs: 30_000 });
+    if (!await threadArrives(threadId)) throw new Error("The side chat didn't reach this device. Try again.");
+    if (prompt) await sendMessage(bot.slug, prompt, [], threadId);
+    set({ sideChat: { parentThreadId, threadId } });
+    return true;
+  } catch (error) {
+    discard();
+    toast(error instanceof Error ? error.message : "Couldn't start a side chat");
+    return false;
+  } finally {
+    sideChatStarting = false;
+  }
+}
+
+export function openSideChat(parentThreadId: string, threadId: string) {
+  set({ sideChat: { parentThreadId, threadId } });
+  void markThreadRead(threadId).catch(() => {});
+}
+
+export function closeSideChat() {
+  const open = get().sideChat;
+  if (!open) return;
+  set({ sideChat: null });
+  if (!get().threads[open.threadId]) return;
+  void markThreadRead(open.threadId).catch(() => {});
+  // An unused side chat leaves nothing behind; a used one stays in details.
+  void t3.dispatch({ type: "thread.delete", threadId: open.threadId, onlyIfUnused: true }).catch(() => {});
+}
+
+export async function bringBackSideChat(threadId: string, parentThreadId: string, runId: string) {
+  await t3.dispatch({ type: "thread.merge_back", createdBy: "user", creationSource: "web", sourceThreadId: threadId, targetThreadId: parentThreadId, sourcePoint: { type: "run", runId } });
+}
+
+export async function deleteSideChat(threadId: string) {
+  await t3.dispatch({ type: "thread.delete", threadId });
+  if (get().sideChat?.threadId === threadId) set({ sideChat: null });
+}
+
+export async function saveFallbackModel(selection: ModelSelection | null) {
+  const settings = await t3.call("server.updateSettings", { patch: { fallbackModelSelection: selection } });
+  set({ fallbackModel: settings?.fallbackModelSelection ?? null });
+}
+
 export function resolvedSnoozes(presets = get().snoozePresets, now = new Date()) {
   return presets.flatMap((preset) => {
     const date = new Date(now);

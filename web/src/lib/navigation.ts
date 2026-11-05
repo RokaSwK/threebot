@@ -5,12 +5,14 @@ export type Navigation =
   | { view: "list" }
   | { view: "chat"; slug: string; threadId: string | null }
   | { view: "exchange"; slug: string; threadId: string | null; otherSlug: string }
+  | { view: "projects"; itemId: string | null }
   | { view: "overlay"; slug: string | null; threadId: string | null; details: boolean; dialog: Dialog };
 
-type RouteState = { selected: string | null; selectedThreadId: string | null; exchangeBotSlug: string | null; detailsOpen: boolean; dialog: Dialog };
+type RouteState = { selected: string | null; selectedThreadId: string | null; exchangeBotSlug: string | null; detailsOpen: boolean; dialog: Dialog; page?: "projects" | null; projectItemId?: string | null };
 
 export function navigationFor(state: RouteState, narrow: boolean): Navigation {
   if (state.dialog === "search" || (narrow && (state.dialog || (state.detailsOpen && state.selected)))) return { view: "overlay", slug: state.selected, threadId: state.selectedThreadId, details: state.detailsOpen, dialog: state.dialog };
+  if (state.page === "projects") return { view: "projects", itemId: state.projectItemId ?? null };
   if (!state.selected) return { view: "list" };
   return state.exchangeBotSlug
     ? { view: "exchange", slug: state.selected, threadId: state.selectedThreadId, otherSlug: state.exchangeBotSlug }
@@ -19,7 +21,10 @@ export function navigationFor(state: RouteState, narrow: boolean): Navigation {
 
 export function navigationUrl(route: Navigation, pathname: string) {
   const query = new URLSearchParams();
-  if (route.view !== "list") {
+  if (route.view === "projects") {
+    if (route.itemId) query.set("item", route.itemId);
+    else query.set("page", "projects");
+  } else if (route.view !== "list") {
     if (route.slug) query.set("bot", route.slug);
     if (route.threadId) query.set("thread", route.threadId);
     if (route.view === "exchange") query.set("exchange", route.otherSlug);
@@ -44,6 +49,7 @@ function isDialog(value: unknown): value is Dialog {
 export function readNavigation(value: unknown): Navigation | null {
   if (typeof value !== "object" || value === null || !("view" in value)) return null;
   if (value.view === "list") return { view: "list" };
+  if (value.view === "projects") return "itemId" in value && (value.itemId === null || (typeof value.itemId === "string" && /^[a-z0-9]{4,24}$/.test(value.itemId))) ? { view: "projects", itemId: value.itemId } : null;
   if (!("slug" in value) || !("threadId" in value) || (value.threadId !== null && typeof value.threadId !== "string")) return null;
   if (value.view === "overlay" && (value.slug === null || typeof value.slug === "string") && "dialog" in value && isDialog(value.dialog) && "details" in value && typeof value.details === "boolean") return { view: "overlay", slug: value.slug, threadId: value.threadId, dialog: value.dialog, details: value.details };
   if (typeof value.slug !== "string") return null;
@@ -53,8 +59,11 @@ export function readNavigation(value: unknown): Navigation | null {
 }
 
 export function restoreNavigation(route: Navigation, bots: Record<string, Bot>) {
+  if (route.view === "projects") return { page: "projects" as const, projectItemId: route.itemId, exchangeBotSlug: null, dialog: null };
   const selected = route.view !== "list" && route.slug && bots[route.slug] ? route.slug : null;
   return {
+    page: null,
+    projectItemId: null,
     selected,
     selectedThreadId: selected && route.view !== "list" ? route.threadId : null,
     exchangeBotSlug: route.view === "exchange" && bots[route.otherSlug] ? route.otherSlug : null,

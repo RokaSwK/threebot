@@ -1,14 +1,16 @@
 import { memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import { defaultUrlTransform } from "react-markdown";
-import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Globe, FileText, Folder, Image, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
 import { Avatar, botColor } from "./Avatar";
 import { BotMention, BotEvent } from "./BotMention";
 import { BotExchange } from "./BotExchange";
-import { ApprovalCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
+import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
 import { RichMarkdown } from "./RichMarkdown";
+import { BoardItemChip } from "./Projects";
+import { parseItemLink } from "../lib/projects";
 import { ChatMessageActions } from "./ChatMessageActions";
 import { ChatAttachmentList } from "./ChatAttachments";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
@@ -17,10 +19,13 @@ import { requestMicrophone } from "../lib/voiceChat";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { avatarStateFor } from "./Sidebar";
-import { openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, toast, useApp, watchThread } from "../store";
+import { openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, watchThread } from "../store";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
-import { buildEntries, isActiveRun, workingPhrases, type Entry } from "../lib/transcript";
+import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
+import { getTriggerDisplayModelName } from "../lib/modelTraits";
+import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
+import { SideChatPill, SideChatSheet } from "./SideChat";
 import type { Bot } from "../lib/types";
 import { composerFocusBehavior, MOBILE_CHAT_QUERY, splitBubbles, takeAttachmentFiles } from "../lib/chatBehavior";
 import { chatDraft } from "../lib/chatDrafts";
@@ -56,7 +61,7 @@ function StopAllButton({ threadId }: { threadId: string }) {
   return <div className="composer-stop relative"><IconButton disabled={action.disabled} onClick={() => void action.send({ type: "thread.stop", threadId, stopDelegatedTasks: true })} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Stop" aria-label="Stop"><Square size={13} fill="currentColor" /></IconButton>{action.state === "error" && <div className="absolute right-0 bottom-full z-20 w-52 rounded-xl bg-elevated p-2 shadow-lg"><WorkFeedback action={action} /></div>}</div>;
 }
 
-export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; threadId?: string | null; onBack?: () => void }) {
+export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = false }: { bot: Bot; threadId?: string | null; onBack?: () => void; embedded?: boolean }) {
   useEffect(() => (threadId ? watchThread(threadId) : undefined), [threadId]);
   const data = useApp((s) => (threadId ? s.threadData[threadId] : undefined));
   const shell = useApp((s) => (threadId ? s.threads[threadId] : undefined));
@@ -85,8 +90,15 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; t
   }, [threadId]);
 
   const items = useMemo(() => supplementSubagents(Object.values(data?.items ?? {}), Object.values(data?.subagents ?? {}), threadId ?? ""), [data?.items, data?.subagents, threadId]);
-  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls]);
-  const runs = Object.values(data?.runs ?? {});
+  const providers = useApp((s) => s.providers);
+  const sideChat = useApp((s) => s.sideChat);
+  const runs = useMemo(() => Object.values(data?.runs ?? {}), [data?.runs]);
+  const switches = useMemo(() => modelSwitches(runs, (selection) => {
+    const provider = providers.find((p) => p.instanceId === selection.instanceId);
+    const model = provider?.models.find((m) => m.slug === selection.model);
+    return model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
+  }), [runs, providers]);
+  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches]);
   const activeRun = runs.filter(run => isActiveRun(run) && run.status !== "queued").sort((a, b) => b.ordinal - a.ordinal)[0];
   const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest;
   const [tick, setTick] = useState(0);
@@ -113,7 +125,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; t
   return (
     <section className="chat-view relative flex h-full min-w-0 flex-1 flex-col bg-chat">
       <div className="contents" inert={!!exchangeBot}>
-      <header className="chat-header pointer-events-none absolute inset-x-0 top-0 z-10 flex h-[52px] items-center justify-center bg-gradient-to-b from-[var(--bg-chat)] from-50% to-transparent px-3">
+      {!embedded && <header className="chat-header pointer-events-none absolute inset-x-0 top-0 z-10 flex h-[52px] items-center justify-center bg-gradient-to-b from-[var(--bg-chat)] from-50% to-transparent px-3">
         {(onBack || isChild) && (
           <IconButton onClick={isChild ? () => selectThread(bot, shell?.lineage.parentThreadId ?? bot.mainThreadId ?? threadId) : onBack} className="chat-back pointer-events-auto absolute left-2" aria-label={isChild ? "Back to parent thread" : "Back"}>
             <ChevronLeft size={24} />
@@ -133,7 +145,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; t
             </IconButton>
           )}
         </div>
-      </header>
+      </header>}
 
       <div
         ref={scroller}
@@ -145,13 +157,13 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; t
         className="chat-scroller scroll-thin min-h-0 flex-1 overflow-y-auto"
       >
         <WorkspaceFileContext value={workspace}>
-        <div className="chat-messages mx-auto flex w-full max-w-[960px] flex-col px-4 pt-16 pb-4">
+        <div className={clsx("chat-messages mx-auto flex w-full max-w-[960px] flex-col px-4 pb-4", embedded ? "pt-3" : "pt-16")}>
           {!data?.loaded && threadId && (
             <div className="flex justify-center py-10 text-muted">
               <Spinner size={18} />
             </div>
           )}
-          {greeting && (
+          {greeting && !embedded && (
             <BotBubble text={`Hey${settings?.userName ? ` ${settings.userName}` : ""}, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?`} />
           )}
           {hiddenCount > 0 && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover" onClick={loadEarlier}>Load earlier messages</button>}
@@ -184,15 +196,17 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack }: { bot: Bot; t
         </button>
       )}
 
+      {threadId && !embedded && <SideChatPill parentThreadId={threadId} />}
       {voiceChat && threadId && <VoiceDock bot={identity === bot ? bot : { ...bot, ...identity }} threadId={threadId} observation={voiceObservation} onEnd={() => setVoiceChat(false)} />}
-      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} inVoiceChat={voiceChat} onVoiceChat={async () => {
+      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} embedded={embedded} inVoiceChat={voiceChat} onVoiceChat={async () => {
         if (!threadId || !voiceChatSupported()) return;
         const problem = await requestMicrophone();
         if (problem) toast(problem); else setVoiceChat(true);
       }} />}
       {openFile && <FileViewer bot={bot} threadId={threadId} path={openFile} onOpenFile={setOpenFile} onClose={() => setOpenFile(null)} />}
       </div>
-      {exchangeBot && <BotExchange bot={bot} other={exchangeBot} />}
+      {exchangeBot && !embedded && <BotExchange bot={bot} other={exchangeBot} />}
+      {!embedded && threadId && sideChat?.parentThreadId === threadId && <SideChatSheet bot={bot} parentThreadId={threadId} threadId={sideChat.threadId}><Chat key={sideChat.threadId} bot={bot} threadId={sideChat.threadId} embedded /></SideChatSheet>}
     </section>
   );
 }
@@ -212,6 +226,10 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
       return <DateSep label={entry.label} />;
     case "event":
       return <EventLine entry={entry} />;
+    case "automated":
+      return <AutomatedCard entry={entry} />;
+    case "model-switch":
+      return <p className="chat-model-switch">{entry.text}</p>;
     case "voice-call":
       return <p className="chat-voice-call"><AudioLines size={16} aria-hidden="true" />Voice chat <span>· {duration(entry.seconds)}</span></p>;
     case "bot-event":
@@ -224,7 +242,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
           {entry.text && (
             <div
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
-              style={accent === "bot" && bot.color !== "white" && bot.color !== "gray" ? { background: botColor(bot.color), color: "#fff" } : { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
+              style={accent === "bot" && bot.color !== "white" && bot.color !== "gray" && bot.color !== "black" ? { background: botColor(bot.color), color: "#fff" } : { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
             >
               {entry.text}
             </div>
@@ -313,6 +331,8 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
     return <a className="md-link" href={reference.environmentId ? threadLink({ kind: "remote", ...reference, environmentId: reference.environmentId, label: "T3 Code" }) : undefined} target="_blank" rel="noreferrer">{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}</a>;
   }
   if (href?.startsWith("bot:")) return <>{children}</>;
+  const boardItem = href ? parseItemLink(href) : null;
+  if (boardItem) return <BoardItemChip id={boardItem}>{children}</BoardItemChip>;
   const path = href && workspace ? workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath) : null;
   if (path && workspace) return <button className="text-left underline" onClick={() => workspace.openFile(path)}>{children}</button>;
   // Unresolved local paths must never become browser URLs pointing at host files.
@@ -351,12 +371,13 @@ function useMobileChat() {
   return mobile;
 }
 
-function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles }: {
+function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles, onSideChat }: {
   mobile: boolean;
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
   onFiles: (files: File[]) => void;
+  onSideChat?: () => void;
 }) {
   const libraryInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
@@ -400,6 +421,9 @@ function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles }: {
                 <Image size={14} /> Photo or Video
               </button>
             </>}
+            {onSideChat && <button role="menuitem" onClick={() => { onClose(); onSideChat(); }} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
+              <MessageCircle size={14} /> Side chat
+            </button>}
           </div>
         </>
       )}
@@ -413,7 +437,7 @@ function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles }: {
   );
 }
 
-function Composer({ bot, threadId, working, inVoiceChat, onVoiceChat }: { bot: Bot; threadId: string | null; working: boolean; inVoiceChat: boolean; onVoiceChat: () => void }) {
+function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void }) {
   const draft = chatDraft(bot, threadId);
   const { text, attachments: atts, sending, failed, replyTo } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const { setText, addFiles, setReply } = draft;
@@ -429,7 +453,16 @@ function Composer({ bot, threadId, working, inVoiceChat, onVoiceChat }: { bot: B
       for (const item of saved.attachments) draft.removeAttachment(item.attachment.id);
     });
   };
-  const submit = () => /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
+  const sideChatsOn = useApp((s) => !embedded && s.runtimeFeatures.sideChats && canStartSideChat(threadId ? s.threads[threadId] : null));
+  const submitSide = async (prompt: string) => {
+    if (!threadId) return;
+    if (atts.length) return toast("Side chats can't take attachments yet");
+    const saved = text;
+    setText("");
+    if (!await startSideChat(bot, threadId, prompt) && !draft.getSnapshot().text) setText(saved);
+  };
+  const side = embedded ? null : parseSideCommand(text);
+  const submit = () => side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
   const [popover, setPopover] = useState<"attachments" | null>(null);
   const [listening, setListening] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -522,7 +555,7 @@ function Composer({ bot, threadId, working, inVoiceChat, onVoiceChat }: { bot: B
           )}
           {replyTo && <div className="composer-reply"><span title={replyTo}>{replyLabel(replyTo)}</span><button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}><X size={16} aria-hidden="true" /></button></div>}
           <div className="composer-controls flex items-end gap-1.5 p-1.5" data-expanded={replying}>
-            <AttachmentPicker mobile={mobile} open={popover === "attachments"} onToggle={() => setPopover((v) => v === "attachments" ? null : "attachments")} onClose={() => setPopover(null)} onFiles={addFiles} />
+            <AttachmentPicker mobile={mobile} open={popover === "attachments"} onToggle={() => setPopover((v) => v === "attachments" ? null : "attachments")} onClose={() => setPopover(null)} onFiles={addFiles} onSideChat={sideChatsOn ? () => void startSideChat(bot, threadId!) : undefined} />
             <textarea
               ref={ta}
               readOnly={mobile}
@@ -553,13 +586,13 @@ function Composer({ bot, threadId, working, inVoiceChat, onVoiceChat }: { bot: B
                   submit();
                 }
               }}
-              placeholder={`Ask ${bot.name}`}
+              placeholder={embedded ? "Ask on the side" : `Ask ${bot.name}`}
               className="scroll-thin max-h-[120px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[14px] leading-[22px] outline-none placeholder:text-faint"
             />
             {!inVoiceChat && <IconButton onClick={dictate} aria-pressed={listening} className={clsx("composer-dictate size-9", listening ? "bg-danger text-white hover:bg-danger hover:text-white" : "bg-hover text-muted")} title="Start voice input">
               <Mic size={16} />
             </IconButton>}
-            {threadId && <ComposerRunAction threadId={threadId} working={working} hasDraft={!!text.trim() || atts.length > 0} inVoiceChat={inVoiceChat} onVoiceChat={onVoiceChat} />}
+            {threadId && <ComposerRunAction threadId={threadId} working={working} hasDraft={!!text.trim() || atts.length > 0} inVoiceChat={inVoiceChat || embedded} onVoiceChat={onVoiceChat} />}
             {(text.trim() || atts.length > 0) && <IconButton onClick={submit} disabled={sending || specialSend.disabled || atts.some((item) => item.state === "uploading")} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send">
               <ArrowUp size={17} />
             </IconButton>}

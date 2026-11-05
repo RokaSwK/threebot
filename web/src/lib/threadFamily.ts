@@ -5,6 +5,11 @@ export type ThreadTarget =
   | { kind: "local"; threadId: string }
   | { kind: "remote"; threadId: string; environmentId: string; label: string };
 
+/** T3 follows the real shell snapshot with a project-only one; its empty thread list is not the roster. */
+export function isProjectEnrichment(item: { resolvedRepositoryIdentityRoots?: unknown; snapshot: { threads: unknown[]; archivedThreads?: unknown[] } }) {
+  return item.resolvedRepositoryIdentityRoots !== undefined && !item.snapshot.threads.length && !item.snapshot.archivedThreads?.length;
+}
+
 export function sameTaskBot(a: Bot, b: Bot) {
   return a.slug === b.slug && a.mainThreadId === b.mainThreadId && a.name === b.name && a.shape === b.shape && a.color === b.color && a.avatarImage === b.avatarImage;
 }

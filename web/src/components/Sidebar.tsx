@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import clsx from "clsx";
-import { Archive, ArrowLeftRight, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
+import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
 import { Avatar, type AvatarState } from "./Avatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
-import { archiveThread, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
+import { archiveThread, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
+import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
 import type { Bot, ThreadShell } from "../lib/types";
@@ -39,6 +40,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [deletingSection, setDeletingSection] = useState<string | null>(null);
   const [sectionBusy, setSectionBusy] = useState(false);
+  const page = useApp((s) => s.page);
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((v) => v + 1), 30_000); return () => clearInterval(timer); }, []);
   const [showHidden, setShowHidden] = useState(false);
@@ -187,7 +189,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} state={avatarStateFor(status)} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
       })}</div>)}
     </div>
-    <div className="flex shrink-0 flex-col items-center gap-2 pt-2"><RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton></div>
+    <div className="flex shrink-0 flex-col items-center gap-2 pt-2"><RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton><RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton></div>
     <AccountRow compact />
     {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
   </aside>;
@@ -206,6 +208,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
       {wide && attention && <button className="mobile-attention pop-in" aria-label={`Jump to the chat needing attention ${attention}`} onClick={jumpToAttention}>Needs attention{attention === "above" ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}</button>}
 
       <div ref={list} onScroll={wide ? measureAttention : undefined} className="bot-list scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <ProjectsRow large={wide} current={page === "projects"} />
         {pinned.length > 0 && (
           <div className="pinned-bots flex flex-wrap gap-1 px-1 pt-1 pb-3">
             {pinned.map((b) => {
@@ -281,6 +284,19 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         <div className="flex justify-end gap-3 p-4"><Pill variant="ghost" disabled={sectionBusy} onClick={() => setDeletingSection(null)}>Cancel</Pill><Pill variant="danger" disabled={sectionBusy} onClick={() => void deleteSection()}>Delete</Pill></div>
       </Modal>}
     </aside>
+  );
+}
+
+/** The way to the Projects page, with the count of open to-dos once the board has loaded. */
+function ProjectsRow({ large, current }: { large: boolean; current: boolean }) {
+  // Following the board here keeps the count live while the app is open.
+  useEffect(() => followBoard(), []);
+  const open = useBoard((s) => (s.status === "ready" ? Object.values(s.items).filter(isOpenTask).length : null));
+  return (
+    <button onClick={() => openProjects()} aria-current={current ? "page" : undefined} className={clsx("projects-nav mb-1 flex w-full items-center gap-3 rounded-[10px] px-2 text-left transition-colors", large ? "py-[9px]" : "py-[7px]", current ? "bg-active" : "hover:bg-hover")}>
+      <span className={clsx("grid shrink-0 place-items-center rounded-[12px] border border-line text-muted", large ? "size-11" : "size-9")}><FolderKanban size={large ? 20 : 17} /></span>
+      <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] leading-5">Projects</span><span className="block truncate text-[12.5px] leading-[18px] text-muted">{open === null ? "To-dos, machines, what's running" : open ? `${open} open to-do${open === 1 ? "" : "s"}` : "Nothing open"}</span></span>
+    </button>
   );
 }
 
