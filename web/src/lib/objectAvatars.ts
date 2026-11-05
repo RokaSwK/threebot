@@ -37,6 +37,21 @@ export function objectDefinition(shape: string, owners: Iterable<Owner>) {
   return null;
 }
 
+/** Objects Bots have drawn for themselves, deduplicated, excluding the built-in gallery. */
+export function sharedObjects(bots: Iterable<Owner>): AvatarDefinition[] {
+  const found = new Map<string, AvatarDefinition>();
+  for (const bot of bots) {
+    if (!isObjectShape(bot.shape)) continue;
+    const own = safeDefinition(bot.avatarDefinition);
+    if (own && !builtIn.has(own.id) && !found.has(own.id) && bot.shape === objectShape(own.id)) found.set(own.id, own);
+  }
+  return [...found.values()];
+}
+
+/** What the "+" tile sends: the Bot draws the object with the avatar rules it already has. */
+export const drawObjectPrompt = (description: string) =>
+  `Draw yourself a new object avatar: ${description.trim()}. Follow your avatar instructions: give it a new unique id, set \`shape\` to \`object:<that-id>\` and add the \`avatarDefinition\` in \`.bot/bot.json\`. Check it validates, then tell me when it's done.`;
+
 /** Pasted JSON becomes a definition with its own id, or a sentence saying what's wrong. */
 export function importDefinition(json: string): { ok: true; definition: AvatarDefinition } | { ok: false; error: string } {
   let parsed: unknown;

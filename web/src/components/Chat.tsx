@@ -242,7 +242,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
           {entry.text && (
             <div
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
-              style={accent === "bot" && bot.color !== "white" && bot.color !== "gray" ? { background: botColor(bot.color), color: "#fff" } : { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
+              style={accent === "bot" && bot.color !== "white" && bot.color !== "gray" && bot.color !== "black" ? { background: botColor(bot.color), color: "#fff" } : { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
             >
               {entry.text}
             </div>

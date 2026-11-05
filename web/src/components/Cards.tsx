@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ChangeEvent } from "react";
 import { flushSync } from "react-dom";
 import clsx from "clsx";
-import { Check, Clock, ExternalLink, FileText, KeyRound, Lock, Monitor, Pencil, Send, ShieldAlert, Square, Sparkles, X } from "lucide-react";
+import { Check, Clock, ExternalLink, FileText, KeyRound, Lock, Maximize2, Monitor, Pencil, Send, ShieldAlert, Square, Sparkles, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { SubagentRow } from "./ThreadFamily";
 import { sameTaskBot } from "../lib/threadFamily";
@@ -471,28 +471,13 @@ function PagePreview({ entry }: { entry: PageEntry }) {
   return (
     <div className="page-card fade-up">
       {doc ? <>
-        <div className="page-card-preview" inert aria-hidden="true">
-          <iframe ref={frame} srcDoc={doc} title={`${title} preview`} tabIndex={-1} aria-hidden="true" sandbox="allow-scripts" style={{ height }} />
-          <div className="page-card-fade" />
+        <div className="page-card-preview">
+          <iframe ref={frame} srcDoc={doc} title={title} sandbox="allow-scripts" style={{ height }} />
         </div>
-        <button ref={opener} type="button" onClick={() => setFull(true)} className="page-card-open" aria-label={`Open page, ${title}`} />
+        <button ref={opener} type="button" onClick={() => setFull(true)} className="page-card-expand" aria-label={`Open page, ${title}`} title="Open full screen"><Maximize2 size={16} aria-hidden="true" /></button>
       </> : <div className="page-card-placeholder">
         {load.kind === "error" ? <div role="alert"><p>Couldn't load this page.</p><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry</button></div> : <span role="status" aria-label="Loading page"><Spinner /></span>}
       </div>}
-      <div className="page-card-footer" aria-hidden={doc ? true : undefined}>
-        <span className="page-card-icon" aria-hidden="true">
-          <svg width="32" height="40" viewBox="0 0 32 40" fill="none">
-            <path d="M5 1h15l11 11v24a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3Z" fill="currentColor" opacity=".18" />
-            <path d="M20 1v8a3 3 0 0 0 3 3h8" fill="currentColor" opacity=".3" />
-            <path d="M7 8h8M7 14h11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            <rect x="6" y="27" width="4" height="8" rx="2" fill="#10b981" />
-            <rect x="12" y="23" width="4" height="12" rx="2" fill="#f59e0b" />
-            <rect x="18" y="20" width="4" height="15" rx="2" fill="#f05252" />
-            <rect x="24" y="17" width="4" height="18" rx="2" fill="#3285f5" />
-          </svg>
-        </span>
-        <span className="page-card-label"><span className="page-card-title">{title}</span><span className="page-card-kind">Page</span></span>
-      </div>
       {full && doc && load.kind === "ready" && <dialog ref={dialog} className="page-viewer" aria-label={title} onCancel={event => { event.preventDefault(); setFull(false); }} onClose={() => setFull(false)}>
         <div className="page-viewer-header">
           <button ref={close} type="button" onClick={() => setFull(false)} className="page-viewer-action" aria-label="Close page"><X size={22} /></button>

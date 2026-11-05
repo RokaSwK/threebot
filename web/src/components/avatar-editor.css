@@ -161,3 +161,8 @@
   .avatar-editor-sheet .avatar-import { margin: 12px 16px 14px; }
   .avatar-editor-sheet .avatar-import summary { text-align: left; }
 }
+.avatar-object-new { border: 1.5px dashed var(--border-strong); color: var(--fg-muted); }
+.avatar-object-new:hover, .avatar-object-new[aria-expanded="true"] { border-color: var(--fg-muted); color: var(--fg); }
+.avatar-object-draw { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.avatar-object-draw input { min-width: 0; flex: 1; height: 32px; padding-inline: 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-card); color: var(--fg); font-size: 13px; }
+.avatar-object-draw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
