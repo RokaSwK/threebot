@@ -1,6 +1,7 @@
 // Bot gateway: serves the web app, guards it with a password, proxies T3 Code,
 // and reads/writes the small JSON files that describe Bots. No database.
 import http from "node:http";
+import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -25,6 +26,8 @@ import { createRoutineHistoryRoutes } from "./routine-history.mjs";
 import { objectAvatarPatch } from "./object-avatars.mjs";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mjs";
 import { safeEqual } from "./safe-equal.mjs";
+import { createAccessStore, createRemoteAccess } from "./remote-access.mjs";
+import { createUpdateChecker, currentVersion, installedRuntime } from "./release.mjs";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mjs";
 import { createProjects } from "./projects.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
@@ -59,7 +62,12 @@ const appDir = path.join(cfg.botsRoot, ".botapp");
 await fs.mkdir(appDir, { recursive: true });
 const secretPath = path.join(appDir, "session-secret");
 if (!existsSync(secretPath)) await fs.writeFile(secretPath, randomBytes(32).toString("hex"), { mode: 0o600 });
-const sessionSecret = readFileSync(secretPath, "utf8").trim();
+let sessionSecret = readFileSync(secretPath, "utf8").trim();
+/** A new password signs everyone out: sessions from before it stop working. */
+async function rotateSessionSecret() {
+  sessionSecret = randomBytes(32).toString("hex");
+  await fs.writeFile(secretPath, sessionSecret, { mode: 0o600 });
+}
 // Bearer for the Bots' tool server: BOT_MCP_TOKEN, or a random one kept next to the vault key.
 const botMcpTokenPath = path.join(path.dirname(cfg.vaultKeyFile), ".bot-mcp-token");
 let botMcpToken = (process.env.BOT_MCP_TOKEN ?? readIfExists(botMcpTokenPath) ?? "").trim();
@@ -140,6 +148,61 @@ const verifyAccess = createAccessVerifier({
 
 const originPolicy = { allowed: allowedOrigins(), allowLoopback: !verifyAccess };
 const exposure = exposureConfig();
+const envTailnet = exposure.tailnetPort > 0;
+const version = currentVersion();
+const checkUpdates = createUpdateChecker({ version });
+let tailnetServer = null;
+async function openTailnet(port, users) {
+  // This port trusts the Tailscale-User-Login header, so only a local `tailscale serve` may reach it.
+  if (!users.length) throw new Error("The Tailscale listener needs at least one allowed user");
+  exposure.tailnetUsers = new Set(users.map((user) => String(user).toLowerCase()));
+  if (tailnetServer && exposure.tailnetPort === port) return;
+  await closeTailnet();
+  const listener = http.createServer((req, res) => server.emit("request", req, res));
+  listener.on("upgrade", (req, socket, head) => server.emit("upgrade", req, socket, head));
+  await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(port, "127.0.0.1", resolve); });
+  tailnetServer = listener;
+  exposure.tailnetPort = port;
+  console.log(`tailnet listener on 127.0.0.1:${port}`);
+}
+async function closeTailnet() {
+  const listener = tailnetServer;
+  tailnetServer = null;
+  exposure.tailnetPort = 0;
+  if (listener) await new Promise((resolve) => { listener.close(() => resolve()); listener.closeAllConnections?.(); });
+}
+const remoteAccess = createRemoteAccess({
+  store: createAccessStore(path.join(appDir, "access.json")),
+  home: dataRoot, localPort: cfg.port, urlFile: path.join(appDir, "tunnel-url"), exposure, envPassword: cfg.password, envTailnet, openTailnet, closeTailnet,
+});
+let updating = null;
+/** Settings → Updates: hand the update to `threebot update`, which swaps versions and restarts this service. */
+async function startSelfUpdate() {
+  if (!installedRuntime() || process.env.THREEBOT_SERVICE !== "1") {
+    throw Object.assign(new Error("This copy can't update itself. Install Threebot with the installer and run it as a service, or update it with `git pull` and `npm run setup`."), { status: 409 });
+  }
+  const { updateAvailable, latest, error } = await checkUpdates({ force: true });
+  if (error) throw Object.assign(new Error(error), { status: 502 });
+  if (!updateAvailable) return { started: false, version };
+  if (updating) return { started: true, version: latest.version };
+  const logFile = path.join(dataRoot, "logs", "update.log");
+  await fs.mkdir(path.dirname(logFile), { recursive: true });
+  const out = await fs.open(logFile, "a");
+  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", latest.version];
+  // systemd stops every process in the service's cgroup on restart, so the updater runs outside it.
+  const command = process.platform === "linux" ? ["systemd-run", "--user", "--collect", "--quiet", ...args] : args;
+  const child = spawn(command[0], command.slice(1), { detached: true, stdio: ["ignore", out.fd, out.fd], env: process.env });
+  child.unref();
+  await out.close();
+  updating = { version: latest.version, startedAt: Date.now() };
+  child.on("exit", () => { updating = null; });
+  return { started: true, version: latest.version };
+}
+const passwordRequired = async () => Boolean(cfg.password) || (await remoteAccess.hasPassword());
+async function passwordMatches(password) {
+  if (cfg.password) return safeEqual(password, cfg.password);
+  return remoteAccess.verify(password);
+}
 const publicPortClosed = (req) => exposure.landingOnly && !onTailnet(req, exposure);
 async function authed(req) {
   // Tailscale identity is the only way in on this port, and it counts nowhere else.
@@ -149,7 +212,7 @@ async function authed(req) {
     const accessToken = accessTokenFrom(req, jar);
     if (accessToken && (await verifyAccess(accessToken))) return true;
   }
-  if (cfg.password) return validSession(jar[COOKIE]);
+  if (await passwordRequired()) return validSession(jar[COOKIE]);
   // No password: Cloudflare Access is the only way in. Without Access configured either, it's an open dev setup.
   return !verifyAccess;
 }
@@ -535,6 +598,8 @@ const server = http.createServer(async (req, res) => {
     // A missing landing file must not fall through to the app shell.
     if (landingAsset && !existsSync(path.join(cfg.staticDir, p))) return send(res, 404, "not found");
     // Landing-only mode: the app isn't here at all. Bots still reach their local tool server.
+    // The updater and `threebot up` wait on this; it only says the gateway is up and its version.
+    if (p === "/api/health" && req.method === "GET") return send(res, 200, { ok: true, version });
     if (publicPortClosed(req)) {
       if (p === "/mcp/bot" && !req.headers["cf-ray"]) return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
       if (!["GET", "HEAD"].includes(req.method) || !landingPath(p)) return send(res, 404, "not found");
@@ -548,7 +613,7 @@ const server = http.createServer(async (req, res) => {
       const ip = clientIp(req);
       if (loginBlocked(ip)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
       const { password } = await readBody(req, 4096);
-      const ok = !cfg.password || safeEqual(password, cfg.password);
+      const ok = !(await passwordRequired()) || (await passwordMatches(password));
       if (!ok) {
         loginFailed(ip);
         console.warn(`failed login from ${ip}`);
@@ -561,7 +626,7 @@ const server = http.createServer(async (req, res) => {
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
     if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
 
-    if (p === "/api/session") return send(res, 200, { authenticated: await authed(req), passwordRequired: Boolean(cfg.password), accessLogin: Boolean(verifyAccess) });
+    if (p === "/api/session") return send(res, 200, { authenticated: await authed(req), passwordRequired: await passwordRequired(), accessLogin: Boolean(verifyAccess) });
     if (p === "/api/logout") return send(res, 200, { ok: true }, { "set-cookie": `${COOKIE}=; Path=/; Max-Age=0` });
 
     if (p.startsWith("/api/") || p.startsWith("/t3/")) {
@@ -605,6 +670,30 @@ const server = http.createServer(async (req, res) => {
       let id;
       try { id = decodeURIComponent(executorConnectionRoute[1]); } catch { return send(res, 400, { error: 'Invalid connection identifier' }); }
       return send(res, 200, await executorClient(url.searchParams.get('backend') ?? executorConfig.active).connection(id));
+    }
+    if (p === "/api/system" && req.method === "GET") {
+      const updates = await checkUpdates({ force: url.searchParams.get("check") === "1" });
+      return send(res, 200, { version, installed: installedRuntime(), service: process.env.THREEBOT_SERVICE === "1", ...updates });
+    }
+    if (p === "/api/system/update" && req.method === "POST") return send(res, 202, await startSelfUpdate());
+    if (p === "/api/access" && req.method === "GET") return send(res, 200, await remoteAccess.status());
+    if (p === "/api/access/password" && req.method === "PUT") {
+      const { password } = await readBody(req, 4096);
+      await remoteAccess.setPassword(password ?? null);
+      // Everyone signs in again with the new password; this browser gets a fresh session now.
+      await rotateSessionSecret();
+      const secure = isHttps(req) ? "; Secure" : "";
+      return send(res, 200, await remoteAccess.status(), password ? { "set-cookie": `${COOKIE}=${makeSession()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 3600}${secure}` } : {});
+    }
+    if (p === "/api/access/tailscale" && req.method === "POST") {
+      const { on } = await readBody(req, 1024);
+      if (on) await remoteAccess.tailscaleOn(); else await remoteAccess.tailscaleOff();
+      return send(res, 200, await remoteAccess.status());
+    }
+    if (p === "/api/access/tunnel" && req.method === "POST") {
+      const { on } = await readBody(req, 1024);
+      if (on) await remoteAccess.tunnelOn(); else await remoteAccess.tunnelOff();
+      return send(res, 200, await remoteAccess.status());
     }
     if (p === "/api/settings" && req.method === "GET") return send(res, 200, await getSettings());
     if (p === "/api/settings" && req.method === "PUT") {
@@ -671,7 +760,7 @@ const server = http.createServer(async (req, res) => {
     return await serveStatic(req, res, p);
   } catch (err) {
     console.error(req.method, p, err);
-    if (!res.headersSent) send(res, err.status ?? 500, { error: String(err.message ?? err) });
+    if (!res.headersSent) send(res, err.status ?? 500, { error: String(err.message ?? err), ...(err.status && err.code ? { code: err.code } : {}) });
     else res.end();
   }
 });
@@ -754,13 +843,13 @@ const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBo
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
 
-if (exposure.tailnetPort) {
+if (envTailnet) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");
-  const tailnetServer = http.createServer((req, res) => server.emit("request", req, res));
-  tailnetServer.on("upgrade", (req, socket, head) => server.emit("upgrade", req, socket, head));
-  // This port trusts the Tailscale-User-Login header, so only a local `tailscale serve` may reach it.
-  tailnetServer.listen(exposure.tailnetPort, "127.0.0.1", () => console.log(`tailnet listener on 127.0.0.1:${exposure.tailnetPort}`));
+  await openTailnet(exposure.tailnetPort, [...exposure.tailnetUsers]);
 }
+// Tailscale and Cloudflare links switched on in Settings come back with the gateway.
+remoteAccess.boot().catch((e) => console.error("remote access", e));
+for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { remoteAccess.stop(); process.exit(0); });
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });
