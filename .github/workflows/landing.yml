@@ -1,0 +1,45 @@
+name: Landing page
+# Publishes the public landing page (web/public/welcome) to GitHub Pages at bot.swk.tools, apart from
+# anyone's own Threebot. The page keeps its /welcome/... paths, with a copy at the root.
+on:
+  push:
+    branches: [main]
+    paths: ["web/public/welcome/**", "web/src/landing/**", "install.sh", ".github/workflows/landing.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --prefix web
+      # The ball's live animation is built from web/src/landing.
+      - run: npm run build:ball --prefix web
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -R web/public/welcome _site/welcome
+          cp web/public/welcome/index.html _site/index.html
+          cp install.sh _site/install.sh
+          printf 'bot.swk.tools\n' > _site/CNAME
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
