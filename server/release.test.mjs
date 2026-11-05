@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { activate, compareVersions, createUpdateChecker, expectedSum, findRelease, installRelease, installedRuntime, prune, readLink, rollback, runtimePaths } from "./release.mjs";
+import { activate, compareVersions, createUpdateChecker, expectedSum, findRelease, installRelease, installedRuntime, prune, readLink, rollback, runtimePaths, startUpdateChecks } from "./release.mjs";
 
 const json = (value) => ({ ok: true, status: 200, json: async () => value, arrayBuffer: async () => Buffer.from(JSON.stringify(value)) });
 const release = (tag, extra = {}) => ({ tag_name: tag, draft: false, prerelease: false, body: `notes ${tag}`, html_url: `https://example.test/${tag}`, assets: [
@@ -105,4 +105,43 @@ test("the update check caches its answer and reports a failure instead of throwi
   assert.equal(calls, 2);
   const broken = createUpdateChecker({ env: {}, fetchImpl: async () => ({ ok: false, status: 503 }) });
   assert.match((await broken()).error, /503/);
+});
+
+test("the stored answer serves every tab until a check is due, and failures back off keeping the last answer", async () => {
+  let t = 0, calls = 0, fail = false;
+  const minute = 60 * 1000;
+  const check = createUpdateChecker({ env: {}, version: "0.1.0", now: () => t, fetchImpl: async () => { calls++; return fail ? { ok: false, status: 403 } : json([release("v0.1.2")]); } });
+  await Promise.all([check(), check(), check()]);
+  assert.equal(calls, 1);
+  for (t = 0; t < 60 * minute; t += minute) await check();
+  assert.equal(calls, 4); // one call each 15 minutes over the hour
+  t = 60 * minute; fail = true;
+  const failed = await check();
+  assert.deepEqual([failed.updateAvailable, failed.latest?.version, failed.checkedAt], [true, "0.1.2", new Date(t).toISOString()]);
+  assert.match(failed.error, /403/);
+  t += 14 * minute; await check(); assert.equal(calls, 5); // waits the full period after the first failure
+  t += minute; await check(); assert.equal(calls, 6);
+  t += 29 * minute; await check(); assert.equal(calls, 6); // then twice as long
+  t += minute; fail = false; assert.equal((await check()).error, null);
+  assert.equal(calls, 7);
+});
+
+test("background checks look straight away, then on every tick until stopped", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let looks = 0;
+  const stop = startUpdateChecks(async () => { looks++; }, { everyMs: 1000 });
+  assert.equal(looks, 1);
+  t.mock.timers.tick(3000);
+  assert.equal(looks, 4);
+  stop();
+  t.mock.timers.tick(3000);
+  assert.equal(looks, 4);
+});
+
+test("a preview install is offered newer previews, a stable install only stable releases", async () => {
+  const list = async () => json([release("v0.2.0-preview.2", { prerelease: true }), release("v0.1.9")]);
+  const preview = await createUpdateChecker({ env: {}, version: "0.2.0-preview.1", fetchImpl: list })();
+  assert.deepEqual([preview.updateAvailable, preview.latest?.version], [true, "0.2.0-preview.2"]);
+  const stable = await createUpdateChecker({ env: {}, version: "0.1.9", fetchImpl: list })();
+  assert.deepEqual([stable.updateAvailable, stable.latest?.version], [false, "0.1.9"]);
 });

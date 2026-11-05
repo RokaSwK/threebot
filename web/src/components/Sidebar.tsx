@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import clsx from "clsx";
-import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
+import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, CloudDownload, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
 import { Avatar, type AvatarState } from "./Avatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
+import { useUpdateNotice } from "./RemoteAccess";
 import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
@@ -192,7 +193,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} state={avatarStateFor(status)} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
       })}</div>)}
     </div>
-    <div className="flex shrink-0 flex-col items-center gap-2 pt-2"><RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton><RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton></div>
+    <div className="flex shrink-0 flex-col items-center gap-2 pt-2"><RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton><RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
     <AccountRow compact />
     {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
   </aside>;
@@ -279,6 +280,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
 
       {wide ? <div className="mobile-home-toolbar flex shrink-0 items-center gap-3 px-4 py-3">
         <RoundButton className="size-11" onClick={() => openDialog("connect-apps")} aria-label="Connect apps"><Grid2x2Plus size={21} /></RoundButton>
+        <UpdateButton large className="me-auto" />
         <button className="mobile-new-bot" onClick={() => openDialog("new-bot")} aria-label="New Bot"><Plus size={20} aria-hidden="true" /> New Bot</button>
       </div> : <AccountRow />}
       {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
@@ -370,9 +372,21 @@ function AccountRow({ compact = false }: { compact?: boolean }) {
       {!compact && <RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps">
         <LayoutGrid size={15} />
       </RoundButton>}
+      {!compact && <UpdateButton />}
       {menu && <AccountMenu {...menu} onClose={() => setMenu(null)} />}
     </div>
   );
+}
+
+/** T3 Code's footer update button: shown once Settings → Updates could install a newer release, and opens it there. */
+function UpdateButton({ large = false, className }: { large?: boolean; className?: string }) {
+  const update = useUpdateNotice();
+  if (!update?.installable) return null;
+  const label = `Update to v${update.version}`;
+  return <button type="button" onClick={() => { useApp.setState({ settingsPane: "updates" }); openDialog("settings"); }} title={label} aria-label={label}
+    className={clsx("update-button grid shrink-0 place-items-center rounded-full bg-accent text-app transition-[filter] hover:brightness-110", large ? "size-11" : "size-[30px]", className)}>
+    <CloudDownload size={large ? 21 : 16} aria-hidden="true" />
+  </button>;
 }
 
 type MenuPoint = { clientX: number; clientY: number; preventDefault: () => void };
