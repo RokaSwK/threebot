@@ -111,6 +111,7 @@ test('live changes apply in order, a missed one reloads, and a Bot\'s edit is po
   assert.equal(useBoard.getState().items.task0002.status, 'done');
   assert.equal(useBoard.getState().flashes.task0002.who, 'Ops');
   const before = calls.filter((c) => c.url === '/api/projects').length;
+  serve(board(), 9);
   source.emit('change', { version: 9, items: [], removed: ['task0003'], activity: [] });
   await settle();
   assert.equal(calls.filter((c) => c.url === '/api/projects').length, before + 1, 'a gap in versions reloads the board');
@@ -197,4 +198,40 @@ test('an empty board offers to have the main Bot set it up', async () => {
   await act(async () => ask.click());
   assert.equal(useApp.getState().selected, 'ops');
   assert.match(b.chatDraft({ slug: 'ops', mainThreadId: 'thread-ops' }, 'thread-ops').snapshot.text, /^Set up my Projects board/);
+});
+
+test('a snapshot older than a change already seen is fetched again instead of erasing it', async () => {
+  const replies = [{ version: 0, items: [], activity: [] }, { version: 1, items: [item({ id: 'task0009', kind: 'task', title: 'Fresh', status: 'todo' })], activity: [] }];
+  let release;
+  const first = new Promise((resolve) => { release = resolve; });
+  let n = 0;
+  globalThis.fetch = async (url) => {
+    calls.push({ url: String(url) });
+    const reply = replies[Math.min(n, 1)];
+    if (n++ === 0) await first;
+    return new Response(JSON.stringify(reply), { status: 200 });
+  };
+  const stop = b.followBoard();
+  sources[0].emit('change', { version: 1, items: [item({ id: 'task0009', kind: 'task', title: 'Fresh', status: 'todo' })], removed: [], activity: [] });
+  release();
+  await settle();
+  assert.equal(useBoard.getState().version, 1);
+  assert.equal(useBoard.getState().items.task0009?.title, 'Fresh');
+  stop();
+});
+
+test('a save reply older than the board leaves newer Bot changes in place', async () => {
+  serve();
+  const stop = b.followBoard();
+  await settle();
+  let release;
+  const reply = new Promise((resolve) => { release = resolve; });
+  globalThis.fetch = async () => { await reply; return new Response(JSON.stringify({ version: 4, items: [item({ id: 'task0002', kind: 'task', title: 'Old', status: 'todo' })] }), { status: 200 }); };
+  const saving = b.saveItems([{ id: 'task0002', title: 'Old' }]);
+  sources[0].emit('change', { version: 4, items: [item({ id: 'task0002', kind: 'task', title: 'Old', status: 'todo' })], removed: [], activity: [] });
+  sources[0].emit('change', { version: 5, items: [item({ id: 'task0002', kind: 'task', title: 'New', status: 'todo' })], removed: [], activity: [] });
+  release();
+  await saving;
+  assert.equal(useBoard.getState().items.task0002.title, 'New');
+  stop();
 });

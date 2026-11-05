@@ -125,7 +125,10 @@ async function reload() {
   loading = (async () => {
     if (get().status !== "ready") set({ status: "loading", error: null });
     try {
-      const snap = await boardApi.snapshot();
+      // Changes can arrive while the request is out; a snapshot older than them would erase them.
+      let snap = await boardApi.snapshot();
+      // A server whose version went back (a restart, a restored file) still wins after a few tries.
+      for (let tries = 1; snap.version < get().version && tries < 3; tries++) snap = await boardApi.snapshot();
       set({ status: "ready", error: null, version: snap.version, items: Object.fromEntries(snap.items.map((item) => [item.id, item])), activity: snap.activity });
     } catch (error) {
       if (get().status !== "ready") set({ status: "error", error: error instanceof Error ? error.message : "Couldn't load the board" });
@@ -167,7 +170,8 @@ export function ensureBoard() {
 /** Save changes. The returned items land at once; the stream confirms the same version. */
 export async function saveItems(inputs: ItemInput[]) {
   const result = await boardApi.save(inputs);
-  set((s) => ({ items: { ...s.items, ...Object.fromEntries(result.items.map((item) => [item.id, item])) } }));
+  // The stream may already have brought this version or a newer one; then the reply is stale.
+  set((s) => result.version <= s.version ? {} : { items: { ...s.items, ...Object.fromEntries(result.items.map((item) => [item.id, item])) } });
   return result.items;
 }
 

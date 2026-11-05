@@ -758,7 +758,8 @@ if (exposure.tailnetPort) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");
   const tailnetServer = http.createServer((req, res) => server.emit("request", req, res));
   tailnetServer.on("upgrade", (req, socket, head) => server.emit("upgrade", req, socket, head));
-  tailnetServer.listen(exposure.tailnetPort, cfg.host, () => console.log(`tailnet listener on ${cfg.host}:${exposure.tailnetPort}`));
+  // This port trusts the Tailscale-User-Login header, so only a local `tailscale serve` may reach it.
+  tailnetServer.listen(exposure.tailnetPort, "127.0.0.1", () => console.log(`tailnet listener on 127.0.0.1:${exposure.tailnetPort}`));
 }
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);

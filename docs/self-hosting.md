@@ -60,7 +60,7 @@ TAILNET_USERS=you@example.com
 tailscale serve --bg --https=8443 http://127.0.0.1:3781
 ```
 
-Only `tailscale serve` should reach that port. It sets the signed-in user on each request, and the gateway accepts no other login there. Then open `https://<machine>.<tailnet>.ts.net:8443`.
+Only `tailscale serve` should reach that port, so the gateway always binds it to `127.0.0.1`, whatever `HOST` says. It sets the signed-in user on each request, and the gateway accepts no other login there. Then open `https://<machine>.<tailnet>.ts.net:8443`.
 
 If a public host also points at the gateway, `PUBLIC_LANDING_ONLY=true` reduces that port to the landing page. Bots keep their local tool server.
 
