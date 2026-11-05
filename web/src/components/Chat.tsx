@@ -559,6 +559,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
             <textarea
               ref={ta}
               readOnly={mobile}
+              enterKeyHint={mobile ? "enter" : undefined}
               onPointerDown={(e) => focus.onPointerDown(e.currentTarget)}
               onPointerCancel={(e) => focus.onPointerCancel(e.currentTarget)}
               onClick={(e) => focus.onClick(e.currentTarget)}
@@ -575,7 +576,12 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
                 }
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  submit();
+                  return;
+                }
+                if (!mobile && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
                   submit();
                 }
