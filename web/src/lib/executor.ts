@@ -1,7 +1,7 @@
 export type ExecutorBackend = "cloud" | "self-hosted";
 export type ExecutorAccount = { id: string; name: string; linked: boolean; signIn: "saved" | "reconnect" | "unavailable" };
 export type ExecutorRequirement = { id: string; scope: "user" | "app"; name: string; cardinality: "one" | "many"; accounts: ExecutorAccount[] };
-export type ExecutorApp = { id: string; slug: string; name: string; status: "ready" | "connected" | "needs-connection" | "unknown"; requirements: ExecutorRequirement[]; error?: string };
+export type ExecutorApp = { id: string; slug: string; name: string; status: "ready" | "connected" | "needs-connection" | "unknown"; requirements: ExecutorRequirement[]; icon?: string; domain?: string; error?: string };
 export type ExecutorConnection = { id: string; backend: ExecutorBackend; appId: string; requirement: string; scope: "user" | "app"; url: string; status: "pending" | "completed" | "expired" | "cancelled"; expiresAt: string; error?: string };
 export type ExecutorStatus = { configured: boolean; hasToken: boolean; backend: ExecutorBackend; backupAvailable: boolean; connections: ExecutorApp[]; error?: string };
 export type CatalogEntry = { id: string; name: string; description: string; icon: string | null; auth: string[]; authLabels: string[]; category: string | null };
@@ -29,7 +29,9 @@ function requirement(value: unknown): ExecutorRequirement {
 }
 export function parseExecutorApp(value: unknown): ExecutorApp {
   const v = object(value);
-  return { id: string(v.id), slug: string(v.slug), name: string(v.name), status: oneOf(v.status, ["ready", "connected", "needs-connection", "unknown"]), requirements: array(v.requirements, requirement), ...(typeof v.error === "string" ? { error: v.error } : {}) };
+  const icon = typeof v.icon === "string" && /^(?:https?:|data:image\/)/i.test(v.icon) ? v.icon : null;
+  const domain = typeof v.domain === "string" && v.domain ? v.domain : null;
+  return { id: string(v.id), slug: string(v.slug), name: string(v.name), status: oneOf(v.status, ["ready", "connected", "needs-connection", "unknown"]), requirements: array(v.requirements, requirement), ...(icon ? { icon } : {}), ...(domain ? { domain } : {}), ...(typeof v.error === "string" ? { error: v.error } : {}) };
 }
 export function parseExecutorConnection(value: unknown): ExecutorConnection {
   const v = object(value), url = string(v.url);

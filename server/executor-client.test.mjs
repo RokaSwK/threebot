@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { test } from 'node:test';
-import { createExecutorClient } from './executor-client.mjs';
+import { appIcon, appSiteDomain, createExecutorClient } from './executor-client.mjs';
 
 const TOKEN = 'fake-executor-token-private';
 const account = (id) => ({ id, label: id === 'acct_a' ? 'Personal' : 'Work', provider: 'provider', method: 'oauth', credentialsFingerprint: 'private-fingerprint' });
@@ -180,4 +180,20 @@ for (const fault of ['app-identity', 'choice-identity', 'connection-identity', '
   state.fault = fault;
   const operation = fault === 'connection-identity' ? () => client.connection('con_fixture') : fault === 'target-identity' ? () => client.connect('app_many', { requirement: 'service', scope: 'user' }) : () => client.app('app_many');
   await assert.rejects(operation(), (error) => error.status === 502);
+});
+
+test('apps carry their own logo and sign-in site, so a card for a custom app can show it', async (t) => {
+  const { client, state } = await fixture(t);
+  state.apps.app_many.requirements.icons = [{ src: 'javascript:private' }, { src: 'data:image/svg+xml;base64,PHN2Zy8+' }];
+  state.apps.app_many.requirements.accounts.service.definition.hosts = ['mcp.example.com'];
+  const app = await client.app('app_many');
+  assert.equal(app.icon, 'data:image/svg+xml;base64,PHN2Zy8+');
+  assert.equal(app.domain, 'example.com');
+  const ready = await client.app('app_ready');
+  assert.equal('icon' in ready || 'domain' in ready, false);
+  assert.equal(appIcon([{ src: 'data:text/html,<script>' }, { src: `https://user:${TOKEN}@example.invalid/a.svg` }]), null);
+  assert.equal(appIcon([{ src: `data:image/png;base64,${'A'.repeat(70_000)}` }, { src: 'https://example.invalid/b.png' }]), 'https://example.invalid/b.png');
+  assert.equal(appIcon([{ src: 'https://example.invalid/dark.svg', theme: 'dark' }, { src: 'https://example.invalid/light.svg', theme: 'light' }]), 'https://example.invalid/light.svg');
+  assert.equal(appSiteDomain({ a: { definition: { hosts: ['localhost', 'api.example.co.uk'] } } }), 'example.co.uk');
+  assert.equal(appSiteDomain({ a: { definition: {} } }), null);
 });
