@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { activate, compareVersions, currentVersion, findRelease, homeDir, installRelease, installedRuntime, prune, rollback, run, runtimePaths } from "./release.mts";
+import { activate, compareVersions, currentVersion, findRelease, homeDir, installRelease, installedRuntime, prune, rollback, run, runtimePaths, updateLogger } from "./release.mts";
 import { installService, restartService, serviceInstalled, serviceSpec, serviceSupported, uninstallService } from "./service.mts";
 import { randomBytes } from "node:crypto";
 import { createAccessStore, createTailscale, findCloudflared, hashPassword, installCloudflared, MIN_PASSWORD, pickServePort, serveOwner, tailnetUrl } from "./remote-access.mts";
@@ -223,36 +223,47 @@ async function status(flags: Flags) {
 
 async function update(flags: Flags, rest: string[]) {
   const from = currentVersion();
-  const release = await findRelease({ version: rest[0], channel: flags.preview ? "preview" : "stable" });
-  if (!release) fail(rest[0] ? `There is no release ${rest[0]}.` : "There are no releases yet.");
+  // An update (not --check) writes its failures to logs/update.log, the same whoever started it.
+  const stop: (message: string) => never = (message) => { if (!flags.check) updateLogger(home, { print: null })(`Update failed: ${message}`); fail(message); };
+  const release = await findRelease({ version: rest[0], channel: flags.preview ? "preview" : "stable" }).catch((error) => stop(error instanceof Error ? error.message : String(error)));
+  if (!release) stop(rest[0] ? `There is no release ${rest[0]}.` : "There are no releases yet.");
   const newer = compareVersions(release.version, from) > 0;
   if (flags.check) return say(newer ? `Threebot ${release.version} is available (you have ${from}). ${release.url}` : `Threebot ${from} is up to date.`);
   if (!installedRuntime()) fail("This copy runs from a source checkout. Update it with `git pull && npm run setup`, or install a release with the installer.");
   if (!newer && !rest[0]) return say(`Threebot ${from} is up to date.`);
   if (compareVersions(release.version, from) < 0 && !flags["allow-downgrade"]) fail(`${release.version} is older than ${from}. Pass --allow-downgrade to go back anyway.`);
 
-  const dir = await installRelease(release, { home, log: (line) => say(line) });
-  const managed = serviceSupported() && serviceInstalled(spec());
-  if (managed && !(await confirm(`Restart Threebot to switch from ${from} to ${release.version}? Running Bot turns keep going in T3 Code.`, flags.yes))) {
-    fail("Not restarted. Run `threebot update --yes` to switch.");
+  // From here on every step is also written there.
+  const log = updateLogger(home);
+  log(`Updating Threebot ${from} → ${release.version}`);
+  try {
+    const dir = await installRelease(release, { home, log });
+    const managed = serviceSupported() && serviceInstalled(spec());
+    if (managed && !(await confirm(`Restart Threebot to switch from ${from} to ${release.version}? Running Bot turns keep going in T3 Code.`, flags.yes))) {
+      stop("Not restarted. Run `threebot update --yes` to switch.");
+    }
+    await activate(dir, home);
+    log(`Switched to ${release.version}`);
+    if (!managed) {
+      log(`Installed ${release.version}. Restart Threebot (\`threebot serve\`) to use it.`);
+      return;
+    }
+    await restartService(spec());
+    log(`Restarted on ${release.version}; waiting for it to answer`);
+    if (await waitForHealth({ version: release.version, timeoutMs: 90000 })) {
+      const removed = await prune(home);
+      log(`Threebot ${release.version} is running.${removed.length ? ` Removed ${removed.join(", ")}.` : ""}`);
+      return;
+    }
+    // The new version never answered: put the old one back.
+    log(`${release.version} didn't answer; rolling back`);
+    const back = await rollback(home);
+    await restartService(spec());
+    const ok = await waitForHealth({ timeoutMs: 60000 });
+    stop(`${release.version} didn't start, so Threebot went back to ${path.basename(back)}${ok ? "" : ", which isn't answering either"}. Logs: ${path.join(home, "logs", "gateway.log")}`);
+  } catch (error) {
+    stop(error instanceof Error ? error.message : String(error));
   }
-  await activate(dir, home);
-  if (!managed) {
-    say(`Installed ${release.version}. Restart Threebot (\`threebot serve\`) to use it.`);
-    return;
-  }
-  await restartService(spec());
-  say(`Restarted on ${release.version}; waiting for it to answer`);
-  if (await waitForHealth({ version: release.version, timeoutMs: 90000 })) {
-    const removed = await prune(home);
-    say(`Threebot ${release.version} is running.${removed.length ? ` Removed ${removed.join(", ")}.` : ""}`);
-    return;
-  }
-  // The new version never answered: put the old one back.
-  const back = await rollback(home);
-  await restartService(spec());
-  const ok = await waitForHealth({ timeoutMs: 60000 });
-  fail(`${release.version} didn't start, so Threebot went back to ${path.basename(back)}${ok ? "" : ", which isn't answering either"}. Logs: ${path.join(home, "logs", "gateway.log")}`);
 }
 
 async function rollbackCommand() {

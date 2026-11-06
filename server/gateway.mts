@@ -3,7 +3,6 @@
 import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -29,7 +28,7 @@ import { objectAvatarPatch } from "./object-avatars.mts";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
-import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks } from "./release.mts";
+import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks, startUpdater, updateLogger } from "./release.mts";
 import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
@@ -221,17 +220,7 @@ async function startSelfUpdate({ target, onExit }: { target?: string; onExit?: (
   if (!updateAvailable) return { started: false, version };
   // An available update always names its release.
   if (updating) return { started: true, version: latest!.version };
-  const logFile = path.join(dataRoot, "logs", "update.log");
-  await fs.mkdir(path.dirname(logFile), { recursive: true });
-  const out = await fs.open(logFile, "a");
-  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", ...(channelFor(version) === "preview" ? ["--preview"] : []), latest!.version];
-  // systemd stops every process in the service's cgroup on restart, so the updater runs outside it.
-  // systemd-run starts it with a clean environment, so pass on what the updater needs.
-  const keep = ["PATH", "HOME", "THREEBOT_HOME", "THREEBOT_RELEASES_URL", "THREEBOT_RELEASE_BASE_URL"].filter((k) => process.env[k]).map((k) => `--setenv=${k}=${process.env[k]}`);
-  const command = process.platform === "linux" ? ["systemd-run", "--user", "--collect", "--quiet", ...keep, ...args] : args;
-  const child = spawn(command[0], command.slice(1), { detached: true, stdio: ["ignore", out.fd, out.fd], env: process.env });
-  child.unref();
-  await out.close();
+  const child = startUpdater(latest!.version, { preview: channelFor(version) === "preview" });
   updating = { version: latest!.version, startedAt: Date.now() };
   child.on("exit", (code) => { updating = null; if (process.platform !== "linux") onExit?.(latest!.version, code); });
   return { started: true, version: latest!.version };
@@ -251,9 +240,11 @@ const shellThreads = (omitIdleSubagents = true) => firstOf<(BotThread & { update
 async function busyThreads() {
   return busyBotThreads(await shellThreads(), await listBots());
 }
+const updateLog = updateLogger(dataRoot, { print: null });
 const autoUpdate = createAutoUpdater({
   store: createAutoUpdateStore(path.join(appDir, "auto-update.json")),
-  version, isBusy: busyThreads, installed: versionInstalled(runtimePaths(dataRoot).versions), log: (line) => console.log(line),
+  // Its lines go to gateway.log and, with the updater's own, to logs/update.log.
+  version, isBusy: busyThreads, installed: versionInstalled(runtimePaths(dataRoot).versions), log: (line) => { console.log(line); updateLog(line); },
   install: async (target) => {
     await startSelfUpdate({ target, onExit: (v, code) => void autoUpdate.failed(v, new Error(`the updater exited (${code}) without switching`)) });
   },

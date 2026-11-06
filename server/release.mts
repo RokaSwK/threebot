@@ -2,8 +2,8 @@
 // version, a `current` link the service runs, and the version before it kept for a rollback.
 // Releases are GitHub release assets checked against the release's SHA256SUMS.
 import { createHash } from "node:crypto";
-import { spawn, type SpawnOptions } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -133,6 +133,7 @@ export async function installRelease(release: Pick<Release, "version" | "archive
   if (!expected) throw new Error(`SHA256SUMS has no entry for ${assetName(release.version)}`);
   const actual = createHash("sha256").update(archive).digest("hex");
   if (actual !== expected) throw new Error(`Checksum mismatch for ${assetName(release.version)}: expected ${expected}, got ${actual}`);
+  log(`Checksum OK (${actual.slice(0, 12)}…)`);
   const staging = await fs.mkdtemp(path.join(paths.versions, ".staging-"));
   try {
     const file = path.join(staging, assetName(release.version));
@@ -151,6 +152,37 @@ export async function installRelease(release: Pick<Release, "version" | "archive
     throw error;
   }
   return target;
+}
+
+/**
+ * logs/update.log. Every update writes its steps here, each line with the time, whoever started it:
+ * `threebot update` in a terminal, Settings → Updates, or the automatic update. `print` also shows the
+ * line (the terminal); pass null to only write it down.
+ */
+export const updateLogFile = (home: string = homeDir()) => path.join(home, "logs", "update.log");
+export function updateLogger(home: string = homeDir(), { print = (line: string) => void process.stdout.write(line + "\n"), now = () => new Date() }: { print?: ((line: string) => void) | null; now?: () => Date } = {}) {
+  const file = updateLogFile(home);
+  return (line: string) => {
+    print?.(line);
+    // Written at once, so a line is down even when the process exits right after.
+    try { mkdirSync(path.dirname(file), { recursive: true }); appendFileSync(file, `${now().toISOString()} ${line}\n`); } catch {}
+  };
+}
+
+/**
+ * Start `threebot update --yes <version>` in the background, the way Settings → Updates and the automatic
+ * update do. It writes update.log itself (see updateLogger): on Linux systemd-run runs it with no
+ * output of ours to write to, because systemd stops every process in the service's cgroup on restart,
+ * so the updater has to run outside it. systemd-run also starts it with a clean environment, so pass
+ * on what the updater needs.
+ */
+export function startUpdater(version: string, { preview = false, cli = path.join(here, "cli.mjs"), env = process.env, platform = process.platform }: { preview?: boolean; cli?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {}): ChildProcess {
+  const args = [process.execPath, cli, "update", "--yes", ...(preview ? ["--preview"] : []), version];
+  const keep = ["PATH", "HOME", "THREEBOT_HOME", "THREEBOT_RELEASES_URL", "THREEBOT_RELEASE_BASE_URL"].filter((k) => env[k]).map((k) => `--setenv=${k}=${env[k]}`);
+  const command = platform === "linux" ? ["systemd-run", "--user", "--collect", "--quiet", ...keep, ...args] : args;
+  const child = spawn(command[0], command.slice(1), { detached: true, stdio: "ignore", env });
+  child.unref();
+  return child;
 }
 
 async function swapLink(link: string, target: string) {
