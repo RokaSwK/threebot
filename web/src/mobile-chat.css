@@ -126,6 +126,8 @@
 .composer-reply { display: flex; align-items: center; gap: 8px; margin: 10px 10px 0; padding: 4px 8px 4px 12px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 14px; line-height: 20px; color: var(--fg-muted); }
 .composer-reply > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .composer-reply > button { display: grid; flex: none; width: 24px; height: 24px; place-items: center; }
+.composer-fresh { border-radius: 14px; }
+.composer-fresh > span { white-space: normal; }
 .composer-controls[data-expanded="true"] { flex-wrap: wrap; }
 .composer-controls[data-expanded="true"] textarea { order: -1; flex: 1 0 100%; padding-inline: 10px; }
 .composer-controls[data-expanded="true"] .composer-dictate { margin-left: auto; }

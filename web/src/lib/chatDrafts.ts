@@ -4,8 +4,9 @@ import { parseReply, withReply } from "./reply";
 import type { Bot } from "./types";
 
 type DraftAttachment = { state: "uploading" | "ready"; attachment: Attachment };
-type UnsentMessage = { id: string; text: string; attachments: Attachment[] };
-type DraftSnapshot = { text: string; attachments: DraftAttachment[]; sending: boolean; failed: UnsentMessage[]; replyTo: string | null };
+type UnsentMessage = { id: string; text: string; attachments: Attachment[]; fresh?: boolean };
+/** `fresh`: the next message starts a fresh session in this thread. */
+type DraftSnapshot = { text: string; attachments: DraftAttachment[]; sending: boolean; failed: UnsentMessage[]; replyTo: string | null; fresh: boolean };
 
 function readText(key: string) {
   try { return localStorage.getItem(key) ?? ""; }
@@ -25,10 +26,10 @@ function readAttachments(value: unknown): Attachment[] {
 
 function unsentMessage(value: unknown): UnsentMessage | null {
   if (!value || typeof value !== "object" || !("id" in value) || !("text" in value) || !("attachments" in value) || typeof value.id !== "string" || typeof value.text !== "string") return null;
-  return { id: value.id, text: value.text, attachments: readAttachments(value.attachments) };
+  return { id: value.id, text: value.text, attachments: readAttachments(value.attachments), ...("fresh" in value && value.fresh === true ? { fresh: true } : {}) };
 }
 
-function readMetadata(key: string): Pick<DraftSnapshot, "attachments" | "failed" | "replyTo"> & { retryMessageId: string | null } {
+function readMetadata(key: string): Pick<DraftSnapshot, "attachments" | "failed" | "replyTo" | "fresh"> & { retryMessageId: string | null } {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(key) ?? "null");
     if (value && typeof value === "object" && "attachments" in value && "failed" in value) {
@@ -39,10 +40,10 @@ function readMetadata(key: string): Pick<DraftSnapshot, "attachments" | "failed"
       if (inFlight && !failed.some((item) => item.id === inFlight.id)) failed.push(inFlight);
       const retryMessageId = "retryMessageId" in value && typeof value.retryMessageId === "string" ? value.retryMessageId : null;
       const replyTo = "replyTo" in value && typeof value.replyTo === "string" ? value.replyTo : null;
-      return { attachments, failed, retryMessageId, replyTo };
+      return { attachments, failed, retryMessageId, replyTo, fresh: "fresh" in value && value.fresh === true };
     }
   } catch { /* Storage may be unavailable or contain an older/invalid value. */ }
-  return { attachments: [], failed: [], retryMessageId: null, replyTo: null };
+  return { attachments: [], failed: [], retryMessageId: null, replyTo: null, fresh: false };
 }
 
 function metadata({ previewUrl: _preview, ...attachment }: Attachment) { return attachment; }
@@ -88,6 +89,7 @@ class ChatDraft {
         inFlight: this.inFlight ? { ...this.inFlight, attachments: this.inFlight.attachments.map(metadata) } : null,
         retryMessageId: this.retryMessageId,
         replyTo: this.snapshot.replyTo,
+        fresh: this.snapshot.fresh,
       }));
     } catch { /* Quota/private-mode failures must not destroy the in-memory draft. */ }
     this.listeners.forEach((listener) => listener());
@@ -96,6 +98,8 @@ class ChatDraft {
   setText = (text: string) => { this.retryMessageId = null; this.update({ text }, true); };
 
   setReply = (replyTo: string | null) => { this.retryMessageId = null; this.update({ replyTo }, true); };
+
+  setFresh = (fresh: boolean) => { this.retryMessageId = null; this.update({ fresh }, true); };
 
   removeAttachment = (id: string) => {
     const item = this.snapshot.attachments.find((item) => item.attachment.id === id);
@@ -134,15 +138,15 @@ class ChatDraft {
   };
 
   submit = () => {
-    const { text, attachments, sending, replyTo } = this.snapshot;
+    const { text, attachments, sending, replyTo, fresh } = this.snapshot;
     if (sending || (!text.trim() && !attachments.length) || attachments.some((item) => item.state === "uploading")) return;
-    const message = { id: this.retryMessageId ?? uuid(), text: withReply(text, replyTo), attachments: attachments.map((item) => item.attachment) };
+    const message: UnsentMessage = { id: this.retryMessageId ?? uuid(), text: withReply(text, replyTo), attachments: attachments.map((item) => item.attachment), ...(fresh ? { fresh: true } : {}) };
     this.retryMessageId = null;
     this.inFlight = message;
     // Sending is what makes "tell me when this finishes" a reasonable question.
     requestNotificationPermission();
     // Claim synchronously, before React renders or another click/Enter arrives.
-    this.update({ text: "", attachments: [], sending: true, replyTo: null }, true);
+    this.update({ text: "", attachments: [], sending: true, replyTo: null, fresh: false }, true);
     void this.deliver(message, this.revision);
   };
 
@@ -161,7 +165,7 @@ class ChatDraft {
     if (!message) return;
     this.retryMessageId = message.id;
     const { quote, text } = parseReply(message.text);
-    this.update({ text, replyTo: quote, attachments: message.attachments.map((attachment) => ({ state: "ready", attachment })), failed: this.snapshot.failed.filter((item) => item.id !== id) }, true);
+    this.update({ text, replyTo: quote, fresh: message.fresh === true, attachments: message.attachments.map((attachment) => ({ state: "ready", attachment })), failed: this.snapshot.failed.filter((item) => item.id !== id) }, true);
   };
 
   discard = (id: string) => {
@@ -173,7 +177,7 @@ class ChatDraft {
 
   private async deliver(message: UnsentMessage, clearedRevision: number | null, retryRejected = true): Promise<void> {
     try {
-      await sendMessage(this.slug, message.text.trim(), message.attachments, this.threadId, message.id);
+      await sendMessage(this.slug, message.text.trim(), message.attachments, this.threadId, message.id, message.fresh === true);
       this.inFlight = null;
       this.update({ sending: false });
       message.attachments.forEach(release);
@@ -190,7 +194,7 @@ class ChatDraft {
       if (clearedRevision === this.revision) {
         this.retryMessageId = message.id;
         const { quote, text } = parseReply(message.text);
-        this.update({ text, replyTo: quote, attachments: message.attachments.map((attachment) => ({ state: "ready", attachment })), sending: false }, true);
+        this.update({ text, replyTo: quote, fresh: message.fresh === true, attachments: message.attachments.map((attachment) => ({ state: "ready", attachment })), sending: false }, true);
       } else {
         // A failure cannot write over newer edits. Keep the exact original as a
         // separate recoverable message with its own retry/edit/discard actions.

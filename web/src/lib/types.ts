@@ -209,6 +209,8 @@ export type ScheduledTask = {
     | { type: "webhook"; [k: string]: unknown };
   projectId: string;
   threadId: string | null;
+  /** Where runs go. T3 versions before thread modes omit it; their bound tasks continue the conversation. */
+  threadMode?: "new_thread" | "continue" | "fresh_session";
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunStatus?: string | null;
@@ -218,4 +220,4 @@ export type ScheduledTask = {
 };
 
 export type SnoozePreset = { kind: "after"; minutes: number } | { kind: "at"; day: "today" | "tomorrow" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"; time: string };
-export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean; threadForceStop: boolean; voiceTranscription: boolean };
+export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean; threadForceStop: boolean; voiceTranscription: boolean; freshContext: boolean; scheduledTaskThreadModes: boolean };

@@ -14,3 +14,8 @@ test("Bots can park threads and read what's parked across projects", () => {
 test("snooze times fall back to the server's clock", () => {
   assert.match(render(), /"9am" in the server's local time/);
 });
+
+test("routines start fresh each run when T3 offers it, unless they need the conversation", () => {
+  assert.match(render(), /If the tool offers `freshSession`, set it to true/);
+  assert.match(render(), /leave it off when a run needs the conversation so far/);
+});

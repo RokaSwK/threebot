@@ -69,3 +69,8 @@ export function splitBubbles(text: string): string[] {
   }
   return out.length > 4 ? [text] : out;
 }
+
+/** `/clear` on its own starts a fresh session with the next message, as in T3 Code. */
+export function isClearCommand(text: string) {
+  return /^\/clear\s*$/i.test(text.trim());
+}

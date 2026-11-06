@@ -18,7 +18,7 @@ import type { Bot, ModelSelection, ScheduledTask } from "../lib/types";
 
 import { chatDraft } from "../lib/chatDrafts";
 import "./routines.css";
-import { changeRoutineEnabled, copyWebhookUrl, displayTimezone, removeRoutine, routineDate, routineHistory, scheduleText, testRoutine } from "../lib/routines";
+import { changeRoutineEnabled, changeRoutineFreshSession, copyWebhookUrl, displayTimezone, removeRoutine, routineDate, routineHistory, scheduleText, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
 
 export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }) {
@@ -59,7 +59,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
         <IconButton onClick={() => setDetailsOpen(false)} title="Hide details" className="details-close"><ChevronsRight size={16} /></IconButton>
       </div>
       {openRoutine ? (
-        <RoutineDetail key={`routine-detail:${openRoutine.id}`} task={openRoutine} onBack={() => setRoutine(null)} onEdit={() => routineChat(`Edit your routine: ${openRoutine.title}`)} />
+        <RoutineDetail key={`routine-detail:${openRoutine.id}`} bot={bot} task={openRoutine} onBack={() => setRoutine(null)} onEdit={() => routineChat(`Edit your routine: ${openRoutine.title}`)} />
       ) : (
         <div className="details-content scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-6">
           <div className={clsx("details-profile flex flex-col items-center pt-1 pb-4", (tab !== "details" || showRoutines) && "details-profile-mobile-hidden")}>
@@ -200,12 +200,15 @@ function RoutineRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void 
   </div>;
 }
 
-function RoutineDetail({ task, onBack, onEdit }: { task: ScheduledTask; onBack: () => void; onEdit: () => void }) {
+function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: ScheduledTask; onBack: () => void; onEdit: () => void }) {
   const [confirm, setConfirm] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const busy = useRef(false);
   const [error, setError] = useState("");
   const timezone = displayTimezone(useApp((s) => s.settings?.timezone ?? ""));
+  // Older T3 versions keep every bound routine in the same conversation and ignore a mode.
+  const modes = useApp((s) => s.runtimeFeatures.scheduledTaskThreadModes);
+  const mode = threadMode(task);
   const action = async (label: string, work: () => Promise<unknown>) => {
     if (busy.current) return;
     busy.current = true;
@@ -226,6 +229,10 @@ function RoutineDetail({ task, onBack, onEdit }: { task: ScheduledTask; onBack: 
     {task.blockedByPolicy && <p role="status" className="mb-4 break-words rounded-2xl bg-card px-3.5 py-3 text-[13px]">This routine can’t run: {task.blockedByPolicy}</p>}
     <Section title="Instruction"><div className="whitespace-pre-wrap break-words rounded-2xl bg-card px-3.5 py-3 text-[13.5px]">{task.prompt}</div></Section>
     <Section title="When to run"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">{scheduleText(task, timezone)}{!task.enabled && <p className="mt-1 text-muted">{task.schedule.type === "webhook" ? "Paused. Webhook deliveries will not dispatch work." : "Paused. Scheduled runs are off; Test still dispatches work."}</p>}{task.schedule.type === "fixed_time" && <p className="mt-1 text-[12px] text-muted">Uses the T3 server’s clock and daylight saving rules. Changing your display timezone does not change this schedule.</p>}</div></Section>
+    {modes && mode !== "new_thread" && <Section title="Conversation"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">
+      <div className="flex items-center gap-3"><span className="flex-1">Start fresh each run</span>{pending === "fresh" ? <span className="text-muted">Saving…</span> : <Switch label="Start fresh each run" checked={mode === "fresh_session"} onChange={(on) => void action("fresh", () => changeRoutineFreshSession(task, bot, on))} />}</div>
+      <p className="mt-1 text-[12px] text-muted">{mode === "fresh_session" ? `Each run starts a fresh session here instead of re-reading the whole chat. ${bot.name} keeps its memory and files, and your next message carries on from the run.` : "Each run continues the conversation, re-reading the chat so far."}</p>
+    </div></Section>}
     {task.schedule.type === "webhook" && <WebhookDetails task={task} />}
     <RoutineHistory task={task} timezone={timezone} />
     {confirm ? <div className="flex flex-wrap items-center gap-2"><span className="flex-1 text-[13px]">Delete this routine?</span><Pill variant="soft" disabled={!!pending} onClick={() => setConfirm(false)}>Cancel</Pill><Pill variant="danger" disabled={!!pending} onClick={() => void action("delete", async () => { await removeRoutine(task); onBack(); })}>{pending === "delete" ? "Deleting…" : "Delete"}</Pill></div> : <button onClick={() => setConfirm(true)} className="flex min-h-10 items-center gap-2 px-1 text-[13px] text-danger hover:underline"><Trash2 size={13} /> Delete routine</button>}

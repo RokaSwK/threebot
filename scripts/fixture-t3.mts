@@ -279,7 +279,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
               threadRuns.push(run);
             }
             const entries = items.get(thread.id)!;
-            entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: 'user', creationSource: 'web', attachments: payload.attachments ?? [], updatedAt: now }));
+            entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: 'user', creationSource: 'web', attachments: payload.attachments ?? [], ...(payload.freshContext === true ? { freshContext: true } : {}), updatedAt: now }));
             Object.assign(thread, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: now });
             avatars?.afterMessage(thread, payload.text, publish);
           } else {
