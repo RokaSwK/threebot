@@ -53,3 +53,28 @@ test('gateway handler subscribes read-only, records linked executions and reject
   assert.deepEqual([...new Set(calls)].sort(), ['orchestration.getThreadProjection','orchestration.subscribeShell','scheduledTasks.subscribe']);
   assert.ok(!JSON.stringify(result).includes('PRIVATE'));
 });
+test('a T3 disconnect with projection reads still queued does not throw from the read queue', async (t) => {
+  const { file } = await fixture(t);
+  const unhandled: unknown[] = []; const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on('unhandledRejection', onUnhandled); t.after(() => { process.off('unhandledRejection', onUnhandled); });
+  const reads: (() => void)[] = []; let dropShell!: () => void;
+  const threads = ['a', 'b', 'c'].map((id) => ({ id, projectId: 'project', updatedAt: 'now' }));
+  const client = {
+    stream(tag: string, payload: unknown, onItem: (event: unknown) => void) {
+      queueMicrotask(() => onItem(tag === 'scheduledTasks.subscribe' ? { tasks: [task] } : { kind: 'snapshot', snapshot: { threads } }));
+      const done = tag === 'orchestration.subscribeShell' ? new Promise<void>((resolve) => { dropShell = resolve; }) : new Promise<void>(() => {});
+      return { cancel() {}, done };
+    },
+    // Two reads run at once; the third waits in the queue.
+    call() { return new Promise((resolve) => { reads.push(() => resolve(projection())); }); },
+  };
+  const routes = createRoutineHistoryRoutes({ rpc: async () => client, file });
+  t.after(() => routes.close());
+  const server = http.createServer(async (req, res) => { if (!(await routes.handle(req, res, new URL(req.url!, 'http://localhost')))) { res.writeHead(404); res.end(); } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => { server.closeAllConnections(); server.close(); });
+  assert.equal((await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/routine-history?task=task-1`)).status, 200);
+  while (reads.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
+  dropShell(); await new Promise((resolve) => setTimeout(resolve, 10)); // T3 goes away
+  reads.shift()!(); await new Promise((resolve) => setTimeout(resolve, 50)); // a read finishes after that
+  assert.deepEqual(unhandled, []);
+});

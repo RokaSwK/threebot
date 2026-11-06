@@ -117,9 +117,9 @@ export function createRoutineHistoryRoutes({ rpc, file, timeoutMs = 15000 }: { r
     pump();
   };
   const pump = () => {
-    while (workers < 2 && work.size) {
+    while (connection && workers < 2 && work.size) { // Reads wait for the next connection, which re-queues every thread.
       const [key, thread] = work.entries().next().value!; work.delete(key); workers++;
-      void bounded(connection!.call('orchestration.getThreadProjection', { threadId: key })).then(async (projection) => {
+      void bounded(connection.call('orchestration.getThreadProjection', { threadId: key })).then(async (projection) => {
         await history.consumeProjection(projection as RoutineProjection, new Set(tasks.map((task) => task.id))); stamps.set(key, thread.updatedAt);
       }).catch(() => { healthy = false; }).finally(() => { workers--; pump(); });
     }
