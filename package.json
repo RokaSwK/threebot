@@ -9,6 +9,6 @@
     "setup": "npm ci --prefix web && npm ci --prefix server && npm run build --prefix web",
     "start": "node --env-file-if-exists=.env server/gateway.mjs",
     "dev": "npm run dev --prefix web",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mts"
   }
 }
