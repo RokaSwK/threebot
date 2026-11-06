@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Threebot: your Bot is a T3 thread</title>
 <meta name="description" content="Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for." />
-<meta name="theme-color" content="#FFAF38" />
+<meta name="theme-color" content="#0b0a12" />
+<meta name="color-scheme" content="dark" />
 <meta property="og:title" content="Threebot" />
 <meta property="og:description" content="Your Bot is a T3 thread. Personal agents on T3 Code, on the subscriptions you already have." />
 <meta property="og:type" content="website" />
@@ -16,345 +17,698 @@
 <link rel="preload" href="/welcome/img/ball.webp" as="image" />
 <style>
 @font-face { font-family: "Rubik"; font-style: normal; font-weight: 300 900; font-display: swap; src: url("/welcome/fonts/rubik.woff2") format("woff2"); }
-:root { --amber: #FFAF38; --ink: #000; --paper: #fff; --mx: 0; --my: 0; --ease: cubic-bezier(.2, .7, .2, 1); }
+/* The app's own dark theme. The only loud colour on the page is a Bot's face. */
+:root {
+  --bg: #0b0a12; --side: #0e0c17; --chat: #131122; --raise: #1a1729; --elev: #211d33;
+  --bubble-bot: #1f1b30; --bubble-user: #34313f;
+  --fg: #f2f0fb; --muted: #f2f0fba8; --faint: #f2f0fb61; --line: #f2f0fb12; --line-strong: #f2f0fb21;
+  --pill: #f2f0fb; --pill-fg: #121020; --pill-soft: #f2f0fb1f; --card: #f2f0fb0a; --details: transparent;
+  --violet: #A97EFE; --done: #00C972; --attention: #ff7ab8;
+  --bg-chat: var(--chat); --border-strong: var(--line-strong);
+  --mx: 0; --my: 0; --ease: cubic-bezier(.2, .7, .2, 1); --wrap: 1180px;
+  color-scheme: dark;
+}
+
+/* Everything drawn from the app wears the app's default palette, AMOLED: pure black and neutral greys.
+   Only the page around it keeps the night-sky tint. Values follow web/src/index.css [data-palette="amoled"]. */
+.app, .phone, .dlg, .lin, .scene {
+  --chat: #000000; --side: #000000; --details: #050505; --raise: #121214; --elev: #161619; --card: #0e0e11;
+  --bubble-bot: #141417; --bubble-user: #2a2a2e;
+  --fg: #f5f5f7; --muted: #f5f5f7a6; --faint: #f5f5f75e; --line: #ffffff14; --line-strong: #ffffff26;
+  --pill: #f5f5f7; --pill-fg: #000000; --pill-soft: #f5f5f71f;
+  --bg-chat: #000000; --border-strong: #ffffff26;
+  color: var(--fg);
+}
 * { box-sizing: border-box; }
-html { overflow-x: clip; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--amber); color: var(--ink); font: 400 18px/1.45 "Rubik", -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
+html { overflow-x: clip; scroll-behavior: smooth; scroll-padding-top: 72px; -webkit-text-size-adjust: 100%; background: var(--bg); }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 17px/1.55 "Rubik", -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; overflow-x: clip; }
 a { color: inherit; text-decoration: none; }
 h1, h2, h3, p, ul { margin: 0; }
+ul { padding: 0; list-style: none; }
 img { display: block; max-width: 100%; height: auto; }
+button { font: inherit; color: inherit; }
 .post { display: none !important; }
 .public .post { display: inline-flex !important; }
 .public p.post, .public span.post { display: inline !important; }
 .public .pre { display: none !important; }
+.wrap { width: min(var(--wrap), 100% - 32px); margin-inline: auto; }
 
 /* Nav */
-.nav { position: absolute; inset: 0 0 auto; z-index: 5; display: flex; align-items: center; gap: 22px; padding: 20px clamp(20px, 3vw, 40px); }
-.brand { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; font-size: 22px; font-weight: 600; letter-spacing: -.02em; }
-.brand img { width: 34px; height: 34px; }
-.nav a:not(.brand):not(.btn) { font-weight: 500; font-size: 16px; }
+.nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(14px) saturate(1.4); -webkit-backdrop-filter: blur(14px) saturate(1.4); border-bottom: 1px solid transparent; transition: border-color .2s; }
+.nav.scrolled { border-bottom-color: var(--line); }
+.nav .wrap { display: flex; align-items: center; gap: 26px; height: 60px; }
+.brand { display: inline-flex; align-items: center; gap: 9px; margin-right: auto; font-size: 18px; font-weight: 500; letter-spacing: -.01em; }
+.brand img { width: 26px; height: 26px; }
+.nav a:not(.brand):not(.btn) { font-size: 14px; color: var(--muted); transition: color .15s; }
+.nav a:not(.brand):not(.btn):hover { color: var(--fg); }
 
-/* Buttons */
-.btn { display: inline-flex; align-items: center; justify-content: center; height: 56px; padding-inline: 28px; border-radius: 999px; background: var(--ink); color: #fff; font-size: 18px; font-weight: 500; transition: transform .2s var(--ease); }
-.btn:hover { transform: translateY(-2px); }
+/* Buttons: the app's pills */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding-inline: 20px; border: 0; border-radius: 999px; background: var(--pill); color: var(--pill-fg); font-size: 15px; font-weight: 500; cursor: pointer; transition: transform .2s var(--ease), background .15s; }
+.btn:hover { transform: translateY(-1px); }
 .btn:active { transform: scale(.97); }
-.btn.line { background: transparent; color: inherit; box-shadow: inset 0 0 0 2px currentColor; }
-.btn.off { background: transparent; color: inherit; opacity: .62; box-shadow: inset 0 0 0 2px currentColor; pointer-events: none; }
-.btn.sm { height: 42px; padding-inline: 18px; font-size: 15px; }
-.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
-/* The one-line installer, with a copy button */
-.install { display: none; align-items: center; gap: 4px; max-width: min(100%, 800px); margin-top: 18px; padding: 6px 6px 6px 18px; border-radius: 999px; background: rgba(0, 0, 0, .07); font: 500 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: left; }
+.btn.soft { background: var(--pill-soft); color: var(--fg); }
+.btn.soft:hover { background: #f2f0fb2b; }
+.btn.off { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); pointer-events: none; }
+.btn.sm { height: 34px; padding-inline: 14px; font-size: 14px; }
+.btn svg { width: 16px; height: 16px; }
+.cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+/* The one-line installer */
+.install { display: none; align-items: center; gap: 4px; max-width: min(100%, 720px); margin-top: 18px; padding: 5px 5px 5px 16px; border-radius: 999px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); font: 400 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); text-align: left; }
 .public .install { display: inline-flex; }
 .install code { min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 .install code::-webkit-scrollbar { display: none; }
-.install button { flex: none; height: 34px; padding-inline: 14px; border: 0; border-radius: 999px; background: var(--ink); color: #fff; font: 500 14px/1 inherit; font-family: inherit; cursor: pointer; }
-.install-note { display: none; margin-top: 10px; font-size: 15px; opacity: .8; }
+.install button { flex: none; height: 30px; padding-inline: 12px; border: 0; border-radius: 999px; background: var(--pill-soft); color: var(--fg); font: 500 13px/1 "Rubik", system-ui, sans-serif; cursor: pointer; }
+.install-note { display: none; margin-top: 10px; font-size: 14px; color: var(--faint); }
 .public .install-note { display: block; }
+.install-note code { color: var(--muted); }
 
 /* The ball, with eyes that are alive */
-.ball { position: relative; display: block; width: var(--size, 300px); aspect-ratio: 1; flex: none; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.ball { position: relative; display: block; width: var(--size, 300px); aspect-ratio: 1; flex: none; padding: 0; border: 0; background: none; cursor: pointer; }
 .ball img { width: 100%; }
 .ball svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .ball.is-live img, .ball.is-live .pill { display: none; }
-.ball:focus-visible { outline: 3px solid #000; outline-offset: 6px; border-radius: 50%; }
-.ball-hint { display: none; margin-top: -4px; font-size: 15px; font-weight: 500; }
+.ball:focus-visible { outline: 2px solid var(--violet); outline-offset: 6px; border-radius: 50%; }
+.ball-hint { display: none; margin-top: 2px; font-size: 13px; color: var(--faint); }
 .is-live + .ball-hint { display: block; }
 .pill { position: absolute; top: 35%; width: 8.7%; height: 24%; border-radius: 999px; background: #fff; transform: translate(calc(var(--mx) * 26%), calc(var(--my) * 7%)) scaleY(var(--open, 1)); transition: transform .14s ease-out; }
 .pill.l { left: 33.6%; } .pill.r { left: 57.7%; }
+/* Any Bot's face: a coloured dot until the live character takes over */
+.av { display: inline-block; flex: none; width: var(--s, 24px); height: var(--s, 24px); border-radius: 50%; background: var(--c, var(--violet)); vertical-align: middle; }
+.av.is-live { background: none; border-radius: 0; }
+.av svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* Type */
+h1 { font-size: clamp(40px, 5.6vw, 68px); line-height: 1.02; font-weight: 500; letter-spacing: -.035em; text-wrap: balance; }
+h2 { font-size: clamp(30px, 3.6vw, 44px); line-height: 1.08; font-weight: 500; letter-spacing: -.028em; text-wrap: balance; }
+h3 { font-size: 17px; line-height: 1.4; font-weight: 500; letter-spacing: -.005em; }
+.lede { max-width: 600px; margin: 18px auto 0; font-size: clamp(17px, 1.6vw, 19px); line-height: 1.55; color: var(--muted); text-wrap: pretty; }
+.sub { max-width: 620px; margin-top: 14px; font-size: 17px; line-height: 1.6; color: var(--muted); text-wrap: pretty; }
+.center { text-align: center; }
+.center .sub { margin-inline: auto; }
+.muted { color: var(--muted); }
 
 /* Hero */
-.hero { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100svh; padding: 92px 22px 56px; text-align: center; }
-.hero .ball { --size: min(31vh, 300px); animation: pop .9s var(--ease) both; }
-@keyframes pop { 0% { transform: scale(.2) translateY(60px); } 55% { transform: scale(1.1, .9); } 75% { transform: scale(.96, 1.05); } 100% { transform: none; } }
-h1 { margin-top: 14px; max-width: 12.5em; font-size: clamp(50px, min(9vw, 13.5vh), 132px); line-height: .98; font-weight: 600; letter-spacing: -.035em; text-wrap: balance; }
-.lede { max-width: 640px; margin: 22px auto 28px; font-size: clamp(19px, 2vw, 23px); line-height: 1.35; text-wrap: pretty; }
-.note { margin-top: 14px; font-size: 15px; opacity: .72; }
-.note a { text-decoration: underline; }
+.hero { position: relative; padding: clamp(40px, 7vh, 72px) 0 0; text-align: center; isolation: isolate; }
+.hero::before { content: ""; position: absolute; inset: -60px 0 auto; height: 720px; z-index: -1; background: radial-gradient(60% 55% at 50% 22%, #a97efe24, transparent 70%), radial-gradient(1px 1px at 18% 14%, #fff9, transparent), radial-gradient(1px 1px at 82% 9%, #fff8, transparent), radial-gradient(1.5px 1.5px at 70% 30%, #fff6, transparent), radial-gradient(1px 1px at 30% 34%, #fff5, transparent), radial-gradient(1px 1px at 90% 40%, #fff4, transparent), radial-gradient(1px 1px at 8% 44%, #fff4, transparent); pointer-events: none; }
+.hero .ball { --size: clamp(116px, 15vh, 150px); margin: 0 auto 8px; animation: pop .9s var(--ease) both; }
+@keyframes pop { 0% { transform: scale(.2) translateY(40px); } 55% { transform: scale(1.1, .9); } 75% { transform: scale(.96, 1.05); } 100% { transform: none; } }
+.badge { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 22px; padding: 5px 6px 5px 14px; border-radius: 999px; background: var(--raise); box-shadow: inset 0 0 0 1px var(--line); font-size: 13px; color: var(--muted); transition: background .15s; }
+.badge:hover { background: var(--elev); }
+.badge b { font-weight: 500; color: var(--fg); }
+.badge i { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--pill-soft); font-style: normal; font-size: 11px; }
+.hero .cta { margin-top: 28px; }
+.note { margin-top: 14px; font-size: 14px; color: var(--faint); }
+.note a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.blur-in { animation: blur-in 1s var(--ease) both; }
+.blur-in.d1 { animation-delay: .08s; } .blur-in.d2 { animation-delay: .16s; } .blur-in.d3 { animation-delay: .26s; } .blur-in.d4 { animation-delay: .4s; }
+@keyframes blur-in { from { opacity: 0; filter: blur(10px); transform: translateY(10px); } to { opacity: 1; filter: none; transform: none; } }
 
-/* Worlds */
-.world { position: relative; overflow: clip; padding: clamp(80px, 12vh, 136px) clamp(18px, 3vw, 40px); }
-.amber { background: var(--amber); }
-.black { background: #000; color: #fff; }
-.black .btn:not(.line) { background: var(--amber); color: #000; }
-.black .shot { box-shadow: 0 0 0 1px #2c2c2e; }
-.hl { color: var(--amber); }
-.slim { padding-block: clamp(36px, 5vh, 56px); }
-.any { width: min(1040px, 100%); margin: 0 auto; text-align: center; }
-.any h3 { font-size: clamp(25px, 3vw, 34px); line-height: 1.1; font-weight: 600; letter-spacing: -.02em; }
-.any p { margin-top: 8px; font-size: 18px; line-height: 1.35; text-wrap: pretty; }
-.names { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 16px; list-style: none; }
-.names li { padding: 5px 12px; border-radius: 999px; box-shadow: inset 0 0 0 1.5px #000; font-size: 15px; font-weight: 500; }
-.say { max-width: 980px; margin: 0 auto clamp(36px, 6vh, 64px); text-align: center; }
-h2 { font-size: clamp(42px, 6.6vw, 96px); line-height: 1; font-weight: 600; letter-spacing: -.03em; text-wrap: balance; }
-.say p { max-width: 640px; margin: 18px auto 0; font-size: clamp(18px, 1.8vw, 22px); line-height: 1.38; text-wrap: pretty; }
+/* The live app, playing one real morning */
+.stage { position: relative; margin-top: clamp(44px, 7vh, 72px); }
+.app { position: relative; display: grid; grid-template-columns: 232px minmax(0, 1fr) 286px; grid-template-rows: minmax(0, 1fr); height: 640px; border-radius: 18px; background: var(--chat); box-shadow: 0 0 0 1px #ffffff26, 0 40px 120px -30px #000; overflow: hidden; text-align: left; font-size: 14px; line-height: 1.45; }
+.side { display: flex; flex-direction: column; gap: 4px; padding: 12px 10px; background: var(--side); border-right: 1px solid var(--line); }
+.side .tools { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
+.side .tools span, .chat-head .ico, .composer .ico { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--muted); }
+.side .tools span { box-shadow: inset 0 0 0 1px var(--line); }
+.tools svg, .ico svg { width: 15px; height: 15px; }
+.tile { display: grid; justify-items: center; gap: 4px; width: 96px; padding: 10px 0 8px; margin-bottom: 6px; border-radius: 14px; background: var(--raise); font-size: 13px; }
+.tile .av { --s: 48px; }
+.brow { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; }
+.brow .av { --s: 30px; }
+.brow div { min-width: 0; }
+.brow b { display: block; font-weight: 500; font-size: 14px; }
+.brow small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12.5px; color: var(--faint); transition: color .3s; }
+.brow.busy small { color: var(--muted); }
+.side .me { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 8px; font-size: 13px; color: var(--muted); }
+.side .me i { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--elev); font-style: normal; font-size: 11px; color: var(--fg); }
+.main { display: flex; flex-direction: column; min-width: 0; }
+.chat-head { display: flex; align-items: center; justify-content: center; gap: 8px; height: 52px; flex: none; border-bottom: 1px solid var(--line); font-weight: 500; position: relative; }
+.chat-head .av { --s: 22px; }
+.chat-head .ico { position: absolute; right: 10px; }
+.feed { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; min-height: 0; padding: 16px 18px 10px; overflow: hidden; -webkit-mask-image: linear-gradient(transparent, #000 70px); mask-image: linear-gradient(transparent, #000 70px); }
+.feed > * { flex: none; transition: opacity .45s var(--ease), transform .55s var(--ease); }
+.feed > .new { opacity: 0; transform: translateY(14px); }
+.feed.fade > * { opacity: 0; transition-duration: .6s; }
+.m { max-width: 82%; padding: 9px 14px; border-radius: 18px; background: var(--bubble-bot); text-wrap: pretty; }
+.m.u { align-self: flex-end; background: var(--bubble-user); }
+.ev { align-self: center; display: inline-flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12.5px; color: var(--faint); }
+.ev .av { --s: 14px; }
+.ev b { font-weight: 400; color: var(--muted); }
+.rows { display: grid; gap: 4px; width: min(100%, 470px); }
+.row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: var(--card); }
+.row .av { --s: 20px; }
+.row .t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row small { display: block; font-size: 11.5px; color: var(--faint); }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--violet); animation: pulse 1.1s ease-in-out infinite; }
+.st.done { color: var(--done); }
+.st.done::before { background: var(--done); animation: none; }
+@keyframes pulse { 50% { opacity: .25; } }
+.chev { color: var(--faint); font-size: 16px; line-height: 1; }
+.ask { width: min(100%, 470px); padding: 14px; border-radius: 16px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.ask p { font-weight: 500; font-size: 15px; }
+.ask .opts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.ask .opts span { padding: 7px 14px; border-radius: 999px; background: var(--pill-soft); font-size: 13.5px; transition: transform .15s; }
+.ask .opts .yes { background: var(--pill); color: var(--pill-fg); font-weight: 500; }
+.ask .opts .else { background: none; color: var(--faint); }
+.ask .opts .press { transform: scale(.92); }
+.ask .ans { display: none; margin-top: 10px; font-size: 12.5px; color: var(--faint); }
+.ask .ans b { display: block; font-weight: 400; font-size: 14px; color: var(--fg); }
+.ask.answered { opacity: .62; }
+.ask.answered .opts { display: none; }
+.ask.answered .ans { display: block; }
+.routine { display: flex; align-items: center; gap: 14px; width: min(100%, 470px); padding: 12px 14px; border-radius: 14px; background: var(--card); }
+.routine div { flex: 1; min-width: 0; }
+.routine small { display: block; font-size: 11.5px; color: var(--faint); }
+.routine b { display: block; font-weight: 500; }
+.routine span { font-size: 12.5px; color: var(--muted); }
+.toggle { flex: none; width: 38px; height: 22px; padding: 3px; border-radius: 999px; background: var(--pill-soft); transition: background .3s; }
+.toggle::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--fg); transition: transform .3s var(--ease); }
+.toggle.on { background: var(--pill); }
+.toggle.on::after { background: var(--pill-fg); transform: translateX(16px); }
+.composer { display: flex; align-items: center; gap: 6px; margin: 0 14px 14px; padding: 5px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line-strong); flex: none; }
+.composer .ico { background: var(--pill-soft); }
+.composer .typed { flex: 1; min-width: 0; padding-left: 6px; overflow: hidden; white-space: nowrap; color: var(--faint); }
+.composer .typed.on { color: var(--fg); }
+.composer .typed.on::after { content: ""; display: inline-block; width: 1.5px; height: 1.1em; margin-left: 1px; vertical-align: -.18em; background: var(--fg); animation: pulse 1s steps(1) infinite; }
+.composer .go { background: var(--pill); color: var(--pill-fg); transition: transform .15s; }
+.composer .go.press { transform: scale(.86); }
+.details { display: flex; flex-direction: column; gap: 6px; padding: 18px 14px; border-left: 1px solid var(--line); background: var(--details); overflow: hidden; }
+.details .who { display: grid; justify-items: center; gap: 2px; margin-bottom: 8px; text-align: center; }
+.details .who .av { --s: 68px; margin-bottom: 6px; }
+.details .who b { font-size: 17px; font-weight: 500; }
+.details .who span { font-size: 12.5px; color: var(--muted); transition: color .3s; }
+.details .who span.wait { color: var(--attention); }
+.tabs { display: flex; justify-content: center; gap: 2px; margin-bottom: 8px; font-size: 13px; color: var(--muted); }
+.tabs span { padding: 4px 10px; border-radius: 999px; }
+.tabs span:first-child { background: var(--pill-soft); color: var(--fg); }
+.label { margin-top: 6px; font-size: 12px; color: var(--faint); }
+.box { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 4px; border-radius: 12px; background: var(--card); }
+.box .row { padding: 6px 8px; background: none; font-size: 13px; }
+.box .row .av { --s: 18px; }
+.box .row.lead { background: var(--pill-soft); }
+.box .sub-l { padding: 4px 8px 0; font-size: 11.5px; color: var(--faint); }
+.box .empty { padding: 8px; font-size: 12.5px; color: var(--faint); }
+.box .routine { width: auto; padding: 8px; background: none; font-size: 13px; }
+.model { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 12px; background: var(--card); font-size: 13px; }
+.model span { color: var(--faint); }
+svg.claude { width: 15px; height: 15px; flex: none; }
+/* Ship's lineage, drawn the way the details panel draws it */
+.lin { display: grid; gap: 10px; align-content: start; padding: 20px; border-radius: 14px; background: var(--details); box-shadow: 0 0 0 1px var(--line-strong); text-align: left; }
+.lin .label { margin: 0; font-size: 14px; }
+.lin .box { gap: 4px; padding: 6px; border-radius: 16px; background: var(--card); }
+.lin .box .row { gap: 14px; padding: 12px 14px; border-radius: 12px; font-size: 17px; }
+.lin .box .row .av { --s: 30px; }
+.lin .box .sub-l { padding: 8px 14px 2px; font-size: 13.5px; }
+.lin .st { font-size: 15px; }
+.lin .chev { font-size: 20px; }
+
+/* Create New Bot, the real picker */
+.dlg { display: flex; flex-direction: column; border-radius: 22px; background: var(--raise); box-shadow: 0 0 0 1px var(--line-strong), 0 30px 80px -30px #000; overflow: hidden; text-align: left; }
+.dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); font-weight: 500; font-size: 16px; }
+.dlg-head span { color: var(--muted); font-size: 22px; line-height: 1; }
+.dlg-body { display: grid; justify-items: center; gap: 16px; padding: 20px 20px 18px; }
+.dlg-face { width: 104px; height: 104px; display: grid; place-items: center; }
+.dlg-face .av { --s: 104px; }
+.dlg-name { width: 100%; height: 40px; border: 0; border-radius: 12px; background: none; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font: 500 15px/1 "Rubik", system-ui, sans-serif; text-align: center; outline: none; }
+.dlg-name:focus { box-shadow: inset 0 0 0 1px #ffffff55; }
+.dlg-shapes { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: 290px; }
+.dlg-shapes button, .dlg-colors button { display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 50%; }
+.dlg-shapes button { width: 46px; height: 46px; transition: transform .15s; }
+.dlg-shapes button:hover { transform: scale(1.08); }
+.dlg-shapes button .av { --s: 32px; }
+.dlg-shapes button[aria-checked="true"] { box-shadow: 0 0 0 2px #ffffff66; }
+.dlg-colors { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 250px; }
+.dlg-colors button { width: 26px; height: 26px; background: var(--c); }
+.dlg-colors button[aria-checked="true"] { box-shadow: 0 0 0 2px var(--raise), 0 0 0 4px #ffffff88; }
+.dlg-foot { display: flex; justify-content: flex-end; margin-top: auto; padding: 12px 16px; border-top: 1px solid var(--line); }
+.try { margin-top: -6px; padding-bottom: clamp(18px, 3vw, 32px); font-size: 13px; color: var(--faint); text-align: center; }
+
+/* T3 Code, drawn small: its sidebar and an empty new thread */
+.t3win { display: grid; grid-template-columns: 200px minmax(0, 1fr); height: 100%; min-height: 380px; border-radius: 16px; background: #000; box-shadow: 0 0 0 1px var(--line-strong); overflow: hidden; text-align: left; font-size: 12.5px; color: #d8d8dc; }
+.t3-side { display: flex; flex-direction: column; gap: 2px; padding: 0 0 10px; border-right: 1px solid #ffffff14; }
+.t3-top { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; margin-bottom: 6px; background: radial-gradient(1px 1px at 20% 30%, #fff8, transparent), radial-gradient(1px 1px at 70% 60%, #fff6, transparent), radial-gradient(1px 1px at 88% 25%, #fff7, transparent), linear-gradient(100deg, #1b1640, #3a2f86 60%, #1b1640); color: #fff; font-size: 13px; }
+.t3-top svg, .t3-search svg { width: 14px; height: 14px; color: #ffffffb0; }
+.t3-top b { font-weight: 700; }
+.t3-search { display: flex; align-items: center; gap: 8px; padding: 6px 12px 10px; color: #ffffffa0; }
+.t3-proj { display: flex; align-items: center; gap: 6px; padding: 6px 12px 2px; color: #ffffff99; font-size: 11.5px; }
+.t3-proj small { margin-left: auto; font-size: 11px; color: #ffffff66; }
+.t3-proj .av { --s: 14px; }
+.t3-thread { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 12px 8px; color: #fff; }
+.t3-thread.is-new { margin: 0 6px; padding: 2px 6px 8px; border-radius: 8px; background: #ffffff0d; }
+.t3-proj.dim, .t3-thread.dim { opacity: .5; }
+.t3-thread.dim { padding-bottom: 4px; }
+.ty { display: inline-grid; place-items: center; width: 15px; height: 13px; border-radius: 3px; background: #3c1730; color: #ff6bb5; font: 700 7.5px/1 "Rubik", system-ui, sans-serif; font-style: normal; letter-spacing: .02em; }
+.t3-foot { display: flex; justify-content: space-between; margin-top: auto; padding: 0 12px; color: #ffffff99; font-size: 11.5px; }
+.t3-main { display: flex; flex-direction: column; min-width: 0; }
+.t3-crumb { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px; color: #ffffffa0; white-space: nowrap; overflow: hidden; }
+.t3-crumb .av { --s: 14px; }
+.t3-crumb .sep { color: #ffffff55; }
+.t3-ask { flex: 1; display: grid; place-content: center; gap: 14px; padding: 16px; text-align: center; }
+.t3-ask p { font-size: clamp(15px, 1.7vw, 20px); color: #fff; letter-spacing: -.01em; }
+.t3-ask p b { font-weight: 500; }
+.t3-box { display: grid; gap: 18px; padding: 12px 14px; border-radius: 12px; background: #0f0f10; box-shadow: 0 0 0 1px #ffffff14; color: #ffffff66; font-size: 11.5px; text-align: left; }
+.t3-model { justify-self: end; display: inline-flex; align-items: center; gap: 5px; color: #ffffffcc; }
+.t3-model em { font-style: normal; color: #ffffff77; }
+.t3-model svg.claude, .t3-thread svg.claude { width: 12px; height: 12px; }
+
+/* T3 Code's thread list, with clocks that tick */
+.t3list { display: grid; align-content: start; gap: 4px; padding: 14px 10px; border-radius: 14px; background: #000; box-shadow: 0 0 0 1px var(--line-strong); text-align: left; font-size: 15px; }
+.t3-group { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; color: #ffffffb0; font-size: 15px; }
+.t3-group span { display: inline-flex; align-items: center; gap: 4px; }
+.t3-group svg { width: 15px; height: 15px; }
+.t3-item { display: grid; gap: 4px; padding: 10px; border-radius: 12px; }
+.t3-item.on { background: #ffffff12; }
+.t3-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13px; color: #ffffff88; }
+.t3-meta .proj { display: inline-flex; align-items: center; gap: 7px; }
+.t3-meta .ty { width: 20px; height: 17px; font-size: 9.5px; }
+.t3-st { display: inline-flex; align-items: center; gap: 6px; color: #4b9bff; font-variant-numeric: tabular-nums; }
+.t3-st b { font-weight: 400; min-width: 2.4em; }
+.t3-st i { width: 13px; height: 13px; border-radius: 50%; border: 1.5px dashed currentColor; animation: spin 2.4s linear infinite; }
+@keyframes spin { to { transform: rotate(1turn); } }
+.t3-title { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: #ffffffcc; }
+.t3-item.on .t3-title { color: #fff; }
+.t3-title svg.claude { width: 16px; height: 16px; }
+.box > *, .details .lin-new { transition: opacity .4s, transform .5s var(--ease); }
+.box > .new { opacity: 0; transform: translateX(10px); }
+.cursor { position: absolute; left: 0; top: 0; z-index: 5; width: 22px; height: 22px; pointer-events: none; opacity: 0; transform: translate(var(--cx, 900px), var(--cy, 700px)); transition: transform .95s cubic-bezier(.45, 0, .2, 1), opacity .3s; filter: drop-shadow(0 2px 4px #0008); }
+.cursor.on { opacity: 1; }
+.cursor.press svg { transform: scale(.85); }
+.cursor svg { transition: transform .12s; transform-origin: 3px 3px; }
+.stage-note { margin-top: 14px; font-size: 13px; color: var(--faint); text-align: center; }
+
+/* Providers */
+.runs { padding: clamp(56px, 9vh, 88px) 0 0; text-align: center; }
+.runs p { font-size: 14px; color: var(--faint); }
+.names { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 26px; margin-top: 16px; font-size: clamp(16px, 1.6vw, 19px); font-weight: 500; color: var(--muted); letter-spacing: -.01em; }
+
+/* Sections and cards */
+.sec { padding: clamp(88px, 13vh, 140px) 0 0; }
+.head { margin-bottom: clamp(28px, 5vh, 48px); }
+.card { position: relative; border-radius: 24px; background: var(--chat); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+.card .txt { padding: clamp(22px, 3vw, 36px); }
+.card .txt p { margin-top: 4px; color: var(--muted); text-wrap: pretty; }
+
+/* First the Bot, then its thread */
+.pair { display: grid; grid-template-columns: minmax(0, 5fr) auto minmax(0, 8fr); align-items: center; gap: clamp(14px, 2.4vw, 32px); padding: 0 clamp(18px, 3vw, 36px) clamp(18px, 3vw, 36px); }
+.arrow { align-self: center; font-size: 28px; color: var(--faint); }
+.pair.duo { align-items: stretch; }
+.pair.threads { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+
+
+/* The grid of small live scenes */
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.grid .wide { grid-column: 1 / -1; }
+.scene { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; height: 300px; margin: 0 clamp(14px, 2vw, 20px) clamp(14px, 2vw, 20px); border-radius: 16px; background: var(--side); overflow: hidden; }
+.scene .inner { display: grid; gap: 8px; width: min(100% - 40px, 380px); font-size: 14px; line-height: 1.45; }
+.scene .m { max-width: 92%; }
+.scene .routine { width: 100%; background: var(--raise); }
+.say-row { display: flex; gap: 8px; }
+.say-row .av { --s: 26px; margin-top: 4px; }
+.say-row .m b { display: block; font-size: 12px; font-weight: 500; color: var(--c); }
+.say-row.r { flex-direction: row-reverse; }
+.vault { display: grid; gap: 6px; }
+.vrow { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--raise); }
+.vrow img { width: 26px; height: 26px; padding: 4px; border-radius: 8px; background: #fff; }
+.vrow div { flex: 1; min-width: 0; }
+.vrow b { display: block; font-weight: 500; font-size: 14px; }
+.vrow span { font-size: 12.5px; color: var(--faint); letter-spacing: .12em; }
+.vrow em { font-style: normal; font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.vrow em .av { --s: 16px; }
+.sky { position: relative; width: min(64%, 250px); aspect-ratio: 1; }
+.sky .core { --s: 30%; position: absolute; left: 35%; top: 35%; z-index: 1; filter: drop-shadow(0 0 30px #a97efe55); }
+.moon { position: absolute; left: 50%; top: 50%; width: 17%; aspect-ratio: 1; margin: -8.5%; padding: 2.6%; border-radius: 28%; background: #fff; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--s, 1)); z-index: var(--z, 1); }
+.moon img { width: 100%; }
+/* The scenes play once they are in view */
+.play > * { opacity: 0; transform: translateY(12px); transition: opacity .5s var(--ease), transform .6s var(--ease); }
+.in .play > * { opacity: 1; transform: none; }
+.in .play > :nth-child(2) { transition-delay: .7s; } .in .play > :nth-child(3) { transition-delay: 1.4s; } .in .play > :nth-child(4) { transition-delay: 2.1s; }
+.in .play .toggle { background: var(--pill); }
+.in .play .toggle::after { background: var(--pill-fg); transform: translateX(16px); transition-delay: 1.9s; }
+.in .play .toggle { transition-delay: 1.9s; }
+
+/* Give each Bot a job */
+.jobs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: clamp(28px, 5vw, 72px); padding: clamp(24px, 4vw, 56px); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 24px; }
+.chip { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px 0 8px; border: 0; border-radius: 999px; background: var(--pill-soft); color: var(--muted); font-size: 14px; cursor: pointer; transition: background .2s, color .2s, box-shadow .2s; }
+.chip .av { --s: 22px; }
+.chip:hover { color: var(--fg); }
+.chip[aria-selected="true"] { color: var(--fg); background: color-mix(in srgb, var(--c) 20%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent); }
+.job-copy { min-height: 84px; margin-top: 22px; color: var(--muted); }
+.job-copy b { font-weight: 500; color: var(--fg); }
+.phone { justify-self: center; width: min(100%, 320px); height: 600px; padding: 10px; border-radius: 46px; background: #000; box-shadow: 0 0 0 1px #f2f0fb21, 0 30px 80px -20px #000; }
+.screen { display: flex; flex-direction: column; height: 100%; border-radius: 37px; background: var(--chat); overflow: hidden; font-size: 13.5px; line-height: 1.45; }
+.notch { width: 90px; height: 26px; margin: 8px auto 0; border-radius: 999px; background: #000; flex: none; }
+.p-head { display: flex; align-items: center; justify-content: center; gap: 7px; height: 46px; flex: none; font-weight: 500; font-size: 14px; }
+.p-head .av { --s: 22px; }
+.p-feed { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 7px; min-height: 0; padding: 10px 12px; overflow: hidden; }
+.p-feed > * { flex: none; animation: rise .5s var(--ease) both; }
+.p-feed .m { max-width: 88%; padding: 8px 12px; }
+.p-feed .quote { padding: 8px 12px; border-left: 2px solid var(--line-strong); color: var(--muted); font-size: 13px; }
+.p-feed .ask, .p-feed .rows { width: 100%; }
+.p-feed .ask p { font-size: 14px; }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+.p-comp { display: flex; align-items: center; gap: 8px; margin: 6px 12px 16px; padding: 5px 5px 5px 14px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--faint); flex: none; }
+.p-comp span { flex: 1; }
+.p-comp i { width: 28px; height: 28px; border-radius: 50%; background: var(--pill-soft); }
+
+/* Two small cards */
+.split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.split .card { display: flex; flex-direction: column; }
+.split .txt { flex: 1; display: flex; flex-direction: column; }
+.split h2 { font-size: clamp(26px, 2.6vw, 32px); }
+.split .cta { justify-content: flex-start; margin-top: auto; padding-top: 24px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.tags li { padding: 4px 11px; border-radius: 999px; background: var(--pill-soft); font-size: 13px; color: var(--muted); }
 
 /* The film */
-.film { position: relative; width: min(1180px, 100%); margin: 0 auto; border-radius: clamp(14px, 1.8vw, 26px); background: #000; overflow: hidden; box-shadow: 0 0 0 2px #000; }
+.film { border-radius: 24px; overflow: hidden; background: #000; box-shadow: 0 0 0 1px var(--line-strong); }
 .film video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
 
-/* Real screens */
-.shot { border-radius: clamp(12px, 1.4vw, 20px); background: #000; overflow: hidden; }
-.shot img { width: 100%; }
-.pair { display: grid; grid-template-columns: minmax(0, 5fr) auto minmax(0, 8fr); align-items: center; gap: clamp(14px, 2.4vw, 36px); width: min(1240px, 100%); margin-inline: auto; }
-.arrow { font-size: clamp(36px, 5vw, 72px); font-weight: 600; line-height: 1; }
-.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin-inline: auto; }
-.two h3 { margin-top: 20px; font-size: clamp(24px, 2.6vw, 34px); font-weight: 600; letter-spacing: -.02em; }
-.two p { margin-top: 6px; font-size: 18px; color: #b9bac0; text-wrap: pretty; }
-
-/* The ball looks over the desktop app */
-.peek { --b: clamp(210px, 34vw, 470px); position: relative; width: min(1120px, 100%); margin: calc(var(--b) * .6) auto 0; }
-.peek .ball { --size: var(--b); position: absolute; left: 50%; bottom: calc(100% - var(--b) * .4); margin-left: calc(var(--b) / -2); }
-.peek .shot { position: relative; box-shadow: 0 0 0 2px #000; }
-
-/* Routines */
-.sleep { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 4vw, 64px); width: min(1240px, 100%); margin-inline: auto; }
-.sleep .stack { display: grid; gap: clamp(14px, 2vw, 24px); }
-.sleep .panel { width: min(68%, 460px); justify-self: end; }
-
-/* Real logos in the ball's real orbit */
-.apps { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 4vw, 64px); width: min(1240px, 100%); margin-inline: auto; }
-.sky { position: relative; aspect-ratio: 1; }
-.sky > img { width: 100%; }
-.moon { position: absolute; left: 50%; top: 50%; width: 15%; aspect-ratio: 1; margin: -7.5%; padding: 2.4%; border-radius: 28%; background: #fff; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--s, 1)); z-index: var(--z, 1); }
-.moon img { width: 100%; }
-
-/* Subagents */
-.kids { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: center; gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin-inline: auto; }
-.kids .col { display: grid; gap: clamp(14px, 2vw, 24px); }
-.note-big { display: block; margin-top: 10px; font-size: clamp(22px, 2.2vw, 28px); font-weight: 500; line-height: 1.2; letter-spacing: -.015em; text-wrap: balance; }
-
-/* Bots talking */
-.chat { display: grid; gap: clamp(10px, 1.2vw, 16px); justify-items: center; width: min(1000px, 100%); margin: 0 auto; }
-.chat .chip { width: clamp(190px, 26vw, 300px); border-radius: 999px; }
-.bub { max-width: 100%; padding: 16px 24px; border-radius: 28px; background: #171717; color: #fff; font-size: clamp(16px, 1.7vw, 20px); line-height: 1.35; }
-.bub b { display: block; font-size: 14px; font-weight: 500; color: #A97EFE; }
-.bub.in b { color: #FF309B; }
-
-/* Asks first */
-.model { width: min(420px, 100%); margin: clamp(36px, 6vh, 64px) auto 0; }
-.ask { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: center; gap: clamp(18px, 4vw, 60px); width: min(1180px, 100%); margin-inline: auto; }
-.phone { position: relative; width: 100%; max-width: 340px; border-radius: clamp(30px, 3.2vw, 44px); background: #000; box-shadow: 0 0 0 7px #000, 0 0 0 9px #2c2c2e; overflow: hidden; justify-self: center; }
-.phone img { width: 100%; }
-
-/* Phones, side by side */
-.strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(18px, 3vw, 44px); width: min(1240px, 100%); margin: 0 auto clamp(48px, 7vh, 80px); }
-.strip .phone { width: 100%; max-width: none; box-shadow: 0 0 0 5px #000, 0 0 0 7px #2c2c2e; }
-.strip h3 { margin-top: 22px; font-size: 22px; font-weight: 600; letter-spacing: -.015em; }
-.strip p { margin-top: 4px; font-size: 16px; text-wrap: pretty; }
-
 /* FAQ */
-.faq { max-width: 780px; margin: 0 auto; border-top: 1px solid rgba(255, 255, 255, .22); }
-details { border-bottom: 1px solid rgba(255, 255, 255, .22); }
-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 2px; font-size: 20px; font-weight: 500; cursor: pointer; list-style: none; }
+.faq-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: clamp(24px, 5vw, 80px); align-items: start; }
+.faq { border-top: 1px solid var(--line); }
+details { border-bottom: 1px solid var(--line); }
+summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 2px; font-size: 17px; font-weight: 500; cursor: pointer; list-style: none; }
 summary::-webkit-details-marker { display: none; }
-summary::after { content: "+"; font-size: 28px; font-weight: 300; line-height: 1; transition: transform .25s var(--ease); }
+summary::after { content: "+"; font-size: 22px; font-weight: 300; line-height: 1; color: var(--faint); transition: transform .25s var(--ease); }
 details[open] summary::after { transform: rotate(45deg); }
-details p { padding: 0 2px 22px; max-width: 660px; color: #c9cad0; }
-details a { text-decoration: underline; }
+details p { padding: 0 2px 20px; color: var(--muted); }
+details a { text-decoration: underline; text-underline-offset: 3px; }
 
 /* End */
-.end { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
-.end .ball { --size: clamp(150px, 20vw, 230px); }
-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 26px clamp(20px, 3vw, 40px) 30px; background: var(--amber); font-size: 15px; }
-footer a { text-decoration: underline; }
+.end { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: clamp(56px, 9vh, 96px) 20px; text-align: center; background: radial-gradient(60% 80% at 50% 0%, #a97efe1f, transparent 70%), var(--chat); }
+.end .ball { --size: clamp(120px, 14vw, 170px); }
+footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; padding: 32px 0 40px; font-size: 13px; color: var(--faint); }
+footer a { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 
 /* Screens rise as they scroll in */
-.rise { opacity: 0; transform: translateY(46px) scale(.97); transition: opacity .55s var(--ease), transform .7s var(--ease); }
+.rise { opacity: 0; transform: translateY(32px); transition: opacity .6s var(--ease), transform .8s var(--ease); }
 .in .rise, .rise.in { opacity: 1; transform: none; }
 
+@media (max-width: 1080px) {
+  .app { grid-template-columns: 220px minmax(0, 1fr); }
+  .details { display: none; }
+}
 @media (max-width: 760px) {
   .nav a:not(.brand):not(.btn) { display: none; }
-  .btn { height: 52px; font-size: 17px; }
-  .pair, .two, .sleep, .apps, .kids, .ask { grid-template-columns: minmax(0, 1fr); }
+  .app { grid-template-columns: minmax(0, 1fr); height: 560px; font-size: 13.5px; }
+  .side { display: none; }
+  .feed { padding-inline: 12px; }
+  .m { max-width: 90%; }
+  .pair, .grid, .jobs, .split, .faq-grid { grid-template-columns: minmax(0, 1fr); }
   .pair { justify-items: center; }
-  .pair .shot:first-child { width: min(76%, 320px); }
+  .pair.threads { grid-template-columns: minmax(0, 1fr); }
+  .pair .dlg { width: min(100%, 380px); }
+  .t3win { width: 100%; grid-template-columns: 140px minmax(0, 1fr); }
+  .lin { width: 100%; }
+  .t3list { width: 100%; }
   .arrow { transform: rotate(90deg); }
-  .sleep .sleeper, .apps .sky { width: min(72%, 300px); justify-self: center; }
-  .sleep .panel { width: 82%; justify-self: center; }
-  .phone { width: min(64vw, 260px); }
-  .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scene { height: 280px; }
+  .phone { height: 560px; }
 }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  .hero .ball { animation: none; }
-  .rise { opacity: 1; transform: none; transition: none; }
+  .hero .ball, .blur-in { animation: none; }
+  .rise, .play > * { opacity: 1; transform: none; transition: none; }
+  .feed > *, .box > *, .p-feed > * { transition: none; animation: none; }
+  .st::before { animation: none; }
   .pill { transition: none; }
 }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="i-claude" viewBox="0 0 256 257"><path fill="#d97757" d="m50.228 170.321 50.357-28.257.843-2.463-.843-1.361h-2.462l-8.426-.518-28.775-.778-24.952-1.037-24.175-1.296-6.092-1.297L0 125.796l.583-3.759 5.12-3.434 7.324.648 16.202 1.101 24.304 1.685 17.629 1.037 26.118 2.722h4.148l.583-1.685-1.426-1.037-1.101-1.037-25.147-17.045-27.22-18.017-14.258-10.37-7.713-5.25-3.888-4.925-1.685-10.758 7-7.713 9.397.649 2.398.648 9.527 7.323 20.35 15.75L94.817 91.9l3.889 3.24 1.555-1.102.195-.777-1.75-2.917-14.453-26.118-15.425-26.572-6.87-11.018-1.814-6.61c-.648-2.723-1.102-4.991-1.102-7.778l7.972-10.823L71.42 0 82.05 1.426l4.472 3.888 6.61 15.101 10.694 23.786 16.591 32.34 4.861 9.592 2.592 8.879.973 2.722h1.685v-1.556l1.36-18.211 2.528-22.36 2.463-28.776.843-8.1 4.018-9.722 7.971-5.25 6.222 2.981 5.12 7.324-.713 4.73-3.046 19.768-5.962 30.98-3.889 20.739h2.268l2.593-2.593 10.499-13.934 17.628-22.036 7.778-8.749 9.073-9.657 5.833-4.601h11.018l8.1 12.055-3.628 12.443-11.342 14.388-9.398 12.184-13.48 18.147-8.426 14.518.778 1.166 2.01-.194 30.46-6.481 16.462-2.982 19.637-3.37 8.88 4.148.971 4.213-3.5 8.62-20.998 5.184-24.628 4.926-36.682 8.685-.454.324.519.648 16.526 1.555 7.065.389h17.304l32.21 2.398 8.426 5.574 5.055 6.805-.843 5.184-12.962 6.611-17.498-4.148-40.83-9.721-14-3.5h-1.944v1.167l11.666 11.406 21.387 19.314 26.767 24.887 1.36 6.157-3.434 4.86-3.63-.518-23.526-17.693-9.073-7.972-20.545-17.304h-1.36v1.814l4.73 6.935 25.017 37.59 1.296 11.536-1.814 3.76-6.481 2.268-7.13-1.297-14.647-20.544-15.1-23.138-12.185-20.739-1.49.843-7.194 77.448-3.37 3.953-7.778 2.981-6.48-4.925-3.436-7.972 3.435-15.749 4.148-20.544 3.37-16.333 3.046-20.285 1.815-6.74-.13-.454-1.49.194-15.295 20.999-23.267 31.433-18.406 19.702-4.407 1.75-7.648-3.954.713-7.064 4.277-6.286 25.47-32.405 15.36-20.092 9.917-11.6-.065-1.686h-.583L44.07 198.125l-12.055 1.555-5.185-4.86.648-7.972 2.463-2.593 20.35-13.999-.064.065Z"/></symbol></svg>
 <nav class="nav" aria-label="Main">
-  <a class="brand" href="#top"><img src="/welcome/img/ball.webp" width="34" height="34" alt="" />Threebot</a>
-  <a href="#faq">FAQ</a>
-  <a href="https://t3.codes/" rel="noopener">T3 Code</a>
-  <a class="btn sm post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="/welcome/img/ball.webp" width="26" height="26" alt="" />Threebot</a>
+    <a href="#how">How it works</a>
+    <a href="#bots">Bots</a>
+    <a href="#faq">FAQ</a>
+    <a href="https://t3.codes/" rel="noopener">T3 Code</a>
+    <a class="btn sm post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a>
+  </div>
 </nav>
 
 <main id="top">
   <header class="hero">
-    <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></button>
-    <p class="ball-hint" data-ball-state>Click the ball</p>
-    <h1>Your Bot is a T3 thread</h1>
-    <p class="lede">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
-    <div class="cta">
-      <a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a>
-      <a class="btn line" href="https://t3.codes/" rel="noopener">t3.codes</a>
-      <span class="btn off pre">On GitHub soon</span>
+    <div class="wrap">
+      <a class="badge blur-in post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener"><b>Threebot 0.1.1</b> Release notes <i aria-hidden="true">&#8599;</i></a>
+      <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></button>
+      <h1 class="blur-in d1">Your Bot is a T3 thread</h1>
+      <p class="lede blur-in d2">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
+      <div class="cta blur-in d3">
+        <a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3.5-3.5L8 10l3.5-3.5M3 13h10"/></svg>Download</a>
+        <a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">View on GitHub</a>
+        <a class="btn soft pre" href="https://t3.codes/" rel="noopener">t3.codes</a>
+        <span class="btn off pre">On GitHub soon</span>
+      </div>
+      <div class="blur-in d3"><div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div></div>
+      <p class="install-note blur-in d3">Then run <code>threebot up</code>. It connects to T3 Code and starts in the background.</p>
+
+      <div class="stage blur-in d4" id="how">
+        <div class="app" data-story aria-label="An animated example: Ship, a Bot, goes through a morning's feedback" role="img">
+          <aside class="side" aria-hidden="true">
+            <div class="tools"><span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg></span><span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></span></div>
+            <div class="tile"><i class="av" data-bot data-shape="t3" data-ship style="--c:#A97EFE"></i>Ship</div>
+            <div class="brow" data-row="inbox"><i class="av" data-bot data-shape="spark" data-color="magenta" style="--c:#FF309B"></i><div><b>Inbox</b><small>Inbox at zero. 2 drafts waiting.</small></div></div>
+            <div class="brow"><i class="av" data-bot data-shape="squircle" data-color="green" data-state="sleeping" style="--c:#00C972"></i><div><b>Ledger</b><small>Stripe paid out on Tuesday.</small></div></div>
+            <div class="brow"><i class="av" data-bot data-shape="cloud" data-color="blue" style="--c:#1084FE"></i><div><b>Scout</b><small>Your digest is ready.</small></div></div>
+            <div class="me"><i>Y</i>You</div>
+          </aside>
+          <div class="main">
+            <div class="chat-head"><i class="av" data-bot data-shape="t3" data-ship style="--c:#A97EFE"></i>Ship<span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="2" y="3" width="12" height="8" rx="1.5"/><path d="M6 13.5h4"/></svg></span></div>
+            <div class="feed" data-feed></div>
+            <div class="composer" aria-hidden="true">
+              <span class="ico"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></span>
+              <span class="typed" data-typed>Ask Ship</span>
+              <span class="ico go" data-go><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3m-4 4 4-4 4 4"/></svg></span>
+            </div>
+          </div>
+          <aside class="details" aria-hidden="true">
+            <div class="who"><i class="av" data-bot data-shape="t3" data-ship style="--c:#A97EFE"></i><b>Ship</b><span data-status>Idle</span></div>
+            <div class="tabs"><span>Details</span><span>Library</span><span>Computer</span></div>
+            <div class="label">Model</div>
+            <div class="model"><svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg>Opus 5.5 <span>Medium</span></div>
+            <div class="label">Lineage</div>
+            <div class="box" data-lineage><div class="row lead"><i class="av" data-bot data-shape="t3" data-ship style="--c:#A97EFE"></i><span class="t">Ship</span></div></div>
+            <div class="label">Routines</div>
+            <div class="box" data-routines><div class="empty">Say "every weekday at 8" to make one.</div></div>
+          </aside>
+          <div class="cursor" data-cursor aria-hidden="true"><svg viewBox="0 0 22 22" width="22" height="22"><path d="M3 2.5 18 10l-6.6 1.6L8.4 18z" fill="#fff" stroke="#121020" stroke-width="1.4" stroke-linejoin="round"/></svg></div>
+        </div>
+        <p class="stage-note">A morning with Ship, on sample data.</p>
+      </div>
     </div>
-    <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
-    <p class="install-note">Then run <code>threebot up</code>. It connects to T3 Code and starts in the background.</p>
-    <p class="note">Free and self-hosted. Built on <a href="https://t3.codes/" rel="noopener">T3 Code</a>.</p>
   </header>
 
-  <section class="world amber" id="film">
-    <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=4" type="video/mp4" /></video></div>
-  </section>
-
-  <section class="world black" id="same">
-    <div class="say">
-      <h2>First the Bot, <span class="hl">then its thread</span></h2>
-      <p>Pick a face and a name. Threebot makes the icon, then opens the Bot's thread in T3 Code, and the thread wears the same face.</p>
-    </div>
-    <div class="pair watch">
-      <div class="shot rise"><img src="/welcome/img/create.webp" width="760" height="978" alt="The Create New Bot dialog with the ball selected and the name Ship" loading="lazy" /></div>
-      <span class="arrow rise" aria-hidden="true">&rarr;</span>
-      <div class="shot rise"><img src="/welcome/img/thread.webp" width="1200" height="750" alt="T3 Code's sidebar with a new thread called Ship, showing the same icon" loading="lazy" /></div>
-    </div>
-  </section>
-
-  <section class="world amber">
-    <div class="say">
-      <h2>What a personal assistant does, faster</h2>
-      <p>It reads, drafts, checks and reminds, on your machine. There's an app for your desktop and one for your phone, and both are the same thread.</p>
-    </div>
-    <div class="peek watch">
-      <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
-      <div class="shot rise"><img src="/welcome/img/desktop.webp" width="1800" height="1125" alt="The Threebot desktop app: Ship's conversation, its subagents and its details" loading="lazy" /></div>
-    </div>
-  </section>
-
-  <section class="world black">
-    <div class="say">
-      <h2><span class="hl">Say it once</span></h2>
-      <p>Tell a Bot to do something every weekday at 8 and it becomes a routine. It wakes up on time, does the work, and tells you how it went.</p>
-    </div>
-    <div class="sleep watch">
-      <img class="sleeper rise" src="/welcome/img/sleep.webp" width="720" height="720" alt="The ball asleep under a moon" loading="lazy" />
-      <div class="stack">
-        <div class="shot rise"><img src="/welcome/img/routine-chat.webp" width="1240" height="434" alt="Do this every weekday at 8. Created routine: Morning feedback triage" loading="lazy" /></div>
-        <div class="shot panel rise"><img src="/welcome/img/routine-panel.webp" width="640" height="430" alt="The routine Morning feedback triage, weekdays at 8:00 AM, with Pause, Edit and Test" loading="lazy" /></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="world amber">
-    <div class="say">
-      <h2>Connect your apps</h2>
-      <p>Powered by Executor. Gmail, Calendar, Linear, GitHub, Slack, Notion, Stripe: connect the ones a Bot should work with.</p>
-    </div>
-    <div class="apps watch">
-      <div class="sky rise" id="sky" aria-hidden="true">
-        <img src="/welcome/img/planet.webp" width="720" height="720" alt="" loading="lazy" />
-        <i class="moon"><img src="/welcome/img/logo-gmail.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-linear.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-github.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-slack.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-notion.webp" width="96" height="96" alt="" loading="lazy" /></i>
-        <i class="moon"><img src="/welcome/img/logo-stripe.webp" width="96" height="96" alt="" loading="lazy" /></i>
-      </div>
-      <div class="shot rise"><img src="/welcome/img/connect.webp" width="1400" height="754" alt="Connect apps showing Gmail, Google Calendar, Linear, GitHub, Slack, Notion and Stripe with their real logos" loading="lazy" /></div>
-    </div>
-  </section>
-
-  <section class="world black">
-    <div class="say"><h2>The rest of a <span class="hl">personal agent</span></h2></div>
-    <div class="strip">
-      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-bot.webp" width="560" height="1212" alt="A Bot's page with its face, routines, library, computer, model and subagents" loading="lazy" /></div><h3>A face</h3><p>You can tell what it's doing just by looking at it.</p></div>
-      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-routine.webp" width="560" height="1212" alt="A routine: Morning feedback triage, weekdays at 8:00 AM" loading="lazy" /></div><h3>Routines</h3><p>Ask once, then put it on a schedule.</p></div>
-      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-vault.webp" width="560" height="1212" alt="The Vault with saved logins and real logos" loading="lazy" /></div><h3>A vault</h3><p>Bots can fill website passwords without reading them.</p></div>
-      <div class="watch"><div class="phone rise"><img src="/welcome/img/m-apps.webp" width="560" height="1212" alt="Connect apps with real logos" loading="lazy" /></div><h3>Your apps</h3><p>Connect the tools it should work with.</p></div>
-    </div>
-  </section>
-
-  <section class="world amber">
-    <div class="say">
-      <h2>It runs your other threads and other machines</h2>
-      <p>Powered by T3 Code MCP. You talk to one Bot, and it starts real T3 threads and subagents, each with its own shape, here or on another machine.</p>
-    </div>
-    <div class="kids watch">
-      <div class="shot rise"><img src="/welcome/img/rows.webp" width="520" height="700" alt="T3 Code's sidebar with Ship working and the three threads it started: Make search case-insensitive, Fix dates a month ahead and Fix 3-way split losing a cent" loading="lazy" /></div>
-      <div class="col">
-        <div class="shot rise"><img src="/welcome/img/lineage.webp" width="620" height="410" alt="Ship's lineage with two subagents in different shapes: Review the fixes and Draft the changelog" loading="lazy" /></div>
-      </div>
-    </div>
-    <div class="say" style="margin-top:clamp(28px,5vh,56px);margin-bottom:0">
-      <p class="note-big">A subagent reviewed the work and found a real crash, so Ship sent it back.</p>
-      <div class="shot rise" style="margin-top:16px"><img src="/welcome/img/crash.webp" width="1140" height="140" alt="Bugs are committed and reviewed; the review found a crash in the search fix, so I'm sending that back before drafting replies." loading="lazy" /></div>
-    </div>
-  </section>
-
-  <section class="world black">
-    <div class="say">
-      <h2>Bots talk to <span class="hl">each other</span></h2>
-      <p>Ship needed to know who was paying, so it asked Inbox. You can read every word.</p>
-    </div>
-    <div class="chat watch">
-      <img class="chip rise" src="/welcome/img/chip.webp" width="370" height="80" alt="Ship and Inbox" loading="lazy" />
-      <p class="bub rise"><b>Ship</b>Which of these are paying customers: Ana, Ravi, Noor, Theo K., Mina, Jonas, Priya?</p>
-      <p class="bub in rise"><b>Inbox</b>Paying: Ana, Ravi (Team), Mina, Jonas (Pro); Noor, Theo K. and Priya are on Free.</p>
-    </div>
-  </section>
-
-  <section class="world amber slim">
-    <div class="any">
-      <h3>Runs on whatever T3 Code runs</h3>
-      <p>Threebot doesn't sell you AI. Your Bots use the plans you already pay for, or your own local models.</p>
+  <section class="runs">
+    <div class="wrap">
+      <p>Runs on whatever T3 Code runs. Threebot doesn't sell you AI.</p>
       <ul class="names"><li>Claude</li><li>Codex</li><li>Cursor</li><li>Grok Build</li><li>OpenCode</li><li>Antigravity</li><li>Muse Code</li><li>Pi</li><li>fx</li><li>Hermes</li><li>Ollama</li><li>any ACP agent</li></ul>
     </div>
   </section>
 
-  <section class="world black" id="credits">
-    <div class="say" style="margin-bottom:clamp(20px,3vh,32px)">
-      <h2>Built on <span class="hl">T3 Code</span></h2>
-      <p>Threebot stands on T3 Code. The threads, subagents, routines, browser, secure requests and MCP tools are all theirs. It's open source, made by T3 Tools and its contributors. Thank you.</p>
-    </div>
-    <div class="cta">
-      <a class="btn" href="https://t3.codes/" rel="noopener">t3.codes</a>
-      <a class="btn line" href="https://github.com/pingdotgg/t3code" rel="noopener">T3 Code on GitHub</a>
+  <section class="sec">
+    <div class="wrap">
+      <div class="card watch">
+        <div class="txt center">
+          <h2>First the Bot, then its thread</h2>
+          <p class="sub">Pick a face and a name. Threebot makes the icon, then opens the Bot's thread in T3 Code, and the thread wears the same face.</p>
+        </div>
+        <div class="pair duo">
+          <div class="dlg rise" data-create>
+            <div class="dlg-head">Create New Bot<span aria-hidden="true">&times;</span></div>
+            <div class="dlg-body">
+              <div class="dlg-face" data-create-face></div>
+              <input class="dlg-name" value="Ship" maxlength="20" spellcheck="false" aria-label="The Bot's name" data-create-name />
+              <div class="dlg-shapes" role="radiogroup" aria-label="Shape" data-create-shapes></div>
+              <div class="dlg-colors" role="radiogroup" aria-label="Colour" data-create-colors></div>
+            </div>
+            <div class="dlg-foot"><span class="btn sm">Create</span></div>
+          </div>
+          <span class="arrow rise" aria-hidden="true">&rarr;</span>
+          <div class="t3win rise" role="img" aria-label="T3 Code's sidebar with the new Bot's thread, wearing the same face">
+            <div class="t3-side">
+              <div class="t3-top"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M6.5 2.5v11"/></svg><b>T3</b> Code</div>
+              <div class="t3-search"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>Search</div>
+              <div class="t3-proj"><span data-t3-face></span><span data-t3-proj>Ship</span><small>now</small></div>
+              <div class="t3-thread is-new"><span data-t3-name>Ship</span><svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg></div>
+              <div class="t3-proj dim"><i class="ty">TY</i>Tally<small>2h</small></div>
+              <div class="t3-thread dim">Fix 3-way split losing a cent</div>
+              <div class="t3-thread dim">Make search case-insensitive</div>
+              <div class="t3-foot">Settled<span>0 &rsaquo;</span></div>
+            </div>
+            <div class="t3-main">
+              <div class="t3-crumb"><span data-t3-crumb-face></span><span data-t3-crumb>Ship</span><span class="sep">/</span><span data-t3-crumb-thread>Ship</span></div>
+              <div class="t3-ask">
+                <p>What should we build in <b data-t3-ask>Ship</b>?</p>
+                <div class="t3-box"><span>Ask anything. @ files, $ skills, / commands</span><span class="t3-model"><svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg>Opus 5.5 <em>Medium</em></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="try">Try it: pick a shape, a colour or a name.</p>
+      </div>
     </div>
   </section>
 
-  <section class="world black" id="faq">
-    <div class="say"><h2>Good questions</h2></div>
-    <div class="faq">
-      <details><summary>What is Threebot?</summary><p>An app that gives a T3 Code thread a face, a memory and a place on your phone. You message it like a person, and it runs your other threads for you.</p></details>
-      <details><summary>How is it different from T3 Code?</summary><p>T3 Code is where threads run. Threebot sits on top of it and keeps things small: one or two Bots for each part of your life, each with its own thread, running the others.</p></details>
-      <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the provider you already use with T3 Code, or on your own local models. Threebot has no account of its own.</p></details>
-      <details><summary>Where does it run?</summary><p>On your own machine or server. Your Bots, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
-      <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: install it with the one-line installer at the top of this page, or from the <a href="https://github.com/RokaSwK/threebot" rel="noopener">repository</a>. Settings then gets it onto your phone through Tailscale or a Cloudflare link in one click.</p></details>
-      <details><summary>Is this made by the T3 Code team?</summary><p>No. Threebot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
+  <section class="sec">
+    <div class="wrap">
+      <div class="head center"><h2>The rest of a personal agent</h2></div>
+      <div class="grid">
+        <div class="card watch">
+          <div class="txt"><h3>Say it once</h3><p>Tell a Bot to do something every weekday at 8 and it becomes a routine. It wakes up on time, does the work, and tells you how it went.</p></div>
+          <div class="scene" aria-hidden="true"><div class="inner play">
+            <p class="m u">Do this every weekday at 8.</p>
+            <div class="routine"><div><small>Created routine</small><b>Morning feedback triage</b><span>Weekdays at 8:00 AM</span></div><i class="toggle"></i></div>
+            <div class="ev"><i class="av" data-bot data-shape="t3" data-state="sleeping" style="--c:#A97EFE;--s:18px"></i>Ship sleeps until 8:00</div>
+          </div></div>
+        </div>
+        <div class="card watch">
+          <div class="txt"><h3>Connect your apps</h3><p>Powered by Executor. Gmail, Calendar, Linear, GitHub, Slack, Notion, Stripe: connect the ones a Bot should work with.</p></div>
+          <div class="scene" aria-hidden="true">
+            <div class="sky" id="sky">
+              <i class="av core" data-bot data-shape="t3" style="--c:#A97EFE"></i>
+              <i class="moon"><img src="/welcome/img/logo-gmail.webp" width="96" height="96" alt="" loading="lazy" /></i>
+              <i class="moon"><img src="/welcome/img/logo-linear.webp" width="96" height="96" alt="" loading="lazy" /></i>
+              <i class="moon"><img src="/welcome/img/logo-github.webp" width="96" height="96" alt="" loading="lazy" /></i>
+              <i class="moon"><img src="/welcome/img/logo-slack.webp" width="96" height="96" alt="" loading="lazy" /></i>
+              <i class="moon"><img src="/welcome/img/logo-notion.webp" width="96" height="96" alt="" loading="lazy" /></i>
+              <i class="moon"><img src="/welcome/img/logo-stripe.webp" width="96" height="96" alt="" loading="lazy" /></i>
+            </div>
+          </div>
+        </div>
+        <div class="card watch">
+          <div class="txt"><h3>A vault for its logins</h3><p>Bots can fill website passwords without reading them. The logins stay on your machine.</p></div>
+          <div class="scene" aria-hidden="true"><div class="inner vault play">
+            <div class="vrow"><img src="/welcome/img/logo-github.webp" width="96" height="96" alt="" loading="lazy" /><div><b>GitHub</b><span>&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span></div><em><i class="av" data-bot data-shape="t3" style="--c:#A97EFE"></i>Ship, just now</em></div>
+            <div class="vrow"><img src="/welcome/img/logo-stripe.webp" width="96" height="96" alt="" loading="lazy" /><div><b>Stripe</b><span>&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span></div><em><i class="av" data-bot data-shape="squircle" data-color="green" style="--c:#00C972"></i>Ledger</em></div>
+            <div class="vrow"><img src="/welcome/img/logo-gmail.webp" width="96" height="96" alt="" loading="lazy" /><div><b>Gmail</b><span>&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;</span></div><em><i class="av" data-bot data-shape="spark" data-color="magenta" style="--c:#FF309B"></i>Inbox</em></div>
+          </div></div>
+        </div>
+        <div class="card watch">
+          <div class="txt"><h3>Bots talk to each other</h3><p>Ship needed to know who was paying, so it asked Inbox. You can read every word.</p></div>
+          <div class="scene" aria-hidden="true"><div class="inner play">
+            <div class="say-row"><i class="av" data-bot data-shape="t3" style="--c:#A97EFE"></i><p class="m" style="--c:#A97EFE"><b>Ship</b>Which of these are paying customers: Ana, Ravi, Noor, Theo K., Mina, Jonas, Priya?</p></div>
+            <div class="say-row r"><i class="av" data-bot data-shape="spark" data-color="magenta" style="--c:#FF309B"></i><p class="m" style="--c:#FF5EB1"><b>Inbox</b>Paying: Ana, Ravi (Team), Mina, Jonas (Pro). Noor, Theo K. and Priya are on Free.</p></div>
+          </div></div>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="world amber">
-    <div class="end">
-      <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
-      <h2>Give your thread a face</h2>
-      <div class="cta"><a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a><a class="btn line post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a></div>
-      <span class="btn off pre">On GitHub soon</span>
-      <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
+  <section class="sec" id="bots">
+    <div class="wrap">
+      <div class="card jobs">
+        <div>
+          <h2>One or two Bots for each part of your life</h2>
+          <div class="chips" role="tablist" aria-label="Example Bots" data-chips></div>
+          <p class="job-copy" data-job-copy></p>
+        </div>
+        <div class="phone" aria-hidden="true"><div class="screen">
+          <div class="notch"></div>
+          <div class="p-head" data-p-head></div>
+          <div class="p-feed" data-p-feed></div>
+          <div class="p-comp"><span data-p-ask>Ask Ship</span><i></i></div>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="card watch">
+        <div class="txt center">
+          <h2>It runs your other threads and other machines</h2>
+          <p class="sub">Powered by T3 Code MCP. You talk to one Bot, and it starts real T3 threads and subagents, each with its own shape, here or on another machine.</p>
+        </div>
+        <div class="pair threads">
+          <div class="t3list rise" role="img" aria-label="T3 Code's sidebar with Ship working and the three threads it started" data-t3list>
+            <div class="t3-group">Working<span>4 <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4.5 6.5 3.5 3.5 3.5-3.5"/></svg></span></div>
+            <div class="t3-item"><div class="t3-meta"><span class="proj"><i class="ty">TY</i>Tally</span><span class="t3-st"><i></i>Working <b data-since="0">0s</b></span></div><div class="t3-title">Make search case-insensitive<svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg></div></div>
+            <div class="t3-item"><div class="t3-meta"><span class="proj"><i class="ty">TY</i>Tally</span><span class="t3-st"><i></i>Working <b data-since="2">2s</b></span></div><div class="t3-title">Fix dates a month ahead<svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg></div></div>
+            <div class="t3-item"><div class="t3-meta"><span class="proj"><i class="ty">TY</i>Tally</span><span class="t3-st"><i></i>Working <b data-since="4">4s</b></span></div><div class="t3-title">Fix 3-way split losing a cent<svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg></div></div>
+            <div class="t3-item on"><div class="t3-meta"><span class="proj"><i class="av" data-bot data-shape="t3" style="--c:#A97EFE;--s:18px"></i>Ship</span><span class="t3-st"><i></i>Working <b data-since="50">50s</b></span></div><div class="t3-title">Ship<svg class="claude" aria-hidden="true"><use href="#i-claude"/></svg></div></div>
+            <div class="t3-group">Settled<span>0 &rsaquo;</span></div>
+          </div>
+          <div class="lin rise" role="img" aria-label="Ship's lineage with two subagents in different shapes: Review the fixes and Draft the changelog">
+            <p class="label">Lineage</p>
+            <div class="box">
+              <div class="row lead"><i class="av" data-bot data-shape="t3" style="--c:#A97EFE"></i><span class="t">Ship</span><span class="st done">Done</span><span class="chev">&rsaquo;</span></div>
+              <div class="sub-l">Subagents</div>
+              <div class="row"><i class="av" data-bot data-shape="clover" data-color="purple" style="--c:#A97EFE"></i><span class="t">Review the fixes</span><span class="st done">Done</span><span class="chev">&rsaquo;</span></div>
+              <div class="row"><i class="av" data-bot data-shape="tablet" data-color="purple" style="--c:#A97EFE"></i><span class="t">Draft the changelog</span><span class="st done">Done</span><span class="chev">&rsaquo;</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="film">
+    <div class="wrap">
+      <div class="head center"><h2>Watch the film</h2></div>
+      <div class="film watch rise"><video controls playsinline preload="none" poster="/welcome/img/film-poster.webp" width="1920" height="1080" aria-label="The Threebot launch film"><source src="/welcome/img/film.mp4?v=4" type="video/mp4" /></video></div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap split">
+      <div class="card"><div class="txt">
+        <h2>Nothing new to pay for</h2>
+        <p class="sub">Your Bots use the plans you already pay for, or your own local models. Threebot has no account of its own, and it's free and open source.</p>
+        <ul class="tags"><li>Free</li><li>Open source</li><li>Self-hosted</li><li>Your subscriptions</li><li>Local models</li></ul>
+      </div></div>
+      <div class="card"><div class="txt">
+        <h2>Built on T3 Code</h2>
+        <p class="sub">The threads, subagents, routines, browser, secure requests and MCP tools are all theirs. It's open source, made by T3 Tools and its contributors. Thank you.</p>
+        <div class="cta"><a class="btn soft" href="https://t3.codes/" rel="noopener">t3.codes</a><a class="btn soft" href="https://github.com/pingdotgg/t3code" rel="noopener">T3 Code on GitHub</a></div>
+      </div></div>
+    </div>
+  </section>
+
+  <section class="sec" id="faq">
+    <div class="wrap faq-grid">
+      <h2>Good questions</h2>
+      <div class="faq">
+        <details><summary>What is Threebot?</summary><p>An app that gives a T3 Code thread a face, a memory and a place on your phone. You message it like a person, and it runs your other threads for you.</p></details>
+        <details><summary>How is it different from T3 Code?</summary><p>T3 Code is where threads run. Threebot sits on top of it and keeps things small: one or two Bots for each part of your life, each with its own thread, running the others.</p></details>
+        <details><summary>Do I need another subscription?</summary><p>No. Your Bots run on the provider you already use with T3 Code, or on your own local models. Threebot has no account of its own.</p></details>
+        <details><summary>Where does it run?</summary><p>On your own machine or server. Your Bots, their memory and your saved logins all stay there. Nothing is hosted for you.</p></details>
+        <details><summary>Can I use it?</summary><p class="pre">Soon. It will be free and open source, and you'll need T3 Code. The repository opens at launch.</p><p class="post">Yes, if you run T3 Code. It's free and open source: install it with the one-line installer at the top of this page, or from the <a href="https://github.com/RokaSwK/threebot" rel="noopener">repository</a>. Settings then gets it onto your phone through Tailscale or a Cloudflare link in one click.</p></details>
+        <details><summary>Is this made by the T3 Code team?</summary><p>No. Threebot is an independent project built on T3 Code. It isn't affiliated with or endorsed by its team.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="card end">
+        <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
+        <p class="ball-hint" data-ball-state>Click the ball</p>
+        <h2>Give your thread a face</h2>
+        <div class="cta"><a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a><a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a><span class="btn off pre">On GitHub soon</span></div>
+        <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
+      </div>
     </div>
   </section>
 </main>
 
-<footer>
+<footer class="wrap">
   <span>Threebot is an independent project, built on <a href="https://t3.codes/" rel="noopener">T3 Code</a> (<a href="https://github.com/pingdotgg/t3code" rel="noopener">GitHub</a>). Apps through <a href="https://executor.sh/" rel="noopener">Executor</a>.</span>
-  <span>Screens are real Bot runs on sample data. Film music: "House Vibes" by Alejandro Magaña, Mixkit.</span>
+  <span>The app scenes are drawn in HTML with Threebot's real Bot faces and play sample data. Film music: "House Vibes" by Alejandro Magaña, Mixkit.</span>
 </footer>
 
 <script>
 (() => {
   const root = document.documentElement, reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const COLORS = { white: "#f2f2f0", brown: "#936439", yellow: "#FF9800", cyan: "#00BCA6", gray: "#777777", violet: "#9159FE", purple: "#A97EFE", magenta: "#FF309B", pink: "#FF5EB1", green: "#00C972", blue: "#1084FE", orange: "#FF6700", teal: "#1CC3B0", red: "#FF263C" };
+  const mount = (el) => window.threebotMount?.(el);
+  const face = (shape, color = "purple", size, state) => `<i class="av" data-bot data-shape="${shape}" data-color="${color}"${state ? ` data-state="${state}"` : ""} style="--c:${COLORS[color] || COLORS.purple}${size ? `;--s:${size}px` : ""}"></i>`;
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
   // The GitHub links turn on by themselves once the repository is public.
   fetch("https://api.github.com/repos/RokaSwK/threebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
   for (const box of document.querySelectorAll("[data-install]")) {
@@ -365,6 +719,180 @@ footer a { text-decoration: underline; }
       setTimeout(() => { button.textContent = "Copy"; }, 1800);
     });
   }
+  const nav = document.querySelector(".nav");
+  addEventListener("scroll", () => nav.classList.toggle("scrolled", scrollY > 8), { passive: true });
+
+  /* ---------- The hero: one real morning with Ship, played in the app ---------- */
+  const app = document.querySelector("[data-story]");
+  const feed = app.querySelector("[data-feed]"), typed = app.querySelector("[data-typed]"), go = app.querySelector("[data-go]");
+  const status = app.querySelector("[data-status]"), lineage = app.querySelector("[data-lineage]"), routines = app.querySelector("[data-routines]");
+  const inbox = app.querySelector('[data-row="inbox"]'), cursor = app.querySelector("[data-cursor]");
+  const lineageStart = lineage.innerHTML, routinesStart = routines.innerHTML, inboxStart = inbox.querySelector("small").textContent;
+  let instant = reduced;
+  const wait = (ms) => new Promise((done) => setTimeout(done, instant ? 0 : ms));
+  const ship = (state, label) => {
+    app.querySelectorAll("[data-ship]").forEach((el) => { el.dataset.state = state; });
+    status.textContent = label; status.classList.toggle("wait", state === "waiting");
+  };
+  const add = (html, into = feed) => {
+    const tpl = document.createElement("template"); tpl.innerHTML = html.trim();
+    const el = tpl.content.firstElementChild;
+    if (!instant) el.classList.add("new");
+    into.append(el); mount(el);
+    if (!instant) requestAnimationFrame(() => requestAnimationFrame(() => el.classList.remove("new")));
+    return el;
+  };
+  const bot = (text) => add(`<p class="m">${esc(text)}</p>`);
+  const ev = (verb, shape, color, name) => add(`<p class="ev">${verb} ${face(shape, color)}<b>${name}</b></p>`);
+  const row = (title, shape, color, kind) => `<div class="row">${face(shape, color)}<span class="t">${esc(title)}${kind ? `<small>${kind}</small>` : ""}</span><span class="st">Running</span><span class="chev">&rsaquo;</span></div>`;
+  const setRun = (els, running) => els.forEach((el) => { const st = el.querySelector(".st"); st.classList.toggle("done", !running); st.textContent = running ? "Running" : "Done"; });
+  const say = async (text) => {
+    typed.textContent = ""; typed.classList.add("on");
+    for (const ch of text) { typed.textContent += ch; await wait(26 + Math.random() * 30); }
+    await wait(260); go.classList.add("press"); await wait(140); go.classList.remove("press");
+    typed.textContent = "Ask Ship"; typed.classList.remove("on");
+    add(`<p class="m u">${esc(text)}</p>`);
+  };
+  const click = async (target) => {
+    if (instant) return;
+    const a = app.getBoundingClientRect(), t = target.getBoundingClientRect();
+    cursor.classList.add("on");
+    cursor.style.setProperty("--cx", `${t.left - a.left + t.width * .45}px`); cursor.style.setProperty("--cy", `${t.top - a.top + t.height * .4}px`);
+    await wait(1100); cursor.classList.add("press"); target.classList.add("press");
+    await wait(160); cursor.classList.remove("press"); target.classList.remove("press");
+  };
+  const reset = () => {
+    feed.replaceChildren(); feed.classList.remove("fade"); lineage.innerHTML = lineageStart; routines.innerHTML = routinesStart; mount(lineage);
+    inbox.querySelector("small").textContent = inboxStart; inbox.classList.remove("busy"); inbox.querySelector(".av").dataset.state = "idle";
+    cursor.classList.remove("on"); cursor.style.setProperty("--cx", `${app.clientWidth * .78}px`); cursor.style.setProperty("--cy", `${app.clientHeight + 40}px`);
+    ship("idle", "Idle");
+  };
+  const morning = async () => {
+    reset();
+    await wait(900);
+    await say("Morning. Go through today's feedback.");
+    ship("thinking", "Thinking"); await wait(900);
+    bot("On it, pulling in today's feedback now."); ship("working", "Working"); await wait(1200);
+    ev("Messaged", "spark", "magenta", "Inbox");
+    inbox.classList.add("busy"); inbox.querySelector(".av").dataset.state = "working"; inbox.querySelector("small").textContent = "Checking who's paying…";
+    await wait(1700);
+    ev("Message from", "spark", "magenta", "Inbox");
+    inbox.classList.remove("busy"); inbox.querySelector(".av").dataset.state = "happy"; inbox.querySelector("small").textContent = "Ana, Ravi, Mina and Jonas pay.";
+    await wait(900);
+    bot("Three of them are real bugs. I've started a thread for each.");
+    const list = add(`<div class="rows">${row("Make search case-insensitive", "drop", "teal", "T3 thread")}${row("Fix dates a month ahead", "hex", "blue", "T3 thread")}${row("Fix 3-way split losing a cent", "gem", "orange", "T3 thread")}</div>`);
+    const threads = [...list.children];
+    for (const [title, shape, color] of [["Make search case-insensitive", "drop", "teal"], ["Fix dates a month ahead", "hex", "blue"], ["Fix 3-way split losing a cent", "gem", "orange"]]) { await wait(260); add(row(title, shape, color), lineage); }
+    const mirrors = [...lineage.querySelectorAll(".row:not(.lead)")];
+    await wait(1900); setRun([threads[1], mirrors[1]], false);
+    await wait(800); setRun([threads[2], mirrors[2]], false);
+    await wait(500); setRun([threads[0], mirrors[0]], false);
+    await wait(700);
+    const review = add(`<div class="rows">${row("Review the fixes", "clover", "purple", "Subagent")}</div>`).firstElementChild;
+    add(`<div class="sub-l">Subagents</div>`, lineage); const reviewMirror = add(row("Review the fixes", "clover", "purple"), lineage);
+    await wait(2100); setRun([review, reviewMirror], false); await wait(500);
+    bot("The review found a crash in the search fix, so I'm sending it back before drafting replies.");
+    setRun([threads[0], mirrors[0]], true);
+    await wait(2000); setRun([threads[0], mirrors[0]], false); await wait(700);
+    const ask = add(`<div class="ask"><p>All 3 bugs fixed, tests pass. Send the 7 replies?</p><div class="opts"><span class="yes">Send</span><span>Not yet</span><span class="else">Something else</span></div><div class="ans">Your answer<b>Send</b></div></div>`);
+    ship("waiting", "Waiting for you"); await wait(1500);
+    await click(ask.querySelector(".yes"));
+    ask.classList.add("answered"); cursor.classList.remove("on"); ship("working", "Working"); await wait(1200);
+    bot("All 7 replies sent."); ship("happy", "Done"); await wait(1800);
+    await say("Do this every weekday at 8.");
+    ship("thinking", "Thinking"); await wait(1000);
+    const made = add(`<div class="routine"><div><small>Created routine</small><b>Morning feedback triage</b><span>Weekdays at 8:00 AM</span></div><i class="toggle"></i></div>`);
+    routines.replaceChildren(); const mirror = add(`<div class="routine"><div><b>Morning feedback triage</b><span>Weekdays at 8:00 AM</span></div><i class="toggle"></i></div>`, routines);
+    await wait(500); made.querySelector(".toggle").classList.add("on"); mirror.querySelector(".toggle").classList.add("on");
+    ship("proud", "Done");
+  };
+  if (reduced) morning();
+  else {
+    let started = false;
+    new IntersectionObserver(async ([entry], observer) => {
+      if (!entry.isIntersecting || started) return;
+      started = true; observer.disconnect();
+      for (;;) { await morning(); await wait(5200); feed.classList.add("fade"); await wait(700); }
+    }, { threshold: .25 }).observe(app);
+  }
+
+  /* ---------- Give each Bot a job ---------- */
+  const BOTS = [
+    { name: "Ship", shape: "t3", color: "purple", role: "Runs the code side.", blurb: "Turns feedback into fixed bugs: starts T3 threads and subagents, reviews the work and drafts the replies.",
+      chat: [["u", "Anything broken overnight?"], ["b", "Two tests failed on main. I started a thread for each and both are green now."], ["rows", [["Fix the flaky date test", "drop", "teal"], ["Pin the parser version", "hex", "blue"]]], ["ask", "Tell the two people who reported it?"]] },
+    { name: "Inbox", shape: "spark", color: "magenta", role: "Keeps your email at zero.", blurb: "Reads everything, archives the noise, drafts in your voice and only sends what you approve.",
+      chat: [["u", "What came in?"], ["b", "23 new. I archived 19, passed 2 invoices to Ledger and drafted a reply to Noor."], ["q", "\"Hi Noor, thanks for the report. It's fixed in 1.2.1, out today.\""], ["ask", "Send this to Noor?"]] },
+    { name: "Ledger", shape: "squircle", color: "green", role: "Watches the money.", blurb: "Checks payouts, chases late invoices and tells you when a number looks wrong.",
+      chat: [["u", "Anything I should know this week?"], ["b", "Stripe paid out €4,210 on Tuesday. Two invoices from Globex are 30 days late."], ["b", "I drafted a polite reminder for each."], ["ask", "Send both reminders?"]] },
+    { name: "Scout", shape: "cloud", color: "blue", role: "Reads so you don't.", blurb: "Follows the repos, papers and feeds you care about and sends you a short digest.",
+      chat: [["u", "Morning digest, please."], ["b", "Three things: a new release of the parser you pin, a paper on agent memory and a price drop on your hosting plan."], ["b", "The release fixes the bug Ship pinned around."], ["ask", "Ask Ship to unpin it?"]] },
+    { name: "Home", shape: "heart", color: "orange", role: "Remembers the rest.", blurb: "Renewals, bookings, birthdays: the small admin of a life.",
+      chat: [["u", "When does my passport expire?"], ["b", "March 14. Renewals open six months before, on September 14."], ["b", "I put a reminder on that Monday at 9:00 with the form linked."], ["ask", "Book the photo appointment too?"]] },
+  ];
+  const chips = document.querySelector("[data-chips]"), copy = document.querySelector("[data-job-copy]");
+  const pHead = document.querySelector("[data-p-head]"), pFeed = document.querySelector("[data-p-feed]"), pAsk = document.querySelector("[data-p-ask]");
+  chips.innerHTML = BOTS.map((b, i) => `<button type="button" class="chip" role="tab" aria-selected="${i === 0}" style="--c:${COLORS[b.color]}" data-i="${i}">${face(b.shape, b.color)}${b.name}</button>`).join("");
+  mount(chips);
+  const show = (i) => {
+    const b = BOTS[i];
+    chips.querySelectorAll(".chip").forEach((c, j) => c.setAttribute("aria-selected", String(i === j)));
+    copy.innerHTML = `<b>${b.role}</b> ${esc(b.blurb)}`;
+    pHead.innerHTML = `${face(b.shape, b.color)}${b.name}`; pAsk.textContent = `Ask ${b.name}`;
+    pFeed.innerHTML = b.chat.map(([k, v], n) => {
+      const d = ` style="animation-delay:${n * .18}s"`;
+      if (k === "u") return `<p class="m u"${d}>${esc(v)}</p>`;
+      if (k === "b") return `<p class="m"${d}>${esc(v)}</p>`;
+      if (k === "q") return `<p class="quote"${d}>${esc(v)}</p>`;
+      if (k === "rows") return `<div class="rows"${d}>${v.map(([t, s, c]) => row(t, s, c).replace('class="st"', 'class="st done"').replace(">Running<", ">Done<")).join("")}</div>`;
+      return `<div class="ask"${d}><p>${esc(v)}</p><div class="opts"><span class="yes">Send</span><span>Not yet</span><span class="else">Something else</span></div></div>`;
+    }).join("");
+    mount(pHead); mount(pFeed);
+  };
+  let current = 0, touched = false;
+  chips.addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; touched = true; show(current = Number(c.dataset.i)); });
+  show(0);
+  if (!reduced) {
+    let visible = false;
+    new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }, { threshold: .4 }).observe(chips.closest(".jobs"));
+    setInterval(() => { if (visible && !touched && !document.hidden) show(current = (current + 1) % BOTS.length); }, 6500);
+  }
+
+  /* ---------- Create New Bot: the real shapes and colours, and T3 Code follows ---------- */
+  const SHAPES = ["ball", "cloud", "squircle", "spark", "clover", "heart", "flower", "drop", "tablet", "wedge", "dome", "star", "hex", "t3"];
+  const SWATCHES = ["white", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"];
+  const create = document.querySelector("[data-create]"), t3win = document.querySelector(".t3win");
+  const shapesEl = create.querySelector("[data-create-shapes]"), colorsEl = create.querySelector("[data-create-colors]"), nameEl = create.querySelector("[data-create-name]");
+  const pick = { shape: "t3", color: "violet" };
+  const wear = () => {
+    create.querySelector("[data-create-face]").innerHTML = face(pick.shape, pick.color);
+    t3win.querySelectorAll("[data-t3-face], [data-t3-crumb-face]").forEach((slot) => { slot.innerHTML = face(pick.shape, pick.color); });
+    shapesEl.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.pick === pick.shape)));
+    mount(create); mount(t3win);
+  };
+  const paintShapes = () => {
+    shapesEl.innerHTML = SHAPES.map((s) => `<button type="button" role="radio" aria-label="${s === "t3" ? "The T3 ball" : s}" data-pick="${s}">${face(s, pick.color)}</button>`).join("");
+    colorsEl.innerHTML = SWATCHES.map((c) => `<button type="button" role="radio" aria-label="${c}" aria-checked="${c === pick.color}" data-swatch="${c}" style="--c:${COLORS[c]}"></button>`).join("");
+    wear();
+  };
+  shapesEl.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { pick.shape = b.dataset.pick; wear(); } });
+  colorsEl.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { pick.color = b.dataset.swatch; if (pick.shape === "t3") pick.shape = "ball"; paintShapes(); } });
+  nameEl.addEventListener("input", () => {
+    const name = nameEl.value.trim() || "Ship";
+    t3win.querySelectorAll("[data-t3-proj], [data-t3-name], [data-t3-crumb], [data-t3-crumb-thread], [data-t3-ask]").forEach((el) => { el.textContent = name; });
+  });
+  paintShapes();
+
+  /* ---------- T3 Code's clocks keep counting ---------- */
+  const clocks = [...document.querySelectorAll("[data-since]")], clockStart = performance.now();
+  if (!reduced) setInterval(() => {
+    const passed = (performance.now() - clockStart) / 1000;
+    for (const clock of clocks) {
+      const n = Math.floor(Number(clock.dataset.since) + passed);
+      clock.textContent = n < 60 ? `${n}s` : `${Math.floor(n / 60)}m ${n % 60}s`;
+    }
+  }, 1000);
+
+  /* ---------- Things that appear as they scroll in ---------- */
   const watched = document.querySelectorAll(".watch");
   if (reduced || !("IntersectionObserver" in window)) {
     watched.forEach((el) => el.classList.add("in"));
@@ -381,23 +909,22 @@ footer a { text-decoration: underline; }
   const orbit = (now) => {
     const size = sky.clientWidth, t = now / 1000;
     moons.forEach((moon, i) => {
-      const a = t * .55 + i * 1.047, r = size * (.27 + (i % 3) * .07), x = Math.cos(a) * r, y = Math.sin(a) * r * .42;
+      const a = t * .55 + i * 1.047, r = size * (.3 + (i % 3) * .08), x = Math.cos(a) * r, y = Math.sin(a) * r * .42;
       moon.style.setProperty("--x", `${(x * .976 + y * .216).toFixed(1)}px`); moon.style.setProperty("--y", `${(y * .976 - x * .216).toFixed(1)}px`);
       moon.style.setProperty("--s", (.86 + .18 * Math.sin(a)).toFixed(3)); moon.style.setProperty("--z", Math.sin(a) > 0 ? 2 : 0);
     });
     requestAnimationFrame(orbit);
   };
   requestAnimationFrame(orbit);
-  // Every face looks at you.
+  // The fallback ball's eyes look at you and blink until the live one loads.
   let frame = 0;
   addEventListener("pointermove", (e) => {
     if (frame) return;
     frame = requestAnimationFrame(() => { frame = 0; root.style.setProperty("--mx", (e.clientX / innerWidth - .5).toFixed(3)); root.style.setProperty("--my", (e.clientY / innerHeight - .5).toFixed(3)); });
   }, { passive: true });
-  // And blinks.
   const blink = () => {
-    root.style.setProperty("--open", ".08"); root.style.setProperty("--blink", ".08");
-    setTimeout(() => { root.style.setProperty("--open", "1"); root.style.setProperty("--blink", "1"); }, 120);
+    root.style.setProperty("--open", ".08");
+    setTimeout(() => root.style.setProperty("--open", "1"), 120);
     setTimeout(blink, 2400 + Math.random() * 3200);
   };
   setTimeout(blink, 2200);
