@@ -27,6 +27,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Bot's conversation | One main T3 thread per project (`mainThreadId` in `bot.json`). |
 | Avatar, label, section, pinned, hidden, primary, notifications | `bots/<slug>/.bot/bot.json` |
 | Sections order, theme, accent, timezone, Auto-review, rules, Beta switches | `bots/.botapp/settings.json` |
+| Usage stats choice, install ID, last ping (opt-in, see [PRIVACY.md](../PRIVACY.md)) | `bots/.botapp/telemetry.json`; pings go from the gateway to the collector in `telemetry/`; token counts come from T3's `orchestration.getThreadProjection` (`providerTurns[].turnTokenUsage`) for Bot threads |
 | Bot persona, memory, library | `AGENTS.md` (+ `CLAUDE.md` link), `memory/MEMORY.md`, `library/` in the Bot folder |
 | Helper Bots | New Bot projects created by agents (they follow the same folder convention) |
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |

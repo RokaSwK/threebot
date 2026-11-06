@@ -7,6 +7,7 @@ import { Details } from "./components/Details";
 import { DeleteBotDialog, NewBotDialog, RenameBotDialog } from "./components/NewBotDialog";
 import { SearchDialog } from "./components/SearchDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { UsageStatsPrompt } from "./components/UsageStats";
 import { Sidebar } from "./components/Sidebar";
 import { useAutoUpdateNotice } from "./components/RemoteAccess";
 import { ProjectsPage } from "./components/Projects";
@@ -249,6 +250,7 @@ function Dialogs() {
         ? <MainBotDialog intent={{ kind: "delete", slug: dialog.slug }} />
         : <DeleteBotDialog slug={dialog.slug} />)}
       {typeof dialog === "object" && dialog?.kind === "main-bot" && <MainBotDialog intent={dialog.intent} initialSlug={dialog.initialSlug} />}
+      <UsageStatsPrompt />
       {toastMsg && <div className="pop-in fixed bottom-6 left-1/2 z-[70] w-max max-w-[calc(100vw-32px)] -translate-x-1/2 rounded-2xl bg-pill px-4 py-2 text-[13px] text-pill-fg shadow-[var(--shadow-pop)]" role="status">{toastMsg}{toastLink && <> <a href={toastLink.href} target="_blank" rel="noopener noreferrer" className="font-medium underline underline-offset-2">{toastLink.label}</a></>}</div>}
     </>
   );

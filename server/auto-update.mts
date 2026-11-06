@@ -43,11 +43,14 @@ type CheckResult = { checkedAt?: string | null; error?: string | null; updateAva
  * A thread is a Bot's when it's in a Bot's project or descends from a Bot's main thread (side chats, subagents).
  */
 export function busyBotThreads<T extends BotThread>(threads: T[], bots: BotRef[]): T[] {
+  return botThreads(threads, bots).filter((thread) => !thread.archivedAt
+    && (Boolean(thread.pendingRuntimeRequest) || BUSY.has(thread.activityRunStatus ?? thread.status)));
+}
+/** The threads that belong to a Bot: in a Bot's project, or descended from a Bot's main thread. */
+export function botThreads<T extends Pick<BotThread, "id" | "projectId" | "lineage">>(threads: T[], bots: BotRef[]): T[] {
   const projects = new Set(bots.map((bot) => bot.projectId).filter(Boolean));
   const mains = new Set(bots.map((bot) => bot.mainThreadId).filter(Boolean));
-  return threads.filter((thread) => !thread.archivedAt
-    && (projects.has(thread.projectId) || mains.has(thread.id) || mains.has(thread.lineage?.rootThreadId) || mains.has(thread.lineage?.parentThreadId))
-    && (Boolean(thread.pendingRuntimeRequest) || BUSY.has(thread.activityRunStatus ?? thread.status)));
+  return threads.filter((thread) => projects.has(thread.projectId) || mains.has(thread.id) || mains.has(thread.lineage?.rootThreadId) || mains.has(thread.lineage?.parentThreadId));
 }
 
 export function createAutoUpdateStore(file: string) {

@@ -73,6 +73,8 @@ To use it on your phone, open **Settings → Remote access**:
 
 **Settings → Updates** shows new releases and installs them, like T3 Code: it downloads and checks the new version, restarts the service, and goes back to the old one if the new one doesn't start. From a terminal, run `threebot update`. `threebot help` lists the other commands.
 
+**Settings → Usage stats** can share anonymous usage stats (versions, Bot and routine counts in ranges, and token counts per model). They are off unless you turn them on, and Settings shows the exact data before it's sent. [PRIVACY.md](PRIVACY.md) lists every field.
+
 Threebot listens on `127.0.0.1` by default, with no sign-in. [docs/self-hosting.md](docs/self-hosting.md) covers the other ways to expose it.
 
 ### From source

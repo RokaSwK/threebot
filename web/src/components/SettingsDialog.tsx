@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
 import { ModelPicker } from "./ModelPicker";
@@ -10,6 +10,7 @@ import { ConnectApps } from "./ConnectApps";
 import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
 import { Group, H, Row } from "./SettingsParts";
 import { RemoteAccessPane, UpdatesPane, useUpdateNotice } from "./RemoteAccess";
+import { UsageStatsPane } from "./UsageStats";
 import { fastDrawingModel } from "../lib/avatarDrawing";
 import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
@@ -27,6 +28,7 @@ const PANES = [
   { id: "access", label: "Remote access", icon: <Globe size={15} /> },
   { id: "updates", label: "Updates", icon: <Download size={15} /> },
   { id: "beta", label: "Beta", icon: <FlaskConical size={15} /> },
+  { id: "usage-stats", label: "Usage stats", icon: <Activity size={15} /> },
 ];
 
 type SaveSettings = (patch: Partial<Settings>) => Promise<boolean>;
@@ -85,6 +87,7 @@ export function SettingsDialog() {
                 {pane === "access" && <RemoteAccessPane />}
                 {pane === "updates" && <UpdatesPane t3={<T3Version />} />}
                 {pane === "beta" && <Beta s={settings} />}
+                {pane === "usage-stats" && <UsageStatsPane />}
                 {pane === "usage" && <UsagePanel />}
                 {pane === "appearance" && <Appearance s={settings} />}
               </fieldset>}
@@ -135,7 +138,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
     <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
-    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update.version} available` : undefined} onClick={() => pane("updates")} /><SettingsHomeLink title="Beta" description="Try experimental features" onClick={() => pane("beta")} /></Group>
+    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update.version} available` : undefined} onClick={() => pane("updates")} /><SettingsHomeLink title="Beta" description="Try experimental features" onClick={() => pane("beta")} /><SettingsHomeLink title="Usage stats" description="Anonymous, off unless you turn them on" onClick={() => pane("usage-stats")} /></Group>
     <Group><SettingsHomeLink title={signingOut ? "Signing out…" : "Sign Out"} disabled={signingOut} onClick={() => void signOut()} /></Group>
   </div>;
 }

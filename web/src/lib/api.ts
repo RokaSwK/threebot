@@ -42,7 +42,15 @@ export type AccessState = {
   cloudflareAccess: { emails: string[] } | null;
 };
 
+/** Settings → Usage stats. `choice` is null until the user has answered the one-time question. */
+export type TelemetryStatus = { enabled: boolean; choice: boolean | null; asked: boolean; blockedBy: "DO_NOT_TRACK" | "THREEBOT_TELEMETRY" | null;
+  installId: string; lastSentAt: string | null; lastAttemptAt: string | null; lastError: string | null; endpoint: boolean };
+
 export const api = {
+  telemetry: () => req<TelemetryStatus>("/api/telemetry"),
+  setTelemetry: (enabled: boolean) => req<TelemetryStatus>("/api/telemetry", { method: "PUT", body: JSON.stringify({ enabled }) }),
+  telemetryPreview: () => req<Record<string, unknown>>("/api/telemetry/preview"),
+  resetTelemetryId: () => req<TelemetryStatus>("/api/telemetry/reset-id", { method: "POST", body: "{}" }),
   session,
   system: (check = false) => req<SystemInfo>(`/api/system${check ? "?check=1" : ""}`),
   setAutoUpdate: (auto: boolean) => req<Pick<SystemInfo, "auto" | "waiting" | "notice">>("/api/system/auto-update", { method: "PUT", body: JSON.stringify({ auto }) }),
