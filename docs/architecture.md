@@ -26,7 +26,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Bot | T3 project at `$THREEBOT_HOME/bots/<slug>`. Name = project title. |
 | Bot's conversation | One main T3 thread per project (`mainThreadId` in `bot.json`). |
 | Avatar, label, section, pinned, hidden, primary, notifications | `bots/<slug>/.bot/bot.json` |
-| Sections order, theme, accent, timezone, Auto-review, rules | `bots/.botapp/settings.json` |
+| Sections order, theme, accent, timezone, Auto-review, rules, Beta switches | `bots/.botapp/settings.json` |
 | Bot persona, memory, library | `AGENTS.md` (+ `CLAUDE.md` link), `memory/MEMORY.md`, `library/` in the Bot folder |
 | Helper Bots | New Bot projects created by agents (they follow the same folder convention) |
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |
@@ -68,6 +68,8 @@ Logins, API tokens and contact info shared by all Bots (Settings › Vault). Bot
 ## Projects
 
 One live board shared by the user and every Bot (the Projects page): projects, to-dos, machines, services (what runs where), repos, notes and links.
+
+- **Beta, off by default** (`server/beta.mjs`): Settings → Beta → Projects board saves `beta.projects` in `settings.json`. Off, the sidebar, compact rail and mobile list show no Projects entry, `/?page=projects` and item links lead home, every `/api/projects*` route answers 404 (open live streams are ended), the `projects_*` tools are neither listed nor callable on the `bot` MCP server (the Vault tools are unaffected), and the "Projects board" section is left out of every Bot's AGENTS.md. Switching takes effect at once: the gateway rewrites each Bot's AGENTS.md managed block, which the Bot's agent picks up the next time it loads its instructions; the routes and tools change on the next request either way. Switching off never deletes `projects.json`. When `beta.projects` has never been saved, the gateway decides it once at startup: on if a non-empty `projects.json` exists (installs that already use the board keep it), off otherwise.
 
 - **Storage** (`server/projects.mjs`): one JSON file, `projects.json` in the Bots folder's `.botapp`. Writes are serialized and atomic (temp file, rename). Each item has a short random id (`[a-z0-9]{8}`), a kind, a title, a status from its kind's list, an optional area (`work`, `personal`…), `parentId` (the project it belongs to), `machineId` (for services and repos), Markdown `body`, a closed set of `fields` (`url`, `path`, `host`, `port`, `branch`, `due`, `priority`, `owner`, `tags`), `links` (to T3 threads, Bots, other items, web pages or T3 projects), and who created and last changed it. A batch either saves whole or not at all. The last 300 changes are kept as activity.
 - **App API** (behind the normal login): `GET /api/projects` (the board, its version and recent activity), `POST /api/projects/items` (`{items}`; no id creates, an id changes only what is sent, `null` clears), `POST /api/projects/delete` (`{ids}`; children move up a level), and `GET /api/projects/events`, a Server-Sent Events stream of every change from anyone (`hello` with the current version, then `change` with `{version, items, removed, activity}`). Writes require `content-type: application/json` and an `Origin` matching the app's host (or `X-Forwarded-Host` behind a proxy). The page reloads the board when a version is skipped.

@@ -12,7 +12,7 @@ import { useAutoUpdateNotice } from "./components/RemoteAccess";
 import { ProjectsPage } from "./components/Projects";
 import { ColumnDivider } from "./components/ColumnDivider";
 import { Modal, Pill, Spinner } from "./components/ui";
-import { boot, botStatus, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, type MainBotIntent } from "./store";
+import { boot, botStatus, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, useProjectsOn, type MainBotIntent } from "./store";
 import { api } from "./lib/api";
 import { MOBILE_LAYOUT_QUERY } from "./lib/layout";
 import { navigationFor, navigationUrl, readNavigation, restoreNavigation } from "./lib/navigation";
@@ -119,10 +119,16 @@ function Shell() {
   const sidebarCompact = useApp((s) => s.sidebarCompact);
   const selectedThreadId = useApp((s) => s.selectedThreadId);
   const settings = useApp((s) => s.settings);
-  const page = useApp((s) => s.page);
+  const projectsOn = useProjectsOn();
+  // Settings → Beta → Projects board off: the page (and links to it) lead home instead.
+  const page = useApp((s) => s.page === "projects" && !projectsOn ? null : s.page);
   const bot = selected ? bots[selected] ?? historicalBots[selected] : undefined;
   const narrow = useNarrow();
   useNavigationHistory(narrow);
+
+  useEffect(() => {
+    if (settings && !projectsOn && useApp.getState().page === "projects") useApp.setState({ page: null, projectItemId: null });
+  }, [settings, projectsOn]);
 
   useEffect(() => {
     if (!narrow && !bot && Object.keys(bots).length) {

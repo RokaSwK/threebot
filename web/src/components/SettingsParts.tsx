@@ -13,7 +13,7 @@ export function Group({ title, children }: { title?: string; children: React.Rea
   );
 }
 
-export function Row({ title, desc, children }: { title: string; desc?: React.ReactNode; children?: React.ReactNode }) {
+export function Row({ title, desc, children }: { title: React.ReactNode; desc?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="settings-row flex items-center gap-4 border-b border-line px-4 py-3.5 last:border-0">
       <div className="min-w-0 flex-1">

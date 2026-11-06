@@ -33,6 +33,7 @@ import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./ex
 import { createProjects } from "./projects.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
 import { createProjectRoutes } from "./projects-routes.mjs";
+import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mjs";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,7 +80,8 @@ if (!botMcpToken) {
 }
 const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
-const projects = createProjects({ file: path.join(appDir, "projects.json") });
+const projectsFile = path.join(appDir, "projects.json");
+const projects = createProjects({ file: projectsFile });
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
@@ -305,12 +307,23 @@ const DEFAULT_SETTINGS = {
   rules: { alwaysAsk: [], allowWithoutAsking: [] },
   sections: [],
   defaultModel: null,
+  beta: BETA_DEFAULTS,
 };
 const settingsPath = path.join(appDir, "settings.json");
+// Settings → Beta: decide the Projects board's default once, before anything reads the settings.
+// An unreadable settings.json is left alone rather than replaced.
+{
+  const saved = await readJson(settingsPath, undefined);
+  const settled = saved !== undefined || !existsSync(settingsPath) ? await settleBetaDefaults(saved, { projectsFile }) : null;
+  if (settled) await writeJson(settingsPath, settled);
+}
 const siteIcons = createSiteIcons({ dir: path.join(appDir, "site-icons") });
 async function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...(await readJson(settingsPath, {})) };
+  const saved = (await readJson(settingsPath, {})) ?? {};
+  return { ...DEFAULT_SETTINGS, ...saved, beta: betaSettings(saved.beta) };
 }
+/** The Projects board is a beta feature; off hides its routes, its Bot tools and its AGENTS.md section. */
+const projectsOn = async () => (await getSettings()).beta.projects;
 function botDir(slug) {
   if (!SLUG_RE.test(slug)) throw Object.assign(new Error("bad slug"), { status: 400 });
   return path.join(cfg.botsRoot, slug);
@@ -517,6 +530,11 @@ function typeIntoTab({ threadId, tabId, text }) {
   });
 }
 
+const projectTools = {
+  tools: PROJECT_TOOLS,
+  call: createProjectTools({ projects, appUrl, log: (line) => console.log(line) }),
+  instructions: "Also the user's Projects board (projects_* tools): their projects, to-dos, machines, what runs where, repos and links, shown live on their Projects page.",
+};
 const botTools = createBotTools({
   vault,
   async findBotByThread(threadId) {
@@ -527,13 +545,9 @@ const botTools = createBotTools({
   secretsDir: cfg.t3SecretsDir,
   tokenDir: path.join(path.dirname(cfg.vaultKeyFile), "bot-secrets"),
   log: (line) => console.log(line),
-  extra: {
-    tools: PROJECT_TOOLS,
-    call: createProjectTools({ projects, appUrl, log: (line) => console.log(line) }),
-    instructions: "Also the user's Projects board (projects_* tools): their projects, to-dos, machines, what runs where, repos and links, shown live on their Projects page.",
-  },
+  extra: async () => (await projectsOn() ? projectTools : null),
 });
-const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
+const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 
 async function vaultRoutes(req, res, p, url) {
   if (p === "/api/vault" && req.method === "GET") {
@@ -751,9 +765,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/settings" && req.method === "GET") return send(res, 200, await getSettings());
     if (p === "/api/settings" && req.method === "PUT") {
       const patch = await readBody(req);
-      const next = { ...(await getSettings()), ...patch };
+      const current = await getSettings();
+      const next = { ...current, ...patch };
+      if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
       await writeJson(settingsPath, next);
-      if ("rules" in patch || "userName" in patch || "timezone" in patch) await refreshAllAgentsMd();
+      if (!next.beta.projects) projectRoutes.closeStreams();
+      if ("rules" in patch || "userName" in patch || "timezone" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);

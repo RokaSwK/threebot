@@ -119,9 +119,10 @@ function toolJson(value) {
  * @param deps.log            (line) => void, never given secrets
  */
 /**
- * `extra` adds more tools to the same server (the Projects board): { tools, call(name, args, { botFor }) }.
+ * `extra` adds more tools to the same server (the Projects board): { tools, call(name, args, { botFor }) },
+ * or a function returning that or null, asked on every request, so a switched-off feature's tools are neither listed nor callable.
  */
-export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra = null }) {
+export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra: extraTools = null }) {
   // Files from an earlier run have no timer left to delete them.
   const ready = tokenDir ? fs.rm(tokenDir, { recursive: true, force: true }).then(() => fs.mkdir(tokenDir, { recursive: true, mode: 0o700 })).catch(() => {}) : Promise.resolve();
 
@@ -256,6 +257,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     }
     const isNotification = !("id" in msg);
     const reply = (result) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
+    const extra = typeof extraTools === "function" ? await extraTools() : extraTools;
     switch (msg.method) {
       case "initialize": {
         const asked = msg.params?.protocolVersion;

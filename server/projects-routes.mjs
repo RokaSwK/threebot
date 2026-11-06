@@ -16,9 +16,13 @@ export function sameOrigin(req) {
   return host === req.headers.host || (forwarded !== "" && host === forwarded);
 }
 
-/** `checkOrigin` lets the gateway use its own origin policy when it has one. */
-export function createProjectRoutes({ projects, send, readBody, requireJson, heartbeatMs = HEARTBEAT_MS, log = () => {}, checkOrigin = sameOrigin }) {
+/**
+ * `checkOrigin` lets the gateway use its own origin policy when it has one.
+ * `enabled` is the Settings → Beta switch: while it's off every /api/projects route answers 404.
+ */
+export function createProjectRoutes({ projects, send, readBody, requireJson, heartbeatMs = HEARTBEAT_MS, log = () => {}, checkOrigin = sameOrigin, enabled = async () => true }) {
   const streams = new Set();
+  const closers = new Map();
 
   projects.subscribe((event) => {
     const data = `event: change\ndata: ${JSON.stringify(event)}\n\n`;
@@ -38,9 +42,10 @@ export function createProjectRoutes({ projects, send, readBody, requireJson, hea
     streams.add(res);
     const beat = setInterval(() => res.write(`: keep-alive\n\n`), heartbeatMs);
     beat.unref?.();
-    const close = () => { clearInterval(beat); streams.delete(res); };
+    const close = () => { clearInterval(beat); streams.delete(res); closers.delete(res); };
     req.on("close", close);
     res.on("error", close);
+    closers.set(res, () => { close(); res.end(); });
     // Tell the page which version it's now following, so it can tell whether it missed anything.
     void projects.snapshot().then((snap) => res.write(`event: hello\ndata: ${JSON.stringify({ version: snap.version })}\n\n`)).catch(() => {});
   }
@@ -48,6 +53,7 @@ export function createProjectRoutes({ projects, send, readBody, requireJson, hea
   async function handle(req, res, url) {
     const p = url.pathname;
     if (p !== "/api/projects" && !p.startsWith("/api/projects/")) return false;
+    if (!(await enabled())) { send(res, 404, { error: "not found" }); return true; }
     if (p === "/api/projects" && req.method === "GET") {
       send(res, 200, await projects.snapshot(), { "cache-control": "no-store" });
       return true;
@@ -79,5 +85,10 @@ export function createProjectRoutes({ projects, send, readBody, requireJson, hea
     return true;
   }
 
-  return { handle, streamCount: () => streams.size };
+  /** End every open live stream, e.g. when the board is switched off. */
+  function closeStreams() {
+    for (const close of [...closers.values()]) close();
+  }
+
+  return { handle, closeStreams, streamCount: () => streams.size };
 }

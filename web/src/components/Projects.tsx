@@ -457,7 +457,7 @@ function NewItemDialog({ kind, area, parentId, machineId, onClose }: { kind: Kin
       setBusy(false);
     }
   };
-  const examples: Record<Kind, string> = { project: "Threebot launch", task: "Renew the domain", machine: "MacBook Air", service: "bot-gateway", repo: "RokaSwK/threebot", note: "How the NAS is set up", link: "Cloudflare dashboard" };
+  const examples: Record<Kind, string> = { project: "Website redesign", task: "Renew the domain", machine: "Home server", service: "Web server", repo: "acme/website", note: "Router and Wi-Fi setup", link: "Hosting dashboard" };
   return (
     <Modal title={`New ${KIND_LABEL[kind].toLowerCase()}`} onClose={onClose} className="w-[400px] max-w-full">
       <form className="p-4" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
