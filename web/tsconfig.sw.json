@@ -1,0 +1,18 @@
+{
+  // Type-checks the service worker on its own: it runs in a ServiceWorkerGlobalScope, not a window.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "noUnusedLocals": true,
+    "types": []
+  },
+  "files": ["src/sw.ts"]
+}

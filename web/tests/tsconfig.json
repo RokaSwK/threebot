@@ -1,0 +1,21 @@
+{
+  // Type-checks the web tests. Node runs them as they are (it strips the types), and most of them build the
+  // app with Vite and drive it through happy-dom, so what they import from the bundle is untyped. The check
+  // is deliberately loose: no strict mode and implicit `any` allowed, but every other error is reported.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "strict": false,
+    "noImplicitAny": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["*.mts"]
+}

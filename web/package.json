@@ -5,10 +5,11 @@
   "version": "0.1.3",
   "scripts": {
     "dev": "vite",
-    "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/*.test.mts",
     "build": "npm run typecheck && npm run build:ball && vite build",
     "build:ball": "rolldown src/landing/ball.ts --file public/welcome/img/ball.js --format iife --minify",
-    "typecheck": "tsrs -b --noEmit"
+    "typecheck": "tsrs -b --noEmit && tsrs -p tsconfig.sw.json && tsrs -p tsconfig.node.json",
+    "typecheck:tests": "tsrs -p tests/tsconfig.json"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -43,7 +44,6 @@
     "jsdom": "^30.1.3",
     "tailwindcss": "^4.3.3",
     "tsrs": "0.22.0-ts7.1.0-beta",
-    "typescript": "^7.0.2",
     "vite": "^8.3.5"
   }
 }

@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Plugin, ResolvedConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { transformWithOxc, type Plugin, type ResolvedConfig } from "vite";
 
 const PUBLIC_ASSETS = ["favicon-32.png", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"];
 const hash = (source: string | Uint8Array) => createHash("sha256").update(source).digest("hex");
+const WORKER = fileURLToPath(new URL("../src/sw.ts", import.meta.url));
+const MARKER = "BOT_BUILD_PRECACHE";
 
 /** Embed exact build bytes, including lazy chunks, in the worker that installs them. */
 export function pwaPrecache(): Plugin {
@@ -50,10 +53,11 @@ export function pwaPrecache(): Plugin {
         // Edge proxies rewrite HTML per request, so the page is identified by what it loads.
         ...(name === "index.html" ? { markers: [...Buffer.from(source).toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g)].map((match) => match[1]) } : {}),
       })).sort((a, b) => a.url.localeCompare(b.url));
-      const template = await readFile(path.join(config.publicDir, "sw.js"), "utf8");
+      // The worker is a classic script with no imports, so stripping its types is the whole build.
+      const { code: template } = await transformWithOxc(await readFile(WORKER, "utf8"), WORKER, { lang: "ts" });
+      if (template.split(MARKER).length !== 2) this.error("PWA worker is missing its build manifest marker.");
       const revision = hash(template + JSON.stringify(entries)).slice(0, 24);
-      const source = template.replace("/* BOT_BUILD_PRECACHE */ null", JSON.stringify({ revision, base, entries }));
-      if (source === template) this.error("PWA worker is missing its build manifest marker.");
+      const source = template.replace(MARKER, () => JSON.stringify({ revision, base, entries }));
       this.emitFile({ type: "asset", fileName: "sw.js", source });
     } },
   };
