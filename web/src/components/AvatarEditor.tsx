@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
-import { Camera, ChevronRight, ImageIcon, LoaderCircle, Plus, TriangleAlert } from "lucide-react";
+import { Camera, ChevronRight, ImageIcon, LoaderCircle, Plus, TriangleAlert, X } from "lucide-react";
 import type { AvatarDefinition } from "open-bot-avatar";
 import { Avatar } from "./Avatar";
-import { Modal, Pill } from "./ui";
+import { IconButton, Modal, Pill } from "./ui";
 import { avatarShape, botColor, DEFAULT_AVATAR, PICKER_COLORS, PICKER_SHAPES } from "../lib/character";
 import { importDefinition, OBJECT_AVATARS, objectShape } from "../lib/objectAvatars";
-import type { Drawing } from "../lib/avatarDrawing";
+import type { Drawing, DrawingOption } from "../lib/avatarDrawing";
 import "./avatar-editor.css";
 
 export type AvatarDraft = { shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown };
@@ -26,18 +26,28 @@ type PickerProps = {
   onChange: (shape: string, color: string, definition?: AvatarDefinition) => void;
   /** Objects other Bots have drawn, offered for reuse. */
   shared?: AvatarDefinition[];
-  /** Asks the Bot to draw a new object from a description. Only offered for an existing Bot. */
+  /** Asks for a new object from a description. Only offered for an existing Bot. */
   draw?: DrawControls;
+  /** Small labels over every group, as in the avatar editor. */
+  labels?: boolean;
 };
 
-export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], draw }: PickerProps) {
+const busyOption = (option: DrawingOption) => option.status === "drawing" || option.status === "checking" || option.status === "fixing";
+
+export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], draw, labels = false }: PickerProps) {
   const [open, setOpen] = useState(false);
+  const [chosen, setChosen] = useState(0);
   const drawing = draw?.drawing ?? null;
+  const options = drawing?.options ?? [];
+  // The chosen option, or the first one that is ready.
+  const ready = options.findIndex((option) => option.status === "ready");
+  const pick = options[chosen]?.status === "ready" ? chosen : ready >= 0 ? ready : chosen;
   const tile = (object: AvatarDefinition, own: boolean) => <button type="button" disabled={disabled} key={`${own ? "shared" : "gallery"}-${object.id}`} className="avatar-tile avatar-object" aria-label={object.name} title={object.name} aria-pressed={shape === objectShape(object.id)} onClick={() => onChange(objectShape(object.id), color, own ? object : undefined)}>
     <Avatar shape={objectShape(object.id)} color={color} definition={own ? object : undefined} size={40} still />
   </button>;
-  return <fieldset disabled={disabled} className="avatar-picker">
+  return <fieldset disabled={disabled} className={clsx("avatar-picker", labels && "avatar-picker-labelled")}>
     <legend className="sr-only">Choose an avatar</legend>
+    {labels && <p className="avatar-section-title" aria-hidden="true">Shape</p>}
     <div className="avatar-shapes">
       {PICKER_SHAPES.map(s => <button type="button" disabled={disabled} key={s} className="avatar-tile avatar-choice" data-shape={s} onClick={() => onChange(s, color)} aria-label={s === "t3" ? "T3 avatar" : `${s} shape`} aria-pressed={avatarShape(shape) === s}>
         <Avatar shape={s} color={color} size={64} />
@@ -49,38 +59,44 @@ export function AvatarPicker({ shape, color, onChange, disabled = false, shared 
       <p className="avatar-section-title">Drawn by your Bots</p>
       <div className="avatar-objects avatar-drawn">
         {shared.map(object => tile(object, true))}
-        {draw && <DrawTile drawing={drawing} color={color} open={open} disabled={disabled} onToggle={() => setOpen(value => !value)} />}
+        {draw && (drawing ? (options.length ? options : [{ status: "drawing" } as DrawingOption]).map((option, index) =>
+          <OptionTile key={option.thread?.id ?? index} option={option} index={index} count={Math.max(options.length, 1)} color={color} chosen={option.status === "ready" && index === pick} disabled={disabled} onChoose={() => setChosen(index)} />)
+          : <button type="button" disabled={disabled} className="avatar-tile avatar-object avatar-object-new" aria-label="Draw a new object" title="Draw a new object" aria-expanded={open} onClick={() => setOpen(value => !value)}><Plus size={20} aria-hidden="true" /></button>)}
       </div>
-      {draw && (drawing || open) && <DrawPanel draw={draw} color={color} disabled={disabled} onClose={() => setOpen(false)} />}
+      {draw && (drawing || open) && <DrawPanel draw={draw} chosen={options[pick]} color={color} disabled={disabled} onClose={() => setOpen(false)} />}
     </>}
+    {labels && <p className="avatar-section-title" aria-hidden="true">Colour</p>}
     <div className="avatar-colors">
       {PICKER_COLORS.map(c => <button key={c.id} type="button" disabled={disabled} onClick={() => onChange(shape, c.id)} style={{ background: botColor(c.id) }} aria-label={c.name} aria-pressed={color === c.id} />)}
     </div>
   </fieldset>;
 }
 
-/** The "+" tile, which stands for the drawing once one is under way. */
-function DrawTile({ drawing, color, open, disabled, onToggle }: { drawing: Drawing | null; color: string; open: boolean; disabled: boolean; onToggle: () => void }) {
-  if (!drawing) return <button type="button" disabled={disabled} className="avatar-tile avatar-object avatar-object-new" aria-label="Draw a new object" title="Draw a new object" aria-expanded={open} onClick={onToggle}><Plus size={20} aria-hidden="true" /></button>;
-  if (drawing.status === "ready") return <span className="avatar-tile avatar-object avatar-object-draft" role="img" aria-label={`Drawing ready: ${drawing.definition.name}`} title={drawing.definition.name}><Avatar shape={objectShape(drawing.definition.id)} color={color} definition={drawing.definition} size={40} still /></span>;
-  if (drawing.status === "failed") return <span className="avatar-tile avatar-object avatar-object-draft" data-failed role="img" aria-label="Drawing failed"><TriangleAlert size={18} aria-hidden="true" /></span>;
-  return <span className="avatar-tile avatar-object avatar-object-draft" data-pending role="img" aria-label="Drawing"><LoaderCircle size={20} className="animate-spin" aria-hidden="true" /></span>;
+/** One option of a drawing: a spinner while it draws, then the drawing to pick. */
+function OptionTile({ option, index, count, color, chosen, disabled, onChoose }: { option: DrawingOption; index: number; count: number; color: string; chosen: boolean; disabled: boolean; onChoose: () => void }) {
+  const label = count > 1 ? `Option ${index + 1} of ${count}` : "Drawing";
+  if (option.status === "ready") return <button type="button" disabled={disabled} className="avatar-tile avatar-object avatar-object-draft" data-ready aria-pressed={chosen} aria-label={`${label}: ${option.definition.name}`} title={option.definition.name} onClick={onChoose}>
+    <Avatar shape={objectShape(option.definition.id)} color={color} definition={option.definition} size={40} still />
+  </button>;
+  if (option.status === "failed") return <span className="avatar-tile avatar-object avatar-object-draft" data-failed role="img" aria-label={`${label}: couldn't draw it`} title={option.error}><TriangleAlert size={18} aria-hidden="true" /></span>;
+  return <span className="avatar-tile avatar-object avatar-object-draft" data-pending role="img" aria-label={`${label}: ${option.status === "fixing" ? "fixing" : "drawing"}`}><LoaderCircle size={20} className="animate-spin" aria-hidden="true" /></span>;
 }
 
 function useElapsed(since: string | undefined, running: boolean) {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { if (!running) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [running]);
+  useEffect(() => { if (!running) return; setNow(Date.now()); const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [running]);
   const seconds = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) : 0;
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function DrawPanel({ draw, color, disabled, onClose }: { draw: DrawControls; color: string; disabled: boolean; onClose: () => void }) {
+function DrawPanel({ draw, chosen, color, disabled, onClose }: { draw: DrawControls; chosen?: DrawingOption; color: string; disabled: boolean; onClose: () => void }) {
   const { drawing } = draw;
   const [description, setDescription] = useState("");
   const [using, setUsing] = useState(false);
   const [error, setError] = useState("");
-  const busy = drawing?.status === "drawing" || drawing?.status === "checking";
-  const elapsed = useElapsed(drawing?.thread?.createdAt, busy);
+  const options = drawing?.options ?? [];
+  const busy = !!drawing && !drawing.error && (!options.length || options.some(busyOption));
+  const elapsed = useElapsed(drawing?.startedAt, busy);
   const submit = () => { const text = description.trim(); if (!text) return; draw.start(text); setDescription(""); };
   const use = async (definition: AvatarDefinition) => {
     setUsing(true); setError("");
@@ -94,24 +110,27 @@ function DrawPanel({ draw, color, disabled, onClose }: { draw: DrawControls; col
     <Pill type="submit" disabled={disabled || !description.trim()}>Draw it</Pill>
   </form>;
   const quoted = drawing.description ? `“${drawing.description}”` : "your object";
+  const done = options.filter((option) => option.status === "ready").length;
+  const failure = drawing.error ?? (options.length && options.every((option) => option.status === "failed") ? (options[0] as Extract<DrawingOption, { status: "failed" }>).error : "");
+  const ready = chosen?.status === "ready" ? chosen.definition : null;
   return <div className="avatar-draw-card" role="status" aria-live="polite">
     <span className="avatar-draw-preview">
-      {drawing.status === "ready" ? <Avatar shape={objectShape(drawing.definition.id)} color={color} definition={drawing.definition} size={64} state="happy" />
-        : drawing.status === "failed" ? <TriangleAlert size={22} aria-hidden="true" />
-        : <LoaderCircle size={24} className="animate-spin" aria-hidden="true" />}
+      {ready ? <Avatar shape={objectShape(ready.id)} color={color} definition={ready} size={56} state="happy" />
+        : failure ? <TriangleAlert size={22} aria-hidden="true" />
+        : <LoaderCircle size={22} className="animate-spin" aria-hidden="true" />}
     </span>
     <span className="avatar-draw-text">
-      {drawing.status === "ready" ? <><strong>{drawing.definition.name}</strong><span>Drawn from {quoted}. Use it to make it this Bot's avatar.</span></>
-        : drawing.status === "failed" ? <><strong>Couldn't draw {quoted}</strong><span className="avatar-draw-error">{error || drawing.error}</span></>
-        : <><strong>Drawing {quoted}</strong><span>{drawing.status === "checking" ? "Checking the drawing…" : `${elapsed} · In the background, not in your chat`}</span></>}
-      {error && drawing.status !== "failed" && <span className="avatar-draw-error" role="alert">{error}</span>}
+      {failure ? <><strong>Couldn't draw {quoted}</strong><span className="avatar-draw-error">{error || failure}</span></>
+        : ready ? <><strong>{ready.name}</strong><span>{busy ? `${done} of ${options.length} ready · ${elapsed}` : options.length > 1 ? "Pick one, then Use it." : "Use it to make it this Bot's avatar."}</span></>
+        : <><strong>Drawing {quoted}</strong><span>{options.some((option) => option.status === "fixing") ? `Fixing a drawing · ${elapsed}` : `${elapsed} · In the background, not in your chat`}</span></>}
+      {error && !failure && <span className="avatar-draw-error" role="alert">{error}</span>}
       {busy && <span className="avatar-draw-progress" aria-hidden="true" />}
     </span>
     <span className="avatar-draw-actions">
-      {busy ? <Pill variant="ghost" disabled={disabled || !drawing.thread} onClick={draw.discard}>Stop</Pill> : <>
+      {busy && !ready ? <Pill variant="ghost" disabled={disabled || !options.length} onClick={draw.discard}>Stop</Pill> : <>
         <Pill variant="ghost" disabled={disabled || using} onClick={draw.discard}>Discard</Pill>
         {drawing.description && <Pill variant="soft" disabled={disabled || using} onClick={draw.retry}>Try again</Pill>}
-        {drawing.status === "ready" && <Pill disabled={disabled || using} onClick={() => void use(drawing.definition)}>Use</Pill>}
+        {ready && <Pill disabled={disabled || using} onClick={() => void use(ready)}>Use</Pill>}
       </>}
     </span>
   </div>;
@@ -138,7 +157,7 @@ function AvatarImport({ color, disabled, onImport }: { color: string; disabled: 
   </details>;
 }
 
-export function AvatarEditor({ value, onChange, disabled = false, onPendingChange, shared, draw }: { value: AvatarDraft; onChange: (value: AvatarDraft) => void; disabled?: boolean; onPendingChange?: (pending: boolean) => void; shared?: AvatarDefinition[]; draw?: DrawControls }) {
+export function AvatarEditor({ value, onChange, disabled = false, onPendingChange, shared, draw, actions }: { value: AvatarDraft; onChange: (value: AvatarDraft) => void; disabled?: boolean; onPendingChange?: (pending: boolean) => void; shared?: AvatarDefinition[]; draw?: DrawControls; /** Done and close, at the end of the header row on desktop. */ actions?: ReactNode }) {
   const [tab, setTab] = useState<"bot" | "upload">("bot");
   const [crop, setCrop] = useState<Crop | null>(null);
   const [error, setError] = useState("");
@@ -191,12 +210,15 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
     <button type="button" role="tab" aria-selected={tab === "bot"} disabled={disabled} onClick={() => { version.current++; setLoading(false); setCrop(null); setTab("bot"); }}><span className="avatar-desktop">Bot</span><span className="avatar-mobile">Shape</span></button>
     <button type="button" role="tab" aria-selected={tab === "upload"} disabled={disabled} onClick={() => setTab("upload")}>Upload</button>
   </div>;
+  // One surface: the preview on the left (on top on mobile), the header row and the choices beside it.
   return <div className="avatar-editor" onPaste={e => { const file = Array.from(e.clipboardData.files).find(f => f.type.startsWith("image/")); if (file) { e.preventDefault(); void load(file); } }}>
-    <div className="avatar-mobile avatar-mobile-tabs">{tabs}</div>
+    <div className="avatar-editor-head">
+      {tabs}
+      <span className="avatar-desktop avatar-editor-actions"><button type="button" className="avatar-editor-reset" disabled={disabled} onClick={reset}>Reset</button>{actions}</span>
+    </div>
     <div className="avatar-editor-preview" aria-label="Avatar preview"><Avatar shape={value.shape} color={value.color} picture={value.avatarImage} definition={value.avatarDefinition} size={112} /></div>
-    <div className="avatar-editor-card">
-      <div className="avatar-desktop avatar-card-header">{tabs}<button type="button" disabled={disabled} onClick={reset}>Reset</button></div>
-      {tab === "bot" ? <AvatarPicker shape={value.shape} color={value.color} disabled={disabled} shared={shared} draw={draw} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
+    <div className="avatar-editor-body">
+      {tab === "bot" ? <AvatarPicker labels shape={value.shape} color={value.color} disabled={disabled} shared={shared} draw={draw} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
         {crop ? <>
           <div className="avatar-crop" aria-label="Drag to reposition" onPointerDown={e => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, startX: crop.x, startY: crop.y }; }} onPointerMove={e => { if (!drag.current) return; const size = e.currentTarget.clientWidth; setCrop(limitCrop({ ...crop, x: drag.current.startX + (e.clientX - drag.current.x) / size, y: drag.current.startY + (e.clientY - drag.current.y) / size })); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
             <img draggable={false} alt="" src={crop.source.src} style={{ width: `${100 * crop.source.naturalWidth / Math.min(crop.source.naturalWidth, crop.source.naturalHeight) * crop.zoom}%`, maxWidth: "none", transform: `translate(calc(-50% + ${crop.x * 240}px), calc(-50% + ${crop.y * 240}px))` }} />
@@ -240,7 +262,9 @@ export function AvatarEditorDialog({ initial, onSave, onClose, shared, draw }: {
     setDraft(next);
     draw?.discard();
   };
-  return <Modal title="Avatar" className="avatar-editor-sheet w-[560px]" onClose={close} onBack={close} headerActions={<Pill disabled={saving || pending} onClick={() => void save()}>Done</Pill>}>
-    <div className="dialog-body"><AvatarEditor value={draft} onChange={setDraft} disabled={saving} onPendingChange={setPending} shared={shared} draw={draw && { ...draw, use }} />{error && <p role="alert" className="avatar-editor-error">{error}</p>}</div>
+  const done = <Pill disabled={saving || pending} onClick={() => void save()}>Done</Pill>;
+  // Mobile keeps the sheet's own header (Back, title, Done); desktop puts Done and close on the editor's header row.
+  return <Modal title="Avatar" className="avatar-editor-sheet w-[560px]" onClose={close} onBack={close} headerActions={done}>
+    <div className="dialog-body"><AvatarEditor value={draft} onChange={setDraft} disabled={saving} onPendingChange={setPending} shared={shared} draw={draw && { ...draw, use }} actions={<>{done}<IconButton className="avatar-editor-close" onClick={close} aria-label="Close"><X size={16} /></IconButton></>} />{error && <p role="alert" className="avatar-editor-error">{error}</p>}</div>
   </Modal>;
 }

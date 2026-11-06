@@ -16,7 +16,7 @@ const bundle = await build({
 });
 const entry = bundle.output.find((output) => output.type === "chunk" && output.isEntry);
 assert.ok(entry, "test bundle has an entry point");
-const { drawingDescription, drawingOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, importDefinition, isAvatarDrawing, isObjectShape, OBJECT_AVATARS, objectDefinition, objectMood, objectShape, parseDrawing, safeDefinition, sideChatsOf } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString("base64")}`);
+const { DRAWING_RULES, drawingDescription, drawingModel, drawingOf, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fastDrawingModel, fixPrompt, importDefinition, isAvatarDrawing, isObjectShape, OBJECT_AVATARS, objectDefinition, objectMood, objectShape, parseDrawing, safeDefinition, sideChatsOf } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString("base64")}`);
 
 const fox = { version: 1, id: "fox", name: "Fox", body: { path: "M20 20 H80 V80 H20 Z" }, eyes: { x: 50, y: 46, spacing: 15, scale: 1 } };
 
@@ -66,24 +66,58 @@ const side = (patch = {}) => ({ id: "s", title: "Side", status: "idle", activeRu
   createdAt: "2026-11-06T10:00:00Z", updatedAt: "2026-11-06T10:00:00Z", lineage: { parentThreadId: "main", relationshipToParent: "fork", rootThreadId: "main", sideChat: true }, ...patch });
 const reply = (text) => ({ type: "assistant_message", text });
 
-test("a drawing is a side chat that side chat lists leave out", () => {
-  const drawing = side({ id: "d", title: drawingTitle("a fox with a scarf") });
-  const threads = { d: drawing, s: side(), older: side({ id: "older", title: drawingTitle("an owl"), createdAt: "2026-11-05T00:00:00Z" }) };
-  assert.equal(isAvatarDrawing(drawing), true);
+test("a drawing is the newest set of hidden side chats in the Bot's project, which side chat lists leave out", () => {
+  const bot = { mainThreadId: "main", projectId: "p" };
+  const option = (id, patch = {}) => side({ id, projectId: "p", title: drawingTitle("a fox with a scarf"), createdAt: `2026-11-06T10:00:0${id.at(-1)}Z`, lineage: { parentThreadId: "job", relationshipToParent: "fork", rootThreadId: "job", sideChat: true }, ...patch });
+  const threads = { o2: option("o2"), o1: option("o1"), o3: option("o3"), s: side({ projectId: "p" }),
+    older: side({ id: "older", projectId: "p", title: drawingTitle("an owl"), createdAt: "2026-11-05T00:00:00Z", lineage: { parentThreadId: "old-job", relationshipToParent: "fork", rootThreadId: "old-job", sideChat: true } }),
+    elsewhere: side({ id: "elsewhere", projectId: "q", title: drawingTitle("a cat"), createdAt: "2026-11-07T00:00:00Z", lineage: { parentThreadId: "other-job", relationshipToParent: "fork", rootThreadId: "other-job", sideChat: true } }) };
+  assert.equal(isAvatarDrawing(threads.o1), true);
   assert.equal(isAvatarDrawing(side()), false);
   assert.deepEqual(sideChatsOf(threads, "main").map((t) => t.id), ["s"]);
-  assert.equal(drawingOf(threads, "main").id, "d");
-  assert.equal(drawingOf(threads, "other"), undefined);
+  assert.deepEqual(drawingOf(threads, bot).map((t) => t.id), ["o1", "o2", "o3"], "options in order, the older drawing and other Bots' left out");
+  assert.deepEqual(drawingsOf(threads, bot).map((t) => t.id).sort(), ["o1", "o2", "o3", "older"], "discarding clears the older drawing too");
+  assert.deepEqual(drawingOf(threads, { mainThreadId: "other", projectId: "r" }), []);
+  // A drawing started before this change is a side chat of the main thread, and still counts.
+  assert.deepEqual(drawingOf({ legacy: side({ id: "legacy", title: drawingTitle("an owl") }) }, { mainThreadId: "main", projectId: null }).map((t) => t.id), ["legacy"]);
   const long = `a fox with ${"a very long striped scarf, ".repeat(6)}and boots`;
   assert.equal(drawingDescription(side({ title: drawingTitle(` ${long}\n`) })), long, "Try again asks for the whole description");
 });
 
-test("the drawing prompt keeps the Bot's avatar rules and leaves its files alone", () => {
-  const prompt = drawingPrompt("  a fox with a scarf ");
-  assert.match(prompt, /a fox with a scarf\./);
-  assert.match(prompt, /avatar drawing rules in your instructions/);
-  assert.match(prompt, /Don't edit `\.bot\/bot\.json`/);
+test("the drawing prompt is only the avatar rules and the description, the same rules as AGENTS.md", async () => {
+  const prompt = drawingPrompt("  a fox with a scarf ", 2, 3);
+  assert.match(prompt, /^Draw one object avatar: a fox with a scarf\./);
   assert.match(prompt, /```json/);
+  assert.match(prompt, /option 2 of 3/);
+  assert.doesNotMatch(drawingPrompt("a fox"), /option/);
+  assert.doesNotMatch(prompt, /bot\.json|yourself|your instructions/, "nothing about the Bot");
+  const { readFile } = await import("node:fs/promises");
+  const agents = await readFile(new URL("../../server/bot-template.mts", import.meta.url), "utf8");
+  for (const rule of ["0 0 100 100", "within 8..92", "wound clockwise", "M L H V C S Q T A Z", "under 1500 characters", "Put the eyes on the biggest part, with about 36 by 25 units of solid fill around them"]) {
+    assert.ok(DRAWING_RULES.includes(rule), `prompt has: ${rule}`);
+    assert.ok(agents.includes(rule), `AGENTS.md has: ${rule}`);
+  }
+  assert.match(fixPrompt("The drawing didn't validate: body.path: path is empty"), /^That avatar didn't validate: body\.path: path is empty/);
+});
+
+const descriptor = (id, options) => ({ id, label: id, type: "select", options: options.map(([id, label]) => ({ id, label })) });
+const codex = { instanceId: "codex", driver: "codex", displayName: "Codex", enabled: true, status: "ready", models: [
+  { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+  { slug: "gpt-5.6-luna", name: "GPT-5.6-Luna" },
+  { slug: "gpt-6-luna", name: "GPT-6-Luna", capabilities: { optionDescriptors: [descriptor("reasoningEffort", [["low", "Low"], ["medium", "Medium"]]), descriptor("serviceTier", [["default", "Standard"], ["priority", "Fast"]])] } }] };
+const claude = { instanceId: "claudeAgent", driver: "claudeAgent", displayName: "Claude", enabled: true, status: "ready", models: [
+  { slug: "claude-opus-5-5", name: "Opus 5.5" }, { slug: "claude-haiku-4-5", name: "Haiku 4.5" },
+  { slug: "claude-haiku-5-5", name: "Haiku 5.5", capabilities: { optionDescriptors: [descriptor("effort", [["low", "Low"], ["high", "High"]])] } }] };
+
+test("drawing picks GPT-6 Luna on the fast tier, then Claude Haiku, then the Bot's own model", () => {
+  assert.deepEqual(fastDrawingModel([claude, codex]), { instanceId: "codex", model: "gpt-6-luna", options: [{ id: "reasoningEffort", value: "low" }, { id: "serviceTier", value: "priority" }] });
+  assert.deepEqual(fastDrawingModel([claude]), { instanceId: "claudeAgent", model: "claude-haiku-5-5", options: [{ id: "effort", value: "low" }] });
+  assert.equal(fastDrawingModel([{ ...codex, status: "disabled" }]), null, "a provider that isn't ready is skipped");
+  const own = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+  assert.equal(drawingModel([], null, own), own);
+  const setting = { instanceId: "claudeAgent", model: "claude-haiku-4-5" };
+  assert.equal(drawingModel([codex, claude], setting, own), setting, "the setting wins while it's offered");
+  assert.equal(drawingModel([codex], setting, own).model, "gpt-6-luna", "and falls back when it isn't");
 });
 
 test("a reply becomes a validated definition, or says why not", () => {
@@ -99,14 +133,20 @@ test("a reply becomes a validated definition, or says why not", () => {
   assert.equal(parseDrawing("```json\n" + JSON.stringify({ ...fox, body: { path: 'M0 0"/><img src=x onerror=alert(1)>' } }) + "\n```").ok, false);
 });
 
-test("a drawing is pending until its run finishes, then shows its result", () => {
+test("an option is pending until its run finishes; a reply that doesn't validate gets one fix", () => {
   const thread = side({ title: drawingTitle("a fox") });
   assert.equal(drawingPending({ ...thread, latestRunId: null }).status, "drawing");
   assert.equal(drawingPending({ ...thread, status: "running", activeRunId: "r1" }).status, "drawing");
   assert.equal(drawingPending(thread), null);
-  const ready = drawingResult(thread, [reply("```json\n" + JSON.stringify(fox) + "\n```")], [{ id: "r1", ordinal: 1, status: "completed" }]);
-  assert.equal(ready.status, "ready");
-  assert.equal(ready.description, "a fox");
+  const one = [{ id: "r1", ordinal: 1, status: "completed" }], two = [...one, { id: "r2", ordinal: 2, status: "completed" }];
+  assert.equal(drawingResult(thread, [reply("```json\n" + JSON.stringify(fox) + "\n```")], one).status, "ready");
   assert.equal(drawingResult(thread, [], [{ id: "r1", ordinal: 1, status: "failed" }]).status, "failed");
-  assert.equal(drawingResult(thread, [], [{ id: "r1", ordinal: 1, status: "completed" }]).error, "The Bot finished without an avatar.");
+  const broken = reply("```json\n" + JSON.stringify({ ...fox, body: { path: "" } }) + "\n```");
+  const fixing = drawingResult(thread, [broken], one);
+  assert.equal(fixing.status, "fixing");
+  assert.match(fixing.retry, /path is empty/);
+  const failed = drawingResult(thread, [broken, broken], two);
+  assert.equal(failed.status, "failed", "only one fix");
+  assert.equal(failed.retry, undefined);
+  assert.equal(drawingResult(thread, [], one).retry, "The model finished without an avatar.");
 });
