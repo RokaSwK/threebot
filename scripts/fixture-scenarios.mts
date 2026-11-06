@@ -489,6 +489,9 @@ export function seedAvatars({ threads, items, runs, model }: { threads: FixtureT
         calls.push({ type: 'thread.create', title: payload.title, modelSelection: payload.modelSelection });
         return { value: { sequence: 0 } };
       }
+      // "refused" turns down option 2's message, as a T3 that rejects one dispatch would.
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'message.dispatch' && /option 2 of/.test(payload.text ?? '')
+        && /refused/i.test(threads.find((thread) => thread.id === payload.threadId)?.title ?? '')) return { error: 'Fixture refused this drawing option.' };
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.archive') {
         const job = threads.find((thread) => thread.id === payload.threadId && thread.title === AVATAR_DRAWING_JOB);
         if (!job) return null;

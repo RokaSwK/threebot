@@ -928,8 +928,14 @@ export async function startAvatarDrawing(bot: Bot, description: string, options 
     const started = await Promise.allSettled(Array.from({ length: options }, async (_, index) => {
       const threadId = uuid();
       await t3.dispatch({ type: "thread.fork", ...actor, sourceThreadId: jobId, targetThreadId: threadId, sourcePoint: { type: "latest_stable" }, sideChat: true, title: drawingTitle(description) }, { timeoutMs: 30_000 });
-      if (!await threadArrives(threadId)) throw new Error("The drawing didn't reach this device. Try again.");
-      await sendMessage(bot.slug, drawingPrompt(description, index + 1, options), [], threadId);
+      try {
+        if (!await threadArrives(threadId)) throw new Error("The drawing didn't reach this device. Try again.");
+        await sendMessage(bot.slug, drawingPrompt(description, index + 1, options), [], threadId);
+      } catch (error) {
+        // An option that never started would spin forever; the others go on without it.
+        await t3.dispatch({ type: "thread.delete", threadId }).catch(() => {});
+        throw error;
+      }
       return threadId;
     }));
     const running = started.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
