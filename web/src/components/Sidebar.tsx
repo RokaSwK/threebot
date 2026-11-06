@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import clsx from "clsx";
 import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, CloudDownload, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
-import { Avatar, type AvatarState } from "./Avatar";
+import { ActivityAvatar } from "./ActivityAvatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
 import { useUpdateNotice } from "./RemoteAccess";
@@ -10,10 +10,6 @@ import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
 import type { Bot, ThreadShell } from "../lib/types";
-
-export function avatarStateFor(status: BotStatus): AvatarState {
-  return status === "working" ? "working" : status === "waiting" ? "waiting" : status === "failed" ? "failed" : "idle";
-}
 
 function preview(bot: Bot, status: BotStatus) {
   const s = useApp.getState();
@@ -191,7 +187,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
     <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4">
       {[pinned, ...groups.map((g) => g.bots)].filter((group) => group.length).map((group, index) => <div key={index} className="flex flex-col items-center gap-2 border-b border-line py-3 last:border-0">{group.map((bot) => {
         const status = botStatus(bot);
-        return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} state={avatarStateFor(status)} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
+        return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><ActivityAvatar threadId={bot.mainThreadId} status={status} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
       })}</div>)}
     </div>
     <div className="flex shrink-0 flex-col items-center gap-2 pt-2">{projectsOn && <RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton>}<RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
@@ -227,7 +223,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
                   className={clsx("pinned-bot flex w-[76px] flex-col items-center gap-1.5 rounded-2xl pt-2.5 pb-2 transition-colors", selected === b.slug ? "bg-active" : "hover:bg-hover")}
                 >
                   <span className="relative">
-                    <Avatar shape={b.shape} color={b.color} picture={b.avatarImage} size={wide ? 52 : 60} state={wide && st === "waiting" ? "idle" : avatarStateFor(st)} star={b.primary} />
+                    <ActivityAvatar threadId={b.mainThreadId} status={st} quietWaiting={wide} shape={b.shape} color={b.color} picture={b.avatarImage} size={wide ? 52 : 60} star={b.primary} />
                     {(st === "waiting" || (!wide && st === "unread")) && <Dot status={st} className="absolute -top-0.5 -right-0.5" />}
                   </span>
                   <span className="pinned-name w-full truncate px-1 text-center text-[12px] text-fg/90">{b.name}{wide && st === "unread" && <Dot status={st} className="ml-1.5 inline-block align-middle" />}{b.primary && <span className="pinned-main-label block text-[10px] text-muted">Main Bot</span>}</span>
@@ -323,7 +319,7 @@ function BotRow({ bot, selected, onMenu, large }: { large: boolean; bot: Bot; se
       onMenu={(e) => onMenu(e, bot)}
       className={clsx("bot-row flex w-full items-center gap-3 rounded-[10px] px-2 py-[9px] text-left transition-colors", selected ? "bg-active" : "hover:bg-hover")}
     >
-      <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={large ? 44 : 36} state={large && st === "waiting" ? "idle" : avatarStateFor(st)} star={bot.primary} />
+      <ActivityAvatar threadId={bot.mainThreadId} status={st} quietWaiting={large} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={large ? 44 : 36} star={bot.primary} />
       <span className="min-w-0 flex-1 pr-7">
         <span className="flex items-baseline gap-2"><span className="bot-row-name block min-w-0 flex-1 truncate text-[13.5px] leading-5 text-fg">{bot.name}</span><span className="bot-row-time hidden shrink-0 text-[12px] text-faint">{messageDate(p.at ?? undefined)}</span></span>
         <span className={clsx("bot-row-preview flex min-w-0 items-center gap-1.5 text-[12.5px] leading-[18px]", p.tone === "attention" ? "text-attention" : "text-muted")}>{p.icon && <PreviewIcon>{p.icon}</PreviewIcon>}<span className="min-w-0 truncate">{p.text}</span></span>

@@ -20,7 +20,7 @@ export const INTERACTION_IDS = {
 };
 
 export function validateScenario(scenario) {
-  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars.');
+  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars', 'activity'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity.');
 }
 
 // A believable personal setup for product screenshots. Everything here is invented;
@@ -439,5 +439,96 @@ export function seedAvatars({ threads, items, runs, model }) {
       setTimeout(() => finish(thread, reply, publish), /slow/i.test(thread.title) ? 30000 : 6000);
     },
     model,
+  };
+}
+
+// Bots doing different things at once, for the activity-driven avatars. Alpha walks
+// through a scripted turn (thinking, searching, writing, a command, a subagent, a
+// message to another Bot) and finishes; the rest hold one shell-level activity, and
+// Theta keeps waking up for short runs. Synthetic shells and items only.
+export const ACTIVITY_SAMPLES = [
+  { slug: 'alpha', name: 'Alpha', shape: 't3', color: 'purple', primary: true },
+  { slug: 'beta', name: 'Beta', shape: 'clover', color: 'orange', primary: false },
+  { slug: 'gamma', name: 'Gamma', shape: 'sparkle', color: 'purple', primary: false },
+  { slug: 'delta', name: 'Delta', shape: 'hex', color: 'blue', primary: false },
+  { slug: 'epsilon', name: 'Epsilon', shape: 'pebble', color: 'pink', primary: false },
+  { slug: 'zeta', name: 'Zeta', shape: 'object:ghost', color: 'teal', primary: false },
+  { slug: 'eta', name: 'Eta', shape: 'drop', color: 'green', primary: false },
+  { slug: 'theta', name: 'Theta', shape: 'cloud', color: 'teal', primary: false },
+  { slug: 'iota', name: 'Iota', shape: 't3', color: 'purple', primary: false },
+  { slug: 'kappa', name: 'Kappa', shape: 'squircle', color: 'blue', primary: false },
+  { slug: 'lambda', name: 'Lambda', shape: 'flower', color: 'pink', primary: false },
+  { slug: 'mu', name: 'Mu', shape: 'gem', color: 'orange', primary: false },
+  { slug: 'nu', name: 'Nu', shape: 't3', color: 'purple', primary: false },
+  { slug: 'xi', name: 'Xi', shape: 'star', color: 'green', primary: false },
+];
+export const ACTIVITY_STEP_MS = 2600;
+const ALPHA_SCRIPT = [
+  ['reasoning', {}],
+  ['web_search', { query: 'generic sample query' }],
+  ['assistant_message', { text: 'Writing a generic sample reply…', streaming: true }],
+  ['command_execution', { command: 'echo sample', title: 'Run a sample command' }],
+  ['subagent', { title: 'Sample helper' }],
+  ['dynamic_tool', { toolName: 'mcp__t3-code__t3_thread_send' }],
+  ['file_change', { fileName: 'notes/sample.md' }],
+  ['done', {}],
+  ['rest', {}],
+];
+
+export function seedActivity({ threads, items, runs, model }) {
+  const now = () => new Date().toISOString();
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const thread = (slug) => threads.find((t) => t.id === `thread-${slug}`);
+  const start = (t, status = 'running') => {
+    const list = runs.get(t.id);
+    const run = { id: `${t.id}-run-${list.length + 1}`, ordinal: list.length + 1, status, requestedAt: now(), startedAt: now(), completedAt: null, modelSelection: model };
+    list.push(run);
+    Object.assign(t, { status, activityRunStatus: status, activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: run.startedAt, latestRunCompletedAt: null, updatedAt: now() });
+    return run;
+  };
+  const finish = (t, startedAgo = 0) => {
+    const at = now();
+    for (const run of runs.get(t.id)) if (run.status === 'running') Object.assign(run, { status: 'completed', completedAt: at });
+    Object.assign(t, { status: 'completed', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: at, lastVisitedAt: at, updatedAt: at,
+      ...(startedAgo ? { latestRunStartedAt: ago(startedAgo) } : {}) });
+  };
+  for (const t of threads) Object.assign(t, { lastVisitedAt: now(), latestRunCompletedAt: ago(5 * 60_000), latestUserMessageAt: ago(5 * 60_000), createdAt: ago(86_400_000), status: 'completed' });
+  for (const slug of ['beta', 'iota', 'kappa', 'lambda', 'mu', 'nu', 'xi', 'zeta']) start(thread(slug));
+  start(thread('gamma'), 'starting');
+  Object.assign(thread('delta'), { pendingRuntimeRequest: { id: 'fixture-activity-question', kind: 'user_input', blocking: true } });
+  Object.assign(thread('epsilon'), { status: 'failed', lastErrorClass: 'provider_error', lastError: 'Synthetic failure for the fixture.' });
+  Object.assign(thread('eta'), { latestRunCompletedAt: ago(40 * 60_000), latestUserMessageAt: ago(40 * 60_000) });
+  Object.assign(thread('theta'), { latestRunCompletedAt: ago(5 * 3_600_000), latestUserMessageAt: ago(5 * 3_600_000) });
+
+  const alpha = thread('alpha');
+  let step = 0;
+  let run = null;
+  let thetaTicks = 0;
+  const advance = () => {
+    const [type, extra] = ALPHA_SCRIPT[step % ALPHA_SCRIPT.length];
+    const list = items.get(alpha.id);
+    for (const item of list) if (item.runId && item.status === 'running') Object.assign(item, { status: 'completed', streaming: false, completedAt: now(), updatedAt: now() });
+    if (type === 'done') { finish(alpha, 3 * 60_000); run = null; }
+    else if (type !== 'rest') {
+      if (!run) run = start(alpha);
+      const ordinal = Math.max(0, ...list.map((item) => item.ordinal)) + 1;
+      list.push({ id: `${alpha.id}-activity-${ordinal}`, threadId: alpha.id, ordinal, type, runId: run.id, status: 'running', title: extra.title ?? null,
+        startedAt: now(), completedAt: null, updatedAt: now(), parentItemId: null, ...extra });
+    }
+    step++;
+    // Theta sleeps, wakes for a short run, cheers, and nods off again.
+    const theta = thread('theta');
+    thetaTicks++;
+    if (thetaTicks % 6 === 2) start(theta);
+    else if (thetaTicks % 6 === 4) finish(theta);
+    else if (thetaTicks % 6 === 0) Object.assign(theta, { latestRunCompletedAt: ago(5 * 3_600_000), latestUserMessageAt: ago(5 * 3_600_000), status: 'completed' });
+  };
+  advance();
+  return {
+    start(publish) {
+      const timer = setInterval(() => { advance(); publish(); }, ACTIVITY_STEP_MS);
+      timer.unref?.();
+      return () => clearInterval(timer);
+    },
   };
 }

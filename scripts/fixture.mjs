@@ -90,7 +90,7 @@ async function seed(root, scenario = 'basic') {
   }
   const settings = landing
     ? { userName: LANDING_USER, theme: 'dark', palette: 'amoled', timezone: 'UTC', defaultModel: MODEL, sections: LANDING_SECTIONS }
-    : { userName: 'Sample User', theme: 'light', timezone: 'UTC', defaultModel: MODEL };
+    : { userName: 'Sample User', theme: scenario === 'activity' ? 'system' : 'light', timezone: 'UTC', defaultModel: MODEL };
   await writeFile(path.join(root, 'bots/.botapp/settings.json'), JSON.stringify(settings) + '\n');
 }
 
@@ -265,7 +265,7 @@ export async function smokeFixture(fixture) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('Usage: node scripts/fixture.mjs [--port PORT] [--scenario basic|interactions|executor|library|latest-t3|avatars] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
+    console.log('Usage: node scripts/fixture.mjs [--port PORT] [--scenario basic|interactions|executor|library|latest-t3|avatars|activity] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
     return;
   }
   let port = 0;

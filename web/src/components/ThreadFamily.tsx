@@ -1,7 +1,7 @@
 import { memo, useEffect } from "react";
 import { ArrowUpRight, ChevronRight } from "lucide-react";
 import clsx from "clsx";
-import { Avatar } from "./Avatar";
+import { ActivityAvatar } from "./ActivityAvatar";
 import { isSideChat } from "../lib/sideChats";
 import { botReferenceKey, conversationStatus, loadThreadFamily, selectThread, useApp } from "../store";
 import { agentStatus, localAncestors, sameTaskBot, subagentStatus, subagentTarget, supplementSubagents, threadIdentity, threadLink, variantShape, type ThreadTarget } from "../lib/threadFamily";
@@ -42,7 +42,7 @@ function ThreadRow({ bot, target, shape, color, avatarImage, title, status, curr
 }) {
   const working = ["pending", "preparing", "starting", "running", "queued"].includes(status);
   const content = <>
-    <Avatar shape={shape} color={color} picture={avatarImage} size={24} state={status === "failed" ? "failed" : working ? "working" : status === "waiting" ? "waiting" : "idle"} />
+    <ActivityAvatar threadId={target?.kind === "local" ? target.threadId : null} status={status} shape={shape} color={color} picture={avatarImage} size={24} />
     <span className="min-w-0 flex-1">
       <span className="block truncate text-[14px] leading-5" title={title}>{title}</span>
       {description && <span className="block truncate text-[12px] leading-4 text-muted" title={description}>{description}</span>}

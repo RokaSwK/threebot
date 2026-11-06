@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Settings, X } from "lucide-react";
-import { Avatar } from "./Avatar";
+import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
+import type { LocalActivity } from "../lib/avatarActivity";
 import { recordVoiceCall, sendMessage, toast } from "../store";
 import { browserRecognition, browserSpeak, defaultVoiceLang, readVoiceSettings, saveVoiceSettings, VOICE_SETTINGS_EVENT, VoiceSession, voiceLang, type VoiceObservation, type VoiceSettings, type VoiceState } from "../lib/voiceChat";
 import type { Bot } from "../lib/types";
 import "./VoiceDock.css";
+
+const VOICE_ACTIVITY: Partial<Record<VoiceState["phase"], LocalActivity>> = { listening: "voice-listening", sending: "voice-sending", thinking: "voice-thinking", speaking: "voice-speaking" };
 
 const STATUS: Record<VoiceState["phase"], string> = {
   listening: "Listening", sending: "Sending", thinking: "Thinking", speaking: "Speaking. Tap to skip", muted: "Muted", ended: "Call ended", error: "Voice chat stopped",
@@ -81,11 +84,11 @@ export function VoiceDock({ bot, threadId, observation, onEnd }: { bot: Bot; thr
   };
   const language = lang.split("-")[0].toLowerCase();
   const choices = voices.filter((voice) => voice.lang.toLowerCase().startsWith(language) || voice.voiceURI === settings.voice);
-  const active = state.phase === "listening" || state.phase === "speaking";
+  useReportLocalActivity(threadId, VOICE_ACTIVITY[state.phase] ?? null);
 
   return <div className="voice-dock" data-phase={state.phase} role="group" aria-label={`Voice chat with ${bot.name}`}>
     <div className="voice-dock-bar">
-      <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={34} state={state.phase === "thinking" ? "thinking" : active ? "working" : "idle"} />
+      <ActivityAvatar threadId={threadId} status={null} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={34} />
       <button type="button" className="voice-dock-wave" aria-label={STATUS[state.phase]} disabled={state.phase !== "speaking"} onClick={() => session.current?.skip()}>
         {Array.from({ length: 20 }, (_, index) => <span key={index} style={{ animationDelay: `${index * 45}ms` }} aria-hidden="true" />)}
       </button>

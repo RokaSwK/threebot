@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowLeft, Check, Hand, Monitor, Plus, X } from "lucide-react";
 import { Avatar } from "./Avatar";
+import { ActivityAvatar } from "./ActivityAvatar";
 import { IconButton, Spinner } from "./ui";
 import { botStatus, openDialog, useApp } from "../store";
 import { browserStreamUrl, closeBrowser, openBrowser, profileLabel, watchBrowser, type BrowserState } from "../lib/previewApi";
@@ -385,7 +386,7 @@ function ComputerView({ bot, threadId }: { bot: Bot; threadId: string }) {
   return <div ref={root} role="dialog" aria-modal="true" aria-label={`${bot.name}’s computer`} className="fixed inset-0 z-50 flex flex-col bg-black text-white" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
     <header className="flex min-h-20 shrink-0 items-center gap-3 px-4 py-4">
       <button type="button" aria-label="Back to conversation" onClick={close} className="grid size-11 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10"><ArrowLeft size={23} /></button>
-      <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={28} state={controlling ? "waiting" : status === "working" ? "working" : status === "waiting" ? "waiting" : status === "failed" ? "failed" : "idle"} />
+      {controlling ? <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={28} state="waiting" /> : <ActivityAvatar threadId={bot.mainThreadId} status={status} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={28} />}
       <span className="min-w-0 flex-1 truncate text-[18px]">{bot.name}</span>
     </header>
     {tab && <div className="flex shrink-0 items-center gap-2 px-4 pb-2 text-[12px] text-white/55">

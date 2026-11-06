@@ -346,13 +346,13 @@ test("T3 weather follows the mood: sleep tide, storm lightning and celebration",
   } finally { character.destroy(); }
 });
 
-test("small T3 avatars carry status on the rim and drop the fine detail", () => {
+test("small T3 avatars only light the rim for trouble and drop the fine detail", () => {
   const busy = t3Scene("working", 28), angry = t3Scene("angry", 28), calm = t3Scene("idle", 28), folded = t3Scene("thinking", 28);
   const arc = scene => scene.svg.querySelector("[data-status-arc]");
   try {
     for (const scene of [busy, angry, calm, folded]) scene.advance(2);
-    assert.ok(Number(arc(busy).getAttribute("opacity")) > 0.5);
-    assert.equal(arc(busy).getAttribute("stroke"), "#ffffff");
+    assert.equal(arc(busy).getAttribute("opacity"), "0", "busy states act out the work instead of spinning a ring");
+    assert.ok(Number(arc(angry).getAttribute("opacity")) > 0.5);
     assert.equal(arc(angry).getAttribute("stroke"), "#ff6b7d");
     assert.equal(arc(calm).getAttribute("opacity"), "0");
     assert.equal(arc(folded).getAttribute("opacity"), "0", "folded states already show their own glyph");
