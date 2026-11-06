@@ -530,6 +530,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
     }
     const problem = await requestMicrophone();
     if (problem) return toast(problem);
+    if (!mounted.current) return;
 
     const rec = new SR();
     activeRec.current = rec;

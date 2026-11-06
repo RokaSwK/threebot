@@ -257,6 +257,21 @@ test("leaving the chat while T3 dictation is starting never leaves the microphon
   } finally { speech.restore(); }
 });
 
+test("browser dictation doesn't start if the chat closes while the microphone is being granted", async () => {
+  const grant = deferred();
+  Object.defineProperty(window.navigator, "mediaDevices", { configurable: true, value: { getUserMedia: () => grant.promise } });
+  const recognitions = [];
+  window.SpeechRecognition = class { constructor() { recognitions.push(this); } start() { this.started = true; } };
+  try {
+    await render();
+    await click(host.querySelector('.composer-dictate'));
+    await runtime.act(async () => root.unmount());
+    await runtime.act(async () => { grant.resolve({ getTracks: () => [] }); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(recognitions.length, 0);
+    root = runtime.createRoot(host);
+  } finally { delete window.navigator.mediaDevices; }
+});
+
 test("a T3 Code without a speech model leaves the browser's dictation in place", async () => {
   const speech = fakeT3Speech({ status: { supported: true, state: "missing-model", model: "None" } });
   const recognitions = [];
