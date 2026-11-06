@@ -6,6 +6,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The check takes about 3 minutes; a hung test or open handle fails the job instead of running for hours.
+    timeout-minutes: 10
     strategy:
       matrix:
         # 22.18 is the oldest Node Threebot supports: the first 22.x that runs TypeScript without a flag.

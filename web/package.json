@@ -5,7 +5,7 @@
   "version": "0.1.2",
   "scripts": {
     "dev": "vite",
-    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/*.test.mjs",
     "build": "npm run typecheck && npm run build:ball && vite build",
     "build:ball": "rolldown src/landing/ball.ts --file public/welcome/img/ball.js --format iife --minify",
     "typecheck": "tsrs -b --noEmit"
