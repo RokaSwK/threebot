@@ -5,6 +5,7 @@ import {
   Link2, MessageSquare, MoreHorizontal, Pin, PinOff, Plus, Search, Server, Sparkles, Trash2, X,
 } from "lucide-react";
 import { Avatar } from "./Avatar";
+import { ActivityAvatar } from "./ActivityAvatar";
 import { RichMarkdown } from "./RichMarkdown";
 import { Menu, Modal, Pill, Spinner, type MenuItem } from "./ui";
 import { openProjects, select, selectThread, toast, useApp } from "../store";
@@ -359,7 +360,7 @@ function RunningNow({ items }: { items: BoardItem[] }) {
           const extra = helpers(thread.id);
           return (
             <li key={thread.id} className="projects-row">
-              {owner ? <Avatar shape={owner.shape} color={owner.color} picture={owner.avatarImage} size={20} state={state === "waiting" ? "waiting" : "working"} /> : <span className={clsx("projects-dot", state === "waiting" ? "projects-dot-wait" : "projects-dot-ok", "projects-live-dot")} aria-hidden="true" />}
+              {owner ? <ActivityAvatar threadId={thread.id} status={state === "waiting" ? "waiting" : "running"} shape={owner.shape} color={owner.color} picture={owner.avatarImage} size={20} /> : <span className={clsx("projects-dot", state === "waiting" ? "projects-dot-wait" : "projects-dot-ok", "projects-live-dot")} aria-hidden="true" />}
               <button className="flex min-w-0 flex-1 flex-col text-left" disabled={!owner} onClick={() => owner && selectThread(owner, thread.id)}>
                 <span className="min-w-0 truncate text-[13.5px]">{thread.title || "Untitled thread"}</span>
                 <span className="truncate text-[12px] text-muted">{[owner?.name ?? projects[thread.projectId]?.title, extra ? `${extra} helper${extra === 1 ? "" : "s"}` : null, thread.latestRunStartedAt ? `started ${timeAgo(thread.latestRunStartedAt, now)}` : null].filter(Boolean).join(" · ")}</span>
@@ -792,7 +793,7 @@ function LinkRow({ link, itemsById, onRemove }: { link: BoardLink; itemsById: Re
     const owner = thread ? Object.values(bots).find((bot) => bot.projectId === thread.projectId) : undefined;
     const bot = Object.values(bots).find((b) => b.mainThreadId === link.threadId);
     const state = threadState(thread);
-    icon = bot || owner ? <Avatar shape={(bot ?? owner)!.shape} color={(bot ?? owner)!.color} picture={(bot ?? owner)!.avatarImage} size={18} state={state === "running" ? "working" : state === "waiting" ? "waiting" : "idle"} /> : <MessageSquare size={14} className="text-muted" />;
+    icon = bot || owner ? <ActivityAvatar threadId={thread?.id} status={state} shape={(bot ?? owner)!.shape} color={(bot ?? owner)!.color} picture={(bot ?? owner)!.avatarImage} size={18} /> : <MessageSquare size={14} className="text-muted" />;
     label ||= bot ? `${bot.name}'s chat` : thread?.title || "T3 thread";
     detail = link.environmentId ? "On another machine" : state === "running" ? "Working now" : state === "waiting" ? "Needs you" : thread ? (projects[thread.projectId]?.title ?? "") : "Thread";
     if (bot) action = () => select(bot.slug);

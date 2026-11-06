@@ -17,8 +17,10 @@ const PUFFS = {
 const OVERCAST = [[-6, -8, 30], [36, -14, 34], [84, -8, 30], [130, -16, 36], [178, -8, 31], [226, -12, 32]];
 const SPARKLES = [[59, 47, 9.5], [100, 22, 6.5], [174, 27, 3.8], [197, 76, 3.2], [29, 92, 3]];
 
-const CALM = { speed: 1, billow: 1, tide: 0, part: 0, light: 1, sparkle: 1, storm: 0, ember: 0, moon: 0, shower: 0, glyph: 0, chorus: 0, arc: 0, beacon: 0, aurora: 0 };
-const BUSY = { speed: 1.35, billow: 1.15, tide: -5, part: 5, light: 1.1, sparkle: 1.2, arc: 1 };
+const CALM = { speed: 1, billow: 1, tide: 0, part: 0, light: 1, sparkle: 1, storm: 0, ember: 0, moon: 0, shower: 0, glyph: 0, chorus: 0, beacon: 0, aurora: 0 };
+// Busy skies used to spin a status ring on small avatars; the states themselves act out
+// the work now, so the rim only lights up red for a failure.
+const BUSY = { speed: 1.35, billow: 1.15, tide: -5, part: 5, light: 1.1, sparkle: 1.2 };
 const JOY = { speed: 1.5, billow: 1.8, tide: -9, part: 8, light: 1.25, sparkle: 1.6 };
 const SLEEP = { speed: 0.28, billow: 0.45, tide: 34, part: -14, light: 0.62, sparkle: 0.42, moon: 1 };
 const GLOOM = { speed: 0.7, billow: 0.7, tide: 12, part: -4, light: 0.74, sparkle: 0.5, storm: 0.5 };
@@ -174,7 +176,7 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   const rim = node("g", { "data-layer": "rim", fill: "none" }, scene);
   // A stroke of the body path, unlike a gradient, follows every squash.
   const rimStrokes = [[2, 0.16]].map(([width, opacity]) => node("path", { stroke: "#cfcaff", "stroke-width": width, "stroke-opacity": opacity }, rim));
-  const statusArc = node("path", { "data-status-arc": "", stroke: "#ffffff", "stroke-width": 11, "stroke-linecap": "round", pathLength: 1, "stroke-dasharray": "0.2 0.8", opacity: 0 }, rim);
+  const statusArc = node("path", { "data-status-arc": "", stroke: "#ff6b7d", "stroke-width": 11, "stroke-linecap": "round", opacity: 0 }, rim);
 
   let time = 0;
   let stateTime = 0;
@@ -329,16 +331,10 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   const paintRim = () => {
     const path = body.getAttribute("d");
     if (path !== bodyPath) { bodyPath = path; for (const el of [...rimStrokes, statusArc]) el.setAttribute("d", path); }
-    // Small avatars can't show the sky's story, so the rim carries full-face status.
-    const open = 1 - fold;
+    // Small avatars can't show the sky's storm, so their rim glows red for it instead.
     const alarm = compact && motion.ember > 0.3;
-    const arc = open * (alarm ? motion.ember * (0.7 + 0.3 * Math.sin(stateTime * 3.4)) : compact ? motion.arc : 0);
+    const arc = alarm ? (1 - fold) * motion.ember * (0.7 + 0.3 * Math.sin(stateTime * 3.4)) : 0;
     statusArc.setAttribute("opacity", arc > 0.01 ? clamp(arc, 0, 1).toFixed(3) : "0");
-    if (arc > 0.01) {
-      statusArc.setAttribute("stroke", alarm ? "#ff6b7d" : "#ffffff");
-      statusArc.setAttribute("stroke-dasharray", alarm ? "1 0" : "0.22 0.78");
-      statusArc.setAttribute("stroke-dashoffset", alarm ? "0" : (-stateTime * 0.62).toFixed(3));
-    }
     halo.setAttribute("opacity", (fold * (0.82 + 0.18 * Math.sin(stateTime * 2.2))).toFixed(3));
   };
 

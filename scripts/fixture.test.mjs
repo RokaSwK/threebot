@@ -211,9 +211,26 @@ function watchThread(rpc, threadId) {
   };
 }
 
+test('activity scenario shows Bots in different activities and walks Alpha through a turn', { timeout: 20000 }, async () => {
+  const fake = await startFakeT3('/unused', 0, { scenario: 'activity' });
+  const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
+  try {
+    await bounded(rpc.connect());
+    const watched = watchThread(rpc, 'thread-alpha');
+    const first = await watched.wait();
+    const shells = Object.fromEntries((await bounded(rpc.call('orchestration.getThreadFamily', { threadId: 'thread-delta' }))).threads.map((t) => [t.id, t]));
+    assert.ok(shells['thread-delta'].pendingRuntimeRequest);
+    const live = (projection) => projection.turnItems.filter((item) => item.runId && item.status === 'running').map((item) => item.type);
+    assert.deepEqual(live(first), ['reasoning']);
+    const next = await watched.wait((projection) => live(projection)[0] === 'web_search');
+    assert.equal(next.thread.status, 'running');
+    watched.stream.cancel();
+  } finally { rpc.close(); await fake.close(); }
+});
+
 test('basic protocol remains unchanged and interaction handlers are opt-in', { timeout: 15000 }, async () => {
-  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars/);
-  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars/);
+  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity/);
+  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity/);
   const fake = await startFakeT3('/unused');
   const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
   try {

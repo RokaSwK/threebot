@@ -14,7 +14,7 @@ const webRequire = createRequire(new URL('../web/package.json', import.meta.url)
 const HELP = `Usage: node scripts/local-pwa-dev.mjs [options]
   --pwa-port PORT     Built PWA + disposable gateway (default 43780; 0 chooses a free port)
   --hmr-port PORT     Vite frontend + proxied disposable gateway (default 5180; 0 chooses a free port)
-  --scenario NAME     interactions (default), basic, executor, library, or latest-t3
+  --scenario NAME     interactions (default), basic, executor, library, latest-t3, or activity
   --build             Run the web production build before starting
   --help              Show this help
 

@@ -18,7 +18,7 @@ import { useVoiceSettings, VoiceDock, voiceChatSupported } from "./VoiceDock";
 import { requestMicrophone, readVoiceSettings, voiceLang } from "../lib/voiceChat";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
-import { avatarStateFor } from "./Sidebar";
+import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
 import { openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
@@ -134,7 +134,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           </IconButton>
         )}
         <button onClick={() => setDetailsOpen(!detailsOpen)} className="chat-title pointer-events-auto flex h-8 max-w-[55%] items-center gap-2 rounded-full border border-line bg-chat/80 pr-3.5 pl-1.5 backdrop-blur hover:bg-hover" title="View conversation details">
-          <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={onBack ? 26 : 24} state={isChild ? status === "failed" ? "failed" : working ? "working" : shell?.pendingRuntimeRequest ? "waiting" : "idle" : avatarStateFor(botStatus(bot))} />
+          <ActivityAvatar threadId={threadId} status={status} shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={onBack ? 26 : 24} />
           <span className="chat-title-text min-w-0"><span className="chat-title-name block truncate text-[13.5px]">{identity.name}</span>{statusLine(status) && <span className="chat-status block truncate text-[11px] text-muted">{statusLine(status)}</span>}</span>
         </button>
         <div className="pointer-events-auto absolute right-3 flex gap-1">
@@ -179,7 +179,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {threadId && <ForceStop threadId={threadId} items={items} readOnly={archived} />}
           {working && (
             <div className="fade-up flex items-center gap-2 py-2 pl-1 text-[13px]">
-              <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={20} state={/^(Thinking|Mulling|Putting)/.test(phrase) ? "thinking" : "working"} />
+              <ActivityAvatar threadId={threadId} status="working" shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={20} />
               <span className="shimmer-text">{phrase}</span>
             </div>
           )}
@@ -470,6 +470,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
   const submit = () => side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
   const [popover, setPopover] = useState<"attachments" | null>(null);
   const [listening, setListening] = useState(false);
+  useReportLocalActivity(threadId, listening ? "listening" : atts.some((item) => item.state === "uploading") ? "uploading" : sending ? "sending" : null);
   const settings = useVoiceSettings();
   const activeRec = useRef<any>(null);
   const ta = useRef<HTMLTextAreaElement>(null);

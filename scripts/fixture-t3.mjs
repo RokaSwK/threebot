@@ -2,7 +2,7 @@
 import http from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { AVATAR_SAMPLES, LANDING_SAMPLES, landingData, seedAvatars, seedInteractions, seedLatestT3, validateScenario } from './fixture-scenarios.mjs';
+import { ACTIVITY_SAMPLES, AVATAR_SAMPLES, LANDING_SAMPLES, landingData, seedActivity, seedAvatars, seedInteractions, seedLatestT3, validateScenario } from './fixture-scenarios.mjs';
 const require = createRequire(new URL('../server/package.json', import.meta.url));
 const { WebSocketServer } = require('ws');
 
@@ -15,7 +15,7 @@ export const SAMPLES = [
 ];
 export const SAMPLE_IMAGE = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#128c87"/><text x="40" y="190" font-size="40" fill="white">Generic fixture image</text></svg>');
 export const SAMPLE_TEXT = Buffer.from('Generic attachment. No user data.\n');
-export const samplesFor = (scenario) => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : SAMPLES;
+export const samplesFor = (scenario) => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
 
 export async function startFakeT3(root, port = 0, { scenario = 'basic', executor, environmentId = 'fixture-only' } = {}) {
   validateScenario(scenario);
@@ -112,6 +112,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
   const runs = new Map(threads.map(thread => [thread.id, []]));
   const latest = scenario === 'latest-t3' ? seedLatestT3({ threads, items, runs, projects, model: MODEL, stamp: STAMP }) : null;
   const avatars = scenario === 'avatars' ? seedAvatars({ threads, items, runs, model: MODEL }) : null;
+  const activity = scenario === 'activity' ? seedActivity({ threads, items, runs, model: MODEL }) : null;
   const interactions = scenario === 'interactions' ? seedInteractions({ threads, items, stamp: STAMP }) : landing ? landingInteractions : latest ?? avatars;
   const receipts = new Map();
   const subscriptions = new Map();
@@ -130,6 +131,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
       if (sub.tag === 'scheduledTasks.subscribe' && latest) chunk(ws, id, { tasks: latest.tasks });
     }
   };
+  const stopActivity = activity?.start(publish);
   const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer(async (req, res) => {
     try {
@@ -315,6 +317,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
   return {
     port: server.address().port,
     async close() {
+      stopActivity?.();
       for (const ws of wss.clients) ws.terminate();
       await new Promise((resolve) => wss.close(resolve));
       await new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); });

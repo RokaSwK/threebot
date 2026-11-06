@@ -55,7 +55,7 @@ export function Avatar({
   }, [engineShape, color, size, state, picture]);
 
   return (
-    <span className={clsx("relative inline-block shrink-0", className)} style={{ width: size, height: size }}>
+    <span className={clsx("relative inline-block shrink-0", className)} style={{ width: size, height: size }} data-avatar-state={state}>
       {picture ? <img src={picture} width={size} height={size} alt="" className="size-full rounded-full object-cover" /> : object ? <ObjectAvatar key={object.id} definition={object} color={color} size={size} state={state} still={still} /> : <svg ref={svg} width={size} height={size} className="overflow-visible" aria-hidden="true" />}
       {star && (
         <span
