@@ -499,16 +499,24 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
 
   const t3Voice = useApp((s) => s.runtimeFeatures.voiceTranscription);
   const [transcribing, setTranscribing] = useState(false);
-  useEffect(() => () => { activeRec.current?.abort?.(); activeRec.current = null; }, []);
+  const starting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; activeRec.current?.abort?.(); activeRec.current = null; }; }, []);
 
   const dictate = async () => {
-    if (transcribing) return;
+    if (transcribing || starting.current) return;
     if (listening && activeRec.current) {
       activeRec.current.stop?.();
       activeRec.current = null;
       setListening(false);
       return;
     }
+    // Checking T3 and the microphone takes a moment; a second tap then must not start another recording.
+    starting.current = true;
+    try { await startDictation(); } finally { starting.current = false; }
+  };
+
+  const startDictation = async () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
     const currentLang = voiceLang(readVoiceSettings());
     const engine = dictationEngine({ browser: !!SR, t3: t3Voice && !!globalThis.MediaRecorder, preferT3: readVoiceSettings().t3 });
@@ -593,6 +601,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
     let recording: Recording | null = null;
     try { recording = await startRecording(() => void finish()); }
     catch (e: any) { return toast(`Could not start voice input: ${e?.message || e}`); }
+    if (!mounted.current) return recording.cancel();
     activeRec.current = handle;
     setListening(true);
   };

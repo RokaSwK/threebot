@@ -173,7 +173,7 @@ test("the mobile mic starts real dictation only on an explicit tap", async () =>
   assert.equal(sends.length, 0, "dictation creates a draft without sending it");
 });
 
-function fakeT3Speech({ status = { supported: true, state: "ready", model: "Fixture model", languages: ["en", "es"] }, text = "Hola mundo" } = {}) {
+function fakeT3Speech({ status = { supported: true, state: "ready", model: "Fixture model", languages: ["en", "es"] }, text = "Hola mundo", statusGate = null } = {}) {
   const calls = [], tracks = [];
   Object.defineProperty(window.navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => {
     const track = { stopped: false, stop() { this.stopped = true; } };
@@ -193,7 +193,7 @@ function fakeT3Speech({ status = { supported: true, state: "ready", model: "Fixt
   };
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url, method: init.method ?? "GET", body: init.body });
-    if (url === "/t3/api/voice/status") return Response.json(status);
+    if (url === "/t3/api/voice/status") { await statusGate; return Response.json(status); }
     if (url === "/t3/api/voice/transcribe") return Response.json({ text });
     return new Response("{}", { status: 404 });
   };
@@ -223,6 +223,37 @@ test("without browser speech, a T3 Code that transcribes takes the dictation in 
     assert.deepEqual([pcm[0], pcm[1], pcm[2]], [1, -1, 0.25], "overshoot is clamped to the range T3 accepts");
     assert.equal(sends.length, 0, "dictation creates a draft without sending it");
     assert.equal(mic().getAttribute("aria-pressed"), "false");
+  } finally { speech.restore(); }
+});
+
+test("taps during a slow T3 start open one recording, and leaving the chat releases it", async () => {
+  const gate = deferred();
+  const speech = fakeT3Speech({ statusGate: gate.promise });
+  try {
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render();
+    const mic = host.querySelector('.composer-dictate');
+    await click(mic); await click(mic); await click(mic);
+    await runtime.act(async () => { gate.resolve(); for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(speech.tracks.length, 2, "one permission check and one recording");
+    assert.equal(host.querySelector('.composer-dictate').getAttribute("aria-pressed"), "true");
+    await runtime.act(async () => root.unmount());
+    assert.ok(speech.tracks.every((track) => track.stopped), "unmounting stops the microphone");
+    root = runtime.createRoot(host);
+  } finally { speech.restore(); }
+});
+
+test("leaving the chat while T3 dictation is starting never leaves the microphone on", async () => {
+  const gate = deferred();
+  const speech = fakeT3Speech({ statusGate: gate.promise });
+  try {
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render();
+    await click(host.querySelector('.composer-dictate'));
+    await runtime.act(async () => root.unmount());
+    await runtime.act(async () => { gate.resolve(); for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.ok(speech.tracks.length > 0 && speech.tracks.every((track) => track.stopped), "a recording that starts after unmount is cancelled");
+    root = runtime.createRoot(host);
   } finally { speech.restore(); }
 });
 
