@@ -1,5 +1,5 @@
 // Scripted protocol fixtures, never an agent runner or a real T3 connection.
-// Shapes follow runtime-cards.test.mjs, bot-messages.test.mjs and the installed
+// Shapes follow runtime-cards.test.mts, bot-messages.test.mts and the installed
 // T3 OrchestrationV2RuntimeRequest, ProviderApprovalDecision and
 // SecretRequestAnswerInput contracts.
 import { RICH_MESSAGES } from './fixture-rich-content.mts';

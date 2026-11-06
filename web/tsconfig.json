@@ -14,5 +14,7 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // The service worker has its own config (tsconfig.sw.json): it runs in a worker, not a window.
+  "exclude": ["src/sw.ts"]
 }

@@ -5,8 +5,7 @@
   "version": "0.1.3",
   "scripts": {
     "start": "node gateway.mjs",
-    "typecheck": "tsrs -p tsconfig.json",
-    "typecheck:stable": "tsc -p tsconfig.json"
+    "typecheck": "tsrs -p tsconfig.json"
   },
   "engines": {
     "node": ">=22.18"
@@ -20,7 +19,6 @@
   "devDependencies": {
     "@types/node": "26.6.6",
     "@types/ws": "8.18.2",
-    "tsrs": "0.22.0-ts7.1.0-beta",
-    "typescript": "7.0.2"
+    "tsrs": "0.22.0-ts7.1.0-beta"
   }
 }
