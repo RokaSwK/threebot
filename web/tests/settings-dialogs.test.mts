@@ -36,6 +36,7 @@ const bundle = await buildOnce({
       export { parseVaultCsv, parseCsv } from ${JSON.stringify(`${src}lib/vaultCsv.ts`)};
       export { SettingsDialog } from ${JSON.stringify(`${src}components/SettingsDialog.tsx`)};
       export { AvatarPicker, NewBotDialog } from ${JSON.stringify(`${src}components/NewBotDialog.tsx`)};
+      export { AvatarEditorDialog } from ${JSON.stringify(`${src}components/AvatarEditor.tsx`)};
       export { createCharacter } from ${JSON.stringify(`${src}lib/character.ts`)};
       export { AvatarPlayer } from ${JSON.stringify(`${src}components/avatarPlayer.ts`)};
       export { AvatarDialog } from ${JSON.stringify(`${src}components/Details.tsx`)};
@@ -49,7 +50,7 @@ assert.ok(entry);
 const testDir = await mkdtemp(join(tmpdir(), "bot-settings-tests-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entry.code);
-const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer } = await import(pathToFileURL(testEntry).href);
+const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, AvatarEditorDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 let root, host, requests, settings, handleRequest;
 beforeEach(() => {
@@ -395,6 +396,48 @@ test("profile avatar Done publishes the confirmed choice and keeps failures retr
   fail = false; await click(button("Done"));
   assert.equal(closes, 1); assert.equal(useApp.getState().bots.example.color, "blue");
   assert.deepEqual(requests.filter(request => request.method === "PUT").map(request => JSON.parse(request.body)), [{ shape: "sphere", color: "blue", avatarImage: null }, { shape: "sphere", color: "blue", avatarImage: null }]);
+});
+
+// Three drawn looks with distinct bodies, so the preview's outline says which one it shows.
+const look = (id, name, path) => ({ version: 1, id, name, body: { path }, eyes: { x: 50, y: 50, spacing: 15, scale: 1 } });
+const savedLook = look("own-saved", "Saved", "M32 12 C56 6 86 16 88 42 C90 68 72 90 48 90 C24 90 10 72 12 50 C14 30 18 16 32 12 Z");
+const drawnLooks = [look("drawn-1", "Tall", "M50 10 C72 10 88 22 88 38 L82 42 C84 68 70 90 50 90 C30 90 16 68 18 42 L12 38 C12 22 28 10 50 10 Z"), look("drawn-2", "Round", "M50 14 C74 14 90 30 90 54 C90 76 74 88 50 88 C26 88 10 76 10 54 C10 30 26 14 50 14 Z")];
+test("the editor previews the selected drawing on the left, with one selection and open eyes", async () => {
+  const style = document.createElement("style"); style.textContent = await readFile(new URL("../src/components/avatar-editor.css", import.meta.url), "utf8"); document.head.append(style);
+  try {
+    const initial = { shape: "object:own-saved", color: "brown", avatarImage: null, avatarDefinition: savedLook };
+    const drawing = { description: "a cat", options: drawnLooks.map((definition) => ({ status: "ready", definition })) };
+    let closed = 0;
+    await render(h(AvatarEditorDialog, { initial, shared: [savedLook], draw: { drawing, start() {}, retry() {}, discard() {} }, onSave: async () => assert.fail("nothing is saved without Use or Done"), onClose: () => { closed++; } }));
+    // Each look's scene carries an id made from its outline.
+    const scene = (el) => el.querySelector("[data-avatar-scene]").getAttribute("data-avatar-scene");
+    const preview = () => scene(document.querySelector(".avatar-editor-preview"));
+    const selected = () => [...document.querySelectorAll('.avatar-drawn [aria-pressed="true"]')].map((el) => el.getAttribute("aria-label"));
+    const show = async (definition) => { const probe = document.createElement("div"); document.body.append(probe); const r = createRoot(probe);
+      await act(async () => r.render(h(AvatarEditorDialog, { initial: { ...initial, shape: `object:${definition.id}`, avatarDefinition: definition }, onSave: async () => {}, onClose() {} })));
+      const html = scene([...document.querySelectorAll(".avatar-editor-preview")].at(-1)); await act(async () => r.unmount()); probe.remove(); return html; };
+    const [saved, tall, round] = [await show(savedLook), await show(drawnLooks[0]), await show(drawnLooks[1])];
+    assert.notEqual(saved, tall); assert.notEqual(tall, round);
+    // A finished drawing is the one selection, and the big avatar shows it.
+    assert.deepEqual(selected(), ["Option 1 of 2: Tall"]);
+    assert.equal(preview(), tall);
+    await click(labeled("Option 2 of 2: Round"));
+    assert.deepEqual(selected(), ["Option 2 of 2: Round"]);
+    assert.equal(preview(), round);
+    // Picking the saved look moves the one selection back to it.
+    await click(labeled("Saved"));
+    assert.deepEqual(selected(), ["Saved"]);
+    assert.equal(preview(), saved);
+    await click(labeled("Option 1 of 2: Tall"));
+    assert.equal(preview(), tall);
+    // The small preview rests with open eyes, cut out in an opaque surface colour, never the translucent hover tint.
+    const card = document.querySelector(".avatar-draw-preview");
+    assert.equal(card.querySelector("[data-avatar-state]").getAttribute("data-avatar-state"), "idle");
+    assert.doesNotMatch(style.textContent.match(/\.avatar-draw-preview \{[^}]*\}/)[0], /--bot-eye-bg/);
+    for (const [, value] of style.textContent.matchAll(/--bot-eye-bg:\s*([^;}]+)/g)) assert.doesNotMatch(value, /--bg-(hover|active)/);
+    await click(labeled("Close"));
+    assert.equal(closed, 1);
+  } finally { style.remove(); }
 });
 
 test("computed dialog/grid constraints fit phone and landscape widths", async () => {

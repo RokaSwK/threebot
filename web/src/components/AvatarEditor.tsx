@@ -30,26 +30,37 @@ type PickerProps = {
   draw?: DrawControls;
   /** Small labels over every group, as in the avatar editor. */
   labels?: boolean;
+  /** The drawn option being looked at before Use, or null when the choice is the shape itself. */
+  onPreview?: (definition: AvatarDefinition | null) => void;
 };
 
 const busyOption = (option: DrawingOption) => option.status === "drawing" || option.status === "checking" || option.status === "fixing";
 
-export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], draw, labels = false }: PickerProps) {
+export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], draw, labels = false, onPreview }: PickerProps) {
   const [open, setOpen] = useState(false);
   const [chosen, setChosen] = useState(0);
+  // A drawn option is selected until another shape is picked: the shape it was picked over, or null.
+  const [optionOver, setOptionOver] = useState<string | null>(shape);
   const drawing = draw?.drawing ?? null;
   const options = drawing?.options ?? [];
   // The chosen option, or the first one that is ready.
   const ready = options.findIndex((option) => option.status === "ready");
   const pick = options[chosen]?.status === "ready" ? chosen : ready >= 0 ? ready : chosen;
-  const tile = (object: AvatarDefinition, own: boolean) => <button type="button" disabled={disabled} key={`${own ? "shared" : "gallery"}-${object.id}`} className="avatar-tile avatar-object" aria-label={object.name} title={object.name} aria-pressed={shape === objectShape(object.id)} onClick={() => onChange(objectShape(object.id), color, own ? object : undefined)}>
+  const picked = options[pick];
+  // One selection at a time: a picked drawing, or the shape, object or saved drawing it would replace.
+  const previewed = optionOver === shape && picked?.status === "ready" ? picked.definition : null;
+  useEffect(() => { onPreview?.(previewed); }, [previewed, onPreview]);
+  useEffect(() => () => onPreview?.(null), [onPreview]);
+  const choose = (next: string, definition?: AvatarDefinition) => { setOptionOver(null); if (definition) onChange(next, color, definition); else onChange(next, color); };
+  const drawControls = draw && { ...draw, start: (description: string) => { setOptionOver(shape); setChosen(0); draw.start(description); }, retry: () => { setOptionOver(shape); setChosen(0); draw.retry(); } };
+  const tile = (object: AvatarDefinition, own: boolean) => <button type="button" disabled={disabled} key={`${own ? "shared" : "gallery"}-${object.id}`} className="avatar-tile avatar-object" aria-label={object.name} title={object.name} aria-pressed={!previewed && shape === objectShape(object.id)} onClick={() => choose(objectShape(object.id), own ? object : undefined)}>
     <Avatar shape={objectShape(object.id)} color={color} definition={own ? object : undefined} size={40} still />
   </button>;
   return <fieldset disabled={disabled} className={clsx("avatar-picker", labels && "avatar-picker-labelled")}>
     <legend className="sr-only">Choose an avatar</legend>
     {labels && <p className="avatar-section-title" aria-hidden="true">Shape</p>}
     <div className="avatar-shapes">
-      {PICKER_SHAPES.map(s => <button type="button" disabled={disabled} key={s} className="avatar-tile avatar-choice" data-shape={s} onClick={() => onChange(s, color)} aria-label={s === "t3" ? "T3 avatar" : `${s} shape`} aria-pressed={avatarShape(shape) === s}>
+      {PICKER_SHAPES.map(s => <button type="button" disabled={disabled} key={s} className="avatar-tile avatar-choice" data-shape={s} onClick={() => choose(s)} aria-label={s === "t3" ? "T3 avatar" : `${s} shape`} aria-pressed={!previewed && avatarShape(shape) === s}>
         <Avatar shape={s} color={color} size={64} />
       </button>)}
     </div>
@@ -60,10 +71,10 @@ export function AvatarPicker({ shape, color, onChange, disabled = false, shared 
       <div className="avatar-objects avatar-drawn">
         {shared.map(object => tile(object, true))}
         {draw && (drawing ? (options.length ? options : [{ status: "drawing" } as DrawingOption]).map((option, index) =>
-          <OptionTile key={option.thread?.id ?? index} option={option} index={index} count={Math.max(options.length, 1)} color={color} chosen={option.status === "ready" && index === pick} disabled={disabled} onChoose={() => setChosen(index)} />)
+          <OptionTile key={option.thread?.id ?? index} option={option} index={index} count={Math.max(options.length, 1)} color={color} chosen={!!previewed && index === pick} disabled={disabled} onChoose={() => { setChosen(index); setOptionOver(shape); }} />)
           : <button type="button" disabled={disabled} className="avatar-tile avatar-object avatar-object-new" aria-label="Draw a new object" title="Draw a new object" aria-expanded={open} onClick={() => setOpen(value => !value)}><Plus size={20} aria-hidden="true" /></button>)}
       </div>
-      {draw && (drawing || open) && <DrawPanel draw={draw} chosen={options[pick]} color={color} disabled={disabled} onClose={() => setOpen(false)} />}
+      {drawControls && (drawing || open) && <DrawPanel draw={drawControls} chosen={picked} color={color} disabled={disabled} onClose={() => setOpen(false)} />}
     </>}
     {labels && <p className="avatar-section-title" aria-hidden="true">Colour</p>}
     <div className="avatar-colors">
@@ -115,7 +126,7 @@ function DrawPanel({ draw, chosen, color, disabled, onClose }: { draw: DrawContr
   const ready = chosen?.status === "ready" ? chosen.definition : null;
   return <div className="avatar-draw-card" role="status" aria-live="polite">
     <span className="avatar-draw-preview">
-      {ready ? <Avatar shape={objectShape(ready.id)} color={color} definition={ready} size={56} state="happy" />
+      {ready ? <Avatar shape={objectShape(ready.id)} color={color} definition={ready} size={56} />
         : failure ? <TriangleAlert size={22} aria-hidden="true" />
         : <LoaderCircle size={22} className="animate-spin" aria-hidden="true" />}
     </span>
@@ -162,6 +173,8 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
   const [crop, setCrop] = useState<Crop | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // A drawn option shows here before Use, like any other choice; closing without Use keeps the saved one.
+  const [drawn, setDrawn] = useState<AvatarDefinition | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
   const version = useRef(0);
@@ -216,9 +229,9 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
       {tabs}
       <span className="avatar-desktop avatar-editor-actions"><button type="button" className="avatar-editor-reset" disabled={disabled} onClick={reset}>Reset</button>{actions}</span>
     </div>
-    <div className="avatar-editor-preview" aria-label="Avatar preview"><Avatar shape={value.shape} color={value.color} picture={value.avatarImage} definition={value.avatarDefinition} size={112} /></div>
+    <div className="avatar-editor-preview" aria-label="Avatar preview">{drawn ? <Avatar shape={objectShape(drawn.id)} color={value.color} definition={drawn} size={112} /> : <Avatar shape={value.shape} color={value.color} picture={value.avatarImage} definition={value.avatarDefinition} size={112} />}</div>
     <div className="avatar-editor-body">
-      {tab === "bot" ? <AvatarPicker labels shape={value.shape} color={value.color} disabled={disabled} shared={shared} draw={draw} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
+      {tab === "bot" ? <AvatarPicker labels shape={value.shape} color={value.color} disabled={disabled} shared={shared} draw={draw} onPreview={setDrawn} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
         {crop ? <>
           <div className="avatar-crop" aria-label="Drag to reposition" onPointerDown={e => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, startX: crop.x, startY: crop.y }; }} onPointerMove={e => { if (!drag.current) return; const size = e.currentTarget.clientWidth; setCrop(limitCrop({ ...crop, x: drag.current.startX + (e.clientX - drag.current.x) / size, y: drag.current.startY + (e.clientY - drag.current.y) / size })); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
             <img draggable={false} alt="" src={crop.source.src} style={{ width: `${100 * crop.source.naturalWidth / Math.min(crop.source.naturalWidth, crop.source.naturalHeight) * crop.zoom}%`, maxWidth: "none", transform: `translate(calc(-50% + ${crop.x * 240}px), calc(-50% + ${crop.y * 240}px))` }} />
