@@ -1,0 +1,79 @@
+{
+  "before": {
+    "cpu": {
+      "seconds": 20,
+      "taskPct": 30.1,
+      "scriptPct": 7.7,
+      "layoutPct": 1,
+      "styleRecalcPct": 4.9
+    },
+    "cpuReducedMotion": {
+      "seconds": 10,
+      "taskPct": 5.2,
+      "scriptPct": 0.5,
+      "layoutPct": 0,
+      "styleRecalcPct": 0.5
+    }
+  },
+  "after": {
+    "cpu": {
+      "seconds": 20,
+      "taskPct": 30.3,
+      "scriptPct": 7.5,
+      "layoutPct": 1,
+      "styleRecalcPct": 4.9
+    },
+    "cpuReducedMotion": {
+      "seconds": 10,
+      "taskPct": 4.5,
+      "scriptPct": 0.4,
+      "layoutPct": 0,
+      "styleRecalcPct": 0.4
+    },
+    "transitions": {
+      "count": 56,
+      "minHeldMs": 1119,
+      "states": [
+        "celebrate",
+        "happy",
+        "idle",
+        "orbit",
+        "searching",
+        "sending",
+        "sleeping",
+        "spawning",
+        "thinking",
+        "waking",
+        "working",
+        "writing"
+      ]
+    },
+    "snapshot": [
+      "Alpha, main Bot: celebrate",
+      "Chat with Beta: working",
+      "Chat with Delta, waiting for you: waiting",
+      "Chat with Epsilon: failed",
+      "Chat with Eta: drowsy",
+      "Chat with Gamma: receiving",
+      "Chat with Iota: working",
+      "Chat with Kappa: working",
+      "Chat with Lambda: working",
+      "Chat with Mu: working",
+      "Chat with Nu: working",
+      "Chat with Theta: working",
+      "Chat with Xi: working",
+      "Chat with Zeta: working",
+      "chat header: celebrate",
+      "?: idle",
+      "?: idle",
+      "?: idle",
+      "?: idle",
+      "Conversation details: idle",
+      "Thread lineage: celebrate",
+      "Thread lineage: idle",
+      "Thread lineage: idle",
+      "Thread lineage: idle",
+      "Thread lineage: idle"
+    ]
+  }
+}
