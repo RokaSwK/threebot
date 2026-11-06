@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Bot as BotIcon, Sun, Moon, ChevronRight, Download, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
 import { ModelPicker } from "./ModelPicker";
@@ -25,6 +25,7 @@ const PANES = [
   { id: "vault", label: "Vault", icon: <Vault size={15} /> },
   { id: "access", label: "Remote access", icon: <Globe size={15} /> },
   { id: "updates", label: "Updates", icon: <Download size={15} /> },
+  { id: "beta", label: "Beta", icon: <FlaskConical size={15} /> },
 ];
 
 type SaveSettings = (patch: Partial<Settings>) => Promise<boolean>;
@@ -82,6 +83,7 @@ export function SettingsDialog() {
                 {pane === "vault" && <VaultPane />}
                 {pane === "access" && <RemoteAccessPane />}
                 {pane === "updates" && <UpdatesPane t3={<T3Version />} />}
+                {pane === "beta" && <Beta s={settings} />}
                 {pane === "usage" && <UsagePanel />}
                 {pane === "appearance" && <Appearance s={settings} />}
               </fieldset>}
@@ -131,7 +133,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
     <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
-    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update.version} available` : undefined} onClick={() => pane("updates")} /></Group>
+    <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update.version} available` : undefined} onClick={() => pane("updates")} /><SettingsHomeLink title="Beta" description="Try experimental features" onClick={() => pane("beta")} /></Group>
     <Group><SettingsHomeLink title={signingOut ? "Signing out…" : "Sign Out"} disabled={signingOut} onClick={() => void signOut()} /></Group>
   </div>;
 }
@@ -271,6 +273,28 @@ function Permissions({ s }: { s: Settings }) {
       <RuleList title="Always Ask" desc="Stop and ask when an action matches these rules" rules={rules.alwaysAsk} onChange={(r) => save({ rules: { ...rules, alwaysAsk: r } })} />
       <RuleList title="Allow without Asking" desc="Continue automatically when an action matches these rules" rules={rules.allowWithoutAsking} onChange={(r) => save({ rules: { ...rules, allowWithoutAsking: r } })} />
       <p className="permissions-boundary">Rules are instructions for your Bots. Provider approval policies determine which actions require confirmation.</p>
+    </>
+  );
+}
+
+/** Experimental features, each with its own switch. Saved on the server: they change what Bots get. */
+const BETA_FEATURES = [
+  { key: "projects", title: "Projects board", desc: "A live board of your projects, to-dos, machines and what runs where, kept up to date by you and your Bots." },
+] as const;
+
+function Beta({ s }: { s: Settings }) {
+  const save = useContext(SettingsSave);
+  const beta = s.beta ?? { projects: false };
+  return (
+    <>
+      <p className="mb-4 text-[13px] text-muted">Features that are still taking shape. Switching one off hides it from you and your Bots; nothing is deleted.</p>
+      <Group>
+        {BETA_FEATURES.map((f) => (
+          <Row key={f.key} title={<span className="inline-flex items-center gap-2">{f.title}<span className="rounded-full border border-line px-1.5 text-[11px] leading-[18px] text-muted">Beta</span></span>} desc={f.desc}>
+            <Switch checked={beta[f.key] === true} onChange={(v) => save({ beta: { ...beta, [f.key]: v } })} label={f.title} />
+          </Row>
+        ))}
+      </Group>
     </>
   );
 }

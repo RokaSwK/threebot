@@ -5,7 +5,7 @@ import { Avatar, type AvatarState } from "./Avatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
 import { useUpdateNotice } from "./RemoteAccess";
-import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, type BotStatus } from "../store";
+import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, useProjectsOn, type BotStatus } from "../store";
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
@@ -43,6 +43,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
   const [deletingSection, setDeletingSection] = useState<string | null>(null);
   const [sectionBusy, setSectionBusy] = useState(false);
   const page = useApp((s) => s.page);
+  const projectsOn = useProjectsOn();
   const [, tick] = useState(0);
   useEffect(() => { const timer = setInterval(() => tick((v) => v + 1), 30_000); return () => clearInterval(timer); }, []);
   const [showHidden, setShowHidden] = useState(false);
@@ -193,7 +194,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} state={avatarStateFor(status)} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
       })}</div>)}
     </div>
-    <div className="flex shrink-0 flex-col items-center gap-2 pt-2"><RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton><RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
+    <div className="flex shrink-0 flex-col items-center gap-2 pt-2">{projectsOn && <RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton>}<RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
     <AccountRow compact />
     {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
   </aside>;
@@ -212,7 +213,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
       {wide && attention && <button className="mobile-attention pop-in" aria-label={`Jump to the chat needing attention ${attention}`} onClick={jumpToAttention}>Needs attention{attention === "above" ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}</button>}
 
       <div ref={list} onScroll={wide ? measureAttention : undefined} className="bot-list scroll-thin min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        <ProjectsRow large={wide} current={page === "projects"} />
+        {projectsOn && <ProjectsRow large={wide} current={page === "projects"} />}
         {pinned.length > 0 && (
           <div className="pinned-bots flex flex-wrap gap-1 px-1 pt-1 pb-3">
             {pinned.map((b) => {

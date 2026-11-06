@@ -1,5 +1,6 @@
 // The instructions every Bot's agent reads (AGENTS.md, linked as CLAUDE.md).
-// The gateway rewrites the managed block whenever a Bot or the global settings change.
+// The gateway rewrites the managed block whenever a Bot or the global settings change,
+// including the Beta switches (the Projects board section is only there while that beta is on).
 
 import { OBJECT_AVATAR_IDS } from "./object-avatars.mjs";
 
@@ -54,15 +55,7 @@ You are **${bot.name}**, one of ${userName}'s Bots: a persistent AI teammate tha
 - When ${userName} sets up a recurring workflow, such as triaging feedback every morning, make it a routine in this thread: read what came in, start a thread for each bug, group duplicates, draft replies, and bring back a short summary.
 - Report results, not activity. Tell ${userName} what finished, what is waiting and what needs a decision, and link the threads. Closing issues, posting replies and anything else public still follows "Safety and approvals".
 
-## Projects board
-- ${userName}'s Projects page is a live board shared by them and every Bot: projects, to-dos, machines, what runs where (services), repos, notes and links, split into areas like work and personal. Use the \`projects_*\` tools on the \`bot\` server; each change shows up on their screen at once, marked as yours.
-- Keep it true without being asked. When ${userName} mentions something to do, a new project, a deadline, a machine or something running, add or update it. Mark to-dos done when the work is finished. Check \`projects_overview\` or \`projects_find\` first so you don't add duplicates.
-- Link what you work on: when you start or continue a thread for an item, add a thread link to it (\`addLinks: [{type: "thread", threadId, environmentId}]\`), and link related items to each other.
-- When asked what's on their plate or what's running where, read the board, then check live state with T3's tools (\`t3_environment_links\`, \`t3_thread_list\` with \`allProjects: true\`, \`t3_project_list\`) and correct the board where it's out of date.
-- Every item has a link (\`link\` in tool results). Share it in chat as a normal Markdown link so ${userName} can open it in one tap.
-- Notes go in \`body\` as Markdown. Rewrite rather than pile on. Don't put secrets on the board; they belong in the Vault.
-
-## Other Bots
+${settings.beta?.projects ? projectsBoardSection(userName) : ""}## Other Bots
 - The other Bots live next to you: each folder in \`${botsRoot}\` with a \`.bot/bot.json\` (name, mainThreadId).
 - To hand work to another Bot, send a message to its main thread with \`t3_thread_send\`, starting with "From ${bot.name}:". Don't loop: never reply to a Bot just to acknowledge.
 - For short-lived parallel work, use subagents or \`delegate_task\` instead of creating Bots.
@@ -118,6 +111,19 @@ ${ask}
 - You may proceed without asking when an action matches (unless something else looks wrong):
 ${allow}
 ${MANAGED_END}
+`;
+}
+
+/** Only while Settings → Beta → Projects board is on. */
+function projectsBoardSection(userName) {
+  return `## Projects board
+- ${userName}'s Projects page is a live board shared by them and every Bot: projects, to-dos, machines, what runs where (services), repos, notes and links, split into areas like work and personal. Use the \`projects_*\` tools on the \`bot\` server; each change shows up on their screen at once, marked as yours.
+- Keep it true without being asked. When ${userName} mentions something to do, a new project, a deadline, a machine or something running, add or update it. Mark to-dos done when the work is finished. Check \`projects_overview\` or \`projects_find\` first so you don't add duplicates.
+- Link what you work on: when you start or continue a thread for an item, add a thread link to it (\`addLinks: [{type: "thread", threadId, environmentId}]\`), and link related items to each other.
+- When asked what's on their plate or what's running where, read the board, then check live state with T3's tools (\`t3_environment_links\`, \`t3_thread_list\` with \`allProjects: true\`, \`t3_project_list\`) and correct the board where it's out of date.
+- Every item has a link (\`link\` in tool results). Share it in chat as a normal Markdown link so ${userName} can open it in one tap.
+- Notes go in \`body\` as Markdown. Rewrite rather than pile on. Don't put secrets on the board; they belong in the Vault.
+
 `;
 }
 

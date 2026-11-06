@@ -587,6 +587,9 @@ export function setColumnWidth({ column, width, persist = true }: { column: Colu
   if (persist) localStorage.setItem(`bot.${column}.width`, String(next));
 }
 
+/** Settings → Beta → Projects board. Off until the settings say otherwise. */
+export const useProjectsOn = () => useApp((s) => s.settings?.beta?.projects === true);
+
 /** Open the Projects page, optionally on one item. */
 export function openProjects(itemId: string | null = null) {
   set({ page: "projects", projectItemId: itemId, exchangeBotSlug: null, dialog: null });

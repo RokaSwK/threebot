@@ -35,6 +35,8 @@ export type Settings = {
   rules: { alwaysAsk: string[]; allowWithoutAsking: string[] };
   sections: string[];
   defaultModel: ModelSelection | null;
+  /** Settings → Beta: experimental features, saved on the server because they change what Bots get. */
+  beta: { projects: boolean };
 };
 
 export type ProviderOptionSelection = { id: string; value: string | boolean };

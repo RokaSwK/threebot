@@ -19,7 +19,7 @@ import { requestMicrophone, readVoiceSettings, voiceLang } from "../lib/voiceCha
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { avatarStateFor } from "./Sidebar";
-import { openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, watchThread } from "../store";
+import { openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
@@ -318,6 +318,7 @@ const MessageContent = memo(function MessageContent({ text }: { text: string }) 
 function MessageLink({ href, children }: { href?: string; children?: React.ReactNode }) {
   const workspace = useContext(WorkspaceFileContext);
   const executorUrl = useApp((s) => s.executorUrl);
+  const projectsOn = useProjectsOn();
   const bots = useApp((s) => s.bots);
   const historical = useApp((s) => s.historicalBots);
   const threads = useApp((s) => s.threads);
@@ -334,7 +335,7 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
     return <a className="md-link" href={reference.environmentId ? threadLink({ kind: "remote", ...reference, environmentId: reference.environmentId, label: "T3 Code" }) : undefined} target="_blank" rel="noreferrer">{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}</a>;
   }
   if (href?.startsWith("bot:")) return <>{children}</>;
-  const boardItem = href ? parseItemLink(href) : null;
+  const boardItem = href && projectsOn ? parseItemLink(href) : null;
   if (boardItem) return <BoardItemChip id={boardItem}>{children}</BoardItemChip>;
   const path = href && workspace ? workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath) : null;
   if (path && workspace) return <button className="text-left underline" onClick={() => workspace.openFile(path)}>{children}</button>;
