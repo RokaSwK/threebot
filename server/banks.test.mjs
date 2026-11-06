@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { connectionHealth, createBanks, parsePrivateKey, publicTransaction, signJwt } from "./banks.mjs";
+import { connectionHealth, createBanks, parsePrivateKey, publicTransaction, redactIbans, signJwt } from "./banks.mjs";
 import { BANK_TOOLS, createBankTools } from "./banks-mcp.mjs";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mjs";
 import { createBotTools } from "./vault-mcp.mjs";
@@ -20,6 +20,7 @@ const DAY = 86400_000;
 /** A small Enable Banking: checks the JWT and answers the calls the module makes. */
 function fakeEnableBanking({ redirectUrls = ["https://bot.example/banks/callback"] } = {}) {
   const calls = [];
+  const faults = { deleteStatus: 204 };
   const sessions = new Map();
   let txPages = 0;
   const json = (status, body) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -43,7 +44,7 @@ function fakeEnableBanking({ redirectUrls = ["https://bot.example/banks/callback
     }
     if (u.pathname.startsWith("/sessions/")) {
       const id = decodeURIComponent(u.pathname.slice(10));
-      if (init.method === "DELETE") { sessions.delete(id); return json(204, null); }
+      if (init.method === "DELETE") { if (faults.deleteStatus >= 400) return json(faults.deleteStatus, { message: "unavailable" }); sessions.delete(id); return json(204, null); }
       return json(200, { status: sessions.get(id) ?? "EXPIRED" });
     }
     if (sessions.get(SESSION) !== "AUTHORIZED") return json(401, { message: "Session expired" });
@@ -59,7 +60,7 @@ function fakeEnableBanking({ redirectUrls = ["https://bot.example/banks/callback
     }
     return json(404, { message: "not found" });
   }
-  return { fetch, calls, sessions, get txPages() { return txPages; } };
+  return { fetch, calls, sessions, faults, get txPages() { return txPages; } };
 }
 
 async function setup(options = {}) {
@@ -175,6 +176,53 @@ test("a denied approval, an unknown bank and a missing callback are explained", 
     await n.banks.setup({ appId: APP_ID, privateKey: PEM });
     await assert.rejects(n.banks.connect({ bank: "N26", country: "DE" }), /APP_URL/);
   } finally { await n.done(); }
+});
+
+test("races, a failed setup and a failed disconnect leave the store right", async () => {
+  const t = await setup();
+  try {
+    // Reads that start before a save don't undo it.
+    const early = t.banks.status();
+    await t.banks.setup({ appId: APP_ID, privateKey: PEM });
+    await early;
+    assert.equal((await t.banks.status()).configured, true);
+
+    // A wrong key for the same app fails without spoiling the saved key's token.
+    const other = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" });
+    await assert.rejects(t.banks.setup({ appId: APP_ID, privateKey: other }));
+    assert.equal((await t.banks.findBanks({ country: "DE" })).length, 2);
+
+    // Two callbacks with the same state: only one becomes a session.
+    const link = await t.banks.connect({ bank: "N26", country: "DE" });
+    const stateToken = new URL(link.url).searchParams.get("state");
+    const results = await Promise.allSettled([t.banks.complete({ state: stateToken, code: "good-code" }), t.banks.complete({ state: stateToken, code: "good-code" })]);
+    assert.deepEqual(results.map((r) => r.status).sort(), ["fulfilled", "rejected"]);
+    assert.equal(t.eb.calls.filter((c) => c.method === "POST" && c.path === "/sessions").length, 1);
+
+    // Identical reads at once share one bank call.
+    const before = t.eb.calls.length;
+    await Promise.all([1, 2, 3, 4].map(() => t.banks.balances({ accountId: "acc-main" })));
+    assert.equal(t.eb.calls.length - before, 1);
+
+    // A transaction cap below what came back says there is more.
+    assert.equal((await t.banks.transactions({ accountId: "acc-main", dateFrom: "2026-10-01", limit: 1 })).more, true);
+
+    // Disconnect keeps the connection when Enable Banking can't end the access.
+    const id = (await t.banks.status()).connections[0].connectionId;
+    t.eb.faults.deleteStatus = 503;
+    await assert.rejects(t.banks.disconnect({ connectionId: id }), /still connected/);
+    assert.equal((await t.banks.status()).connections.length, 1);
+    t.eb.faults.deleteStatus = 204;
+    assert.deepEqual(await t.banks.disconnect({ connectionId: id }), { disconnected: true, bank: "N26" });
+    assert.equal((await t.banks.status()).connections.length, 0);
+  } finally { await t.done(); }
+});
+
+test("account numbers in free text are cut to their last 4", () => {
+  assert.equal(redactIbans("Transfer to DE89 3704 0044 0532 0130 00 thanks"), "Transfer to ••••3000 thanks");
+  const tx = publicTransaction({ transaction_amount: { amount: "1", currency: "EUR" }, credit_debit_indicator: "CRDT", remittance_information: [`From ${IBAN}`], debtor: { name: `Acct ${IBAN}` } });
+  assert.ok(!JSON.stringify(tx).includes(IBAN));
+  assert.equal(tx.description, "From ••••3000");
 });
 
 test("a transaction keeps only what a Bot needs", () => {

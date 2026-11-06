@@ -8,7 +8,7 @@
 // Storage: one AES-256-GCM file, BANKS_FILE (default `$THREEBOT_HOME/banks.enc`), encrypted with the
 // Vault key (AAD "bot-banks:v1"). It holds the app id and private key, the pending sign-ins and the
 // sessions. Nothing here is ever returned to a Bot or the app: not the key, not session ids, not IBANs.
-import { createCipheriv, createDecipheriv, createPrivateKey, randomBytes, randomUUID, sign } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createPrivateKey, randomBytes, randomUUID, sign } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -93,13 +93,17 @@ async function writeAtomic(file, body) {
 }
 
 // ---------- shapes Bots see ----------
+/** Free text (remittance, names) can carry account numbers too: keep only their last 4. */
+const IBAN_RE = /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b/g;
+export const redactIbans = (value) => String(value).replace(IBAN_RE, (m) => `••••${m.replace(/ /g, "").slice(-4)}`);
+const safeText = (value) => redactIbans(text(value));
 const last4 = (iban) => { const s = text(iban).replace(/\s+/g, ""); return s.length >= 4 ? s.slice(-4) : ""; };
 function publicAccount(raw) {
   const iban = raw?.account_id?.iban ?? raw?.all_account_ids?.find?.((id) => id?.scheme_name === "IBAN")?.identification;
   return {
     accountId: String(raw.uid),
-    name: text(raw.name) || text(raw.product) || text(raw.details) || "Account",
-    ...(text(raw.product) ? { product: text(raw.product) } : {}),
+    name: safeText(raw.name) || safeText(raw.product) || safeText(raw.details) || "Account",
+    ...(text(raw.product) ? { product: safeText(raw.product) } : {}),
     ...(text(raw.cash_account_type) ? { type: text(raw.cash_account_type) } : {}),
     ...(text(raw.usage) ? { usage: text(raw.usage) } : {}),
     currency: text(raw.currency) || null,
@@ -140,9 +144,9 @@ export function publicTransaction(raw) {
     currency: raw.transaction_amount?.currency ?? null,
     direction: debit ? "out" : raw.credit_debit_indicator === "CRDT" ? "in" : null,
     status: raw.status === "PDNG" ? "pending" : raw.status === "BOOK" ? "booked" : (raw.status ?? null),
-    ...(text(party) ? { counterparty: text(party) } : {}),
-    ...(remittance ? { description: remittance.slice(0, 500) } : {}),
-    ...(text(raw.bank_transaction_code?.description) ? { kind: text(raw.bank_transaction_code.description) } : {}),
+    ...(text(party) ? { counterparty: safeText(party) } : {}),
+    ...(remittance ? { description: redactIbans(remittance).slice(0, 500) } : {}),
+    ...(text(raw.bank_transaction_code?.description) ? { kind: safeText(raw.bank_transaction_code.description) } : {}),
     ...(text(raw.merchant_category_code) ? { merchantCategory: text(raw.merchant_category_code) } : {}),
     ...(text(raw.entry_reference) ? { id: text(raw.entry_reference) } : {}),
   };
@@ -158,19 +162,26 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
   let key = null;
   let state = null;
   let queue = Promise.resolve();
-  let jwt = null;
+  let loading = null;
+  const jwts = new Map();
   const cache = new Map();
+  const inflight = new Map();
 
-  async function load() {
-    if (state) return state;
+  /** One read of the file for every caller, so a slow first read can't overwrite a later save. */
+  function load() {
+    if (state) return Promise.resolve(state);
+    loading ??= readState().then((value) => (state ??= value)).finally(() => { loading = null; });
+    return loading;
+  }
+  async function readState() {
     key ??= await loadKey();
     let raw = null;
     try { raw = await fs.readFile(file, "utf8"); } catch (e) { if (e.code !== "ENOENT") throw e; }
-    if (raw === null) return (state = { app: null, pending: [], connections: [] });
+    if (raw === null) return { app: null, pending: [], connections: [] };
     let envelope;
     try { envelope = JSON.parse(raw); } catch { throw httpError(500, "The bank connections file is damaged."); }
     const payload = unseal(key, envelope);
-    return (state = { app: payload.app ?? null, pending: Array.isArray(payload.pending) ? payload.pending : [], connections: Array.isArray(payload.connections) ? payload.connections : [] });
+    return ({ app: payload.app ?? null, pending: Array.isArray(payload.pending) ? payload.pending : [], connections: Array.isArray(payload.connections) ? payload.connections : [] });
   }
   function mutate(fn) {
     const run = queue.then(async () => {
@@ -189,8 +200,13 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
 
   async function api(app, method, route, body) {
     if (!app) throw httpError(409, "Enable Banking isn't set up yet. Run banks_setup first.");
-    if (!jwt || jwt.appId !== app.appId || jwt.expires <= now() + 60_000) {
-      jwt = { appId: app.appId, token: signJwt({ appId: app.appId, key: parsePrivateKey(app.privateKey), now: now() }), expires: now() + 3600_000 };
+    // Keyed by the credential itself, so checking a new key in setup never leaves a bad token behind.
+    const credential = createHash("sha256").update(`${app.appId}\n${app.privateKey}`).digest("hex");
+    let jwt = jwts.get(credential);
+    if (!jwt || jwt.expires <= now() + 60_000) {
+      jwt = { token: signJwt({ appId: app.appId, key: parsePrivateKey(app.privateKey), now: now() }), expires: now() + 3600_000 };
+      jwts.clear();
+      jwts.set(credential, jwt);
     }
     let response;
     try {
@@ -249,12 +265,14 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
       throw error;
     }
   }
+  /** Banks allow a few unattended reads a day: identical reads share one call and its result for 10 minutes. */
   async function cached(cacheKey, fn) {
     const hit = cache.get(cacheKey);
     if (hit && hit.at > now() - CACHE_MS) return { ...hit.value, cachedAt: new Date(hit.at).toISOString() };
-    const value = await fn();
-    cache.set(cacheKey, { at: now(), value });
-    return value;
+    if (inflight.has(cacheKey)) return inflight.get(cacheKey);
+    const run = fn().then((value) => { cache.set(cacheKey, { at: now(), value }); return value; }).finally(() => inflight.delete(cacheKey));
+    inflight.set(cacheKey, run);
+    return run;
   }
 
   return {
@@ -283,7 +301,6 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
         if (u.protocol !== "https:" || u.username || u.password) throw httpError(400, "redirectUrl must be a full https:// address.");
       }
       const app = { appId: id, privateKey: String(privateKey), ...(redirect ? { redirectUrl: redirect } : {}) };
-      jwt = null;
       const info = await api(app, "GET", "/application");
       const registered = Array.isArray(info?.redirect_urls) ? info.redirect_urls.filter((u) => typeof u === "string") : null;
       const callback = redirectFor(app);
@@ -355,11 +372,15 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
      */
     async complete({ state: stateToken, code, error, errorDescription }) {
       const token = text(stateToken);
-      const s0 = await load();
-      const pending = /^[a-f0-9]{64}$/.test(token) ? s0.pending.find((p) => p.state === token && Date.parse(p.expiresAt) > now()) : null;
+      if (!/^[a-f0-9]{64}$/.test(token)) throw httpError(400, "This sign-in link has expired or was already used. Ask your Bot for a new one.");
+      // Found and removed under the store's lock: one use, even for callbacks that arrive together.
+      const pending = await mutate((s) => {
+        const found = s.pending.find((p) => p.state === token && Date.parse(p.expiresAt) > now()) ?? null;
+        s.pending = s.pending.filter((p) => p.state !== token);
+        return found;
+      });
       if (!pending) throw httpError(400, "This sign-in link has expired or was already used. Ask your Bot for a new one.");
-      // One use, whatever happens next.
-      await mutate((s) => { s.pending = s.pending.filter((p) => p.state !== token); });
+      const s0 = await load();
       if (text(error)) {
         log(`banks: ${pending.aspsp.name} sign-in was not approved (${text(error).slice(0, 60)})`);
         throw httpError(400, `${pending.aspsp.name} didn't grant access${text(errorDescription) ? `: ${text(errorDescription).slice(0, 200)}` : ""}. Ask your Bot for a new link to try again.`);
@@ -414,8 +435,9 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
           continuation = text(data?.continuation_key) || null;
           pages++;
         } while (continuation && out.length < max && pages < MAX_PAGES);
+        const more = Boolean(continuation) || out.length > max;
         out.sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")));
-        return { accountId: account.accountId, bank: connection.aspsp.name, account: account.name, dateFrom: from, ...(to ? { dateTo: to } : {}), count: Math.min(out.length, max), transactions: out.slice(0, max), ...(continuation ? { more: true } : {}) };
+        return { accountId: account.accountId, bank: connection.aspsp.name, account: account.name, dateFrom: from, ...(to ? { dateTo: to } : {}), count: Math.min(out.length, max), transactions: out.slice(0, max), ...(more ? { more: true } : {}) };
       });
     },
 
@@ -423,7 +445,12 @@ export function createBanks({ file, key: loadKey, redirectUrl: defaultRedirect =
     async disconnect({ connectionId }) {
       const connection = await connectionFor(text(connectionId));
       const { app } = await load();
-      await api(app, "DELETE", `/sessions/${encodeURIComponent(connection.sessionId)}`).catch(() => {});
+      try {
+        await api(app, "DELETE", `/sessions/${encodeURIComponent(connection.sessionId)}`);
+      } catch (error) {
+        // Already gone at Enable Banking (404) is fine; anything else keeps the connection so it can be retried.
+        if (error.status !== 404) throw httpError(502, `${connection.aspsp.name} is still connected: Enable Banking couldn't end the access (${error.message}) Try again later.`);
+      }
       await mutate((s) => { s.connections = s.connections.filter((c) => c.id !== connection.id); });
       cache.clear();
       log(`banks: disconnected ${connection.aspsp.name} (${connection.aspsp.country})`);
