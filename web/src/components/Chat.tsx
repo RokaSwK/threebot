@@ -45,7 +45,8 @@ const ConversationWork = memo(function ConversationWork({ threadId, readOnly }: 
     <QueuedWork state={state} />
     {state.plans.slice(-3).map(plan => <ArtifactPlan key={plan.id} threadId={threadId} plan={plan} />)}
     <GoalCard threadId={threadId} state={state} readOnly={readOnly} />
-    <TaskChanges state={state} />
+    {/* Keyed so a PR linked in two threads gets fresh chip state (read, hide rule, timer) per thread. */}
+    <TaskChanges key={threadId} state={state} />
     {state.error && <p className="my-2 text-[12px] text-muted" role="status">Task details unavailable. Reconnect to refresh.</p>}
   </>;
 });
