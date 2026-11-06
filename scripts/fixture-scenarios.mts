@@ -391,9 +391,23 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
     url: `https://github.com/example/generic/pull/${number}`, source: 'manual', snapshot: { state: stale, title: `Generic change ${number}` }, watch: null }));
   // T3 0.1.8 nightlies: a run can start a fresh session in the same thread.
   items.get(alpha.id)!.push(base(alpha.id, 'user_message', { messageId: 'fixture-fresh-routine-run', text: tasks[0].prompt, scheduledTaskId: tasks[0].id, freshContext: true, createdBy: 'user', creationSource: 'web', attachments: [] }));
+  // T3 0.1.5+: provider turns carry token usage (0.1.7+ also names the models). Synthetic counts only.
+  // They finished an hour ago, so a usage-stats preview (the last day) counts them.
+  const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const turn = (id: string, runAttemptId: string, usage: Record<string, unknown>) => ({ id, providerThreadId: `${id}-provider`, nodeId: `${id}-node`, runAttemptId, nativeTurnRef: null, ordinal: 1, status: 'completed', startedAt: recent, completedAt: recent,
+    turnTokenUsage: { usageScope: 'main_agent', usageStatus: 'complete', hasSubagents: false, ...usage } });
+  const usage = new Map<string, { providerTurns: unknown[]; attempts: unknown[] }>([
+    [alpha.id, { attempts: [], providerTurns: [turn('fixture-turn-1', 'fixture-attempt-x', { inputTokens: 12000, outputTokens: 800, cachedInputTokens: 9000, cacheCreationTokens: 500, models: ['fixture-opus'] }),
+      turn('fixture-turn-2', 'fixture-attempt-x', { inputTokens: 3000, outputTokens: 200, cachedInputTokens: 2500, cacheCreationTokens: 0, models: ['fixture-opus'] })] }],
+    // A Bot's child thread counts too.
+    [child.id, { attempts: [], providerTurns: [turn('fixture-turn-3', 'fixture-attempt-y', { inputTokens: 400, outputTokens: 40, models: ['fixture-opus'] })] }],
+    // Without reported models (T3 0.1.5–0.1.6), the run's selected model is used.
+    [beta.id, { attempts: [{ id: 'fixture-attempt-beta', runId: run.id }], providerTurns: [turn('fixture-turn-4', 'fixture-attempt-beta', { inputTokens: 500, outputTokens: 50 })] }],
+  ]);
+  for (const thread of [alpha, child, beta]) thread.updatedAt = recent;
   const calls: Record<string, unknown>[] = [];
   return {
-    requests, tasks,
+    requests, tasks, usage, serverVersion: '0.1.8-nightly.20261106.4275',
     capabilities: { sideChats: true, threadForceStop: true, voiceTranscription: true, freshContext: true, scheduledTaskThreadModes: true },
     voiceStatus: { supported: true, state: 'ready', modelId: 'fixture/speech', model: 'Fixture speech (no model)', size: 0, supportsStreaming: false, supportsTranslation: false,
       languages: ['en', 'es'], supportsLanguageDetection: false, acceleration: 'auto', modelUnloadTimeout: 'min_5', gpuDevices: [] },

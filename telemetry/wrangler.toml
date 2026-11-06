@@ -1,0 +1,16 @@
+# Not deployed. See README.md for the steps; the database_id comes from `wrangler d1 create`.
+name = "threebot-telemetry"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+# Don't keep request logs (they would include IP addresses).
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "threebot-telemetry"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# STATS_TOKEN (for GET /v1/stats) is a secret: `npx wrangler secret put STATS_TOKEN`.

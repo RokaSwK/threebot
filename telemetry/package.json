@@ -1,0 +1,10 @@
+{
+  "name": "threebot-telemetry",
+  "private": true,
+  "type": "module",
+  "description": "Collector for Threebot's opt-in usage stats (Cloudflare Worker + D1). Not deployed by CI.",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "deploy": "wrangler deploy"
+  }
+}

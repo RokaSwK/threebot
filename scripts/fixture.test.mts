@@ -782,3 +782,38 @@ test('latest-t3 transcribes dictation audio carried by the real gateway', { time
     assert.equal(bad.status, 400); assert.equal((await bad.json()).reason, 'invalid_audio');
   } finally { rpc.close(); await fixture.close(); }
 });
+
+test('usage stats: off and unasked by default, with an exact preview from the real gateway', { timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  try {
+    const status = (await fixture.request('/api/telemetry')).body;
+    assert.deepEqual({ enabled: status.enabled, asked: status.asked, choice: status.choice, blockedBy: status.blockedBy, lastSentAt: status.lastSentAt }, { enabled: false, asked: false, choice: null, blockedBy: null, lastSentAt: null });
+    const preview = (await fixture.request('/api/telemetry/preview')).body;
+    assert.equal(preview.installId, status.installId);
+    // The basic fixture's fake T3 reports no version and no provider turns, like T3 Code before 0.1.5: no token section.
+    assert.deepEqual({ ...preview, installId: 'x', threebot: 'x', node: 'x', os: 'x', arch: 'x' }, { schema: 1, installId: 'x', threebot: 'x', t3code: null, node: 'x', os: 'x', arch: 'x', bots: '2-5', routines: '0', features: { projects: false, autoUpdate: false, freshSessionRoutines: false } });
+    assert.equal((await fixture.request('/api/telemetry', 'PUT', { enabled: 'yes' })).status, 400);
+    assert.equal((await fixture.request('/api/telemetry', 'PUT', { enabled: true })).body.enabled, true);
+    const reset = (await fixture.request('/api/telemetry/reset-id', 'POST', {})).body;
+    assert.notEqual(reset.installId, status.installId);
+    // Saved across restarts.
+    await fixture.restart();
+    assert.deepEqual([(await fixture.request('/api/telemetry')).body.enabled, (await fixture.request('/api/telemetry')).body.installId], [true, reset.installId]);
+  } finally { await fixture.close(); }
+});
+
+test('usage stats count Bot token usage per model from T3 provider turns (latest-t3)', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'latest-t3' });
+  try {
+    const preview = (await fixture.request('/api/telemetry/preview')).body;
+    assert.equal(preview.t3code, '0.1.8-nightly.20261106.4275');
+    assert.equal(preview.routines, '2-5');
+    assert.deepEqual(preview.tokens, {
+      // Two turns in Alpha's main thread and one in its child, with the models T3 reported.
+      'fixture-opus': { turns: 3, inputTokens: 15400, cachedInputTokens: 11500, cacheCreationTokens: 500, outputTokens: 1040 },
+      // Beta's turn names no model, so its run's selected model is used.
+      'fixture-idle': { turns: 1, inputTokens: 500, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 50 },
+    });
+    assert.doesNotMatch(JSON.stringify(preview), /Alpha|Beta|Gamma|Generic|thread-|project-|\/bots\//);
+  } finally { await fixture.close(); }
+});

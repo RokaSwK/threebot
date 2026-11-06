@@ -30,12 +30,13 @@ import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
 import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks } from "./release.mts";
-import { busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
+import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
+import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
@@ -236,17 +237,19 @@ async function startSelfUpdate({ target, onExit }: { target?: string; onExit?: (
   return { started: true, version: latest!.version };
 }
 
-/** The Bot threads a restart would interrupt, from one look at T3's thread list. */
-async function busyThreads() {
+/** The first item of a T3 subscription (its snapshot), then the subscription ends. */
+async function firstOf<T>(tag: string, payload: object, pick: (event: any) => T | undefined): Promise<T> {
   const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
   let stream: ReturnType<T3Client["stream"]> | undefined;
-  const threads = await withTimeout(new Promise<BotThread[]>((resolve, reject) => {
-    stream = client.stream("orchestration.subscribeShell", { omitIdleSubagents: true }, (event) => {
-      if (event.kind === "snapshot") resolve(event.snapshot?.threads ?? []);
-    });
-    stream!.done.then(() => reject(new Error("T3 ended the thread list")), reject);
+  return withTimeout(new Promise<T>((resolve, reject) => {
+    stream = client.stream(tag, payload, (event) => { const value = pick(event); if (value !== undefined) resolve(value); });
+    stream!.done.then(() => reject(new Error(`T3 ended ${tag}`)), reject);
   }), 15000, "T3 timed out").finally(() => { try { stream?.cancel(); } catch {} });
-  return busyBotThreads(threads, await listBots());
+}
+const shellThreads = (omitIdleSubagents = true) => firstOf<(BotThread & { updatedAt?: string | null })[]>("orchestration.subscribeShell", { omitIdleSubagents }, (event) => event.kind === "snapshot" ? event.snapshot?.threads ?? [] : undefined);
+/** The Bot threads a restart would interrupt, from one look at T3's thread list. */
+async function busyThreads() {
+  return busyBotThreads(await shellThreads(), await listBots());
 }
 const autoUpdate = createAutoUpdater({
   store: createAutoUpdateStore(path.join(appDir, "auto-update.json")),
@@ -255,6 +258,42 @@ const autoUpdate = createAutoUpdater({
     await startSelfUpdate({ target, onExit: (v, code) => void autoUpdate.failed(v, new Error(`the updater exited (${code}) without switching`)) });
   },
 });
+// Settings → Usage stats: off until the user says yes. One ping a day at most, from here, never the browser.
+const telemetry = createTelemetry({ file: path.join(appDir, "telemetry.json"), collect: collectUsageStats, log: (line) => console.log(line) });
+/** This install's numbers for a usage-stats ping. Anything T3 can't answer is left out rather than failing the ping. */
+async function collectUsageStats({ since, until }: { since: number; until: number }): Promise<PayloadInput> {
+  const [settings, bots, auto] = await Promise.all([getSettings(), listBots(), autoUpdate.status()]);
+  const projectIds = new Set<string | null | undefined>(bots.map((bot) => bot.projectId).filter(Boolean));
+  const mainThreads = new Set<string | null | undefined>(bots.map((bot) => bot.mainThreadId).filter(Boolean));
+  const quietly = <T,>(promise: Promise<T>): Promise<T | null> => promise.catch(() => null);
+  const [config, tasks, threads] = await Promise.all([
+    quietly(withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("server.getConfig", {}), 15000, "T3 timed out"))),
+    quietly(firstOf<{ projectId?: string | null; threadId?: string | null; threadMode?: string }[]>("scheduledTasks.subscribe", {}, (event) => Array.isArray(event.tasks) ? event.tasks : undefined)),
+    quietly(shellThreads(false)),
+  ]);
+  const t3code = typeof config?.environment?.serverVersion === "string" ? config.environment.serverVersion : null;
+  const routines = tasks?.filter((task) => projectIds.has(task.projectId) || mainThreads.has(task.threadId)) ?? null;
+  // Token counts: the provider turns of Bot threads that changed in the window, read one thread at a time.
+  let tokens: PayloadInput["tokens"] = null;
+  if (threads) {
+    const recent = threads.filter((thread) => (Date.parse(thread.updatedAt ?? "") || until) > since);
+    const projections: unknown[] = [];
+    const deadline = Date.now() + 60_000;
+    for (const thread of botThreads(recent, bots).slice(0, 200)) {
+      if (Date.now() > deadline) break;
+      const projection = await quietly(withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("orchestration.getThreadProjection", { threadId: thread.id }), 15000, "T3 timed out")));
+      if (projection) projections.push(projection);
+    }
+    const usage = aggregateTurnUsage(projections as Parameters<typeof aggregateTurnUsage>[0], { since, until });
+    if (usage.seen || versionAtLeast(t3code, MIN_T3_FOR_TOKENS)) tokens = usage.models;
+  }
+  return {
+    installId: (await telemetry.status()).installId, threebot: version, t3code, node: process.versions.node, os: process.platform, arch: process.arch,
+    bots: bots.length, routines: routines?.length ?? null,
+    features: { projects: settings.beta.projects, autoUpdate: auto.auto, freshSessionRoutines: routines?.some((task) => task.threadMode === "fresh_session") ?? false },
+    tokens,
+  };
+}
 const passwordRequired = async () => Boolean(cfg.password) || (await remoteAccess.hasPassword());
 async function passwordMatches(password: string) {
   if (cfg.password) return safeEqual(password, cfg.password);
@@ -786,6 +825,10 @@ const server = http.createServer(async (req, res) => {
       if (on) await remoteAccess.tunnelOn(); else await remoteAccess.tunnelOff();
       return send(res, 200, await remoteAccess.status());
     }
+    if (p === "/api/telemetry" && req.method === "GET") return send(res, 200, await telemetry.status(), { "cache-control": "no-store" });
+    if (p === "/api/telemetry" && req.method === "PUT") return send(res, 200, await telemetry.setEnabled((await readBody(req)).enabled));
+    if (p === "/api/telemetry/preview" && req.method === "GET") return send(res, 200, await telemetry.preview(), { "cache-control": "no-store" });
+    if (p === "/api/telemetry/reset-id" && req.method === "POST") return send(res, 200, await telemetry.resetId());
     if (p === "/api/settings" && req.method === "GET") return send(res, 200, await getSettings());
     if (p === "/api/settings" && req.method === "PUT") {
       const patch = await readBody(req);
@@ -953,6 +996,7 @@ await autoUpdate.settle().catch((error) => console.error("auto-update: couldn't 
 // anyone opening Settings, and an automatic update can start. The checker answers from its stored
 // result until a check is due; the automatic update acts once per new answer.
 if (selfUpdating) startUpdateChecks(() => checkUpdates().then(autoUpdate.consider).catch((error) => console.error("auto-update failed", error)));
+telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });
