@@ -119,8 +119,8 @@ function toolJson(value) {
  * @param deps.log            (line) => void, never given secrets
  */
 /**
- * `extra` adds more tools to the same server (the Projects board): { tools, call(name, args, { botFor }) },
- * or a function returning that or null, asked on every request, so a switched-off feature's tools are neither listed nor callable.
+ * `extra` adds more tools to the same server (the Projects board, bank accounts): { tools, call(name, args, { botFor, readSecret }) },
+ * a list of those, or a function returning that (or null), asked on every request, so a switched-off feature's tools are neither listed nor callable.
  */
 export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra: extraTools = null }) {
   // Files from an earlier run have no timer left to delete them.
@@ -141,6 +141,12 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     const value = (await fs.readFile(real, "utf8")).replace(/\r?\n$/, "");
     if (!value) throw new Error("That secret file is empty.");
     return { value, path: real };
+  }
+
+  /** For extra tools: the secret's value and a way to delete T3's copy once it's stored. */
+  async function readSecretForTool(file) {
+    const secret = await readT3Secret(file);
+    return { value: secret.value, remove: () => fs.rm(secret.path, { force: true }).catch(() => {}) };
   }
 
   async function botFor(threadId) {
@@ -257,7 +263,9 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     }
     const isNotification = !("id" in msg);
     const reply = (result) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
-    const extra = typeof extraTools === "function" ? await extraTools() : extraTools;
+    // One optional tool set or several (the Projects board, bank accounts), each switched on or off.
+    const extras = [].concat((typeof extraTools === "function" ? await extraTools() : extraTools) ?? []).filter(Boolean);
+    const extraInstructions = extras.map((e) => e.instructions).filter(Boolean).join(" ");
     switch (msg.method) {
       case "initialize": {
         const asked = msg.params?.protocolVersion;
@@ -265,16 +273,17 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           protocolVersion: PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "bot", title: "Bot", version: "0.1.0" },
-          instructions: "The user's Vault: saved logins, API tokens and contact info. You never see website passwords; fill them into your browser tab with vault_fill_password. To save a new one, ask with T3's request_secret (delivery \"file\"), then vault_save_login." + (extra?.instructions ? ` ${extra.instructions}` : ""),
+          instructions: "The user's Vault: saved logins, API tokens and contact info. You never see website passwords; fill them into your browser tab with vault_fill_password. To save a new one, ask with T3's request_secret (delivery \"file\"), then vault_save_login." + (extraInstructions ? ` ${extraInstructions}` : ""),
         });
       }
       case "ping":
         return reply({});
       case "tools/list":
-        return reply({ tools: [...TOOLS, ...(extra?.tools ?? [])] });
+        return reply({ tools: [...TOOLS, ...extras.flatMap((e) => e.tools)] });
       case "tools/call": {
         const name = msg.params?.name;
-        if (extra?.tools.some((t) => t.name === name)) return reply(await extra.call(name, msg.params?.arguments ?? {}, { botFor }));
+        const extra = extras.find((e) => e.tools.some((t) => t.name === name));
+        if (extra) return reply(await extra.call(name, msg.params?.arguments ?? {}, { botFor, readSecret: readSecretForTool }));
         if (!TOOLS.some((t) => t.name === name)) return isNotification ? null : { jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool: ${name}` } };
         return reply(await callTool(name, msg.params?.arguments ?? {}));
       }

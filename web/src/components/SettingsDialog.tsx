@@ -280,11 +280,12 @@ function Permissions({ s }: { s: Settings }) {
 /** Experimental features, each with its own switch. Saved on the server: they change what Bots get. */
 const BETA_FEATURES = [
   { key: "projects", title: "Projects board", desc: "A live board of your projects, to-dos, machines and what runs where, kept up to date by you and your Bots." },
+  { key: "banks", title: "Bank accounts", desc: "Let your Bots connect banks such as N26 and Trade Republic through Enable Banking, and read balances and transactions. Read-only: no payments." },
 ] as const;
 
 function Beta({ s }: { s: Settings }) {
   const save = useContext(SettingsSave);
-  const beta = s.beta ?? { projects: false };
+  const beta: Settings["beta"] = s.beta ?? { projects: false };
   return (
     <>
       <p className="mb-4 text-[13px] text-muted">Features that are still taking shape. Switching one off hides it from you and your Bots; nothing is deleted.</p>

@@ -3,7 +3,8 @@
 
 import fs from "node:fs/promises";
 
-export const BETA_DEFAULTS = Object.freeze({ projects: false });
+// banks: bank accounts through Enable Banking (server/banks.mjs).
+export const BETA_DEFAULTS = Object.freeze({ projects: false, banks: false });
 
 /** The saved switches with defaults filled in. Unknown keys and non-booleans are dropped. */
 export function betaSettings(saved) {

@@ -1,6 +1,6 @@
 // The instructions every Bot's agent reads (AGENTS.md, linked as CLAUDE.md).
 // The gateway rewrites the managed block whenever a Bot or the global settings change,
-// including the Beta switches (the Projects board section is only there while that beta is on).
+// including the Beta switches (the Projects board and Bank accounts sections are only there while their beta is on).
 
 import { OBJECT_AVATAR_IDS } from "./object-avatars.mjs";
 
@@ -79,7 +79,7 @@ ${executor?.kind === 'cloud' ? cloudInstructions(userName, executor) : executor 
 - If the Executor Admin tools aren't available, send ${userName} to ${executor.publicUrl} → Apps to connect it there instead.
 - Sending, posting, paying or deleting through an app still needs ${userName}'s go-ahead (see "Safety and approvals").` : "- No connected apps are set up yet. Use the browser, and API tokens from the Vault (see \"Vault\")."}
 
-## Computer
+${settings.beta?.banks ? banksSection(userName) : ""}## Computer
 - You share one computer (this server) and its browser with ${userName}'s other Bots. Sign-ins made in that browser are shared too, so check whether a site is already signed in before asking.
 - Do the work yourself. ${executor?.kind === 'cloud' ? "For connected accounts, use the Executor Cloud connection flow above; do not create developer OAuth clients or send the user to a dashboard as the default setup path." : "Setup chores are your job: creating OAuth apps in developer consoles, enabling APIs, filling settings pages and downloading files."} Use the T3 browser tools (\`preview_open\`, \`preview_act\`, \`preview_snapshot\`, …); keep one tab per task and reuse it.
 - To sign in to a site, use the Vault first (see "Vault"): fill a saved login, or ask for one and save it there.
@@ -123,6 +123,20 @@ function projectsBoardSection(userName) {
 - When asked what's on their plate or what's running where, read the board, then check live state with T3's tools (\`t3_environment_links\`, \`t3_thread_list\` with \`allProjects: true\`, \`t3_project_list\`) and correct the board where it's out of date.
 - Every item has a link (\`link\` in tool results). Share it in chat as a normal Markdown link so ${userName} can open it in one tap.
 - Notes go in \`body\` as Markdown. Rewrite rather than pile on. Don't put secrets on the board; they belong in the Vault.
+
+`;
+}
+
+/** Only while Settings → Beta → Bank accounts is on. */
+function banksSection(userName) {
+  return `## Bank accounts
+- ${userName}'s bank accounts (for example N26 and Trade Republic) connect through **Enable Banking**: read-only PSD2 access to balances and transactions, never payments. Use the \`banks_*\` tools on the \`bot\` server, not Executor or the browser, and pass your main threadId.
+- Start with \`banks_status\`: it lists each connected bank, its accounts (\`accountId\`) and when access ends. Read with \`banks_balances\` and \`banks_transactions\`. Banks allow only a few background reads a day, so read what you need once and reuse it in the conversation.
+- To connect a bank, look it up with \`banks_find\` (country code and name; ask ${userName} which country the account is in if you don't know: banks such as N26 and Trade Republic are listed in several), then \`banks_connect\`, and put the link it returns on its own line, like \`[Connect N26](https://…)\`. ${userName} approves in the bank's app or website (Trade Republic shows a QR code to scan in its app; N26 asks for its login) and lands back on Threebot. When they say they're done, check \`banks_status\`.
+- Access ends after about 90 days, then each bank must be approved again. When \`banks_status\` says \`reconnect-soon\` or \`needs-reconnect\`, tell ${userName} and offer a new link with \`banks_connect\` (it replaces the old connection). If ${userName} wants a reminder, make it a routine that checks \`banks_status\`.
+- If Enable Banking isn't set up, ask ${userName} for the application id in chat (not secret), then the private key with \`request_secret\` (\`delivery: "file"\`, label "Enable Banking private key (.pem)"), and pass the file to \`banks_setup\` without reading it. If it says the callback isn't registered, tell ${userName} the exact address to add in the Enable Banking control panel.
+- What banks share differs: Trade Republic gives only its cash account (no holdings, no merchant names, roughly the latest 100 transactions); N26 includes payee and reference. Say so instead of guessing what's missing.
+- Never write account numbers, balances or transactions to shared places (the Projects board, other Bots, the web) unless ${userName} asks. Tool results show only the last 4 digits of an IBAN; don't try to find the rest.
 
 `;
 }

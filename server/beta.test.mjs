@@ -17,8 +17,8 @@ async function dir() {
 
 test("a new install starts with the Projects board off", async () => {
   const { file, done } = await dir();
-  assert.deepEqual(await settleBetaDefaults(undefined, { projectsFile: file }), { beta: { projects: false } });
-  assert.deepEqual(await settleBetaDefaults({ userName: "Sam" }, { projectsFile: file }), { userName: "Sam", beta: { projects: false } });
+  assert.deepEqual(await settleBetaDefaults(undefined, { projectsFile: file }), { beta: { projects: false, banks: false } });
+  assert.deepEqual(await settleBetaDefaults({ userName: "Sam" }, { projectsFile: file }), { userName: "Sam", beta: { projects: false, banks: false } });
   await writeFile(file, JSON.stringify({ version: 3, items: {} }));
   assert.equal((await settleBetaDefaults({}, { projectsFile: file })).beta.projects, false, "an empty board doesn't count");
   await done();
@@ -30,7 +30,7 @@ test("an existing install with a non-empty board keeps it on", async () => {
   await store.save([{ kind: "task", title: "Renew the domain" }], { type: "user" });
   assert.equal(await boardHasItems(file), true);
   const settled = await settleBetaDefaults({ userName: "Sam", theme: "dark" }, { projectsFile: file });
-  assert.deepEqual(settled, { userName: "Sam", theme: "dark", beta: { projects: true } });
+  assert.deepEqual(settled, { userName: "Sam", theme: "dark", beta: { projects: true, banks: false } });
   // A damaged board is not hidden.
   await writeFile(file, "{ not json");
   assert.equal(await boardHasItems(file), true);
@@ -48,12 +48,12 @@ test("once the switch has been set, the default never overrides it and the board
 
 test("the toggle round-trips and refuses anything but known booleans", () => {
   let saved = betaSettings(undefined);
-  assert.deepEqual(saved, { projects: false });
+  assert.deepEqual(saved, { projects: false, banks: false });
   saved = patchBeta(saved, { projects: true });
-  assert.deepEqual(betaSettings(saved), { projects: true });
-  saved = patchBeta(saved, { projects: false });
-  assert.deepEqual(betaSettings(saved), { projects: false });
-  assert.deepEqual(betaSettings({ projects: "yes", other: true }), { projects: false });
+  assert.deepEqual(betaSettings(saved), { projects: true, banks: false });
+  saved = patchBeta(saved, { projects: false, banks: true });
+  assert.deepEqual(betaSettings(saved), { projects: false, banks: true });
+  assert.deepEqual(betaSettings({ projects: "yes", other: true }), { projects: false, banks: false });
   assert.throws(() => patchBeta(saved, { projects: "on" }), (e) => e.status === 400);
   assert.throws(() => patchBeta(saved, { nope: true }), (e) => e.status === 400);
   assert.throws(() => patchBeta(saved, null), (e) => e.status === 400);

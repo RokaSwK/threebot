@@ -16,7 +16,9 @@ import { createMainBotRegistry } from "./main-bot.mjs";
 import { createEnvironmentRouter, environmentPath } from "./environment-routes.mjs";
 import { createThreadLinkResolver } from "./thread-link.mjs";
 import { accessTokenFrom, createAccessVerifier } from "./access.mjs";
-import { createVault } from "./vault.mjs";
+import { createVault, loadOrCreateKey } from "./vault.mjs";
+import { createBanks } from "./banks.mjs";
+import { BANK_TOOLS, createBankTools } from "./banks-mcp.mjs";
 import { createBotTools, handleMcpHttp } from "./vault-mcp.mjs";
 import { T3Client } from "./t3rpc.mjs";
 import { executorConfiguration, executorMcpDefinition, publicExecutorConfiguration } from "./executor-config.mjs";
@@ -48,6 +50,8 @@ const cfg = {
   password: process.env.BOT_PASSWORD ?? "",
   vaultFile: process.env.VAULT_FILE ?? path.join(dataRoot, "vault.enc"),
   vaultKeyFile: process.env.VAULT_KEY_FILE ?? path.join(dataRoot, ".vault-key"),
+  // Bank connections (Enable Banking), encrypted with the Vault key.
+  banksFile: process.env.BANKS_FILE ?? path.join(dataRoot, "banks.enc"),
   // Where T3's request_secret (delivery "file") leaves values; vault_save_login moves them into the Vault.
   t3SecretsDir: process.env.T3_SECRETS_DIR ?? path.join(homedir(), ".t3", "userdata", "secrets", "files"),
 };
@@ -83,6 +87,15 @@ const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 const projectsFile = path.join(appDir, "projects.json");
 const projects = createProjects({ file: projectsFile });
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
+// Where banks send the user back after they approve: registered in the Enable Banking control panel.
+const banks = createBanks({
+  file: cfg.banksFile,
+  // Opening the Vault first creates its key for a new install, and never replaces a missing one.
+  key: async () => { await vault.list(); return loadOrCreateKey(cfg.vaultKeyFile, { create: false }); },
+  redirectUrl: () => (process.env.ENABLE_BANKING_REDIRECT_URL ?? "").trim() || (appUrl ? `${appUrl}/banks/callback` : ""),
+  apiUrl: (process.env.ENABLE_BANKING_API_URL ?? "https://api.enablebanking.com").replace(/\/$/, ""),
+  log: (line) => console.log(line),
+});
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
 const threadPreviews = createThreadPreviews({
@@ -324,6 +337,8 @@ async function getSettings() {
 }
 /** The Projects board is a beta feature; off hides its routes, its Bot tools and its AGENTS.md section. */
 const projectsOn = async () => (await getSettings()).beta.projects;
+/** Bank accounts are a beta feature too; off hides the banks_* tools, the callback and the AGENTS.md section. */
+const banksOn = async () => (await getSettings()).beta.banks;
 function botDir(slug) {
   if (!SLUG_RE.test(slug)) throw Object.assign(new Error("bad slug"), { status: 400 });
   return path.join(cfg.botsRoot, slug);
@@ -535,6 +550,11 @@ const projectTools = {
   call: createProjectTools({ projects, appUrl, log: (line) => console.log(line) }),
   instructions: "Also the user's Projects board (projects_* tools): their projects, to-dos, machines, what runs where, repos and links, shown live on their Projects page.",
 };
+const bankTools = {
+  tools: BANK_TOOLS,
+  call: createBankTools({ banks, log: (line) => console.log(line) }),
+  instructions: "Also the user's bank accounts through Enable Banking (banks_* tools, read-only): connect a bank, then read balances and transactions.",
+};
 const botTools = createBotTools({
   vault,
   async findBotByThread(threadId) {
@@ -545,7 +565,10 @@ const botTools = createBotTools({
   secretsDir: cfg.t3SecretsDir,
   tokenDir: path.join(path.dirname(cfg.vaultKeyFile), "bot-secrets"),
   log: (line) => console.log(line),
-  extra: async () => (await projectsOn() ? projectTools : null),
+  extra: async () => {
+    const beta = (await getSettings()).beta;
+    return [beta.projects ? projectTools : null, beta.banks ? bankTools : null];
+  },
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 
@@ -637,6 +660,30 @@ async function serveStatic(req, res, urlPath) {
   res.end(await fs.readFile(file));
 }
 
+// ---------- bank sign-in callback ----------
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function bankPage(res, status, title, message) {
+  // The URL carries a one-time code: never cache the page or send it on as a referrer.
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px;box-sizing:border-box}main{max-width:28rem}h1{font-size:1.3rem}</style></head>
+<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body></html>`);
+}
+async function bankCallback(req, res, url) {
+  const ip = clientIp(req);
+  if (!(await banksOn())) return send(res, 404, "not found");
+  if (loginBlocked(ip)) return bankPage(res, 429, "Too many attempts", "Try again in 15 minutes.");
+  const q = url.searchParams;
+  try {
+    const done = await banks.complete({ state: q.get("state"), code: q.get("code"), error: q.get("error"), errorDescription: q.get("error_description") });
+    return bankPage(res, 200, `${done.bank} connected`, `${done.accounts} account${done.accounts === 1 ? "" : "s"} connected, read-only. You can close this page and tell your Bot you're done.`);
+  } catch (error) {
+    if (error.status === 400) loginFailed(ip);
+    else console.error("banks: callback failed", error.message);
+    return bankPage(res, error.status === 400 ? 400 : 502, "Bank not connected", error.status === 400 || error.status === 502 ? error.message : "Something went wrong saving the connection. Ask your Bot for a new link.");
+  }
+}
+
 // ---------- router ----------
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://x");
@@ -676,6 +723,9 @@ const server = http.createServer(async (req, res) => {
     }
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
     if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
+    // A bank sends the user back here after they approve. Their phone's browser may not be signed in to
+    // this app, so the one-time state from banks_connect is what lets it in; failures count like logins.
+    if (p === "/banks/callback" && req.method === "GET") return await bankCallback(req, res, url);
 
     if (p === "/api/session") {
       const needsPassword = await passwordRequired();
@@ -770,7 +820,7 @@ const server = http.createServer(async (req, res) => {
       if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
       await writeJson(settingsPath, next);
       if (!next.beta.projects) projectRoutes.closeStreams();
-      if ("rules" in patch || "userName" in patch || "timezone" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
+      if ("rules" in patch || "userName" in patch || "timezone" in patch || JSON.stringify(next.beta) !== JSON.stringify(current.beta)) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);

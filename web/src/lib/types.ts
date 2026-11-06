@@ -36,7 +36,7 @@ export type Settings = {
   sections: string[];
   defaultModel: ModelSelection | null;
   /** Settings → Beta: experimental features, saved on the server because they change what Bots get. */
-  beta: { projects: boolean };
+  beta: { projects: boolean; banks?: boolean };
 };
 
 export type ProviderOptionSelection = { id: string; value: string | boolean };

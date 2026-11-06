@@ -35,6 +35,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Question cards | T3 `user_input_request` turn items |
 | Secure secret card | T3 `secret_request` + `secrets.answerRequest` |
 | Vault (logins, API tokens, contact info) | Encrypted file owned by the gateway + the gateway's `bot` MCP server (see "Vault" below) |
+| Bank accounts (Enable Banking, read-only) | Encrypted `banks.enc` (Vault key) + `banks_*` tools on the `bot` MCP server + `/banks/callback` (Beta; see [enable-banking.md](enable-banking.md)) |
 | Bot's computer | The host machine + T3's headless browser; screenshots from tool output |
 | Auto-review | T3 runtime mode `auto` (classifier approvals) when on, `full-access` when off; Custom Rules are written into each Bot's `AGENTS.md` |
 | Model picker | T3 `server.getConfig` providers; per-Bot model saved as the project default and thread model selection |
@@ -76,3 +77,7 @@ One live board shared by the user and every Bot (the Projects page): projects, t
 - **Bot tools** (`server/projects-mcp.mjs`), on the same `bot` MCP server as the Vault: `projects_overview`, `projects_find`, `projects_get`, `projects_save` (up to 100 items; `ref`/`"ref:<name>"` lets one call create a project with its to-dos) and `projects_delete`. Writes take the Bot's main `threadId` and are shown as made by that Bot. AGENTS.md tells every Bot to keep the board true and to link the threads it works in.
 - **Links**: `/?item=<id>` opens an item; `/?page=projects` opens the board. `APP_URL` makes the links Bots share absolute. In chat, an item link renders as a chip with the item's live title.
 - **Live T3 state**: "Running now" comes straight from the T3 shell the app already follows on the gateway's own machine. Linked machines aren't reachable from the app, so Bots record them on the board using T3's `t3_environment_links` and `t3_thread_list`.
+
+## Bank accounts
+
+Beta, off by default (`beta.banks`). Enable Banking (PSD2 account information, no payments) for banks such as N26 and Trade Republic. `server/banks.mjs` signs each request with the app's RS256 key and keeps the app key, pending sign-ins and per-bank sessions in `banks.enc`, encrypted with the Vault key. Sessions are shared by all Bots. `server/banks-mcp.mjs` adds the `banks_*` tools to the `bot` MCP server. `GET /banks/callback` finishes a sign-in: it needs no app login, the one-time `state` is checked, and failures count against the login rate limit. Setup, the control-panel redirect URL and expiry are in [enable-banking.md](enable-banking.md).
