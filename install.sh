@@ -32,10 +32,10 @@ sha256() {
 }
 
 # Threebot runs on Node next to T3 Code.
-command -v node >/dev/null 2>&1 || die "Node.js 22.13 or newer is required: https://nodejs.org"
+command -v node >/dev/null 2>&1 || die "Node.js 22.18 or newer is required: https://nodejs.org"
 command -v npm >/dev/null 2>&1 || die "npm is required (it comes with Node.js)"
-node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=13)?0:1)' \
-  || die "Node.js 22.13 or newer is required; this is $(node --version)"
+node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22||(a===22&&b>=18)?0:1)' \
+  || die "Node.js 22.18 or newer is required; this is $(node --version)"
 command -v tar >/dev/null 2>&1 || die "needs tar"
 
 VERSION="${THREEBOT_VERSION:-}"

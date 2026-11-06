@@ -56,7 +56,7 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 
 ## Run it
 
-You need [T3 Code](https://t3.codes) on the same machine, with a provider signed in, and Node 22.13 or newer.
+You need [T3 Code](https://t3.codes) on the same machine, with a provider signed in, and Node 22.18 or newer.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh

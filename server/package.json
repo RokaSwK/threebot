@@ -7,7 +7,7 @@
     "start": "node gateway.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "dependencies": {
     "linkedom": "^0.18.14",

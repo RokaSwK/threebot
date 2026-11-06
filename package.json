@@ -4,7 +4,7 @@
   "private": true,
   "description": "Your Bot is a T3 thread. Personal agents on T3 Code, on your own subscriptions.",
   "license": "MIT",
-  "engines": { "node": ">=22.13" },
+  "engines": { "node": ">=22.18" },
   "scripts": {
     "setup": "npm ci --prefix web && npm ci --prefix server && npm run build --prefix web",
     "start": "node --env-file-if-exists=.env server/gateway.mjs",
