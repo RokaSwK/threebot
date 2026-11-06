@@ -16,6 +16,7 @@ import { ChatAttachmentList } from "./ChatAttachments";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
 import { useVoiceSettings, VoiceDock, voiceChatSupported } from "./VoiceDock";
 import { requestMicrophone, readVoiceSettings, voiceLang } from "../lib/voiceChat";
+import { appendDictation, dictationEngine, speechLanguage, speechProblem, speechStatus, SPEECH_SAMPLE_RATE, startRecording, transcribe, type Recording } from "../lib/t3Speech";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
@@ -496,23 +497,45 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
     }
   }, [text, draft]);
 
+  const t3Voice = useApp((s) => s.runtimeFeatures.voiceTranscription);
+  const [transcribing, setTranscribing] = useState(false);
+  const starting = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; activeRec.current?.abort?.(); activeRec.current = null; }; }, []);
+
   const dictate = async () => {
+    if (transcribing || starting.current) return;
     if (listening && activeRec.current) {
       activeRec.current.stop?.();
       activeRec.current = null;
       setListening(false);
       return;
     }
+    // Checking T3 and the microphone takes a moment; a second tap then must not start another recording.
+    starting.current = true;
+    try { await startDictation(); } finally { starting.current = false; }
+  };
+
+  const startDictation = async () => {
     const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) return toast("Voice input isn't available in this browser");
+    const currentLang = voiceLang(readVoiceSettings());
+    const engine = dictationEngine({ browser: !!SR, t3: t3Voice && !!globalThis.MediaRecorder, preferT3: readVoiceSettings().t3 });
+    if (!engine) return toast("Voice input isn't available in this browser");
+    if (engine === "t3") {
+      const language = speechLanguage(currentLang);
+      const problem = await speechStatus().then((status) => speechProblem(status, language), () => "Couldn't reach T3 Code's transcription.");
+      if (!problem) return dictateOnT3(currentLang, language);
+      if (!SR) return toast(problem);
+      toast(`${problem} Using the browser's voice input.`);
+    }
     const problem = await requestMicrophone();
     if (problem) return toast(problem);
+    if (!mounted.current) return;
 
     const rec = new SR();
     activeRec.current = rec;
     rec.continuous = false;
     rec.interimResults = true;
-    const currentLang = voiceLang(readVoiceSettings());
     rec.lang = currentLang;
     let accumulated = "";
     const baseText = draft.getSnapshot().text;
@@ -528,7 +551,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
       const results = Array.from(ev.results ?? []);
       accumulated = results.map((result: any) => result[0]?.transcript || "").join(" ").trim();
       if (accumulated) {
-        written = (baseText ? baseText.trim() + " " : "") + accumulated;
+        written = appendDictation(baseText, accumulated, currentLang);
         setText(written);
       }
     };
@@ -551,6 +574,37 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
       activeRec.current = null;
       toast(`Could not start voice input: ${e?.message || e}`);
     }
+  };
+
+  /** Records until the second tap, then T3 Code transcribes it and the text joins the draft. */
+  const dictateOnT3 = async (currentLang: string, language: string) => {
+    const problem = await requestMicrophone();
+    if (problem) return toast(problem);
+    const target = draft;
+    let finished = false;
+    const finish = async () => {
+      if (finished) return;
+      finished = true;
+      if (activeRec.current === handle) activeRec.current = null;
+      setListening(false);
+      setTranscribing(true);
+      try {
+        const pcm = await recording!.stop();
+        if (pcm.length < SPEECH_SAMPLE_RATE / 4) return toast(`Didn't hear anything (${currentLang})`);
+        const spoken = await transcribe(pcm, language);
+        if (!spoken) return toast(`Didn't hear anything (${currentLang})`);
+        target.setText(appendDictation(target.getSnapshot().text, spoken, currentLang));
+      } catch (e: any) {
+        toast(e?.message || "T3 Code couldn't transcribe that.");
+      } finally { setTranscribing(false); }
+    };
+    const handle = { stop: () => void finish(), abort: () => { finished = true; recording?.cancel(); } };
+    let recording: Recording | null = null;
+    try { recording = await startRecording(() => void finish()); }
+    catch (e: any) { return toast(`Could not start voice input: ${e?.message || e}`); }
+    if (!mounted.current) return recording.cancel();
+    activeRec.current = handle;
+    setListening(true);
   };
 
   return (
@@ -637,8 +691,8 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
               placeholder={embedded ? "Ask on the side" : `Ask ${bot.name}`}
               className="scroll-thin max-h-[120px] min-h-9 min-w-0 flex-1 resize-none bg-transparent px-1.5 py-[7px] text-[14px] leading-[22px] outline-none placeholder:text-faint"
             />
-            {!inVoiceChat && <IconButton onClick={dictate} aria-pressed={listening} className={clsx("composer-dictate size-9", listening ? "bg-danger text-white hover:bg-danger hover:text-white animate-pulse" : "bg-hover text-muted")} title="Start voice input" aria-label={`Start voice input (${voiceLang(settings)})`}>
-              <Mic size={16} />
+            {!inVoiceChat && <IconButton onClick={dictate} aria-pressed={listening} aria-busy={transcribing} disabled={transcribing} className={clsx("composer-dictate size-9", listening ? "bg-danger text-white hover:bg-danger hover:text-white animate-pulse" : "bg-hover text-muted")} title={transcribing ? "Transcribing…" : "Start voice input"} aria-label={transcribing ? "Transcribing" : `Start voice input (${voiceLang(settings)})`}>
+              {transcribing ? <Spinner /> : <Mic size={16} />}
             </IconButton>}
             {threadId && <ComposerRunAction threadId={threadId} working={working} hasDraft={!!text.trim() || atts.length > 0} inVoiceChat={inVoiceChat || embedded} onVoiceChat={onVoiceChat} />}
             {(text.trim() || atts.length > 0) && <IconButton onClick={submit} disabled={sending || specialSend.disabled || atts.some((item) => item.state === "uploading")} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send">

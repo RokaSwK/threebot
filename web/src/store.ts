@@ -83,7 +83,7 @@ type State = {
 };
 
 export const useApp = create<State>(() => ({
-  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false },
+  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false, voiceTranscription: false },
   snoozePresets: [],
   fallbackModel: null,
   sideChat: null,
@@ -226,7 +226,7 @@ async function loadProviders() {
     set({
       providers: cfg.providers.filter((p: Provider) => p.enabled && p.status === "ready"),
       providerModelPreferences: cfg.settings?.providerModelPreferences ?? {},
-      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true, threadForceStop: cfg.environment?.capabilities?.threadForceStop === true },
+      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true, threadForceStop: cfg.environment?.capabilities?.threadForceStop === true, voiceTranscription: cfg.environment?.capabilities?.voiceTranscription === true },
       snoozePresets: cfg.settings?.snoozePresets ?? [],
       fallbackModel: cfg.settings?.fallbackModelSelection ?? null,
     });

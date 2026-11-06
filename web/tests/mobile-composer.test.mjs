@@ -173,6 +173,119 @@ test("the mobile mic starts real dictation only on an explicit tap", async () =>
   assert.equal(sends.length, 0, "dictation creates a draft without sending it");
 });
 
+function fakeT3Speech({ status = { supported: true, state: "ready", model: "Fixture model", languages: ["en", "es"] }, text = "Hola mundo", statusGate = null } = {}) {
+  const calls = [], tracks = [];
+  Object.defineProperty(window.navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => {
+    const track = { stopped: false, stop() { this.stopped = true; } };
+    tracks.push(track);
+    return { getTracks: () => [track] };
+  } } });
+  globalThis.MediaRecorder = class {
+    constructor() { this.state = "inactive"; this.mimeType = "audio/webm"; }
+    start() { this.state = "recording"; }
+    stop() { this.state = "inactive"; this.ondataavailable({ data: new Blob([new Uint8Array(16)]) }); queueMicrotask(() => this.onstop()); }
+  };
+  window.AudioContext = class { async decodeAudioData() { return { duration: 1.5 }; } async close() {} };
+  globalThis.OfflineAudioContext = class {
+    constructor(channels, frames, rate) { calls.push({ offline: [channels, frames, rate] }); this.frames = frames; this.destination = {}; }
+    createBufferSource() { return { connect() {}, start() {} }; }
+    async startRendering() { const pcm = new Float32Array(this.frames).fill(0.25); pcm[0] = 1.2; pcm[1] = -1.3; return { getChannelData: () => pcm }; }
+  };
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url, method: init.method ?? "GET", body: init.body });
+    if (url === "/t3/api/voice/status") { await statusGate; return Response.json(status); }
+    if (url === "/t3/api/voice/transcribe") return Response.json({ text });
+    return new Response("{}", { status: 404 });
+  };
+  return { calls, tracks, restore() { delete window.navigator.mediaDevices; delete globalThis.MediaRecorder; delete window.AudioContext; delete globalThis.OfflineAudioContext; } };
+}
+
+test("without browser speech, a T3 Code that transcribes takes the dictation in the chosen language", async () => {
+  const speech = fakeT3Speech();
+  try {
+    localStorage.setItem("bot.voice", JSON.stringify({ lang: "es-ES" }));
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render(); await type("Nota:");
+    const mic = () => host.querySelector('.composer-dictate');
+    await click(mic());
+    assert.equal(mic().getAttribute("aria-pressed"), "true", "recording until the second tap");
+    assert.equal(speech.tracks.length, 2, "the permission check and the recording each open the microphone");
+    await click(mic());
+    await runtime.act(async () => { for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(textarea().value, "Nota: Hola mundo");
+    assert.ok(speech.tracks.every((track) => track.stopped), "the microphone is released");
+    assert.deepEqual(speech.calls.find((call) => call.offline).offline, [1, 24000, 16000], "1.5 s resampled to 16 kHz mono");
+    const posted = speech.calls.find((call) => call.url === "/t3/api/voice/transcribe");
+    const body = posted.body, length = new DataView(body.buffer).getUint32(0, true);
+    assert.equal(JSON.parse(new TextDecoder().decode(body.subarray(4, 4 + length))).speechLanguage, "es");
+    assert.equal(body.byteLength - 4 - length, 24000 * 4, "Float32 PCM follows the options");
+    const pcm = new Float32Array(body.slice(4 + length).buffer);
+    assert.deepEqual([pcm[0], pcm[1], pcm[2]], [1, -1, 0.25], "overshoot is clamped to the range T3 accepts");
+    assert.equal(sends.length, 0, "dictation creates a draft without sending it");
+    assert.equal(mic().getAttribute("aria-pressed"), "false");
+  } finally { speech.restore(); }
+});
+
+test("taps during a slow T3 start open one recording, and leaving the chat releases it", async () => {
+  const gate = deferred();
+  const speech = fakeT3Speech({ statusGate: gate.promise });
+  try {
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render();
+    const mic = host.querySelector('.composer-dictate');
+    await click(mic); await click(mic); await click(mic);
+    await runtime.act(async () => { gate.resolve(); for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(speech.tracks.length, 2, "one permission check and one recording");
+    assert.equal(host.querySelector('.composer-dictate').getAttribute("aria-pressed"), "true");
+    await runtime.act(async () => root.unmount());
+    assert.ok(speech.tracks.every((track) => track.stopped), "unmounting stops the microphone");
+    root = runtime.createRoot(host);
+  } finally { speech.restore(); }
+});
+
+test("leaving the chat while T3 dictation is starting never leaves the microphone on", async () => {
+  const gate = deferred();
+  const speech = fakeT3Speech({ statusGate: gate.promise });
+  try {
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render();
+    await click(host.querySelector('.composer-dictate'));
+    await runtime.act(async () => root.unmount());
+    await runtime.act(async () => { gate.resolve(); for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.ok(speech.tracks.length > 0 && speech.tracks.every((track) => track.stopped), "a recording that starts after unmount is cancelled");
+    root = runtime.createRoot(host);
+  } finally { speech.restore(); }
+});
+
+test("browser dictation doesn't start if the chat closes while the microphone is being granted", async () => {
+  const grant = deferred();
+  Object.defineProperty(window.navigator, "mediaDevices", { configurable: true, value: { getUserMedia: () => grant.promise } });
+  const recognitions = [];
+  window.SpeechRecognition = class { constructor() { recognitions.push(this); } start() { this.started = true; } };
+  try {
+    await render();
+    await click(host.querySelector('.composer-dictate'));
+    await runtime.act(async () => root.unmount());
+    await runtime.act(async () => { grant.resolve({ getTracks: () => [] }); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    assert.equal(recognitions.length, 0);
+    root = runtime.createRoot(host);
+  } finally { delete window.navigator.mediaDevices; }
+});
+
+test("a T3 Code without a speech model leaves the browser's dictation in place", async () => {
+  const speech = fakeT3Speech({ status: { supported: true, state: "missing-model", model: "None" } });
+  const recognitions = [];
+  window.SpeechRecognition = class { constructor() { recognitions.push(this); } start() { this.started = true; } };
+  try {
+    localStorage.setItem("bot.voice", JSON.stringify({ t3: true }));
+    runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, voiceTranscription: true } });
+    await render();
+    await click(host.querySelector('.composer-dictate'));
+    assert.equal(recognitions.length, 1); assert.equal(recognitions[0].started, true);
+    assert.equal(speech.calls.some((call) => call.url === "/t3/api/voice/transcribe"), false);
+  } finally { speech.restore(); }
+});
+
 test("desktop has no model controls in the writing row either", async () => {
   window.happyDOM.setWindowSize({ width: 1200, height: 900 });
   await render({ key: "desktop" });

@@ -216,4 +216,4 @@ export type ScheduledTask = {
 };
 
 export type SnoozePreset = { kind: "after"; minutes: number } | { kind: "at"; day: "today" | "tomorrow" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday"; time: string };
-export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean; threadForceStop: boolean };
+export type RuntimeFeatures = { shellOlderSettled: boolean; threadFind: boolean; threadResumeCompletionMarker: boolean; sideChats: boolean; threadForceStop: boolean; voiceTranscription: boolean };

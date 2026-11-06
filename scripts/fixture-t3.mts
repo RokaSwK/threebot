@@ -3,7 +3,7 @@ import http from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { ACTIVITY_SAMPLES, AVATAR_SAMPLES, LANDING_SAMPLES, landingData, seedActivity, seedAvatars, seedInteractions, seedLatestT3, validateScenario } from './fixture-scenarios.mts';
+import { ACTIVITY_SAMPLES, AVATAR_SAMPLES, LANDING_SAMPLES, landingData, seedActivity, seedAvatars, seedInteractions, seedLatestT3, validateScenario, FIXTURE_SPEECH_MAX_BODY } from './fixture-scenarios.mts';
 import type { FixtureInteractions, FixtureItem, FixtureModel, FixtureProject, FixtureRequest, FixtureRun, FixtureSample, FixtureThread } from './fixture-scenarios.mts';
 const require = createRequire(new URL('../server/package.json', import.meta.url));
 const { WebSocketServer } = require('ws');
@@ -148,6 +148,18 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
       const url = new URL(req.url!, 'http://127.0.0.1');
       if (url.pathname === '/api/auth/websocket-ticket/rpc' && req.method === 'POST') return json(res, 200, { ticket: 'fixture-only' });
       if (url.pathname === '/api/projects' && req.method === 'GET') return json(res, 200, { projects });
+      if (latest && url.pathname === '/api/voice/status' && req.method === 'GET') return json(res, 200, latest.voiceStatus);
+      if (latest && url.pathname === '/api/voice/transcribe' && req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const buffer of req) {
+          size += buffer.length;
+          if (size > FIXTURE_SPEECH_MAX_BODY) return json(res, 400, latest.transcribe(Buffer.alloc(0)).body);
+          chunks.push(buffer);
+        }
+        const result = latest.transcribe(Buffer.concat(chunks));
+        return json(res, result.status, result.body);
+      }
       if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId });
       if (interactions && url.pathname === '/fixture/interactions' && req.method === 'GET') return json(res, 200, interactions.inspect());
       if (interactions && url.pathname === '/fixture/interactions/fail-once' && req.method === 'POST') {

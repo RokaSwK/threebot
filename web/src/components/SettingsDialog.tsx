@@ -130,6 +130,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
           {voiceLanguageOptions().map(([code, label]) => <option key={code} value={code}>{label}</option>)}
         </select>
       </Row>
+      <T3DictationRow />
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
     <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
@@ -185,9 +186,20 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
         <Row title="Voice language" desc="Used for dictation and voice calls.">
           <Select label="Voice language" value={voiceSettings.lang} onChange={(lang) => saveVoiceSettings({ lang, voice: null })} options={voiceLanguageOptions()} />
         </Row>
+        <T3DictationRow />
       </Group>}
     </>
   );
+}
+
+/** Only T3 Code servers that advertise transcription (0.1.8 nightly and later) offer this. */
+function T3DictationRow() {
+  const available = useApp((state) => state.runtimeFeatures.voiceTranscription);
+  const voiceSettings = useVoiceSettings();
+  if (!available) return null;
+  return <Row title="Transcribe on T3 Code" desc="Dictation records here and your T3 Code server transcribes it, then discards the audio. Used automatically when this browser has no voice input.">
+    <Switch checked={voiceSettings.t3} onChange={(t3) => saveVoiceSettings({ t3 })} label="Transcribe on T3 Code" />
+  </Row>;
 }
 
 function BackupModelRow() {
