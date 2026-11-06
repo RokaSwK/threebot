@@ -212,8 +212,8 @@ function watchThread(rpc, threadId) {
 }
 
 test('basic protocol remains unchanged and interaction handlers are opt-in', { timeout: 15000 }, async () => {
-  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing or latest-t3/);
-  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing or latest-t3/);
+  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars/);
+  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars/);
   const fake = await startFakeT3('/unused');
   const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
   try {
@@ -684,5 +684,29 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
     await rpc.call('projects.mutate', { type: 'project.update', commandId: 'unarchive', projectId: 'project-gamma', archived: false });
     const inspect = await (await fetch(`http://127.0.0.1:${fixture.t3Port}/fixture/interactions`)).json();
     assert.equal(inspect.request, 'resolved'); assert.equal(inspect.decision, 'accept'); assert.equal(inspect.run, 'interrupted'); assert.equal(inspect.gammaArchived, false);
+  } finally { rpc.close(); await fixture.close(); }
+});
+
+test('avatars scenario draws in a hidden side chat and never touches the main thread', { timeout: 60000 }, async () => {
+  const fixture = await createFixture({ scenario: 'avatars' });
+  const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+  try {
+    await rpc.connect();
+    assert.equal((await rpc.call('server.getConfig')).environment.capabilities.sideChats, true);
+    const bots = (await (await fetch(fixture.url + '/api/bots')).json()).bots;
+    assert.ok(bots.filter((bot) => bot.shape.startsWith('object:')).length >= 12);
+    assert.equal(bots.find((bot) => bot.slug === 'bean').avatarDefinition.name, 'Bean');
+    const main = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length;
+    await rpc.dispatch({ type: 'thread.fork', createdBy: 'user', creationSource: 'web', sourceThreadId: 'thread-cat', targetThreadId: 'drawing', sourcePoint: { type: 'latest_stable' }, sideChat: true, title: 'Avatar drawing: an acorn' });
+    await rpc.dispatch({ type: 'message.dispatch', threadId: 'drawing', messageId: 'drawing-1', text: 'Draw it', createdBy: 'user', creationSource: 'web' });
+    let reply;
+    for (let i = 0; i < 40 && !reply; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      reply = (await rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' })).turnItems.find((item) => item.type === 'assistant_message');
+    }
+    assert.match(reply.text, /"name": "Acorn"/);
+    assert.equal((await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length, main);
+    await rpc.dispatch({ type: 'thread.delete', threadId: 'drawing' });
+    await assert.rejects(rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' }), /Unknown fixture thread/);
   } finally { rpc.close(); await fixture.close(); }
 });

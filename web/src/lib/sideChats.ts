@@ -9,6 +9,9 @@ const FINISHED = ["waiting", "completed"];
 const BLOCKS_BRING_BACK = ["preparing", "starting", "running"];
 
 export const isSideChat = (thread?: Pick<ThreadShell, "lineage"> | null) => thread?.lineage?.sideChat === true;
+/** A Bot drawing itself a new avatar. The avatar editor shows it; side chat lists don't. */
+export const AVATAR_DRAWING_TITLE = "Avatar drawing: ";
+export const isAvatarDrawing = (thread?: Pick<ThreadShell, "lineage" | "title"> | null) => isSideChat(thread) && !!thread?.title.startsWith(AVATAR_DRAWING_TITLE);
 
 export function parseSideCommand(text: string) {
   const match = SIDE_COMMAND.exec(text.trim());
@@ -22,7 +25,7 @@ export function canStartSideChat(thread?: ThreadShell | null) {
 
 export function sideChatsOf(threads: Record<string, ThreadShell>, parentThreadId: string) {
   return Object.values(threads)
-    .filter((thread) => isSideChat(thread) && thread.lineage.parentThreadId === parentThreadId && !thread.archivedAt)
+    .filter((thread) => isSideChat(thread) && !isAvatarDrawing(thread) && thread.lineage.parentThreadId === parentThreadId && !thread.archivedAt)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 

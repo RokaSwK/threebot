@@ -20,7 +20,7 @@ export const INTERACTION_IDS = {
 };
 
 export function validateScenario(scenario) {
-  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing or latest-t3.');
+  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3 or avatars.');
 }
 
 // A believable personal setup for product screenshots. Everything here is invented;
@@ -371,5 +371,73 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
       }
       return null;
     },
+  };
+}
+
+// Many object avatars (the sidebar's live cost, the editor's shared objects) and side chats. A side
+// chat titled "Avatar drawing: …" answers with a scripted definition; no model draws anything.
+const definition = (id, name, path) => ({ version: 1, id, name, body: { path }, eyes: { x: 50, y: 50, spacing: 15, scale: 1 } });
+export const AVATAR_OWN = [
+  definition('fixture-bean', 'Bean', 'M32 12 C56 6 86 16 88 42 C90 68 72 90 48 90 C24 90 10 72 12 50 C14 30 18 16 32 12 Z'),
+  definition('fixture-pebble', 'Pebble', 'M50 14 C74 14 90 30 90 54 C90 76 74 88 50 88 C26 88 10 76 10 54 C10 30 26 14 50 14 Z'),
+];
+export const AVATAR_DRAWN = definition('fixture-acorn', 'Acorn', 'M50 10 C72 10 88 22 88 38 L82 42 C84 68 70 90 50 90 C30 90 16 68 18 42 L12 38 C12 22 28 10 50 10 Z');
+export const AVATAR_SAMPLES = [
+  { slug: 'alpha', name: 'Alpha', shape: 'sphere', color: 'teal', primary: true, pinned: true },
+  ...['cat', 'ghost', 'rocket', 'mug', 'cloud', 'book', 'bunny', 'lightbulb', 'sprout', 'controller'].map((id, index) => ({
+    slug: id, name: id[0].toUpperCase() + id.slice(1), shape: `object:${id}`, primary: false, pinned: true,
+    color: ['orange', 'purple', 'blue', 'pink', 'green', 'red', 'yellow', 'teal', 'green', 'violet'][index] })),
+  ...AVATAR_OWN.map((own, index) => ({ slug: own.id.slice('fixture-'.length), name: own.name, shape: `object:${own.id}`, avatarDefinition: own, color: ['brown', 'gray'][index], primary: false, pinned: true })),
+];
+export const AVATAR_DRAWING_TITLE = 'Avatar drawing: ';
+
+export function seedAvatars({ threads, items, runs, model }) {
+  const calls = [];
+  const finish = (thread, text, publish) => {
+    const now = new Date().toISOString();
+    const run = runs.get(thread.id)?.find((candidate) => candidate.status === 'running');
+    if (!run || !thread.title.startsWith(AVATAR_DRAWING_TITLE)) return;
+    const entries = items.get(thread.id);
+    entries.push({ id: `${thread.id}-${entries.length + 1}`, threadId: thread.id, ordinal: entries.length + 1, type: 'assistant_message', messageId: `${thread.id}-reply-${entries.length + 1}`,
+      runId: run.id, status: 'completed', title: null, text, startedAt: now, completedAt: now, updatedAt: now, parentItemId: null });
+    Object.assign(run, { status: 'completed', completedAt: now });
+    Object.assign(thread, { status: 'completed', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: now, updatedAt: now });
+    publish();
+  };
+  return {
+    requests: new Map(threads.map(({ id }) => [id, []])),
+    capabilities: { sideChats: true, threadForceStop: true },
+    inspect: () => ({ fixtureOnly: true, scenario: 'avatars', liveDelivery: false, calls }),
+    armFailure: () => false,
+    respond(tag, payload, { publish } = {}) {
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.fork') {
+        const source = threads.find((thread) => thread.id === payload.sourceThreadId);
+        if (!source || !payload.sideChat) return { error: 'Fixture forks are side chats of a known thread.' };
+        const now = new Date().toISOString();
+        threads.push({ ...source, id: payload.targetThreadId, title: payload.title ?? 'Side chat', status: 'idle', activityRunStatus: null, activeRunId: null, latestRunId: null,
+          latestRunCompletedAt: null, lastVisitedAt: now, createdAt: now, updatedAt: now, lineage: { parentThreadId: source.id, relationshipToParent: 'fork', rootThreadId: source.lineage.rootThreadId, sideChat: true } });
+        items.set(payload.targetThreadId, []); runs.set(payload.targetThreadId, []);
+        calls.push({ type: 'thread.fork', title: payload.title });
+        return { value: { sequence: 0 } };
+      }
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete') {
+        const index = threads.findIndex((thread) => thread.id === payload.threadId);
+        if (index < 0 || !threads[index].lineage.sideChat) return { error: 'Fixture deletes only side chats.' };
+        threads.splice(index, 1); items.delete(payload.threadId); runs.delete(payload.threadId);
+        calls.push({ type: 'thread.delete' });
+        return { value: { sequence: 0 } };
+      }
+      return null;
+    },
+    /** After a drawing request lands: a valid definition, or a broken one when asked for "broken". "slow" takes 30s. */
+    afterMessage(thread, text, publish) {
+      if (!thread.title.startsWith(AVATAR_DRAWING_TITLE)) return;
+      calls.push({ type: 'message.dispatch', threadId: thread.id, text });
+      const reply = /broken/i.test(thread.title)
+        ? 'Here it is:\n\n```json\n' + JSON.stringify({ ...AVATAR_DRAWN, body: { path: '' } }) + '\n```'
+        : 'Here it is:\n\n```json\n' + JSON.stringify(AVATAR_DRAWN, null, 2) + '\n```';
+      setTimeout(() => finish(thread, reply, publish), /slow/i.test(thread.title) ? 30000 : 6000);
+    },
+    model,
   };
 }

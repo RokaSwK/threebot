@@ -48,10 +48,6 @@ export function sharedObjects(bots: Iterable<Owner>): AvatarDefinition[] {
   return [...found.values()];
 }
 
-/** What the "+" tile sends: the Bot draws the object with the avatar rules it already has. */
-export const drawObjectPrompt = (description: string) =>
-  `Draw yourself a new object avatar: ${description.trim()}. Follow your avatar instructions: give it a new unique id, set \`shape\` to \`object:<that-id>\` and add the \`avatarDefinition\` in \`.bot/bot.json\`. Check it validates, then tell me when it's done.`;
-
 /** Pasted JSON becomes a definition with its own id, or a sentence saying what's wrong. */
 export function importDefinition(json: string): { ok: true; definition: AvatarDefinition } | { ok: false; error: string } {
   let parsed: unknown;
@@ -71,12 +67,15 @@ export function objectMood(state: AvatarState): AvatarMotion {
   return THINKING.includes(state) ? "thinking" : HAPPY.includes(state) ? "happy" : "idle";
 }
 
-/** The same cut-out eyes as the ball. The renderer needs hex, so CSS colors resolve here first. */
-export function objectColors(element: HTMLElement, css: string) {
+/**
+ * Hex colors for a still avatar. Live canvases take CSS colors since Open Bot Avatar 0.2, but stills
+ * go through renderAvatarSvg, which only accepts hex, so CSS colors (and the eye cut-out) resolve here.
+ */
+export function objectColors(element: HTMLElement, css: string, eye: string) {
   const resolve = (value: string, fallback: string) => {
     element.style.color = value;
     const parts = getComputedStyle(element).color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number);
     return parts?.length === 3 ? `#${parts.map((part) => Math.round(part).toString(16).padStart(2, "0")).join("")}` : fallback;
   };
-  return { color: resolve(css, css), eyeColor: resolve("var(--bot-eye-bg, var(--bg-chat))", "#151515") };
+  return { color: resolve(css, css), eyeColor: resolve(eye, "#151515") };
 }

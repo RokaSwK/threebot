@@ -265,7 +265,7 @@ export async function smokeFixture(fixture) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('Usage: node scripts/fixture.mjs [--port PORT] [--scenario basic|interactions|executor|library|latest-t3] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
+    console.log('Usage: node scripts/fixture.mjs [--port PORT] [--scenario basic|interactions|executor|library|latest-t3|avatars] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
     return;
   }
   let port = 0;
