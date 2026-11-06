@@ -116,7 +116,8 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
   const subscriptions = new Map();
   let nextAttachment = 0;
   let sequence = 0;
-  const projection = (threadId) => ({ thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [] });
+  // T3 projections carry user messages beside turn items; Threebot counts them for PR chips.
+  const projection = (threadId) => ({ thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [] });
   const chunk = (ws, id, value) => ws.send(JSON.stringify({ _tag: 'Chunk', requestId: id, values: [value] }));
   const exit = (ws, id, value) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }));
   const fail = (ws, id, message) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id,

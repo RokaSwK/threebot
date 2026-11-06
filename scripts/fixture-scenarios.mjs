@@ -320,6 +320,16 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
     task(LATEST_T3_IDS.once, 'Send the generic reminder once', { type: 'once', runAt: '2026-12-01T08:30:00.000Z' }),
     task(LATEST_T3_IDS.blocked, 'Generic weekday check', { type: 'fixed_time', timeOfDay: '09:00', weekdays: [1, 2, 3, 4, 5] }, { enabled: true, blockedByPolicy: 'Scheduled tasks are turned off by Example Org.' }),
   ];
+  // PR chips in every state. Snapshots are stale on purpose; pullRequests.detail is the truth.
+  // #2, #10 and #11 finished before load (no chip); #24 merges after its first read (flips on focus).
+  const alpha = threads.find((t) => t.id === 'thread-alpha');
+  const prs = [
+    [2, 'merged', false, [], 'open'], [10, 'merged', false, [], 'merged'], [11, 'closed', false, [], 'open'],
+    [21, 'open', false, ['success', 'success'], 'open'], [22, 'open', true, ['pending'], 'open'],
+    [23, 'open', false, ['success', 'failure'], 'open'], [24, 'open', false, ['pending', 'success'], 'open'],
+  ].map(([number, state, isDraft, checks, stale]) => ({ number, state, isDraft, checks, stale, reads: 0 }));
+  alpha.pullRequests = prs.map(({ number, stale }) => ({ host: 'github.com', repository: 'example/generic', number,
+    url: `https://github.com/example/generic/pull/${number}`, source: 'manual', snapshot: { state: stale, title: `Generic change ${number}` }, watch: null }));
   const calls = [];
   return {
     requests, tasks,
@@ -344,6 +354,13 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
         items.get(beta.id).push(base(beta.id, 'run_interrupt_result', { runId: run.id, scopeId: 'fixture', files: [] }));
         calls.push({ tag, threadId: payload.threadId, runId: payload.runId });
         return { ok: true, value: { outcome: 'killed', sharedWithThreadIds: [] } };
+      }
+      if (tag === 'pullRequests.detail' || tag === 'pullRequests.checks') {
+        const pr = prs.find((p) => p.number === payload?.number && payload.repository === 'example/generic');
+        if (!pr) return { error: 'Unknown fixture pull request.' };
+        if (tag === 'pullRequests.checks') return { value: { checks: pr.checks.map((status, i) => ({ name: `generic-check-${i + 1}`, status })) } };
+        if (pr.number === 24 && pr.reads++ > 0) pr.state = 'merged';
+        return { value: { number: pr.number, title: `Generic change ${pr.number}`, state: pr.state, isDraft: pr.isDraft } };
       }
       if (tag === 'scheduledTasks.setEnabled') {
         const found = tasks.find((t) => t.id === payload?.id);

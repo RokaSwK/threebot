@@ -24,6 +24,7 @@
   --attention: #d6368c;
   --danger: #e5484d;
   --success: #3fa45b;
+  --merged: #8250df;
   --pill: #1b1830;
   --pill-fg: #ffffff;
   --pill-soft: #1b183014;
@@ -57,6 +58,7 @@
   --pill-soft: #f2f0fb1f;
   --overlay: #000000b2;
   --shadow-pop: 0 0 0 0.5px #f2f0fb21;
+  --merged: #a371f7;
   color-scheme: dark;
 }
 
@@ -84,6 +86,7 @@
   --color-attention: var(--attention);
   --color-danger: var(--danger);
   --color-success: var(--success);
+  --color-merged: var(--merged);
   --color-pill: var(--pill);
   --color-pill-fg: var(--pill-fg);
   --color-pill-soft: var(--pill-soft);
