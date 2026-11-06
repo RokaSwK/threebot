@@ -395,3 +395,25 @@ test('shelf Back and app-detail Back retain their separate catalog positions wit
   assert.equal(document.querySelector('.apps-catalog').scrollTop, 310);
   assert.ok(button('Browse appsView all')); assert.equal(backCount, 0);
 });
+
+test('inline card shows the app logo, falls back through its site icon to the plug, and badges a confirmed account', async () => {
+  const card = () => h(MessageContent, { text: '[Connect Sample](https://app.executor.sh/connect/con_sample)' });
+  const logo = () => document.querySelector('button[aria-label^="Sample:"] img');
+  const fail = async () => act(async () => { logo().dispatchEvent(new window.Event('error')); await flush(); });
+  app = { ...app, icon: 'data:image/svg+xml;base64,PHN2Zy8+', domain: 'sample.example' };
+  await render(card());
+  assert.ok(labeled('Sample: Sign-in pending'));
+  assert.equal(logo().getAttribute('src'), 'data:image/svg+xml;base64,PHN2Zy8+');
+  assert.equal(document.querySelector('button[aria-label^="Sample:"] .lucide-plug'), null);
+  assert.equal(document.querySelector('button[aria-label^="Sample:"] .lucide-check'), null);
+  await fail();
+  assert.equal(logo().getAttribute('src'), '/api/site-icon?domain=sample.example');
+  await fail();
+  assert.equal(logo(), null);
+  assert.ok(document.querySelector('button[aria-label^="Sample:"] .lucide-plug'));
+  connection.status = 'completed'; setConnected(); app = { ...app, domain: 'sample.example' }; delete app.icon;
+  await act(async () => { root.unmount(); }); root = createRoot(host); await render(card());
+  assert.ok(labeled('Sample: Account connected'));
+  assert.equal(logo().getAttribute('src'), '/api/site-icon?domain=sample.example');
+  assert.ok(document.querySelector('button[aria-label^="Sample:"] .lucide-check'), 'confirmed state is a badge beside the logo');
+});

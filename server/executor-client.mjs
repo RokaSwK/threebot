@@ -19,6 +19,35 @@ function requirements(value) {
   });
 }
 
+const IMAGE_DATA = /^data:image\/(?:png|jpeg|gif|webp|svg\+xml)[;,]/i;
+/** A public logo for the app: a plain web address, or a small inline image Executor stores. */
+export function appIcon(icons) {
+  if (!Array.isArray(icons)) return null;
+  // Logos sit on a white tile, so a dark-theme variant is the last choice.
+  for (const item of [...icons].sort((a, b) => Number(a?.theme === 'dark') - Number(b?.theme === 'dark'))) {
+    if (!object(item) || !string(item.src)) continue;
+    if (IMAGE_DATA.test(item.src)) { if (item.src.length <= 64 * 1024) return item.src; continue; }
+    try { const url = new URL(item.src); if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) return url.href; } catch { /* not a logo */ }
+  }
+  return null;
+}
+const HOST = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+/** The site behind an app's sign-in host, so mcp.example.com shows example.com's logo. */
+export function appSiteDomain(accounts) {
+  if (!object(accounts)) return null;
+  for (const item of Object.values(accounts)) {
+    for (const value of Array.isArray(item?.definition?.hosts) ? item.definition.hosts : []) {
+      const host = typeof value === 'string' ? value.trim().toLowerCase().replace(/\.$/, '') : '';
+      if (!HOST.test(host)) continue;
+      const labels = host.split('.');
+      // Keep three labels for two-letter country suffixes such as example.co.uk.
+      const keep = labels.length > 2 && labels.at(-1).length === 2 && labels.at(-2).length <= 3 ? 3 : 2;
+      return labels.slice(-keep).join('.');
+    }
+  }
+  return null;
+}
+
 async function concurrent(items, transform) {
   const result = new Array(items.length);
   let next = 0;
@@ -78,7 +107,9 @@ export function createExecutorClient(profile, { fetch: request = globalThis.fetc
       const linked = requirement.accounts.filter((entry) => entry.linked && entry.signIn === 'saved');
       return requirement.cardinality === 'one' ? linked.length === 1 : linked.length > 0;
     });
-    return { id: raw.id, slug: raw.slug, name: raw.name, requirements: choices, status: choices.length ? (connected ? 'connected' : 'needs-connection') : 'ready' };
+    const icon = appIcon(raw.requirements?.icons), domain = appSiteDomain(raw.requirements?.accounts);
+    return { id: raw.id, slug: raw.slug, name: raw.name, requirements: choices, status: choices.length ? (connected ? 'connected' : 'needs-connection') : 'ready',
+      ...(icon ? { icon } : {}), ...(domain ? { domain } : {}) };
   }
   async function apps() {
     const rows = await api('/apps');
