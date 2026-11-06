@@ -652,7 +652,7 @@ button {
 
 
 /* Android audit acceptance measurements. Native content origin is excluded. */
-.dark [data-bot-modal] { --fg: #fff; --fg-muted: var(--fg-muted); color: #fff; }
+.dark [data-bot-modal] { --fg: #fff; color: #fff; }
 .apps-filters button { height: 34px; padding-block: 8px; }
 .apps-row { min-height: 68.571px; }
 .apps-row-main { padding-block: 6.286px; }

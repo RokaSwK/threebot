@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { Camera, ChevronRight, ImageIcon, Plus } from "lucide-react";
+import { Camera, ChevronRight, ImageIcon, LoaderCircle, Plus, TriangleAlert } from "lucide-react";
 import type { AvatarDefinition } from "open-bot-avatar";
 import { Avatar } from "./Avatar";
 import { Modal, Pill } from "./ui";
 import { avatarShape, botColor, DEFAULT_AVATAR, PICKER_COLORS, PICKER_SHAPES } from "../lib/character";
 import { importDefinition, OBJECT_AVATARS, objectShape } from "../lib/objectAvatars";
+import type { Drawing } from "../lib/avatarDrawing";
 import "./avatar-editor.css";
 
 export type AvatarDraft = { shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown };
 export const resetAvatar = (): AvatarDraft => ({ ...DEFAULT_AVATAR, avatarImage: null, avatarDefinition: null });
+
+/** A Bot drawing itself in the background: see useAvatarDrawing. */
+export type DrawControls = {
+  drawing: Drawing | null;
+  start: (description: string) => void;
+  retry: () => void;
+  discard: () => void;
+  use: (definition: AvatarDefinition) => Promise<void>;
+};
 
 type PickerProps = {
   choiceSize?: number; shape: string; color: string; disabled?: boolean;
@@ -17,40 +27,94 @@ type PickerProps = {
   /** Objects other Bots have drawn, offered for reuse. */
   shared?: AvatarDefinition[];
   /** Asks the Bot to draw a new object from a description. Only offered for an existing Bot. */
-  onDraw?: (description: string) => void;
+  draw?: DrawControls;
 };
 
-export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], onDraw }: PickerProps) {
-  const [drawing, setDrawing] = useState(false);
-  const [description, setDescription] = useState("");
-  const draw = () => { const text = description.trim(); if (!text || !onDraw) return; onDraw(text); setDescription(""); setDrawing(false); };
+export function AvatarPicker({ shape, color, onChange, disabled = false, shared = [], draw }: PickerProps) {
+  const [open, setOpen] = useState(false);
+  const drawing = draw?.drawing ?? null;
+  const tile = (object: AvatarDefinition, own: boolean) => <button type="button" disabled={disabled} key={`${own ? "shared" : "gallery"}-${object.id}`} className="avatar-tile avatar-object" aria-label={object.name} title={object.name} aria-pressed={shape === objectShape(object.id)} onClick={() => onChange(objectShape(object.id), color, own ? object : undefined)}>
+    <Avatar shape={objectShape(object.id)} color={color} definition={own ? object : undefined} size={40} still />
+  </button>;
   return <fieldset disabled={disabled} className="avatar-picker">
     <legend className="sr-only">Choose an avatar</legend>
     <div className="avatar-shapes">
-      {PICKER_SHAPES.map(s => <button type="button" disabled={disabled} key={s} className="avatar-choice" data-shape={s} onClick={() => onChange(s, color)} aria-label={s === "t3" ? "T3 avatar" : `${s} shape`} aria-pressed={avatarShape(shape) === s}>
+      {PICKER_SHAPES.map(s => <button type="button" disabled={disabled} key={s} className="avatar-tile avatar-choice" data-shape={s} onClick={() => onChange(s, color)} aria-label={s === "t3" ? "T3 avatar" : `${s} shape`} aria-pressed={avatarShape(shape) === s}>
         <Avatar shape={s} color={color} size={64} />
       </button>)}
     </div>
-    <p className="avatar-objects-title">Objects</p>
-    <div className="avatar-objects">
-      {OBJECT_AVATARS.map(object => <button type="button" disabled={disabled} key={object.id} className="avatar-object" aria-label={object.name} title={object.name} aria-pressed={shape === objectShape(object.id)} onClick={() => onChange(objectShape(object.id), color)}>
-        <Avatar shape={objectShape(object.id)} color={color} size={44} still />
-      </button>)}
-      {shared.map(object => <button type="button" disabled={disabled} key={`shared-${object.id}`} className="avatar-object" aria-label={object.name} title={object.name} aria-pressed={shape === objectShape(object.id)} onClick={() => onChange(objectShape(object.id), color, object)}>
-        <Avatar shape={objectShape(object.id)} color={color} definition={object} size={44} still />
-      </button>)}
-      {onDraw && <button type="button" disabled={disabled} className="avatar-object avatar-object-new" aria-label="Draw a new object" title="Draw a new object" aria-expanded={drawing} onClick={() => setDrawing(open => !open)}>
-        <Plus size={22} aria-hidden="true" />
-      </button>}
-    </div>
-    {onDraw && drawing && <form className="avatar-object-draw" onSubmit={e => { e.preventDefault(); draw(); }}>
-      <input aria-label="Describe the new object" autoFocus value={description} disabled={disabled} maxLength={200} onChange={e => setDescription(e.target.value)} placeholder="A fox with a scarf" />
-      <Pill disabled={disabled || !description.trim()} onClick={draw}>Draw it</Pill>
-    </form>}
+    <p className="avatar-section-title">Objects</p>
+    <div className="avatar-objects">{OBJECT_AVATARS.map(object => tile(object, false))}</div>
+    {(shared.length > 0 || draw) && <>
+      <p className="avatar-section-title">Drawn by your Bots</p>
+      <div className="avatar-objects avatar-drawn">
+        {shared.map(object => tile(object, true))}
+        {draw && <DrawTile drawing={drawing} color={color} open={open} disabled={disabled} onToggle={() => setOpen(value => !value)} />}
+      </div>
+      {draw && (drawing || open) && <DrawPanel draw={draw} color={color} disabled={disabled} onClose={() => setOpen(false)} />}
+    </>}
     <div className="avatar-colors">
       {PICKER_COLORS.map(c => <button key={c.id} type="button" disabled={disabled} onClick={() => onChange(shape, c.id)} style={{ background: botColor(c.id) }} aria-label={c.name} aria-pressed={color === c.id} />)}
     </div>
   </fieldset>;
+}
+
+/** The "+" tile, which stands for the drawing once one is under way. */
+function DrawTile({ drawing, color, open, disabled, onToggle }: { drawing: Drawing | null; color: string; open: boolean; disabled: boolean; onToggle: () => void }) {
+  if (!drawing) return <button type="button" disabled={disabled} className="avatar-tile avatar-object avatar-object-new" aria-label="Draw a new object" title="Draw a new object" aria-expanded={open} onClick={onToggle}><Plus size={20} aria-hidden="true" /></button>;
+  if (drawing.status === "ready") return <span className="avatar-tile avatar-object avatar-object-draft" role="img" aria-label={`Drawing ready: ${drawing.definition.name}`} title={drawing.definition.name}><Avatar shape={objectShape(drawing.definition.id)} color={color} definition={drawing.definition} size={40} still /></span>;
+  if (drawing.status === "failed") return <span className="avatar-tile avatar-object avatar-object-draft" data-failed role="img" aria-label="Drawing failed"><TriangleAlert size={18} aria-hidden="true" /></span>;
+  return <span className="avatar-tile avatar-object avatar-object-draft" data-pending role="img" aria-label="Drawing"><LoaderCircle size={20} className="animate-spin" aria-hidden="true" /></span>;
+}
+
+function useElapsed(since: string | undefined, running: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (!running) return; const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, [running]);
+  const seconds = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) : 0;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function DrawPanel({ draw, color, disabled, onClose }: { draw: DrawControls; color: string; disabled: boolean; onClose: () => void }) {
+  const { drawing } = draw;
+  const [description, setDescription] = useState("");
+  const [using, setUsing] = useState(false);
+  const [error, setError] = useState("");
+  const busy = drawing?.status === "drawing" || drawing?.status === "checking";
+  const elapsed = useElapsed(drawing?.thread?.createdAt, busy);
+  const submit = () => { const text = description.trim(); if (!text) return; draw.start(text); setDescription(""); };
+  const use = async (definition: AvatarDefinition) => {
+    setUsing(true); setError("");
+    try { await draw.use(definition); onClose(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Couldn't use this avatar"); }
+    finally { setUsing(false); }
+  };
+  if (!drawing) return <form className="avatar-draw" onSubmit={e => { e.preventDefault(); submit(); }}>
+    <input aria-label="Describe the new object" autoFocus value={description} disabled={disabled} maxLength={200} onChange={e => setDescription(e.target.value)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }} placeholder="Describe it, like a fox with a scarf" />
+    <Pill variant="ghost" disabled={disabled} onClick={onClose}>Cancel</Pill>
+    <Pill type="submit" disabled={disabled || !description.trim()}>Draw it</Pill>
+  </form>;
+  const quoted = drawing.description ? `“${drawing.description}”` : "your object";
+  return <div className="avatar-draw-card" role="status" aria-live="polite">
+    <span className="avatar-draw-preview">
+      {drawing.status === "ready" ? <Avatar shape={objectShape(drawing.definition.id)} color={color} definition={drawing.definition} size={64} state="happy" />
+        : drawing.status === "failed" ? <TriangleAlert size={22} aria-hidden="true" />
+        : <LoaderCircle size={24} className="animate-spin" aria-hidden="true" />}
+    </span>
+    <span className="avatar-draw-text">
+      {drawing.status === "ready" ? <><strong>{drawing.definition.name}</strong><span>Drawn from {quoted}. Use it to make it this Bot's avatar.</span></>
+        : drawing.status === "failed" ? <><strong>Couldn't draw {quoted}</strong><span className="avatar-draw-error">{error || drawing.error}</span></>
+        : <><strong>Drawing {quoted}</strong><span>{drawing.status === "checking" ? "Checking the drawing…" : `${elapsed} · In the background, not in your chat`}</span></>}
+      {error && drawing.status !== "failed" && <span className="avatar-draw-error" role="alert">{error}</span>}
+      {busy && <span className="avatar-draw-progress" aria-hidden="true" />}
+    </span>
+    <span className="avatar-draw-actions">
+      {busy ? <Pill variant="ghost" disabled={disabled || !drawing.thread} onClick={draw.discard}>Stop</Pill> : <>
+        <Pill variant="ghost" disabled={disabled || using} onClick={draw.discard}>Discard</Pill>
+        {drawing.description && <Pill variant="soft" disabled={disabled || using} onClick={draw.retry}>Try again</Pill>}
+        {drawing.status === "ready" && <Pill disabled={disabled || using} onClick={() => void use(drawing.definition)}>Use</Pill>}
+      </>}
+    </span>
+  </div>;
 }
 
 type Crop = { source: HTMLImageElement; zoom: number; x: number; y: number };
@@ -74,7 +138,7 @@ function AvatarImport({ color, disabled, onImport }: { color: string; disabled: 
   </details>;
 }
 
-export function AvatarEditor({ value, onChange, disabled = false, onPendingChange, shared, onDraw }: { value: AvatarDraft; onChange: (value: AvatarDraft) => void; disabled?: boolean; onPendingChange?: (pending: boolean) => void; shared?: AvatarDefinition[]; onDraw?: (description: string) => void }) {
+export function AvatarEditor({ value, onChange, disabled = false, onPendingChange, shared, draw }: { value: AvatarDraft; onChange: (value: AvatarDraft) => void; disabled?: boolean; onPendingChange?: (pending: boolean) => void; shared?: AvatarDefinition[]; draw?: DrawControls }) {
   const [tab, setTab] = useState<"bot" | "upload">("bot");
   const [crop, setCrop] = useState<Crop | null>(null);
   const [error, setError] = useState("");
@@ -132,7 +196,7 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
     <div className="avatar-editor-preview" aria-label="Avatar preview"><Avatar shape={value.shape} color={value.color} picture={value.avatarImage} definition={value.avatarDefinition} size={112} /></div>
     <div className="avatar-editor-card">
       <div className="avatar-desktop avatar-card-header">{tabs}<button type="button" disabled={disabled} onClick={reset}>Reset</button></div>
-      {tab === "bot" ? <AvatarPicker shape={value.shape} color={value.color} disabled={disabled} shared={shared} onDraw={onDraw} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
+      {tab === "bot" ? <AvatarPicker shape={value.shape} color={value.color} disabled={disabled} shared={shared} draw={draw} onChange={(shape, color, definition) => onChange({ shape, color, avatarImage: null, avatarDefinition: definition ?? (shape === value.shape ? value.avatarDefinition : null) })} /> : <div className={clsx("avatar-upload", loading && "opacity-50")} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void load(e.dataTransfer.files[0]); }}>
         {crop ? <>
           <div className="avatar-crop" aria-label="Drag to reposition" onPointerDown={e => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); drag.current = { x: e.clientX, y: e.clientY, startX: crop.x, startY: crop.y }; }} onPointerMove={e => { if (!drag.current) return; const size = e.currentTarget.clientWidth; setCrop(limitCrop({ ...crop, x: drag.current.startX + (e.clientX - drag.current.x) / size, y: drag.current.startY + (e.clientY - drag.current.y) / size })); }} onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
             <img draggable={false} alt="" src={crop.source.src} style={{ width: `${100 * crop.source.naturalWidth / Math.min(crop.source.naturalWidth, crop.source.naturalHeight) * crop.zoom}%`, maxWidth: "none", transform: `translate(calc(-50% + ${crop.x * 240}px), calc(-50% + ${crop.y * 240}px))` }} />
@@ -155,7 +219,7 @@ export function AvatarEditor({ value, onChange, disabled = false, onPendingChang
   </div>;
 }
 
-export function AvatarEditorDialog({ initial, onSave, onClose, shared, onDraw }: { initial: AvatarDraft; onSave: (draft: AvatarDraft) => Promise<void>; onClose: () => void; shared?: AvatarDefinition[]; onDraw?: (description: string) => void }) {
+export function AvatarEditorDialog({ initial, onSave, onClose, shared, draw }: { initial: AvatarDraft; onSave: (draft: AvatarDraft) => Promise<void>; onClose: () => void; shared?: AvatarDefinition[]; draw?: Omit<DrawControls, "use"> }) {
   const [draft, setDraft] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState(false);
@@ -169,7 +233,14 @@ export function AvatarEditorDialog({ initial, onSave, onClose, shared, onDraw }:
     try { await onSave(draft); onClose(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Couldn't save the avatar"); setSaving(false); }
   };
+  // Use saves the drawing straight to the Bot (with the colour picked here) and clears the job.
+  const use = async (definition: AvatarDefinition) => {
+    const next = { shape: objectShape(definition.id), color: draft.color, avatarImage: null, avatarDefinition: definition };
+    await onSave(next);
+    setDraft(next);
+    draw?.discard();
+  };
   return <Modal title="Avatar" className="avatar-editor-sheet w-[560px]" onClose={close} onBack={close} headerActions={<Pill disabled={saving || pending} onClick={() => void save()}>Done</Pill>}>
-    <div className="dialog-body"><AvatarEditor value={draft} onChange={setDraft} disabled={saving} onPendingChange={setPending} shared={shared} onDraw={onDraw && (description => { onDraw(description); onClose(); })} />{error && <p role="alert" className="avatar-editor-error">{error}</p>}</div>
+    <div className="dialog-body"><AvatarEditor value={draft} onChange={setDraft} disabled={saving} onPendingChange={setPending} shared={shared} draw={draw && { ...draw, use }} />{error && <p role="alert" className="avatar-editor-error">{error}</p>}</div>
   </Modal>;
 }

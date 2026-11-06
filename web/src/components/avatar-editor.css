@@ -17,16 +17,19 @@
 .avatar-tabs button[aria-selected="true"] { background: var(--bg-active); color: var(--fg); }
 .avatar-picker { padding: 32px 16px 40px; min-width: 0; }
 .avatar-picker .avatar-shapes { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 24px 0; width: 100%; max-width: none; margin: 0; justify-content: center; }
-.avatar-shapes .avatar-choice { grid-column: span 2; width: 74px; height: 74px; border-radius: 50%; display: grid; place-items: center; justify-self: center; }
+.avatar-shapes .avatar-choice { grid-column: span 2; width: 74px; height: 74px; justify-self: center; }
 .avatar-shapes .avatar-choice:nth-child(11) { grid-column: 2 / span 2; }
-.avatar-choice[aria-pressed="true"] { outline: 2px solid var(--border-strong); outline-offset: 0; }
-.avatar-choice[aria-pressed="true"], .avatar-colors button[aria-pressed="true"] { outline-color: #666; }
+/* Every choice is a tile: hover tints it, the chosen one is filled and ringed, keyboard focus uses the accent. */
+.avatar-tile { display: grid; place-items: center; border-radius: 16px; transition: background-color 120ms, box-shadow 120ms; }
+.avatar-tile:enabled:hover { background: var(--bg-hover); }
+.avatar-tile[aria-pressed="true"] { background: var(--bg-active); box-shadow: inset 0 0 0 2px var(--fg-muted); }
+.avatar-tile:focus-visible, .avatar-colors button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .avatar-choice > span > svg, .avatar-editor-preview > span > svg { width: 100% !important; height: 100% !important; }
-.avatar-choice:hover { background: var(--bg-hover); }
 .avatar-picker .avatar-colors { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 26px 0; margin: 46px 12px 0; }
-.avatar-colors button { width: 44px; height: 44px; border-radius: 50%; grid-column: span 2; justify-self: center; }
+.avatar-colors button { width: 44px; height: 44px; border-radius: 50%; grid-column: span 2; justify-self: center; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 12%, transparent); transition: box-shadow 120ms; }
 .avatar-colors button:nth-child(7) { grid-column: 2 / span 2; }
-.avatar-colors button[aria-pressed="true"] { outline: 2px solid #666; outline-offset: 5px; }
+.avatar-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--bg-card), 0 0 0 5px var(--fg-muted); }
+.dark .avatar-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--bg-card-inner), 0 0 0 5px var(--fg-muted); }
 .avatar-upload { padding: 28px 20px; text-align: center; }
 .avatar-drop { display: flex; min-height: 240px; flex-direction: column; align-items: center; justify-content: center; gap: 16px; border: 1px dashed var(--border-strong); border-radius: 18px; }
 .avatar-drop p { font-size: 18px; }
@@ -60,14 +63,14 @@
   .avatar-shapes .avatar-choice { width: 46px; height: 46px; }
   .avatar-choice > span { width: 40px !important; height: 40px !important; }
   .avatar-choice > span > svg { width: 44px; height: 44px; }
-  .avatar-choice[aria-pressed="true"], .avatar-colors button[aria-pressed="true"] { outline-color: #777; }
   .avatar-shapes .avatar-choice:first-child { grid-column: 2 / span 2; }
   .avatar-shapes .avatar-choice:nth-child(5), .avatar-shapes .avatar-choice:nth-child(10) { grid-column: 1 / span 2; }
   .avatar-shapes .avatar-choice:nth-child(11) { grid-column: span 2; }
   .avatar-picker .avatar-colors { margin: 30px 8px 0; gap: 18px 0; }
   .avatar-colors button { width: 27px; height: 27px; }
-  .avatar-colors button[aria-pressed="true"] { outline-offset: 4px; }
-  .avatar-reset { width: 100%; border-top: 1px solid var(--border); padding: 15px 18px; color: var(--accent); font-size: 18px; text-align: left; }
+  .avatar-tile { border-radius: 14px; }
+  .dark .avatar-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 5px var(--fg-muted); }
+  .avatar-reset { display: block; width: 100%; margin: 0; border-top: 1px solid var(--border); padding: 15px 18px; color: var(--accent); font-size: 18px; text-align: left; }
   .avatar-upload { padding: 0; }
   .avatar-editor-card:has(.avatar-photo-actions) { background: transparent; border: 0; overflow: visible; }
   .avatar-photo-actions { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
@@ -124,18 +127,52 @@
   .new-bot-sheet .dialog-footer > button { width: auto; height: 32px; font-size: 13px; }
 }
 
-/* Objects scroll in their own strip so the picker keeps its size. */
-.avatar-objects-title { margin: 28px 0 10px; font-size: 12.5px; color: var(--fg-muted); text-align: center; }
-.avatar-objects { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 56px); grid-auto-columns: 56px; gap: 4px; overflow-x: auto; padding: 2px; scrollbar-width: thin; }
-.avatar-object { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 16px; }
-.avatar-object:hover { background: var(--bg-hover); }
-.avatar-object[aria-pressed="true"] { outline: 2px solid #666; }
-.avatar-picker .avatar-objects + .avatar-colors { margin-top: 28px; }
+/* Objects wrap in a grid that fits the card, so no tile is ever cut off at its edge. */
+.avatar-section-title { margin: 22px 4px 8px; font-size: 12.5px; color: var(--fg-muted); }
+.avatar-objects { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px 0; justify-items: center; }
+.avatar-object { width: 48px; height: 48px; }
+.avatar-object > span { width: 40px !important; height: 40px !important; }
+.avatar-picker .avatar-objects + .avatar-colors, .avatar-picker .avatar-draw + .avatar-colors, .avatar-picker .avatar-draw-card + .avatar-colors { margin-top: 28px; }
+.avatar-object-new { border: 1.5px dashed var(--border-strong); color: var(--fg-muted); }
+.avatar-object-new:enabled:hover, .avatar-object-new[aria-expanded="true"] { border-color: var(--fg-muted); color: var(--fg); }
+.avatar-object-draft { border: 1.5px dashed var(--accent); color: var(--fg-muted); }
+.avatar-object-draft[data-failed] { border-color: var(--danger); color: var(--danger); }
+.avatar-draw { display: flex; gap: 6px; align-items: center; margin-top: 12px; }
+.avatar-draw input { min-width: 0; flex: 1; height: 32px; padding-inline: 14px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--fg); font-size: 13px; }
+.avatar-draw input::placeholder { color: var(--fg-faint); }
+.avatar-draw input:focus { outline: none; border-color: var(--border-strong); }
+.avatar-draw-card { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-top: 12px; padding: 10px 10px 10px 12px; border: 1px solid var(--border); border-radius: 18px; }
+.avatar-draw-preview { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 16px; background: var(--bg-hover); color: var(--fg-muted); --bot-eye-bg: var(--bg-hover); }
+.avatar-draw-preview:has(> svg[class*="triangle"]) { color: var(--danger); }
+.avatar-draw-text { display: flex; min-width: 0; flex-direction: column; gap: 2px; font-size: 13px; }
+.avatar-draw-text strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.avatar-draw-text > span { color: var(--fg-muted); font-size: 12.5px; }
+.avatar-draw-text > .avatar-draw-error { color: var(--danger); }
+.avatar-draw-progress { position: relative; height: 3px; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--bg-active); }
+.avatar-draw-progress::after { content: ""; position: absolute; inset-block: 0; width: 40%; border-radius: inherit; background: var(--accent); animation: avatar-draw-progress 1.4s ease-in-out infinite; }
+@keyframes avatar-draw-progress { from { left: -40%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .avatar-draw-progress::after { animation: none; left: 0; width: 100%; opacity: 0.4; } }
+.avatar-draw-actions { display: flex; gap: 4px; }
 .avatar-import { margin-top: 18px; font-size: 13px; color: var(--fg-muted); }
-.avatar-import summary { cursor: pointer; text-align: center; }
-.avatar-import p { margin: 8px 0; }
+.avatar-import summary { display: flex; min-height: 32px; cursor: pointer; align-items: center; gap: 8px; list-style: none; border-radius: 10px; }
+.avatar-import summary::-webkit-details-marker { display: none; }
+.avatar-import summary::after { content: ""; width: 6px; height: 6px; margin-top: -3px; border-right: 1.5px solid var(--fg-faint); border-bottom: 1.5px solid var(--fg-faint); transform: rotate(45deg); }
+.avatar-import[open] summary::after { margin-top: 3px; transform: rotate(-135deg); }
+.avatar-import summary:hover { color: var(--fg); }
+.avatar-import summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.avatar-import p { margin: 4px 0 8px; }
 .avatar-import a { text-decoration: underline; }
 .avatar-import textarea { display: block; width: 100%; margin-bottom: 8px; border: 1px solid var(--border); border-radius: 12px; background: transparent; padding: 8px 10px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--fg); resize: vertical; }
+.avatar-import textarea:focus { outline: none; border-color: var(--border-strong); }
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .avatar-import { margin: 18px 4px 14px; }
+  .avatar-import summary { justify-content: center; font-size: 15px; }
+  .avatar-draw { flex-wrap: wrap; justify-content: flex-end; }
+  .avatar-draw input { flex-basis: 100%; height: 40px; font-size: 16px; }
+  .avatar-draw-card { grid-template-columns: 56px minmax(0, 1fr); }
+  .avatar-draw-preview { width: 56px; height: 56px; }
+  .avatar-draw-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
 
 /* Desktop gets its own layout: the preview on the left, every choice visible on the right. */
 @media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
@@ -151,18 +188,13 @@
   .avatar-editor-sheet .avatar-picker .avatar-shapes { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
   .avatar-editor-sheet .avatar-shapes .avatar-choice, .avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(11) { grid-column: auto; width: 68px; height: 68px; }
   .avatar-editor-sheet .avatar-choice > span { width: 52px !important; height: 52px !important; }
-  .avatar-editor-sheet .avatar-objects-title { margin: 14px 0 6px; font-size: 12px; text-align: left; }
-  .avatar-objects { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); grid-template-rows: none; grid-auto-columns: auto; justify-items: center; overflow: visible; padding: 0; }
-  .avatar-object { width: 50px; height: 50px; border-radius: 14px; }
+  .avatar-editor-sheet .avatar-section-title { margin: 16px 2px 6px; font-size: 12px; }
+  .avatar-editor-sheet .avatar-objects { grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 2px 0; }
+  .avatar-object { width: 48px; height: 48px; border-radius: 14px; }
   .avatar-object > span { width: 38px !important; height: 38px !important; }
   .avatar-editor-sheet .avatar-picker .avatar-colors { grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 0; margin: 16px 0 0; }
   .avatar-editor-sheet .avatar-colors button, .avatar-editor-sheet .avatar-colors button:nth-child(7) { grid-column: auto; width: 28px; height: 28px; }
   .avatar-editor-sheet .avatar-colors button[aria-pressed="true"] { outline-offset: 3px; }
-  .avatar-editor-sheet .avatar-import { margin: 12px 16px 14px; }
-  .avatar-editor-sheet .avatar-import summary { text-align: left; }
+  .avatar-editor-sheet .avatar-import { margin: 4px 16px 10px; }
+  .avatar-editor-sheet .avatar-editor-card > .avatar-picker + .avatar-import { border-top: 1px solid var(--border); margin: 0; padding: 6px 16px; }
 }
-.avatar-object-new { border: 1.5px dashed var(--border-strong); color: var(--fg-muted); }
-.avatar-object-new:hover, .avatar-object-new[aria-expanded="true"] { border-color: var(--fg-muted); color: var(--fg); }
-.avatar-object-draw { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
-.avatar-object-draw input { min-width: 0; flex: 1; height: 32px; padding-inline: 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-card); color: var(--fg); font-size: 13px; }
-.avatar-object-draw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

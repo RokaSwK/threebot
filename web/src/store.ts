@@ -4,7 +4,7 @@ import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, th
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
+import { canStartSideChat, isAvatarDrawing, isSideChat, sideChatTitle } from "./lib/sideChats";
 import type { Bot, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
@@ -900,6 +900,29 @@ export async function bringBackSideChat(threadId: string, parentThreadId: string
 export async function deleteSideChat(threadId: string) {
   await t3.dispatch({ type: "thread.delete", threadId });
   if (get().sideChat?.threadId === threadId) set({ sideChat: null });
+}
+
+/** Ask the Bot to draw a new avatar in a hidden side chat. Replaces any earlier drawing. */
+export async function startAvatarDrawing(bot: Bot, title: string, prompt: string) {
+  const parentThreadId = bot.mainThreadId;
+  if (!get().runtimeFeatures.sideChats || !parentThreadId || !canStartSideChat(get().threads[parentThreadId])) throw new Error("Drawing needs a newer T3 Code, with side chats.");
+  for (const old of Object.values(get().threads)) if (isAvatarDrawing(old) && old.lineage.parentThreadId === parentThreadId) await discardAvatarDrawing(old.id);
+  const threadId = uuid();
+  try {
+    await t3.dispatch({ type: "thread.fork", createdBy: "user", creationSource: "web", sourceThreadId: parentThreadId, targetThreadId: threadId, sourcePoint: { type: "latest_stable" }, sideChat: true, title }, { timeoutMs: 30_000 });
+    if (!await threadArrives(threadId)) throw new Error("The drawing didn't reach this device. Try again.");
+    await sendMessage(bot.slug, prompt, [], threadId);
+  } catch (error) {
+    void t3.dispatch({ type: "thread.delete", threadId }).catch(() => {});
+    throw error;
+  }
+}
+
+/** Stop and remove a drawing side chat. */
+export async function discardAvatarDrawing(threadId: string) {
+  if (get().threads[threadId]?.activeRunId) await interrupt(threadId).catch(() => {});
+  await t3.dispatch({ type: "thread.delete", threadId });
+  set((s) => { const { [threadId]: _gone, ...threads } = s.threads; return { threads }; });
 }
 
 export async function saveFallbackModel(selection: ModelSelection | null) {

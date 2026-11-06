@@ -41,6 +41,7 @@ test("saving validates, rewrites and clears definitions", () => {
   assert.match(saved.avatarDefinition.body.path, /^M/);
   assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, extra: 1 } }), (error) => error.status === 400);
   assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, id: "ghost" } }), (error) => error.status === 400);
+  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, body: { path: "" } } }), (error) => error.status === 400 && /path is empty/.test(error.message));
   assert.equal(objectAvatarPatch({ shape: "ball" }).avatarDefinition, null);
   assert.equal(objectAvatarPatch({ shape: "object:ghost", avatarDefinition: null }).avatarDefinition, null);
   assert.deepEqual(objectAvatarPatch({ color: "red" }), { color: "red" });
