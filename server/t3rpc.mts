@@ -4,13 +4,25 @@
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-export function loadToken(path) {
+// RPC results and stream items are T3 Code's own JSON payloads; this client does not model their schema.
+type RpcValue = any;
+type Pending = { resolve: (value: RpcValue) => void; reject: (error: unknown) => void; onChunk?: (item: RpcValue) => void };
+
+export function loadToken(path: string): string {
   if (process.env.T3_TOKEN) return process.env.T3_TOKEN.trim();
   return readFileSync(path, "utf8").trim();
 }
 
 export class T3Client {
-  constructor({ baseUrl, token, clientLabel = "bot" }) {
+  declare baseUrl: string;
+  declare token: string;
+  declare clientLabel: string;
+  declare nextId: number;
+  declare pending: Map<string, Pending>;
+  declare ws: WebSocket;
+  declare pingTimer: ReturnType<typeof setInterval>;
+
+  constructor({ baseUrl, token, clientLabel = "bot" }: { baseUrl: string; token: string; clientLabel?: string }) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
     this.token = token;
     this.clientLabel = clientLabel;
@@ -18,13 +30,13 @@ export class T3Client {
     this.pending = new Map(); // requestId -> { resolve, reject, onChunk }
   }
 
-  async http(path, init = {}) {
+  async http(path: string, init: RequestInit = {}): Promise<RpcValue> {
     const res = await fetch(this.baseUrl + path, {
       ...init,
       headers: { authorization: `Bearer ${this.token}`, ...(init.headers ?? {}) },
     });
     const text = await res.text();
-    let body;
+    let body: RpcValue;
     try { body = JSON.parse(text); } catch { body = text; }
     if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status} ${path}`), { body });
     return body;
@@ -41,7 +53,7 @@ export class T3Client {
     this.ws = new WebSocket(url);
     await new Promise((resolve, reject) => {
       this.ws.addEventListener("open", resolve, { once: true });
-      this.ws.addEventListener("error", (e) => reject(e.error ?? new Error("ws error")), { once: true });
+      this.ws.addEventListener("error", (e) => reject((e as ErrorEvent).error ?? new Error("ws error")), { once: true });
     });
     this.ws.addEventListener("message", (ev) => this.#onMessage(ev.data));
     this.ws.addEventListener("close", (ev) => {
@@ -57,9 +69,9 @@ export class T3Client {
     this.ws?.close();
   }
 
-  #send(msg) { this.ws.send(JSON.stringify(msg)); }
+  #send(msg: Record<string, unknown>) { this.ws.send(JSON.stringify(msg)); }
 
-  #onMessage(raw) {
+  #onMessage(raw: string | ArrayBuffer) {
     const data = JSON.parse(typeof raw === "string" ? raw : Buffer.from(raw).toString("utf8"));
     for (const msg of Array.isArray(data) ? data : [data]) {
       if (msg._tag === "Pong") continue;
@@ -80,23 +92,24 @@ export class T3Client {
   }
 
   /** Unary RPC. */
-  call(tag, payload = {}) {
+  call(tag: string, payload: object = {}): Promise<RpcValue> {
     const id = String(this.nextId++);
-    return new Promise((resolve, reject) => {
+    return new Promise<RpcValue>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.#send({ _tag: "Request", id, tag, payload, headers: [] });
     });
   }
 
   /** Streaming RPC. Returns { done: Promise, cancel() }. */
-  stream(tag, payload, onItem) {
+  stream(tag: string, payload: unknown, onItem: (item: RpcValue) => void): { done: Promise<unknown>; cancel: () => void } {
     const id = String(this.nextId++);
     let cancelled = false;
-    const done = new Promise((resolve, reject) => {
+    // A cancelled stream resolves with no value.
+    const done = new Promise<RpcValue>((resolve: (value?: RpcValue) => void, reject) => {
       this.pending.set(id, {
         resolve,
         // A cancelled stream ends with an Exit whose cause is [{_tag:"Interrupt"}...]; treat as normal end.
-        reject: (err) => (cancelled ? resolve() : reject(err)),
+        reject: (err: unknown) => (cancelled ? resolve() : reject(err)),
         onChunk: onItem,
       });
     });
@@ -108,12 +121,13 @@ export class T3Client {
     };
   }
 
-  dispatch(command) {
+  dispatch(command: object): Promise<RpcValue> {
     return this.call("orchestration.dispatchCommand", { commandId: randomUUID(), ...command });
   }
 }
 
-function describeCause(cause) {
+// The cause is T3's encoded Effect Cause, so its shape is checked field by field below.
+function describeCause(cause: RpcValue): string {
   if (!cause) return "unknown failure";
   // Effect v4 encodes a Cause as an array of reasons: [{_tag:"Fail",error}|{_tag:"Die",defect}|{_tag:"Interrupt"}]
   if (Array.isArray(cause)) return cause.map(describeCause).join("; ");

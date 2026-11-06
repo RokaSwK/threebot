@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, type ExecFileOptions } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { createAssetManifest, verifyAssets } from './verify-assets.mts';
 
 const executable = fileURLToPath(new URL('./verify-assets.mts', import.meta.url));
-const hash = (value) => createHash('sha256').update(value).digest('hex');
+const hash = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 const content = new Map([
   ['/index.html', Buffer.from('<script src="/assets/app.js"></script>')],
   ['/assets/app.js', Buffer.from('import("./lazy/grammar.js");')],
@@ -18,7 +19,7 @@ const content = new Map([
   ['/assets/img%20%231.png', Buffer.from([0, 255, 40, 1])],
 ]);
 
-async function buildFixture(t) {
+async function buildFixture(t: TestContext) {
   const root = await mkdtemp(path.join(tmpdir(), 'bot-assets-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dist = path.join(root, 'dist');
@@ -27,28 +28,29 @@ async function buildFixture(t) {
   return { root, dist };
 }
 
-async function serverFixture(t, handler) {
-  const seen = [];
+async function serverFixture(t: TestContext, handler: (req: http.IncomingMessage, res: http.ServerResponse) => void) {
+  const seen: string[] = [];
   // The verifier never requests `/`; local tools can probe any newly opened port.
-  const server = http.createServer((req, res) => { if (req.url !== '/') seen.push(req.url); handler(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const server = http.createServer((req, res) => { if (req.url !== '/') seen.push(req.url!); handler(req, res); });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
-  return { origin: `http://127.0.0.1:${server.address().port}`, seen };
+  return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
 }
 
-function cli(args, options = {}) {
-  return new Promise((resolve) => {
+function cli(args: string[], options: ExecFileOptions = {}) {
+  return new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve) => {
     execFile(process.execPath, [executable, ...args], { timeout: 10_000, ...options }, (error, stdout, stderr) => {
-      resolve({ code: error?.code ?? 0, stdout, stderr });
+      // No encoding is passed, so execFile hands back utf8 strings.
+      resolve({ code: error?.code ?? 0, stdout: stdout as string, stderr: stderr as string });
     });
   });
 }
 
-async function tree(directory) {
-  const result = [];
+async function tree(directory: string): Promise<[string, string][]> {
+  const result: [string, string][] = [];
   for (const name of await readdir(directory, { withFileTypes: true })) {
     const filename = path.join(directory, name.name);
-    if (name.isDirectory()) result.push(...(await tree(filename)).map(([child, bytes]) => [name.name + '/' + child, bytes]));
+    if (name.isDirectory()) result.push(...(await tree(filename)).map(([child, bytes]): [string, string] => [name.name + '/' + child, bytes]));
     else result.push([name.name, (await readFile(filename)).toString('base64')]);
   }
   return result.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
@@ -72,7 +74,7 @@ test('CLI verifies every expected file and ignores retained old assets without m
   const { dist } = await buildFixture(t);
   const before = await tree(dist);
   const { origin, seen } = await serverFixture(t, (req, res) => {
-    const body = content.get(req.url) ?? (req.url === '/assets/old.js' ? Buffer.from('retained old build') : null);
+    const body = content.get(req.url!) ?? (req.url === '/assets/old.js' ? Buffer.from('retained old build') : null);
     res.writeHead(body ? 200 : 404); res.end(body);
   });
   const output = await cli(['--origin', origin, '--dist', dist]);
@@ -88,12 +90,12 @@ for (const variant of ['missing', 'truncated', 'same-size-corrupt', 'oversized',
     const { dist } = await buildFixture(t);
     const failed = '/assets/lazy/grammar.js';
     const { origin, seen } = await serverFixture(t, (req, res) => {
-      if (req.url !== failed) { const body = content.get(req.url); res.writeHead(body ? 200 : 404); res.end(body); return; }
+      if (req.url !== failed) { const body = content.get(req.url!); res.writeHead(body ? 200 : 404); res.end(body); return; }
       if (variant === 'missing') { res.writeHead(404); res.end('private server response'); }
       else if (variant === 'redirect') { res.writeHead(302, { location: '/login?secret=private-token' }); res.end('private server response'); }
-      else if (variant === 'truncated') { res.end(content.get(failed).subarray(0, 3)); }
-      else if (variant === 'oversized') { res.end(Buffer.alloc(content.get(failed).length + 1, 'x')); }
-      else res.end(Buffer.alloc(content.get(failed).length, 'x'));
+      else if (variant === 'truncated') { res.end(content.get(failed)!.subarray(0, 3)); }
+      else if (variant === 'oversized') { res.end(Buffer.alloc(content.get(failed)!.length + 1, 'x')); }
+      else res.end(Buffer.alloc(content.get(failed)!.length, 'x'));
     });
     const output = await cli(['--dist', dist, '--origin', origin]);
     assert.equal(output.code, 1);
@@ -110,7 +112,7 @@ test('network concurrency is bounded while all chunks are verified', async (t) =
   const { origin, seen } = await serverFixture(t, (req, res) => {
     if (req.url === '/') return res.end();
     active++; maximum = Math.max(maximum, active);
-    setTimeout(() => { active--; res.end(content.get(req.url)); }, 20);
+    setTimeout(() => { active--; res.end(content.get(req.url!)); }, 20);
   });
   const summary = await verifyAssets(dist, origin, { concurrency: 2, timeoutMs: 1000 });
   assert.deepEqual(summary, { files: 4, bytes: [...content.values()].reduce((n, bytes) => n + bytes.length, 0) });

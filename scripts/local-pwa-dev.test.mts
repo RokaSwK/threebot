@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import http from 'node:http';
 import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import { T3Client } from '../server/t3rpc.mts';
 import { parseLocalPwaOptions, startLocalPwaDev } from './local-pwa-dev.mts';
@@ -32,7 +33,7 @@ test('actual HMR frontend, API/RPC proxy and built PWA assets share only disposa
     const appModule = await (await fetch(loop.hmrUrl + '/src/App.tsx')).text();
     assert.match(appModule, /import\.meta\.hot/);
     const client = await (await fetch(loop.hmrUrl + '/@vite/client')).text();
-    const token = client.match(/const wsToken = ["']([^"']+)["']/)[1];
+    const token = client.match(/const wsToken = ["']([^"']+)["']/)![1];
     const hmrSocket = new WebSocket(loop.hmrUrl.replace(/^http/, 'ws') + '/?token=' + encodeURIComponent(token), 'vite-hmr');
     try {
       const connected = await new Promise((resolve, reject) => {
@@ -44,12 +45,12 @@ test('actual HMR frontend, API/RPC proxy and built PWA assets share only disposa
     } finally { hmrSocket.close(); }
     assert.deepEqual(await (await fetch(loop.hmrUrl + '/api/session')).json(), { authenticated: true, passwordRequired: false, accessLogin: false });
     const bots = await (await fetch(loop.hmrUrl + '/api/bots')).json();
-    assert.deepEqual(bots.bots.map((bot) => bot.slug).sort(), ['alpha', 'beta', 'gamma']);
+    assert.deepEqual(bots.bots.map((bot: { slug: string }) => bot.slug).sort(), ['alpha', 'beta', 'gamma']);
     const environment = await (await fetch(loop.hmrUrl + '/t3/.well-known/t3/environment')).json();
     assert.equal(environment.label, 'Disposable local fixture (fake T3)');
     await rpc.connect();
     const family = await rpc.call('orchestration.getThreadFamily', { threadId: 'thread-alpha' });
-    assert.deepEqual(family.threads.map((thread) => thread.id), ['thread-alpha', 'thread-alpha-child']);
+    assert.deepEqual((family as { threads: { id: string }[] }).threads.map((thread) => thread.id), ['thread-alpha', 'thread-alpha-child']);
     const manifest = await (await fetch(loop.pwaUrl + '/manifest.webmanifest')).json();
     assert.equal(manifest.display, 'standalone');
     assert.equal(manifest.start_url, '/');
@@ -58,15 +59,15 @@ test('actual HMR frontend, API/RPC proxy and built PWA assets share only disposa
     assert.equal(await worker.text(), await readFile(new URL('../web/dist/sw.js', import.meta.url), 'utf8'));
     const builtHtml = await (await fetch(loop.pwaUrl)).text();
     assert.doesNotMatch(builtHtml, /\/@vite\/client/);
-    const asset = builtHtml.match(/src="(\/assets\/[^" ]+\.js)"/)[1];
+    const asset = builtHtml.match(/src="(\/assets\/[^" ]+\.js)"/)![1];
     assert.deepEqual(Buffer.from(await (await fetch(loop.pwaUrl + asset)).arrayBuffer()), await readFile(new URL('../web/dist' + asset, import.meta.url)));
     await loop.fixture.request('/api/main-bot', 'PUT', { slug: 'beta' });
     await loop.fixture.restart();
     const restarted = await (await fetch(loop.hmrUrl + '/api/bots')).json();
-    assert.equal(restarted.bots.find((bot) => bot.primary).slug, 'beta');
+    assert.equal(restarted.bots.find((bot: { primary?: boolean }) => bot.primary).slug, 'beta');
     await loop.fixture.reset();
     const reset = await (await fetch(loop.hmrUrl + '/api/bots')).json();
-    assert.equal(reset.bots.find((bot) => bot.primary).slug, 'alpha');
+    assert.equal(reset.bots.find((bot: { primary?: boolean }) => bot.primary).slug, 'alpha');
   } finally { rpc.close(); await loop.close(); await loop.close(); }
   await assert.rejects(access(loop.fixture.root), { code: 'ENOENT' });
   await assert.rejects(fetch(loop.hmrUrl, { signal: AbortSignal.timeout(1000) }));
@@ -77,7 +78,7 @@ test('occupied HMR port fails without stopping its owner', { timeout: 30000 }, a
   const owner = http.createServer((_req, res) => res.end('existing owner'));
   owner.listen(0, '127.0.0.1');
   await once(owner, 'listening');
-  const hmrPort = owner.address().port;
+  const hmrPort = (owner.address() as AddressInfo).port;
   try {
     await assert.rejects(startLocalPwaDev({ pwaPort: 0, hmrPort }), /already in use/);
     assert.equal(await (await fetch(`http://127.0.0.1:${hmrPort}`)).text(), 'existing owner');
@@ -92,7 +93,7 @@ test('inherited backend and frontend environment values do not change fixture is
     Object.assign(process.env, variables);
     loop = await startLocalPwaDev({ pwaPort: 0, hmrPort: 0 });
     const bots = await (await fetch(loop.hmrUrl + '/api/bots')).json();
-    assert.deepEqual(bots.bots.map((bot) => bot.slug).sort(), ['alpha', 'beta', 'gamma']);
+    assert.deepEqual(bots.bots.map((bot: { slug: string }) => bot.slug).sort(), ['alpha', 'beta', 'gamma']);
     const module = await (await fetch(loop.hmrUrl + '/src/main.tsx')).text();
     assert.doesNotMatch(module, /generic-not-for-client|generic-do-not-forward|127\.0\.0\.1:1["']/);
   } finally {

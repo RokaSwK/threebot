@@ -8,14 +8,14 @@ import { randomBytes } from 'node:crypto';
 import { decodeAvatarImage, storeAvatarImage, avatarImagePatch, avatarImageFile, readAvatarImage, MAX_AVATAR_BYTES } from './avatar-images.mts';
 import { ensureBotFavicon } from './bot-avatar.mts';
 
-const dataUrl = (bytes, type = 'png') => `data:image/${type};base64,${bytes.toString('base64')}`;
+const dataUrl = (bytes: Buffer, type = 'png') => `data:image/${type};base64,${bytes.toString('base64')}`;
 const png = await sharp({ create: { width: 8, height: 6, channels: 4, background: '#ff1234' } }).png().toBuffer();
 
 test('avatar upload validates decoded content, MIME and size; SVG is never accepted', async () => {
   for (const invalid of [null, {}, '', dataUrl(Buffer.from('<svg onload="alert(1)"/>')), dataUrl(png, 'jpeg'), 'data:image/svg+xml;base64,' + Buffer.from('<svg/>').toString('base64'), dataUrl(Buffer.from('not an image')), dataUrl(png.subarray(0, 25))]) {
     await assert.rejects(decodeAvatarImage(invalid), /That image could not be loaded/);
   }
-  await assert.rejects(decodeAvatarImage(dataUrl(Buffer.alloc(MAX_AVATAR_BYTES + 1))), error => error.status === 413);
+  await assert.rejects(decodeAvatarImage(dataUrl(Buffer.alloc(MAX_AVATAR_BYTES + 1))), (error: { status?: number }) => error.status === 413);
   const huge = await sharp({ create: { width: 7000, height: 6000, channels: 3, background: 'red' } }).png().toBuffer();
   await assert.rejects(decodeAvatarImage(dataUrl(huge)), /That image could not be loaded/);
 });
@@ -76,5 +76,5 @@ test('gateway upload persists through restart and archive, serves only PNG, and 
   await fixture.request('/api/main-bot', 'PUT', { slug: 'beta' });
   assert.equal((await fixture.request('/api/bots/alpha', 'DELETE')).status, 200);
   assert.deepEqual(Buffer.from(await (await fetch(fixture.url + image)).arrayBuffer()), stored);
-  assert.ok((await fixture.request('/api/bot-identities')).body.bots.some(bot => bot.avatarImage === image));
+  assert.ok((await fixture.request('/api/bot-identities')).body.bots.some((bot: { avatarImage?: string | null }) => bot.avatarImage === image));
 });

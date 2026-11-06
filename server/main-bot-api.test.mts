@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
+import type { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import type { Bot } from './main-bot.mts';
 
 // This gateway only sees temporary fixture directories and an unreachable local T3 port.
 // It never reads real credentials, connects to a real T3, or changes a user's Bots.
@@ -20,9 +22,10 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
   const socket = net.createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
-  const { port } = socket.address();
+  const { port } = socket.address() as net.AddressInfo;
   await new Promise((resolve) => socket.close(resolve));
-  let processHandle;
+  // Typed through a cast so the closures below that assign it don't leave it narrowed to null.
+  let processHandle = null as ChildProcessByStdio<null, Readable, Readable> | null;
   try {
     const start = async () => {
       processHandle = spawn(process.execPath, [new URL('./gateway.mts', import.meta.url).pathname], {
@@ -35,26 +38,27 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
       });
       let output = '';
       processHandle.stderr.on('data', () => {});
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('fixture gateway did not start')), 5000);
-        processHandle.once('error', (error) => { clearTimeout(timeout); reject(error); });
-        processHandle.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`fixture gateway exited ${code}`)); });
-        processHandle.stdout.on('data', (chunk) => {
+        processHandle!.once('error', (error) => { clearTimeout(timeout); reject(error); });
+        processHandle!.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`fixture gateway exited ${code}`)); });
+        processHandle!.stdout.on('data', (chunk) => {
           output += String(chunk);
           if (output.includes('bot gateway on')) { clearTimeout(timeout); resolve(); }
         });
       });
     };
     const stop = async () => {
-      const exited = once(processHandle, 'exit');
-      processHandle.kill();
+      const exited = once(processHandle!, 'exit');
+      processHandle!.kill();
       await exited;
     };
-    const request = async (route, method = 'GET', body) => {
+    const request = async (route: string, method = 'GET', body?: unknown) => {
       const response = await fetch(`http://127.0.0.1:${port}${route}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
-      return { status: response.status, body: await response.json() };
+      // The gateway's JSON replies, read field by field by the assertions below.
+      return { status: response.status, body: (await response.json()) as any };
     };
-    const main = (bots) => bots.filter((bot) => bot.primary).map((bot) => bot.slug);
+    const main = (bots: Bot[]) => bots.filter((bot) => bot.primary).map((bot) => bot.slug);
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['alpha']);
     const replacement = await request('/api/main-bot', 'PUT', { slug: 'beta' });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,7 @@ import { once } from 'node:events';
 import { createRoutineHistory, createRoutineHistoryRoutes } from './routine-history.mts';
 const task = { id: 'task-1', projectId: 'project', threadId: 'thread', lastRunAt: '2026-10-31T12:00:00Z', lastRunStatus: 'succeeded', runCount: 12 };
 const projection = (status = 'completed') => ({ messages: [{ id: 'scheduled-task-message:task-1:123:manual', scheduledTaskId: 'task-1', text: 'PRIVATE PROMPT AND TOKEN' }], runs: [{ id: 'run-1', threadId: 'thread', userMessageId: 'scheduled-task-message:task-1:123:manual', requestedAt: '2026-10-31T12:00:00Z', startedAt: '2026-10-31T12:00:01Z', status }] });
-async function fixture(t, options = {}) { const root = await mkdtemp(join(tmpdir(), 'routine-history-test-')); t.after(() => rm(root, { recursive: true, force: true })); const file = join(root, 'history.json'); return { file, history: createRoutineHistory({ file, ...options }) }; }
+async function fixture(t: TestContext, options: { now?: () => string; limit?: number } = {}) { const root = await mkdtemp(join(tmpdir(), 'routine-history-test-')); t.after(() => rm(root, { recursive: true, force: true })); const file = join(root, 'history.json'); return { file, history: createRoutineHistory({ file, ...options }) }; }
 test('initial summary is not fabricated history; subsequent dispatch differs from execution', async (t) => {
   const { history, file } = await fixture(t);
   await history.consumeTasks([task]); assert.deepEqual((await history.get(task.id)).rows, []);
@@ -36,15 +37,15 @@ test('concurrent writes merge, bound retention per task and keep skipped/failed/
   await history.remove(task.id); assert.equal((await history.get(task.id)).rows.length, 0);
 });
 test('gateway handler subscribes read-only, records linked executions and rejects invalid requests', async (t) => {
-  const { file } = await fixture(t); const calls = []; const listeners = new Map();
+  const { file } = await fixture(t); const calls: string[] = []; const listeners = new Map<string, (event: unknown) => void>();
   const client = {
-    stream(tag, payload, onItem) { calls.push(tag); listeners.set(tag, onItem); queueMicrotask(() => onItem(tag === 'scheduledTasks.subscribe' ? { tasks: [task] } : { kind: 'snapshot', snapshot: { threads: [{ id: 'thread', projectId: 'project', updatedAt: 'now' }] } })); return { cancel() {}, done: new Promise(() => {}) }; },
-    async call(tag) { calls.push(tag); assert.equal(tag, 'orchestration.getThreadProjection'); return projection(); },
+    stream(tag: string, payload: unknown, onItem: (event: unknown) => void) { calls.push(tag); listeners.set(tag, onItem); queueMicrotask(() => onItem(tag === 'scheduledTasks.subscribe' ? { tasks: [task] } : { kind: 'snapshot', snapshot: { threads: [{ id: 'thread', projectId: 'project', updatedAt: 'now' }] } })); return { cancel() {}, done: new Promise(() => {}) }; },
+    async call(tag: string) { calls.push(tag); assert.equal(tag, 'orchestration.getThreadProjection'); return projection(); },
   };
   const routes = createRoutineHistoryRoutes({ rpc: async () => client, file });
-  const server = http.createServer(async (req,res) => { if (!(await routes.handle(req,res,new URL(req.url,'http://localhost')))) { res.writeHead(404); res.end(); } }); server.listen(0,'127.0.0.1'); await once(server,'listening');
+  const server = http.createServer(async (req,res) => { if (!(await routes.handle(req,res,new URL(req.url!,'http://localhost')))) { res.writeHead(404); res.end(); } }); server.listen(0,'127.0.0.1'); await once(server,'listening');
   t.after(() => { routes.close(); server.closeAllConnections(); server.close(); });
-  const url = `http://127.0.0.1:${server.address().port}/api/routine-history`;
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/routine-history`;
   assert.equal((await fetch(url)).status, 400); assert.equal((await fetch(url+'?task=task-1',{method:'POST'})).status, 405);
   let response = await fetch(url+'?task=task-1'); assert.equal(response.status, 200);
   response = await fetch(url+'?task=task-1'); const result = await response.json(); assert.equal(result.rows[0].status,'completed');

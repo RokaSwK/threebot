@@ -1,44 +1,45 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
-import net from 'node:net';
+import net, { type AddressInfo } from 'node:net';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import type { Readable } from 'node:stream';
+import { test, type TestContext } from 'node:test';
 import { startFakeT3 } from '../scripts/fixture-t3.mts';
 
 const TOKEN = 'fake-gateway-executor-token';
 const PASSWORD = 'fake-gateway-password';
-const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+const json = (res: http.ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 
-async function fakeExecutor(t) {
-  const state = { requests: [], linked: false, status: 'pending', unauthorized: false };
+async function fakeExecutor(t: TestContext) {
+  const state: { requests: { path: string; method: string; body: string; authorization?: string }[]; linked: boolean; status: string; unauthorized: boolean } = { requests: [], linked: false, status: 'pending', unauthorized: false };
   const account = { id: 'acct_fixture', label: 'Generic account', credentialsFingerprint: 'never-return-this' };
   const app = { id: 'app_fixture', slug: 'sample', name: 'Sample', requirements: { accounts: { service: { scope: 'user', definition: { name: 'Sample service' }, cardinality: 'many' } } } };
-  let origin;
+  let origin: string;
   const server = http.createServer(async (req, res) => {
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
-    state.requests.push({ path: req.url, method: req.method, body: Buffer.concat(chunks).toString(), authorization: req.headers.authorization });
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
+    state.requests.push({ path: req.url!, method: req.method!, body: Buffer.concat(chunks).toString(), authorization: req.headers.authorization });
     if (state.unauthorized) return json(res, 401, { error: TOKEN });
-    const route = req.url.replace('/api/organizations/workspace', '');
+    const route = req.url!.replace('/api/organizations/workspace', '');
     if (route === '/apps') return json(res, 200, [app]);
     if (route === '/apps/app_fixture') return json(res, 200, app);
     if (route.startsWith('/catalog?')) return json(res, 200, [{ id: 'cat_fixture', name: 'Sample', description: 'Generic', package: 'sample', auth: [] }]);
     if (route === '/apps/install' && req.method === 'POST') return json(res, 200, app);
     if (route === '/apps/app_fixture/accounts/user') return json(res, 200, state.linked ? [{ requirement: 'service', account, signIn: { state: 'saved', reconnectAt: null } }] : []);
     if (route === '/apps/app_fixture/accounts/user/service') return json(res, 200, { requirement: 'service', scope: 'user', cardinality: 'many', accounts: [{ account, linked: state.linked }] });
-    if (route === '/apps/app_fixture/accounts/user/service/acct_fixture' && ['PUT', 'DELETE'].includes(req.method)) { state.linked = req.method === 'PUT'; return json(res, 200, { requirement: 'service', account }); }
+    if (route === '/apps/app_fixture/accounts/user/service/acct_fixture' && ['PUT', 'DELETE'].includes(req.method!)) { state.linked = req.method === 'PUT'; return json(res, 200, { requirement: 'service', account }); }
     if (route === '/apps/app_fixture/accounts/user/service/connections' || route === '/connections/con_fixture') return json(res, 200, { id: 'con_fixture', target: { app: app.id, requirement: 'service', name: 'Sample service' }, state: { status: state.status, ...(state.status === 'completed' ? { account } : {}) }, url: `${origin}/org/workspace/connections/con_fixture`, expiresAt: '2026-12-01T00:00:00Z', checkable: true });
     json(res, 404, { error: 'Unknown fixture route' });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
   return { origin, state };
 }
 
-async function gateway(t, executorEnv = {}) {
+async function gateway(t: TestContext, executorEnv: Record<string, string> = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'executor-gateway-'));
   const botsRoot = path.join(root, 'bots');
   for (const slug of ['alpha', 'beta']) {
@@ -48,8 +49,8 @@ async function gateway(t, executorEnv = {}) {
     await writeFile(path.join(dir, '.codex/config.toml'), '[mcp_servers.executor]\nurl="https://old-backup.invalid/mcp"\n');
   }
   const fakeT3 = await startFakeT3(root);
-  const socket = net.createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening'); const port = socket.address().port; await new Promise((resolve) => socket.close(resolve));
-  let child, stdout = '', stderr = '';
+  const socket = net.createServer(); socket.listen(0, '127.0.0.1'); await once(socket, 'listening'); const port = (socket.address() as AddressInfo).port; await new Promise((resolve) => socket.close(resolve));
+  let child: ChildProcessByStdio<null, Readable, Readable> | undefined, stdout = '', stderr = '';
   t.after(async () => {
     if (child?.exitCode === null) { const exit = once(child, 'exit'); child.kill(); await exit; }
     await fakeT3.close(); await rm(root, { recursive: true, force: true });
@@ -70,20 +71,20 @@ async function gateway(t, executorEnv = {}) {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Disposable gateway failed to start')), 5000);
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`Disposable gateway exited ${code}`)); });
     child.stdout.on('data', (chunk) => { stdout += chunk; if (stdout.includes('bot gateway on')) { clearTimeout(timer); resolve(); } });
   });
   const base = `http://127.0.0.1:${port}`;
-  let cookie;
-  const request = async (route, method = 'GET', body, authenticated = true) => {
+  let cookie: string | undefined;
+  const request = async (route: string, method = 'GET', body?: unknown, authenticated = true) => {
     const response = await fetch(base + route, { method, headers: { 'content-type': 'application/json', ...(authenticated && cookie ? { cookie } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
     const value = await response.json(); return { status: response.status, body: value };
   };
   const login = await fetch(base + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: PASSWORD }) });
-  assert.equal(login.status, 200); cookie = login.headers.get('set-cookie').split(';')[0];
+  assert.equal(login.status, 200); cookie = login.headers.get('set-cookie')!.split(';')[0];
   return { root, botsRoot, request, logs: () => stdout + stderr };
 }
 
@@ -94,7 +95,7 @@ test('all Executor gateway routes require app authentication before reaching ups
     ['/api/executor', 'GET'], ['/api/executor/catalog', 'GET'], ['/api/executor/install', 'POST', { entry: 'cat_fixture', name: 'Sample' }],
     ['/api/executor/apps/app_fixture', 'GET'], ['/api/executor/apps/app_fixture/accounts', 'POST', { requirement: 'service', scope: 'user', account: 'acct_fixture', linked: true }],
     ['/api/executor/apps/app_fixture/connections', 'POST', { requirement: 'service', scope: 'user' }], ['/api/executor/connections/con_fixture', 'GET'], ['/api/executor/resolve-link', 'POST', { url: `${upstream.origin}/org/workspace/apps` }],
-  ]) {
+  ] as [route: string, method: string, body?: unknown][]) {
     const response = await app.request(route, method, body, false);
     assert.deepEqual(response, { status: 401, body: { error: 'login required' } });
   }
@@ -137,18 +138,18 @@ for (const hasCredential of [true, false]) test(`every Bot gets the selected Clo
   const config = await app.request('/api/config'); assert.equal(config.status, 200);
   assert.equal(config.body.executorUrl, hasCredential ? 'https://app.executor.sh' : null);
   assert.doesNotMatch(JSON.stringify(config.body), /fake-gateway|fake-backup|TOKEN|credential/);
-  const read = async (slug) => {
+  const read = async (slug: string) => {
     const directory = path.join(app.botsRoot, slug);
     return { json: JSON.parse(await readFile(path.join(directory, '.mcp.json'), 'utf8')), toml: await readFile(path.join(directory, '.codex/config.toml'), 'utf8'), instructions: await readFile(path.join(directory, 'AGENTS.md'), 'utf8'), directory };
   };
   const deadline = Date.now() + 3000;
-  let files;
+  let files: Awaited<ReturnType<typeof read>>[] | undefined;
   while (Date.now() < deadline) {
     try { files = await Promise.all(['alpha', 'beta'].map(read)); if (files.every(({ json }) => hasCredential ? json.mcpServers.executor?.url === 'https://mcp.executor.sh/org/workspace/mcp' : !json.mcpServers.executor)) break; } catch {}
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(files?.length, 2, 'both Bot managed configurations are generated');
-  for (const { json: mcp, toml, instructions, directory } of files) {
+  for (const { json: mcp, toml, instructions, directory } of files!) {
     assert.equal(mcp.mcpServers.retained.command, 'never-executed');
     assert.equal(mcp.mcpServers.bot.headers.Authorization, 'Bearer fixture-bot-token');
     if (hasCredential) {

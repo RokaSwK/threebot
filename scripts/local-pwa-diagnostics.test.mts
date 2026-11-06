@@ -10,20 +10,21 @@ test('diagnostics executes in its own origin and shows cache/worker state plus e
   let registrations = 0;
   const window = new JSDOM(LOCAL_PWA_DIAGNOSTICS_HTML, {
     url: 'http://localhost:43792/api/__local_pwa_diagnostics', runScripts: 'dangerously',
-    beforeParse(window) {
+    // jsdom comes from web/node_modules through require, untyped; its window is patched freely here.
+    beforeParse(window: any) {
       Object.defineProperty(window, 'isSecureContext', { value: true });
       window.Request = Request;
       const active = new window.EventTarget(); Object.assign(active, { scriptURL, state: 'activated' });
       Object.defineProperty(window.navigator, 'serviceWorker', { value: Object.assign(new window.EventTarget(), {
         controller: active,
         getRegistrations: async () => [Object.assign(new window.EventTarget(), { scope: 'http://localhost:43792/', updateViaCache: 'none', active })],
-        register: async (url, options) => { registrations++; assert.equal(url, '/sw.js'); assert.equal(options.scope, '/'); assert.equal(options.updateViaCache, 'none'); throw new TypeError('Generic diagnostic registration failure'); },
+        register: async (url: string, options: RegistrationOptions) => { registrations++; assert.equal(url, '/sw.js'); assert.equal(options.scope, '/'); assert.equal(options.updateViaCache, 'none'); throw new TypeError('Generic diagnostic registration failure'); },
       }) });
       window.caches = {
         keys: async () => ['bot-shell-test'],
         open: async () => ({
           keys: async () => [new Request('http://localhost:43792/index.html'), new Request('http://localhost:43792/assets/app.js')],
-          match: async (request) => {
+          match: async (request: string | Request) => {
             const url = typeof request === 'string' ? request : request.url;
             return new Response(url.endsWith('index.html') ? '<script type="module" src="/assets/app.js"></script>' : 'app', { headers: { Vary: 'Origin' } });
           },
@@ -32,7 +33,7 @@ test('diagnostics executes in its own origin and shows cache/worker state plus e
     },
   }).window;
   try {
-    const waitFor = async (predicate) => {
+    const waitFor = async (predicate: () => boolean) => {
       const until = Date.now() + 2000;
       while (!predicate()) { if (Date.now() > until) assert.fail('Diagnostic state did not appear'); await new Promise((resolve) => setTimeout(resolve, 5)); }
     };

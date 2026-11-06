@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const arg = (name) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : undefined; };
+const arg = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : undefined; };
 const out = path.resolve(arg("out") ?? path.join(root, "release"));
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const version = arg("version") ?? pkg.version;
@@ -24,7 +24,7 @@ mkdirSync(stage, { recursive: true });
 for (const file of ["LICENSE", "NOTICE", "README.md", ".env.example", "install.sh"]) cpSync(path.join(root, file), path.join(stage, file));
 writeFileSync(path.join(stage, "package.json"), JSON.stringify({ ...pkg, version }, null, 2) + "\n");
 // The server without its tests or anything installed or generated locally.
-const skip = (src) => /node_modules|\.test\.mts$|\.t3-token$|\.env$/.test(src);
+const skip = (src: string) => /node_modules|\.test\.mts$|\.t3-token$|\.env$/.test(src);
 cpSync(path.join(root, "server"), path.join(stage, "server"), { recursive: true, filter: (src) => !skip(path.relative(root, src)) });
 const serverPkg = JSON.parse(readFileSync(path.join(stage, "server", "package.json"), "utf8"));
 writeFileSync(path.join(stage, "server", "package.json"), JSON.stringify({ ...serverPkg, version }, null, 2) + "\n");

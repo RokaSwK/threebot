@@ -1,41 +1,53 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const failure = (message, status = 409) => Object.assign(new Error(message), { status });
+/** A Bot as the app sees it: its `.bot/bot.json`, with defaults filled in, plus where its folder is. */
+export interface Bot {
+  slug: string; workspaceRoot: string; name: string; label: string; shape: string; color: string;
+  section: string | null; pinned: boolean; hidden: boolean; primary: boolean; notifications: boolean;
+  projectId: string | null; mainThreadId: string | null; createdAt: string; updatedAt?: string;
+  // Whatever else the Bot or the app keeps in bot.json (model, brief, avatarImage, ...).
+  [key: string]: unknown;
+}
+/** Fields a caller asks to change. It comes from request bodies and provisioning, so nothing is assumed. */
+export type BotPatch = { [key: string]: unknown };
 
-async function readJson(file, fallback) {
+const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const failure = (message: string, status = 409) => Object.assign(new Error(message), { status });
+
+// The parsed file is whatever JSON is on disk; callers check the fields they use.
+async function readJson<T>(file: string, fallback: T): Promise<any> {
   try { return JSON.parse(await fs.readFile(file, "utf8")); }
-  catch (error) { if (error.code === "ENOENT") return fallback; throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback; throw error; }
 }
 
-async function writeJson(file, value) {
+async function writeJson(file: string, value: unknown) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(`${file}.tmp`, JSON.stringify(value, null, 2) + "\n");
   await fs.rename(`${file}.tmp`, file);
 }
 
 /** One writer owns the selection and its compatibility flags, including provisioning writes. */
-export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} }) {
+export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} }: { botsRoot: string; onBotChanged?: (bot: Bot) => Promise<unknown> }) {
   const selectionFile = path.join(botsRoot, ".botapp", "main-bot.json");
-  let pending = Promise.resolve();
-  function exclusive(operation) {
+  let pending: Promise<unknown> = Promise.resolve();
+  function exclusive<T>(operation: () => T | Promise<T>): Promise<T> {
     const result = pending.then(operation);
     pending = result.catch(() => {});
     return result;
   }
-  function directory(slug) {
+  function directory(slug: unknown): string {
     if (typeof slug !== "string" || !SLUG.test(slug)) throw failure("bad slug", 400);
     return path.join(botsRoot, slug);
   }
-  const metadataFile = (slug) => path.join(directory(slug), ".bot", "bot.json");
+  const metadataFile = (slug: string) => path.join(directory(slug), ".bot", "bot.json");
 
   async function loadBots() {
-    const entries = await fs.readdir(botsRoot, { withFileTypes: true }).catch((error) => {
+    const entries = await fs.readdir(botsRoot, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
     });
-    const bots = [];
+    const bots: Bot[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || !SLUG.test(entry.name)) continue;
       const meta = await readJson(metadataFile(entry.name), null);
@@ -51,7 +63,7 @@ export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} 
     return bots.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slug.localeCompare(b.slug));
   }
 
-  async function persistMetadata(bot) {
+  async function persistMetadata(bot: { slug: string; [key: string]: unknown }) {
     const { slug, workspaceRoot: _workspace, ...metadata } = bot;
     await writeJson(metadataFile(slug), metadata);
   }
@@ -79,7 +91,7 @@ export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} 
     return bots;
   }
 
-  async function choose(slug) {
+  async function choose(slug: string): Promise<Bot[]> {
     directory(slug);
     const bots = await reconcile();
     const target = bots.find((bot) => bot.slug === slug);
@@ -98,12 +110,12 @@ export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} 
     refreshInstructions: () => exclusive(async () => {
       for (const bot of await reconcile()) await onBotChanged(bot);
     }),
-    get: (slug) => exclusive(async () => {
+    get: (slug: string) => exclusive(async () => {
       directory(slug);
       return (await reconcile()).find((bot) => bot.slug === slug) ?? null;
     }),
-    select: (slug) => exclusive(() => choose(slug)),
-    save: (slug, patch, { create = false } = {}) => exclusive(async () => {
+    select: (slug: string) => exclusive(() => choose(slug)),
+    save: (slug: string, patch: BotPatch, { create = false }: { create?: boolean } = {}) => exclusive(async () => {
       directory(slug);
       const bots = await reconcile();
       const current = bots.find((bot) => bot.slug === slug);
@@ -118,11 +130,12 @@ export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} 
       if (requestedMain === true) next.hidden = false;
       await persistMetadata(next);
       const updated = requestedMain === true ? await choose(slug) : await reconcile();
-      const saved = updated.find((bot) => bot.slug === slug);
+      // Just written, so the reload has it.
+      const saved = updated.find((bot) => bot.slug === slug)!;
       await onBotChanged(saved);
       return saved;
     }),
-    remove: (slug) => exclusive(async () => {
+    remove: (slug: string) => exclusive(async () => {
       directory(slug);
       const bots = await reconcile();
       const current = bots.find((bot) => bot.slug === slug);

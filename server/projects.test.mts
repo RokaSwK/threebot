@@ -3,8 +3,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createProjects, detail, find, overview } from "./projects.mts";
-import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import { createProjects, detail, find, overview, type ProjectsError, type ProjectsEvent } from "./projects.mts";
+import { PROJECT_TOOLS, createProjectTools, type ToolResult } from "./projects-mcp.mts";
 import { createBotTools, handleMcpHttp } from "./vault-mcp.mts";
 import { createProjectRoutes, sameOrigin } from "./projects-routes.mts";
 
@@ -18,7 +19,7 @@ async function board() {
 
 test("a project and its to-dos are created in one batch with refs, defaults and authorship", async () => {
   const { store, file, done } = await board();
-  const events = [];
+  const events: ProjectsEvent[] = [];
   store.subscribe((event) => events.push(event));
   const { items } = await store.save([
     { ref: "nas", kind: "machine", title: "NAS" },
@@ -39,7 +40,7 @@ test("a project and its to-dos are created in one batch with refs, defaults and 
   assert.match(nas.id, /^[a-z0-9]{8}$/);
   assert.equal(events.length, 1);
   assert.equal(events[0].activity.length, 4);
-  assert.equal(events[0].activity[0].actor.name, "Ops");
+  assert.equal((events[0].activity[0].actor as { name?: string }).name, "Ops");
   const saved = JSON.parse(await readFile(file, "utf8"));
   assert.equal(Object.keys(saved.items).length, 4);
   assert.equal(saved.version, 1);
@@ -58,7 +59,7 @@ test("patches only change what they name, null clears, and done to-dos record wh
   assert.ok(after.doneAt);
   assert.deepEqual(after.updatedBy, bot);
   const activity = await store.activity();
-  assert.equal(activity.at(-1).action, "completed");
+  assert.equal(activity.at(-1)!.action, "completed");
   const [reopened] = (await store.save([{ id: task.id, status: "todo" }], { type: "user" })).items;
   assert.equal(reopened.doneAt, undefined);
   const unchanged = await store.save([{ id: task.id, status: "todo" }], { type: "user" });
@@ -69,7 +70,7 @@ test("patches only change what they name, null clears, and done to-dos record wh
 test("bad input is refused with a plain reason and leaves the board as it was", async () => {
   const { store, done } = await board();
   const [project] = (await store.save([{ kind: "project", title: "Home" }], { type: "user" })).items;
-  const rejects = async (items, pattern) => assert.rejects(store.save(items, bot), (error) => error.status === 400 && pattern.test(error.message));
+  const rejects = async (items: unknown[], pattern: RegExp) => assert.rejects(store.save(items, bot), (error: ProjectsError) => error.status === 400 && pattern.test(error.message));
   await rejects([{ kind: "task" }], /needs a title/);
   await rejects([{ kind: "spaceship", title: "x" }], /kind must be/);
   await rejects([{ kind: "task", title: "x", status: "active" }], /status is one of todo/);
@@ -85,7 +86,7 @@ test("bad input is refused with a plain reason and leaves the board as it was", 
   await rejects([{ id: project.id, parentId: child.id }], /inside itself/);
   const items = await store.list();
   assert.equal(items.length, 2, "the half-valid batch saved nothing");
-  assert.equal(items.find((item) => item.id === project.id).parentId, undefined);
+  assert.equal(items.find((item) => item.id === project.id)!.parentId, undefined);
   await done();
 });
 
@@ -98,14 +99,14 @@ test("deleting moves children up and drops links to the deleted item", async () 
     { kind: "task", title: "Write post", parentId: "ref:b", addLinks: [{ type: "item", id: "ref:m" }] },
     { kind: "repo", title: "threebot", machineId: "ref:m" },
   ], { type: "user" });
-  const events = [];
+  const events: ProjectsEvent[] = [];
   store.subscribe((event) => events.push(event));
   await store.remove([items[1].id, items[2].id], bot);
   const left = await store.list();
-  const task = left.find((item) => item.title === "Write post");
+  const task = left.find((item) => item.title === "Write post")!;
   assert.equal(task.parentId, items[0].id);
   assert.deepEqual(task.links, []);
-  assert.equal(left.find((item) => item.title === "threebot").machineId, undefined);
+  assert.equal(left.find((item) => item.title === "threebot")!.machineId, undefined);
   assert.deepEqual(events[0].removed.sort(), [items[1].id, items[2].id].sort());
   assert.equal(events[0].activity.every((entry) => entry.action === "deleted"), true);
   await done();
@@ -152,20 +153,20 @@ test("the overview, find and detail views give agents ids, links and placement",
   assert.deepEqual(find(all, { kind: "task", open: true }).items.map((i) => i.title).sort(), ["Low thing", "Urgent thing"]);
   assert.deepEqual(find(all, { threadId: "thread-9" }).items.map((i) => i.title), ["bot-gateway"]);
   const machine = detail(all, items[1].id);
-  assert.deepEqual(machine.onThisMachine.map((i) => i.title).sort(), ["bot-gateway", "threebot-source"]);
-  assert.equal(detail(all, items[0].id).children.length, 3);
+  assert.deepEqual(machine!.onThisMachine!.map((i) => i.title).sort(), ["bot-gateway", "threebot-source"]);
+  assert.equal(detail(all, items[0].id)!.children.length, 3);
   await done();
 });
 
 test("Bots reach the board through the bot MCP server, and their saves carry their name", async () => {
   const { store, done } = await board();
-  const findBotByThread = async (threadId) => (threadId === "main-ops" ? { slug: "ops", name: "Ops", mainThreadId: "main-ops" } : null);
-  const tools = createBotTools({ vault: {}, findBotByThread, listTabs: async () => [], typeIntoTab: async () => {}, extra: { tools: PROJECT_TOOLS, call: createProjectTools({ projects: store, appUrl: "https://bot.example" }), instructions: "Projects too." } });
+  const findBotByThread = async (threadId: string) => (threadId === "main-ops" ? { slug: "ops", name: "Ops", mainThreadId: "main-ops" } : null);
+  const tools = createBotTools({ vault: {} as Parameters<typeof createBotTools>[0]["vault"], findBotByThread, listTabs: async () => [], typeIntoTab: async () => {}, extra: { tools: PROJECT_TOOLS, call: createProjectTools({ projects: store, appUrl: "https://bot.example" }), instructions: "Projects too." } });
   const list = await tools.handleRpc({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  for (const name of ["projects_overview", "projects_find", "projects_get", "projects_save", "projects_delete", "vault_list"]) assert.ok(list.result.tools.some((tool) => tool.name === name), name);
+  for (const name of ["projects_overview", "projects_find", "projects_get", "projects_save", "projects_delete", "vault_list"]) assert.ok((list!.result as { tools: { name: string }[] }).tools.some((tool) => tool.name === name), name);
   const init = await tools.handleRpc({ jsonrpc: "2.0", id: 0, method: "initialize", params: {} });
-  assert.match(init.result.instructions, /Projects too\./);
-  const call = (name, args) => tools.handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } }).then((r) => r.result);
+  assert.match((init!.result as { instructions: string }).instructions, /Projects too\./);
+  const call = (name: string, args: Record<string, unknown>) => tools.handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } }).then((r) => r!.result as ToolResult);
   const refused = await call("projects_save", { items: [{ kind: "task", title: "x" }], threadId: "someone-else" });
   assert.equal(refused.isError, true);
   const saved = await call("projects_save", { items: [{ kind: "task", title: "Book dentist", area: "personal" }], threadId: "main-ops" });
@@ -183,28 +184,41 @@ test("Bots reach the board through the bot MCP server, and their saves carry the
   await done();
 });
 
+type FakeResponse = {
+  status: number;
+  headers: Record<string, unknown> | undefined;
+  chunks: string[];
+  ended: boolean;
+  listeners: Record<string, () => void>;
+  writeHead(status: number, headers?: Record<string, unknown>): void;
+  write(chunk: unknown): boolean;
+  end(body?: unknown): void;
+  on(event: string, fn: () => void): void;
+};
+type FakeRequest = { method: string; headers: IncomingHttpHeaders; body: unknown; on(event: string, fn: () => void): void; close(): void };
 function fakeResponse() {
-  const res = { status: 0, headers: {}, chunks: [], ended: false, listeners: {} };
+  // The methods are added just below.
+  const res = { status: 0, headers: {}, chunks: [] as string[], ended: false, listeners: {} } as FakeResponse;
   res.writeHead = (status, headers) => { res.status = status; res.headers = headers; };
   res.write = (chunk) => { res.chunks.push(String(chunk)); return true; };
   res.end = (body) => { if (body !== undefined) res.chunks.push(String(body)); res.ended = true; };
   res.on = (event, fn) => { res.listeners[event] = fn; };
   return res;
 }
-const send = (res, status, body, headers = {}) => { res.writeHead(status, headers); res.end(typeof body === "string" ? body : JSON.stringify(body)); };
-function fakeRequest({ method = "GET", headers = {}, body } = {}) {
-  const listeners = {};
+const send = (res: FakeResponse, status: number, body: unknown, headers: Record<string, string> = {}) => { res.writeHead(status, headers); res.end(typeof body === "string" ? body : JSON.stringify(body)); };
+function fakeRequest({ method = "GET", headers = {}, body }: { method?: string; headers?: IncomingHttpHeaders; body?: unknown } = {}): FakeRequest {
+  const listeners: Record<string, () => void> = {};
   return { method, headers: { host: "bot.example", ...headers }, body, on: (event, fn) => { listeners[event] = fn; }, close: () => listeners.close?.() };
 }
 
 test("the page's routes save as the user, refuse other websites and stream every change live", async () => {
   const { store, done } = await board();
-  const routes = createProjectRoutes({ projects: store, send, readBody: async (req) => req.body, requireJson: () => {}, heartbeatMs: 60_000 });
-  const url = (p) => new URL(`http://x${p}`);
+  const routes = createProjectRoutes({ projects: store, send, readBody: async (req: FakeRequest) => req.body, requireJson: () => {}, heartbeatMs: 60_000 });
+  const url = (p: string) => new URL(`http://x${p}`);
   const stream = fakeResponse();
   const streamReq = fakeRequest();
   assert.equal(await routes.handle(streamReq, stream, url("/api/projects/events")), true);
-  assert.equal(stream.headers["content-type"], "text/event-stream; charset=utf-8");
+  assert.equal(stream.headers!["content-type"], "text/event-stream; charset=utf-8");
   assert.equal(routes.streamCount(), 1);
 
   const foreign = fakeResponse();
@@ -220,7 +234,7 @@ test("the page's routes save as the user, refuse other websites and stream every
 
   await store.save([{ kind: "task", title: "From a Bot" }], bot);
   const fromBot = stream.chunks.filter((chunk) => chunk.startsWith("event: change")).at(-1);
-  assert.equal(JSON.parse(fromBot.split("data: ")[1]).activity[0].actor.name, "Ops");
+  assert.equal(JSON.parse(fromBot!.split("data: ")[1]).activity[0].actor.name, "Ops");
 
   const invalid = fakeResponse();
   await routes.handle(fakeRequest({ method: "POST", headers: { origin: "https://bot.example" }, body: { items: [{ kind: "task" }] } }), invalid, url("/api/projects/items"));
@@ -247,6 +261,6 @@ test("same-origin checks accept the app behind a proxy and refuse cross-site wri
 
 test("the Bot tool server still only answers local callers", async () => {
   const res = fakeResponse();
-  await handleMcpHttp({ headers: { "cf-ray": "1" }, socket: { remoteAddress: "127.0.0.1" }, method: "POST" }, res, { tools: {}, token: "t", readBody: async () => ({}) });
+  await handleMcpHttp({ headers: { "cf-ray": "1" }, socket: { remoteAddress: "127.0.0.1" }, method: "POST" } as unknown as IncomingMessage, res as unknown as ServerResponse, { tools: {} as Parameters<typeof handleMcpHttp>[2]["tools"], token: "t", readBody: async () => ({}) });
   assert.equal(res.status, 403);
 });

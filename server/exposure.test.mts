@@ -13,13 +13,13 @@ const freePort = async () => {
   const socket = net.createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
-  const { port } = socket.address();
+  const { port } = socket.address() as net.AddressInfo;
   await new Promise((resolve) => socket.close(resolve));
   return port;
 };
 
 // Fixture directories and an unreachable T3 only. Nothing real is read or changed.
-async function startGateway(env) {
+async function startGateway(env: Record<string, string>) {
   const root = await mkdtemp(path.join(tmpdir(), 'exposure-'));
   await mkdir(path.join(root, 'bots'), { recursive: true });
   await mkdir(path.join(root, 'dist/welcome/img'), { recursive: true });
@@ -36,7 +36,7 @@ async function startGateway(env) {
       TAILNET_PORT: String(tailnet), TAILNET_USERS: 'me@example.com', ...env,
     }, stdio: ['ignore', 'pipe', 'ignore'],
   });
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('fixture gateway did not start')), 8000);
     let seen = '';
     child.stdout.on('data', (data) => { seen += data; if (seen.includes('bot gateway on') && seen.includes('tailnet listener')) { clearTimeout(timeout); resolve(); } });
@@ -44,9 +44,9 @@ async function startGateway(env) {
   });
   return { port, tailnet, stop: async () => { child.removeAllListeners('exit'); child.kill(); await once(child, 'exit').catch(() => {}); await rm(root, { recursive: true, force: true }); } };
 }
-const get = (port, url, headers = {}, method = 'GET') => fetch(`http://127.0.0.1:${port}${url}`, { headers, method, redirect: 'manual' });
+const get = (port: number, url: string, headers: Record<string, string> = {}, method = 'GET') => fetch(`http://127.0.0.1:${port}${url}`, { headers, method, redirect: 'manual' });
 const you = { 'tailscale-user-login': 'me@example.com' };
-const socketStatus = (port, headers) => new Promise((resolve) => {
+const socketStatus = (port: number, headers: Record<string, string>) => new Promise((resolve) => {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/t3/ws`, { headers });
   ws.on('unexpected-response', (_req, res) => { resolve(res.statusCode); ws.terminate(); });
   ws.on('open', () => { resolve('open'); ws.terminate(); });
@@ -54,7 +54,7 @@ const socketStatus = (port, headers) => new Promise((resolve) => {
 });
 
 describe('landing-only mode', () => {
-  let gateway;
+  let gateway: Awaited<ReturnType<typeof startGateway>>;
   before(async () => { gateway = await startGateway({ PUBLIC_LANDING_ONLY: 'true' }); });
   after(() => gateway.stop());
 

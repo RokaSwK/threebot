@@ -23,7 +23,7 @@ test("icons are stable and follow color and geometry", () => {
 });
 
 test("a Bot's own definition works, and a bad one falls back to the engine", () => {
-  assert.equal(objectDefinition({ shape: "object:fox", avatarDefinition: fox }).id, "fox");
+  assert.equal(objectDefinition({ shape: "object:fox", avatarDefinition: fox })!.id, "fox");
   assert.equal(objectDefinition({ shape: "object:fox", avatarDefinition: { ...fox, body: { path: "not a path" } } }), null);
   assert.equal(objectDefinition({ shape: "object:other", avatarDefinition: fox }), null);
   assert.equal(objectDefinition({ shape: "ball" }), null);
@@ -32,16 +32,16 @@ test("a Bot's own definition works, and a bad one falls back to the engine", () 
 
 test("a gallery id can't be redefined by a Bot's file", () => {
   const ghost = objectDefinition({ shape: "object:ghost", avatarDefinition: { ...fox, id: "ghost" } });
-  assert.notEqual(ghost.body.path, fox.body.path);
+  assert.notEqual(ghost!.body.path, fox.body.path);
 });
 
 test("saving validates, rewrites and clears definitions", () => {
   const saved = objectAvatarPatch({ avatarDefinition: fox });
   assert.equal(saved.shape, "object:fox");
   assert.match(saved.avatarDefinition.body.path, /^M/);
-  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, extra: 1 } }), (error) => error.status === 400);
-  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, id: "ghost" } }), (error) => error.status === 400);
-  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, body: { path: "" } } }), (error) => error.status === 400 && /path is empty/.test(error.message));
+  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, extra: 1 } }), (error: { status?: number }) => error.status === 400);
+  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, id: "ghost" } }), (error: { status?: number }) => error.status === 400);
+  assert.throws(() => objectAvatarPatch({ avatarDefinition: { ...fox, body: { path: "" } } }), (error: { status?: number; message: string }) => error.status === 400 && /path is empty/.test(error.message));
   assert.equal(objectAvatarPatch({ shape: "ball" }).avatarDefinition, null);
   assert.equal(objectAvatarPatch({ shape: "object:ghost", avatarDefinition: null }).avatarDefinition, null);
   assert.deepEqual(objectAvatarPatch({ color: "red" }), { color: "red" });

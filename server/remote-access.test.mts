@@ -4,7 +4,9 @@ import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createAccessStore, createRemoteAccess, hashPassword, parseTailscaleStatus, pickServePort, serveOwner, startQuickTunnel, tailnetUrl, verifyPassword } from "./remote-access.mts";
+import { createAccessStore, createRemoteAccess, hashPassword, parseTailscaleStatus, pickServePort, serveOwner, startQuickTunnel, tailnetUrl, verifyPassword, type ServeConfig, type TailscaleControl, type TailscaleStatus } from "./remote-access.mts";
+
+type Opened = { opened?: unknown };
 
 const running = { BackendState: "Running", Self: { DNSName: "box.tail1.ts.net.", UserID: 7, CapMap: { https: null } }, User: { 7: { LoginName: "Me@Example.com" } } };
 
@@ -35,15 +37,15 @@ test("passwords are stored as scrypt hashes and checked against them", async () 
   assert.equal(await verifyPassword(undefined, stored), false);
 });
 
-function setup({ tsStatus = { installed: true, ...parseTailscaleStatus(running) }, serveConfig = {}, envPassword = "" } = {}) {
+function setup({ tsStatus = { installed: true, ...parseTailscaleStatus(running) }, serveConfig = {}, envPassword = "" }: { tsStatus?: TailscaleStatus; serveConfig?: ServeConfig; envPassword?: string } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), "tb-access-"));
-  const calls = [];
-  const exposure = { tailnetPort: 0, tailnetUsers: new Set() };
+  const calls: unknown[][] = [];
+  const exposure = { tailnetPort: 0, tailnetUsers: new Set<string>() };
   const tailscale = {
     status: async () => tsStatus,
     serveConfig: async () => serveConfig,
-    serve: async (port, url) => { calls.push(["serve", port, url]); serveConfig = { Web: { [`box:${port}`]: { Handlers: { "/": { Proxy: url } } } } }; },
-    unserve: async (port) => { calls.push(["unserve", port]); serveConfig = {}; },
+    serve: async (port: number, url: string) => { calls.push(["serve", port, url]); serveConfig = { Web: { [`box:${port}`]: { Handlers: { "/": { Proxy: url } } } } }; },
+    unserve: async (port: number) => { calls.push(["unserve", port]); serveConfig = {}; },
   };
   let stopped = 0;
   const access = createRemoteAccess({
@@ -70,16 +72,16 @@ test("Tailscale turns on in one call: listener for the signed-in user, then Serv
 });
 
 test("Tailscale explains what's missing instead of half setting up", async () => {
-  for (const [tsStatus, code] of [[{ installed: false }, "not-installed"], [{ installed: true, running: false, needsLogin: true }, "needs-login"], [{ installed: true, running: true, https: false, login: "a@b" }, "https-off"]]) {
+  for (const [tsStatus, code] of [[{ installed: false }, "not-installed"], [{ installed: true, running: false, needsLogin: true }, "needs-login"], [{ installed: true, running: true, https: false, login: "a@b" }, "https-off"]] satisfies [TailscaleStatus, string][]) {
     const { calls, access } = setup({ tsStatus });
-    await assert.rejects(access.tailscaleOn(), (error) => error.code === code);
+    await assert.rejects(access.tailscaleOn(), (error) => (error as { code?: string }).code === code);
     assert.deepEqual(calls, []);
   }
 });
 
 test("a public Cloudflare link needs a password, and its address is left for `threebot tunnel status`", async () => {
   const { dir, calls, access, stopped } = setup();
-  await assert.rejects(access.tunnelOn(), (error) => error.code === "needs-password");
+  await assert.rejects(access.tunnelOn(), (error) => (error as { code?: string }).code === "needs-password");
   await assert.rejects(access.setPassword("short"), /at least 8/);
   await access.setPassword("long enough");
   assert.equal(await access.verify("long enough"), true);
@@ -100,12 +102,12 @@ test("what was on comes back when the gateway starts", async () => {
   await first.access.tunnelOn();
   const again = createRemoteAccess({
     store: createAccessStore(path.join(first.dir, "access.json")), home: first.dir, localPort: 3780, exposure: { tailnetPort: 0, tailnetUsers: new Set() },
-    openTailnet: async (port, users) => { again.opened = [port, users]; }, closeTailnet: async () => {},
-    tailscale: { status: async () => ({ installed: true }), serveConfig: async () => ({}) },
+    openTailnet: async (port, users) => { (again as typeof again & Opened).opened = [port, users]; }, closeTailnet: async () => {},
+    tailscale: { status: async () => ({ installed: true }), serveConfig: async () => ({}) } as TailscaleControl,
     tunnelBin: () => "/bin/cloudflared", startTunnel: async () => ({ url: "https://new.trycloudflare.com", stop() {} }), log: {},
   });
   await again.boot();
-  assert.deepEqual(again.opened, [3781, ["me@example.com"]]);
+  assert.deepEqual((again as typeof again & Opened).opened, [3781, ["me@example.com"]]);
   assert.equal((await again.status()).tunnel.url, "https://new.trycloudflare.com");
 });
 
@@ -116,7 +118,7 @@ test("the env password wins and can't be changed from the app", async () => {
 });
 
 test("the quick tunnel's link is read from cloudflared's output", async () => {
-  const child = new EventEmitter();
+  const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: () => boolean };
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => child.emit("exit", null);
   let exited = null;
   const started = startQuickTunnel({ bin: "cloudflared", localUrl: "http://127.0.0.1:3780", spawnImpl: (bin, args) => { assert.deepEqual(args, ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", "http://127.0.0.1:3780"]); return child; }, onExit: (code) => { exited = code; } });
@@ -135,11 +137,11 @@ test("the quick tunnel's link is read from cloudflared's output", async () => {
 
 test("two quick clicks start one tunnel, and the password can't go while it starts", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "tb-race-"));
-  let starts = 0, live = 0, release;
-  const gate = new Promise((resolve) => { release = resolve; });
+  let starts = 0, live = 0, release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
   const access = createRemoteAccess({
     store: createAccessStore(path.join(dir, "access.json")), home: dir, localPort: 3780, exposure: { tailnetPort: 0, tailnetUsers: new Set() },
-    openTailnet: async () => {}, closeTailnet: async () => {}, tailscale: { status: async () => ({ installed: false }), serveConfig: async () => ({}) },
+    openTailnet: async () => {}, closeTailnet: async () => {}, tailscale: { status: async () => ({ installed: false }), serveConfig: async () => ({}) } as TailscaleControl,
     tunnelBin: () => "/bin/cloudflared",
     startTunnel: async () => { starts++; live++; await gate; return { url: "https://one.trycloudflare.com", stop: () => { live--; } }; },
     log: {},

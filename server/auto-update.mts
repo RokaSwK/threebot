@@ -11,11 +11,38 @@ export const PENDING_MS = 30 * 60 * 1000;
 export const MAX_WAIT_MS = 24 * 60 * 60 * 1000;
 const BUSY = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
+/** The fields of a T3 thread this file reads. */
+export interface BotThread {
+  id: string;
+  projectId?: string | null;
+  status: string;
+  activityRunStatus?: string | null;
+  pendingRuntimeRequest?: unknown;
+  archivedAt?: string | null;
+  lineage?: { rootThreadId?: string | null; parentThreadId?: string | null } | null;
+}
+/** The fields of a Bot this file reads. */
+export interface BotRef { projectId?: string | null; mainThreadId?: string | null }
+
+export interface AutoUpdateNotice { kind: "updated" | "rolledBack" | "failed" | "waited"; version: string; from: string; url: string; at: string }
+/** What auto-update.json holds. */
+export interface AutoUpdateState {
+  auto: boolean;
+  pending?: { from: string; to: string; url: string; at: string } | null;
+  waiting?: { version: string; since: number } | null;
+  skip?: string[];
+  gaveUp?: string | null;
+  notice?: AutoUpdateNotice | null;
+}
+export type AutoUpdateStore = ReturnType<typeof createAutoUpdateStore>;
+/** The fields of an update check's answer (release.mts's UpdateStatus) this file reads. */
+type CheckResult = { checkedAt?: string | null; error?: string | null; updateAvailable?: boolean; latest?: { version: string; url: string } | null };
+
 /**
  * Bot threads that a restart would interrupt: running, or waiting on an approval or question.
  * A thread is a Bot's when it's in a Bot's project or descends from a Bot's main thread (side chats, subagents).
  */
-export function busyBotThreads(threads, bots) {
+export function busyBotThreads<T extends BotThread>(threads: T[], bots: BotRef[]): T[] {
   const projects = new Set(bots.map((bot) => bot.projectId).filter(Boolean));
   const mains = new Set(bots.map((bot) => bot.mainThreadId).filter(Boolean));
   return threads.filter((thread) => !thread.archivedAt
@@ -23,14 +50,14 @@ export function busyBotThreads(threads, bots) {
     && (Boolean(thread.pendingRuntimeRequest) || BUSY.has(thread.activityRunStatus ?? thread.status)));
 }
 
-export function createAutoUpdateStore(file) {
-  let state = null;
-  const read = async () => state ??= { auto: false, ...(JSON.parse(await fs.readFile(file, "utf8").catch(() => "{}")) || {}) };
-  let chain = Promise.resolve();
+export function createAutoUpdateStore(file: string) {
+  let state: AutoUpdateState | null = null;
+  const read = async (): Promise<AutoUpdateState> => state ??= { auto: false, ...(JSON.parse(await fs.readFile(file, "utf8").catch(() => "{}")) || {}) };
+  let chain: Promise<unknown> = Promise.resolve();
   return {
     read,
     /** Apply `change(state)` and save; changes run one at a time. */
-    update(change) {
+    update(change: (state: AutoUpdateState) => Partial<AutoUpdateState>): Promise<AutoUpdateState> {
       const next = chain.then(async () => {
         const s = await read();
         state = { ...s, ...change(s) };
@@ -50,8 +77,17 @@ export function createAutoUpdateStore(file) {
  * once it's running; `onExit` from the gateway reports an updater that ended while this process lives,
  * which only happens when it failed before swapping. `isBusy()` resolves to the busy Bot threads.
  */
-export function createAutoUpdater({ store, version, isBusy, install, installed = () => false, now = Date.now, maxWaitMs = MAX_WAIT_MS, log = () => {} }) {
-  let lastCheckedAt = null, running = false;
+export function createAutoUpdater({ store, version, isBusy, install, installed = () => false, now = Date.now, maxWaitMs = MAX_WAIT_MS, log = () => {} }: {
+  store: AutoUpdateStore;
+  version: string;
+  isBusy: () => Promise<unknown[]>;
+  install: (version: string) => Promise<unknown>;
+  installed?: (version: string) => boolean;
+  now?: () => number;
+  maxWaitMs?: number;
+  log?: (line: string) => void;
+}) {
+  let lastCheckedAt: string | null = null, running = false;
 
   /** On start-up: an update this gateway's predecessor began either worked (we run its version) or didn't. */
   async function settle() {
@@ -70,7 +106,7 @@ export function createAutoUpdater({ store, version, isBusy, install, installed =
   }
 
   /** Called with every answer from the background check; acts at most once per new check. */
-  async function consider(result) {
+  async function consider(result: CheckResult | null | undefined) {
     if (!result?.checkedAt || result.checkedAt === lastCheckedAt) return;
     lastCheckedAt = result.checkedAt;
     let s = await store.read();
@@ -103,21 +139,21 @@ export function createAutoUpdater({ store, version, isBusy, install, installed =
   }
 
   /** The updater ended without restarting us (download or checksum failed): don't retry that release. */
-  async function failed(target, error) {
+  async function failed(target: string, error: unknown) {
     running = false;
     const s = await store.read();
     if (s.pending?.to !== target) return;
     log(`auto-update: ${target} failed: ${error instanceof Error ? error.message : error}`);
-    await store.update((cur) => ({ pending: null, skip: [...new Set([...(cur.skip ?? []), target])], notice: { kind: "failed", version: target, from: version, url: cur.pending.url, at: new Date(now()).toISOString() } }));
+    await store.update((cur) => ({ pending: null, skip: [...new Set([...(cur.skip ?? []), target])], notice: { kind: "failed", version: target, from: version, url: cur.pending!.url, at: new Date(now()).toISOString() } }));
   }
 
   return {
     settle, consider, failed,
     async status() { const s = await store.read(); return { auto: Boolean(s.auto), waiting: s.waiting ?? null, notice: s.notice ?? null }; },
     /** Turning it on (again) gives a release that was given up on another chance. */
-    setAuto: (auto) => store.update(() => ({ auto: Boolean(auto), waiting: null, gaveUp: null })),
-    dismiss: (at) => store.update((cur) => (cur.notice && (!at || cur.notice.at === at) ? { notice: null } : {})),
+    setAuto: (auto: unknown) => store.update(() => ({ auto: Boolean(auto), waiting: null, gaveUp: null })),
+    dismiss: (at?: string | null) => store.update((cur) => (cur.notice && (!at || cur.notice.at === at) ? { notice: null } : {})),
   };
 }
 
-export const versionInstalled = (versionsDir) => (v) => existsSync(path.join(versionsDir, v, ".install-complete"));
+export const versionInstalled = (versionsDir: string) => (v: string) => existsSync(path.join(versionsDir, v, ".install-complete"));

@@ -4,10 +4,26 @@
 
 import { OBJECT_AVATAR_IDS } from "./object-avatars.mts";
 
+/** The parts of a Bot its instructions mention. */
+export type TemplateBot = {
+  name: string; slug: string; label?: string; primary?: boolean;
+  projectId?: string | null; mainThreadId?: string | null; section?: string | null;
+};
+/** The parts of the global settings its instructions mention. */
+export type TemplateSettings = {
+  userName?: string; timezone?: string;
+  rules?: { alwaysAsk?: string[]; allowWithoutAsking?: string[] };
+  beta?: { projects?: boolean };
+};
+/** How the Bot reaches connected apps, when Executor is set up. */
+export type TemplateExecutor = { kind?: string; publicUrl?: string; organization?: string; skippedApps?: string[] };
+
 export const MANAGED_START = "<!-- bot:managed:start -->";
 export const MANAGED_END = "<!-- bot:managed:end -->";
 
-export function renderAgentsMd({ bot, settings, botsRoot, executor = null }) {
+export function renderAgentsMd({ bot, settings, botsRoot, executor = null }: {
+  bot: TemplateBot; settings: TemplateSettings; botsRoot: string; executor?: TemplateExecutor | null;
+}): string {
   const ask = (settings.rules?.alwaysAsk ?? []).map((r) => `- ${r}`).join("\n") || "- (none)";
   const allow = (settings.rules?.allowWithoutAsking ?? []).map((r) => `- ${r}`).join("\n") || "- (none)";
   const userName = settings.userName || "the user";
@@ -115,7 +131,7 @@ ${MANAGED_END}
 }
 
 /** Only while Settings → Beta → Projects board is on. */
-function projectsBoardSection(userName) {
+function projectsBoardSection(userName: string): string {
   return `## Projects board
 - ${userName}'s Projects page is a live board shared by them and every Bot: projects, to-dos, machines, what runs where (services), repos, notes and links, split into areas like work and personal. Use the \`projects_*\` tools on the \`bot\` server; each change shows up on their screen at once, marked as yours.
 - Keep it true without being asked. When ${userName} mentions something to do, a new project, a deadline, a machine or something running, add or update it. Mark to-dos done when the work is finished. Check \`projects_overview\` or \`projects_find\` first so you don't add duplicates.
@@ -127,7 +143,7 @@ function projectsBoardSection(userName) {
 `;
 }
 
-function cloudInstructions(userName, executor) {
+function cloudInstructions(userName: string, executor: TemplateExecutor): string {
   const skipped = executor.skippedApps?.length ? `\n- The user has explicitly skipped these app connections: ${executor.skippedApps.join(', ')}. Do not initiate or retry their sign-in unless the user asks again.` : '';
   return `- ${userName}'s connected apps use **Executor Cloud**, available as the \`executor\` MCP server (\`mcp__executor__*\`), in the configured organization ${executor.organization}.
 - Use Executor first for connected apps. Discover current tools with \`search\` and \`describe\`, then invoke exact discovered paths with \`call\` or \`execute\`. The MCP surface is fixed; do not assume each app is a separate MCP server.
@@ -142,7 +158,7 @@ function cloudInstructions(userName, executor) {
 - Sending, posting, paying or deleting through an app still requires the user's authorization under Safety and approvals.`;
 }
 
-export function mergeManaged(existing, block) {
+export function mergeManaged(existing: string, block: string): string {
   if (!existing) return block;
   const s = existing.indexOf(MANAGED_START);
   const e = existing.indexOf(MANAGED_END);

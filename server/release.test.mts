@@ -5,10 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { activate, compareVersions, createUpdateChecker, expectedSum, findRelease, installRelease, installedRuntime, prune, readLink, rollback, runtimePaths, startUpdateChecks } from "./release.mts";
+import { activate, compareVersions, createUpdateChecker, expectedSum, findRelease, installRelease, installedRuntime, prune, readLink, rollback, runtimePaths, startUpdateChecks, type FetchBytes } from "./release.mts";
 
-const json = (value) => ({ ok: true, status: 200, json: async () => value, arrayBuffer: async () => Buffer.from(JSON.stringify(value)) });
-const release = (tag, extra = {}) => ({ tag_name: tag, draft: false, prerelease: false, body: `notes ${tag}`, html_url: `https://example.test/${tag}`, assets: [
+// A Buffer stands in for the ArrayBuffer a real response gives: download() copies either with Buffer.from.
+const json = (value: unknown) => ({ ok: true, status: 200, json: async () => value, arrayBuffer: async () => Buffer.from(JSON.stringify(value)) as unknown as ArrayBuffer });
+const release = (tag: string, extra: Record<string, unknown> = {}) => ({ tag_name: tag, draft: false, prerelease: false, body: `notes ${tag}`, html_url: `https://example.test/${tag}`, assets: [
   { name: `threebot-${tag.slice(1)}.tar.gz`, browser_download_url: `https://dl.test/${tag}/threebot-${tag.slice(1)}.tar.gz` },
   { name: "SHA256SUMS", browser_download_url: `https://dl.test/${tag}/SHA256SUMS` },
 ], ...extra });
@@ -24,13 +25,13 @@ test("versions compare by number, and a preview comes before its release", () =>
 test("the newest stable release is picked, previews only on the preview channel", async () => {
   const list = [release("v0.2.0-preview.1", { prerelease: true }), release("v0.1.10"), release("v0.1.9"), release("v0.3.0", { draft: true })];
   const fetchImpl = async () => json(list);
-  assert.equal((await findRelease({ fetchImpl, env: {} })).version, "0.1.10");
-  assert.equal((await findRelease({ fetchImpl, env: {}, channel: "preview" })).version, "0.2.0-preview.1");
+  assert.equal((await findRelease({ fetchImpl, env: {} }))!.version, "0.1.10");
+  assert.equal((await findRelease({ fetchImpl, env: {}, channel: "preview" }))!.version, "0.2.0-preview.1");
   const exact = await findRelease({ fetchImpl, env: {}, version: "v0.1.9" });
-  assert.equal(exact.archive, "https://dl.test/v0.1.9/threebot-0.1.9.tar.gz");
+  assert.equal(exact!.archive, "https://dl.test/v0.1.9/threebot-0.1.9.tar.gz");
   assert.equal(await findRelease({ fetchImpl, env: {}, version: "9.9.9" }), null);
   const mirrored = await findRelease({ fetchImpl, env: { THREEBOT_RELEASE_BASE_URL: "http://mirror.test/" } });
-  assert.equal(mirrored.sums, "http://mirror.test/v0.1.10/SHA256SUMS");
+  assert.equal(mirrored!.sums, "http://mirror.test/v0.1.10/SHA256SUMS");
 });
 
 test("SHA256SUMS lines are read in both text and binary form", () => {
@@ -40,7 +41,7 @@ test("SHA256SUMS lines are read in both text and binary form", () => {
   assert.equal(expectedSum(sums, "missing.tar.gz"), null);
 });
 
-function fakeArchive(version) {
+function fakeArchive(version: string) {
   const dir = mkdtempSync(path.join(tmpdir(), "tb-pack-"));
   const root = path.join(dir, `threebot-${version}`);
   mkdirSync(path.join(root, "server"), { recursive: true });
@@ -50,14 +51,14 @@ function fakeArchive(version) {
   assert.equal(spawnSync("tar", ["-czf", file, "-C", dir, `threebot-${version}`], { env: { ...process.env, COPYFILE_DISABLE: "1" } }).status, 0);
   return readFileSync(file);
 }
-const serveFiles = (files) => async (url) => {
+const serveFiles = (files: Record<string, Buffer>): FetchBytes => async (url) => {
   const body = files[url];
-  return body ? { ok: true, status: 200, arrayBuffer: async () => body } : { ok: false, status: 404 };
+  return body ? { ok: true, status: 200, arrayBuffer: async () => body as unknown as ArrayBuffer } : { ok: false, status: 404 };
 };
 
 test("a release installs only when its checksum matches, then activates, rolls back and prunes", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "tb-home-"));
-  const make = (version, tamper = false) => {
+  const make = (version: string, tamper = false) => {
     const archive = fakeArchive(version);
     const sum = createHash("sha256").update(archive).digest("hex");
     return { release: { version, archive: `https://dl.test/${version}.tgz`, sums: `https://dl.test/${version}.sums` }, files: { [`https://dl.test/${version}.tgz`]: tamper ? Buffer.concat([archive, Buffer.from("x")]) : archive, [`https://dl.test/${version}.sums`]: Buffer.from(`${sum}  threebot-${version}.tar.gz\n`) } };
@@ -69,7 +70,7 @@ test("a release installs only when its checksum matches, then activates, rolls b
   assert.equal(existsSync(path.join(runtimePaths(home).versions, "1.0.1")), false, "nothing is left behind");
 
   const paths = runtimePaths(home);
-  const dirs = {};
+  const dirs: Record<string, string> = {};
   for (const version of ["1.0.0", "1.0.2", "1.0.3"]) {
     const ok = make(version);
     dirs[version] = await installRelease(ok.release, { home, fetchImpl: serveFiles(ok.files), npm });
@@ -104,7 +105,7 @@ test("the update check caches its answer and reports a failure instead of throwi
   await check({ force: true });
   assert.equal(calls, 2);
   const broken = createUpdateChecker({ env: {}, fetchImpl: async () => ({ ok: false, status: 503 }) });
-  assert.match((await broken()).error, /503/);
+  assert.match((await broken()).error!, /503/);
 });
 
 test("the stored answer serves every tab until a check is due, and failures back off keeping the last answer", async () => {
@@ -118,7 +119,7 @@ test("the stored answer serves every tab until a check is due, and failures back
   t = 60 * minute; fail = true;
   const failed = await check();
   assert.deepEqual([failed.updateAvailable, failed.latest?.version, failed.checkedAt], [true, "0.1.2", new Date(t).toISOString()]);
-  assert.match(failed.error, /403/);
+  assert.match(failed.error!, /403/);
   t += 14 * minute; await check(); assert.equal(calls, 5); // waits the full period after the first failure
   t += minute; await check(); assert.equal(calls, 6);
   t += 29 * minute; await check(); assert.equal(calls, 6); // then twice as long

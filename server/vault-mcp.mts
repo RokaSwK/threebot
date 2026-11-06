@@ -5,8 +5,37 @@
 // vault_save_login then moves the value from T3's file into the Vault.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { promises as fs } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
-import { CONTACT_FIELDS, repeatedValues, matchesSite, siteDomain } from "./vault.mts";
+import { CONTACT_FIELDS, repeatedValues, matchesSite, siteDomain, type Vault } from "./vault.mts";
+
+/** Tool arguments as an MCP client sent them; each tool checks the fields it uses. */
+type ToolArgs = Record<string, any>;
+/** A JSON-RPC message from the wire, before validation. */
+type RpcMessage = any;
+export interface ToolResult { content: { type: "text"; text: string }[]; isError?: boolean }
+export interface RpcResponse { jsonrpc: "2.0"; id: unknown; result?: unknown; error?: { code: number; message: string } }
+/** A server-browser tab of a Bot. */
+export interface BrowserTab { tabId: string; url: string; title?: string }
+/** The parts of a Bot the tools use. */
+export interface BotRef { slug: string }
+/** More tools served alongside the Vault's (the Projects board). */
+export interface ExtraTools {
+  tools: ReadonlyArray<{ name: string }>;
+  instructions?: string;
+  call(name: string, args: ToolArgs, context: { botFor: (threadId: unknown) => Promise<BotRef> }): unknown;
+}
+export interface BotToolsDeps {
+  vault: Vault;
+  findBotByThread: (threadId: string) => Promise<BotRef | null>;
+  listTabs: (threadId: string) => Promise<BrowserTab[]>;
+  typeIntoTab: (input: { threadId: string; tabId: string; text: string }) => Promise<unknown>;
+  secretsDir?: string | null;
+  tokenDir?: string | null;
+  log?: (line: string) => void;
+  secretFileTtlMs?: number;
+  extra?: ExtraTools | null | (() => ExtraTools | null | Promise<ExtraTools | null>);
+}
 
 const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 const SECRET_FILE_TTL_MS = 60 * 60 * 1000;
@@ -102,10 +131,10 @@ export const TOOLS = [
   },
 ];
 
-function toolError(text) {
+function toolError(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
-function toolJson(value) {
+function toolJson(value: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value) }] };
 }
 
@@ -122,14 +151,14 @@ function toolJson(value) {
  * `extra` adds more tools to the same server (the Projects board): { tools, call(name, args, { botFor }) },
  * or a function returning that or null, asked on every request, so a switched-off feature's tools are neither listed nor callable.
  */
-export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra: extraTools = null }) {
+export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, secretsDir, tokenDir, log = () => {}, secretFileTtlMs = SECRET_FILE_TTL_MS, extra: extraTools = null }: BotToolsDeps) {
   // Files from an earlier run have no timer left to delete them.
   const ready = tokenDir ? fs.rm(tokenDir, { recursive: true, force: true }).then(() => fs.mkdir(tokenDir, { recursive: true, mode: 0o700 })).catch(() => {}) : Promise.resolve();
 
   /** The value of a file T3 wrote for request_secret; anything outside secretsDir is refused. */
-  async function readT3Secret(file) {
+  async function readT3Secret(file: unknown) {
     if (!secretsDir) throw new Error("Saving secrets isn't set up on this server.");
-    let real, root;
+    let real: string, root: string;
     try {
       [real, root] = await Promise.all([fs.realpath(String(file ?? "")), fs.realpath(secretsDir)]);
     } catch {
@@ -143,14 +172,14 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     return { value, path: real };
   }
 
-  async function botFor(threadId) {
+  async function botFor(threadId: unknown): Promise<BotRef> {
     if (typeof threadId !== "string" || !threadId) throw new Error("threadId is required: pass your main thread id from AGENTS.md.");
     const bot = await findBotByThread(threadId);
     if (!bot) throw new Error("That threadId isn't a Bot's main conversation. Pass your main thread id from AGENTS.md (or mainThreadId in .bot/bot.json).");
     return bot;
   }
 
-  async function fill(args, field) {
+  async function fill(args: ToolArgs, field: "password" | "username"): Promise<ToolResult> {
     const bot = await botFor(args.threadId);
     const login = typeof args.loginId === "string" ? await vault.get(args.loginId, { reveal: true }) : null;
     if (!login || login.type !== "login") return toolError("No login with that id. Check vault_list.");
@@ -186,7 +215,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     return toolJson({ filled: true, field, site: siteDomain(websites.find(site => matchesSite(tab.url, site))), tabId: tab.tabId });
   }
 
-  async function callTool(name, args = {}) {
+  async function callTool(name: string, args: ToolArgs = {}): Promise<ToolResult> {
     try {
       switch (name) {
         case "vault_list": {
@@ -211,7 +240,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           const website = String(args.website ?? "").trim();
           if (!siteDomain(website)) return toolError("website must be a site address like https://example.com");
           const secret = await readT3Secret(args.secretFile);
-          const input = { website, username: String(args.username ?? "").trim(), password: secret.value, botCanRead: args.apiToken === true };
+          const input: { website: string; username: string; password: string; botCanRead: boolean; title?: string; hints?: string } = { website, username: String(args.username ?? "").trim(), password: secret.value, botCanRead: args.apiToken === true };
           if (args.title) input.title = String(args.title);
           if (args.hints) input.hints = String(args.hints);
           const { item, updated } = await vault.saveLogin(input);
@@ -246,17 +275,17 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
       }
     } catch (e) {
       // Errors from here never contain secrets: vault errors are generic and fill errors are ours.
-      return toolError(String(e?.message ?? e));
+      return toolError(String((e as { message?: unknown } | null | undefined)?.message ?? e));
     }
   }
 
   /** One JSON-RPC message → response object, or null for notifications. */
-  async function handleRpc(msg) {
+  async function handleRpc(msg: RpcMessage): Promise<RpcResponse | null> {
     if (!msg || typeof msg !== "object" || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
       return { jsonrpc: "2.0", id: msg?.id ?? null, error: { code: -32600, message: "Invalid request" } };
     }
     const isNotification = !("id" in msg);
-    const reply = (result) => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
+    const reply = (result: unknown): RpcResponse | null => (isNotification ? null : { jsonrpc: "2.0", id: msg.id, result });
     const extra = typeof extraTools === "function" ? await extraTools() : extraTools;
     switch (msg.method) {
       case "initialize": {
@@ -286,8 +315,9 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
 
   return { callTool, handleRpc };
 }
+export type BotTools = ReturnType<typeof createBotTools>;
 
-function hostOf(url) {
+function hostOf(url: string) {
   try {
     return new URL(url).hostname;
   } catch {
@@ -296,7 +326,7 @@ function hostOf(url) {
 }
 
 /** Constant-time bearer check. */
-export function bearerMatches(header, expected) {
+export function bearerMatches(header: unknown, expected: string | null | undefined) {
   const m = /^Bearer\s+(.+)$/i.exec(String(header ?? ""));
   if (!m || !expected) return false;
   const a = Buffer.from(m[1].trim());
@@ -308,8 +338,12 @@ export function bearerMatches(header, expected) {
  * HTTP handler for /mcp/bot. Only local processes with the bearer may call it; requests that came
  * through the Cloudflare tunnel (which also arrive from 127.0.0.1) carry forwarding headers and are refused.
  */
-export async function handleMcpHttp(req, res, { tools, token, readBody }) {
-  const sendJson = (status, body, headers = {}) => {
+export async function handleMcpHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  { tools, token, readBody }: { tools: Pick<BotTools, "handleRpc">; token: string | null | undefined; readBody: (req: IncomingMessage, limit: number) => Promise<unknown> },
+) {
+  const sendJson = (status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
     res.end(body === undefined ? "" : JSON.stringify(body));
   };
@@ -320,14 +354,14 @@ export async function handleMcpHttp(req, res, { tools, token, readBody }) {
   if (!bearerMatches(req.headers.authorization, token)) return sendJson(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
   if (req.method !== "POST") return sendJson(405, { error: "Method not allowed" }, { allow: "POST" });
 
-  let body;
+  let body: RpcMessage;
   try {
     body = await readBody(req, 1 << 20);
   } catch {
     return sendJson(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
   }
   const batch = Array.isArray(body);
-  const responses = (await Promise.all((batch ? body : [body]).map((m) => tools.handleRpc(m)))).filter(Boolean);
+  const responses = (await Promise.all((batch ? body : [body]).map((m: RpcMessage) => tools.handleRpc(m)))).filter(Boolean);
   if (responses.length === 0) return sendJson(202, undefined);
   if (res.destroyed) return;
   return sendJson(200, batch ? responses : responses[0]);

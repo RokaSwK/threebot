@@ -38,10 +38,12 @@ Data, settings and installed versions live in THREEBOT_HOME (default ~/.threebot
 `;
 
 const say = (line = "") => process.stdout.write(line + "\n");
-function fail(message, code = 1) { process.stderr.write(`threebot: ${message}\n`); process.exit(code); }
+function fail(message: string, code = 1): never { process.stderr.write(`threebot: ${message}\n`); process.exit(code); }
 
-function parseArgs(argv) {
-  const flags = {}, rest = [];
+/** `--name value`, `--name=value`, `--name` (true) and `--no-name` (false). */
+type Flags = Record<string, string | boolean | undefined>;
+function parseArgs(argv: string[]) {
+  const flags: Flags = {}, rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("--no-")) flags[a.slice(5)] = false;
@@ -62,7 +64,7 @@ const envFile = path.join(home, ".env");
 const tokenFile = path.join(home, "t3-token");
 
 function readEnvFile(file = envFile) {
-  const out = {};
+  const out: Record<string, string> = {};
   if (!existsSync(file)) return out;
   for (const line of readFileSync(file, "utf8").split("\n")) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
@@ -71,7 +73,7 @@ function readEnvFile(file = envFile) {
   return out;
 }
 /** Set KEY=value lines in THREEBOT_HOME/.env, keeping everything else. */
-async function setEnv(values) {
+async function setEnv(values: Record<string, string | number>) {
   let text = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
   for (const [key, value] of Object.entries(values)) {
     const line = `${key}=${value}`;
@@ -92,13 +94,15 @@ function serviceCli() {
 }
 const spec = () => serviceSpec({ cli: serviceCli(), home });
 
-async function health(port = portOf(), timeoutMs = 2000) {
+/** The fields of the gateway's /api/health answer this file reads. */
+type Health = { ok?: boolean; version?: string };
+async function health(port = portOf(), timeoutMs = 2000): Promise<Health | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
     return res.ok ? await res.json() : null;
   } catch { return null; }
 }
-async function waitForHealth({ port = portOf(), version, timeoutMs = 60000 } = {}) {
+async function waitForHealth({ port = portOf(), version, timeoutMs = 60000 }: { port?: number; version?: string; timeoutMs?: number } = {}): Promise<Health | null> {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     const h = await health(port);
@@ -114,20 +118,21 @@ function findT3() {
   return existsSync(own) ? own : null;
 }
 
-async function ask(question, { secret = false } = {}) {
+async function ask(question: string, { secret = false }: { secret?: boolean } = {}): Promise<string> {
   if (!process.stdin.isTTY) {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk);
     return Buffer.concat(chunks).toString("utf8").split("\n")[0];
   }
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  if (secret) rl._writeToOutput = (s) => { if (s.includes(question)) process.stdout.write(s); };
-  const answer = await new Promise((resolve) => rl.question(question, resolve));
+  // readline's own (untyped) hook for echoing input; replacing it hides what is typed.
+  if (secret) (rl as typeof rl & { _writeToOutput: (s: string) => void })._writeToOutput = (s) => { if (s.includes(question)) process.stdout.write(s); };
+  const answer = await new Promise<string>((resolve) => rl.question(question, resolve));
   rl.close();
   if (secret) say();
   return answer;
 }
-async function confirm(question, yes) {
+async function confirm(question: string, yes?: string | boolean) {
   if (yes) return true;
   if (!process.stdin.isTTY) return false;
   return /^y(es)?$/i.test((await ask(`${question} [y/N] `)).trim());
@@ -135,7 +140,7 @@ async function confirm(question, yes) {
 
 // ---------- commands ----------
 
-async function up(flags) {
+async function up(flags: Flags) {
   await fs.mkdir(home, { recursive: true });
   const port = Number(flags.port || settings().PORT || 3780);
   const t3Url = String(flags["t3-url"] || settings().T3_URL || "http://127.0.0.1:3773").replace(/\/$/, "");
@@ -194,7 +199,7 @@ async function serve() {
   await import("./gateway.mts");
 }
 
-async function status(flags) {
+async function status(flags: Flags) {
   const h = await health();
   const saved = await accessStore().read();
   const out = {
@@ -211,12 +216,12 @@ async function status(flags) {
   say(`Gateway:   ${h ? `running ${h.version} at ${out.gateway.url}` : "not running"}`);
   say(`T3 Code:   ${out.t3.url}`);
   say(`Password:  ${out.access.password ? "set" : "none"}`);
-  say(`Tailscale: ${out.access.tailscale ? `on${saved.tailscale.httpsPort ? ` (HTTPS port ${saved.tailscale.httpsPort})` : ""}` : "off"}`);
+  say(`Tailscale: ${out.access.tailscale ? `on${saved.tailscale!.httpsPort ? ` (HTTPS port ${saved.tailscale!.httpsPort})` : ""}` : "off"}`);
   const tunnelUrl = await fs.readFile(path.join(appDirOf(), "tunnel-url"), "utf8").catch(() => "");
   say(`Cloudflare: ${out.access.tunnel ? `on${tunnelUrl ? ` ${tunnelUrl.trim()}` : ""}` : "off"}`);
 }
 
-async function update(flags, rest) {
+async function update(flags: Flags, rest: string[]) {
   const from = currentVersion();
   const release = await findRelease({ version: rest[0], channel: flags.preview ? "preview" : "stable" });
   if (!release) fail(rest[0] ? `There is no release ${rest[0]}.` : "There are no releases yet.");
@@ -256,7 +261,7 @@ async function rollbackCommand() {
   say(`Switched back to ${path.basename(back)}.`);
 }
 
-async function serviceCommand([action = "status"]) {
+async function serviceCommand([action = "status"]: string[]) {
   const s = spec();
   if (action === "install") return say(`Installed ${await installService(s)}`);
   if (action === "uninstall") { await uninstallService(s); return say("Removed the background service. Your Bots and settings are kept."); }
@@ -271,7 +276,7 @@ async function restartIfManaged() {
   return false;
 }
 
-async function tailscaleCommand([action = "status"], { restart = true } = {}) {
+async function tailscaleCommand([action = "status"]: string[], { restart = true }: { restart?: boolean } = {}) {
   const store = accessStore();
   const ts = createTailscale();
   const state = await ts.status();
@@ -298,12 +303,12 @@ async function tailscaleCommand([action = "status"], { restart = true } = {}) {
   const pick = pickServePort(await ts.serveConfig(), localUrl);
   if (!pick) fail("Every HTTPS port Threebot tries is already used by Tailscale Serve.");
   if (!pick.ours) await ts.serve(pick.port, localUrl);
-  await store.update({ tailscale: { enabled: true, port, httpsPort: pick.port, users: [state.login.toLowerCase()] } });
-  say(`Threebot on your tailnet: ${tailnetUrl(state.dnsName, pick.port)} (only ${state.login})`);
+  await store.update({ tailscale: { enabled: true, port, httpsPort: pick.port, users: [state.login!.toLowerCase()] } });
+  say(`Threebot on your tailnet: ${tailnetUrl(state.dnsName!, pick.port)} (only ${state.login})`);
   if (restart) await restartIfManaged();
 }
 
-async function tunnelCommand([action = "status"]) {
+async function tunnelCommand([action = "status"]: string[]) {
   const store = accessStore();
   const saved = await store.read();
   if (action === "status") {

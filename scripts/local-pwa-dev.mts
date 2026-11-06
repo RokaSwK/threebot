@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Two local frontend origins over the existing disposable gateway/runtime fixture.
 import { spawn } from 'node:child_process';
+import type { Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -21,12 +22,19 @@ const HELP = `Usage: node scripts/local-pwa-dev.mts [options]
 Fixture data only. No live-runtime mode or credentials are used.
 Build web/dist first, or use --build. Type restart, reset, or quit while running.`;
 
-function port(value, label) {
+// Vite is loaded from web/ at run time, so its types aren't available here; these are the parts used.
+interface ViteDevServerLike { httpServer: Server; listen(): Promise<unknown>; close(): Promise<void> }
+interface ViteApi {
+  createServer(config: object): Promise<ViteDevServerLike>;
+  loadConfigFromFile(env: { command: string; mode: string }, configFile: string, root: string): Promise<{ config: object } | null>;
+}
+
+function port(value: number, label: string) {
   if (!Number.isInteger(value) || value < 0 || value > 65535) throw new Error(`${label} must be an integer from 0 to 65535.`);
   return value;
 }
 
-export function parseLocalPwaOptions(args) {
+export function parseLocalPwaOptions(args: string[]) {
   const options = { pwaPort: 43780, hmrPort: 5180, scenario: 'interactions', build: false, help: false };
   for (let index = 0; index < args.length; index++) {
     const flag = args[index];
@@ -46,15 +54,15 @@ export function parseLocalPwaOptions(args) {
   return options;
 }
 
-async function buildFrontend(signal) {
-  await new Promise((resolve, reject) => {
+async function buildFrontend(signal?: AbortSignal) {
+  await new Promise<void>((resolve, reject) => {
     const child = spawn('npm', ['run', 'build'], { cwd: web, stdio: 'inherit', shell: false, signal });
     child.once('error', reject);
     child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(`Web build failed (${code ?? signal}).`)));
   });
 }
 
-export async function startLocalPwaDev({ pwaPort = 43780, hmrPort = 5180, scenario = 'interactions', build = false, signal } = {}) {
+export async function startLocalPwaDev({ pwaPort = 43780, hmrPort = 5180, scenario = 'interactions', build = false, signal }: { pwaPort?: number; hmrPort?: number; scenario?: string; build?: boolean; signal?: AbortSignal } = {}) {
   signal?.throwIfAborted();
   validateScenario(scenario);
   port(pwaPort, 'PWA port');
@@ -62,8 +70,8 @@ export async function startLocalPwaDev({ pwaPort = 43780, hmrPort = 5180, scenar
   if (pwaPort && pwaPort === hmrPort) throw new Error('PWA and HMR ports must differ so service workers cannot cache HMR modules.');
   if (build) await buildFrontend(signal);
   const fixture = await createFixture({ port: pwaPort, scenario });
-  let vite;
-  let closing;
+  let vite: ViteDevServerLike | undefined;
+  let closing: Promise<void> | undefined;
   const close = () => closing ??= (async () => {
     // Both servers are owned by this invocation. Always try to close both.
     const results = await Promise.allSettled([vite?.close(), fixture.close()]);
@@ -72,7 +80,7 @@ export async function startLocalPwaDev({ pwaPort = 43780, hmrPort = 5180, scenar
   })();
   try {
     signal?.throwIfAborted();
-    const { createServer, loadConfigFromFile } = await import(pathToFileURL(webRequire.resolve('vite')).href);
+    const { createServer, loadConfigFromFile }: ViteApi = await import(pathToFileURL(webRequire.resolve('vite')).href);
     const loaded = await loadConfigFromFile({ command: 'serve', mode: 'development' }, path.join(web, 'vite.config.ts'), web);
     if (!loaded) throw new Error('Could not load the web Vite configuration.');
     vite = await createServer({
@@ -103,7 +111,7 @@ export async function startLocalPwaDev({ pwaPort = 43780, hmrPort = 5180, scenar
   }
 }
 
-function deviceUrl(origin) {
+function deviceUrl(origin: string) {
   const url = new URL(origin);
   url.hostname = 'localhost';
   return url.origin;
@@ -113,8 +121,8 @@ async function main() {
   const options = parseLocalPwaOptions(process.argv.slice(2));
   if (options.help) { console.log(HELP); return; }
   const controller = new AbortController();
-  const fail = (error) => { console.error(error.message); process.exitCode = 1; };
-  let stop = () => controller.abort();
+  const fail = (error: Error) => { console.error(error.message); process.exitCode = 1; };
+  let stop: () => void | Promise<void> = () => controller.abort();
   const onSignal = () => void Promise.resolve(stop()).catch(fail);
   process.once('SIGINT', onSignal);
   process.once('SIGTERM', onSignal);
@@ -122,7 +130,7 @@ async function main() {
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
   };
-  let loop;
+  let loop: Awaited<ReturnType<typeof startLocalPwaDev>>;
   try { loop = await startLocalPwaDev({ ...options, signal: controller.signal }); }
   catch (error) {
     removeSignals();
@@ -134,7 +142,7 @@ async function main() {
   console.log(`\nDisposable local PWA loop (scenario: ${options.scenario})\nHMR: ${loop.hmrUrl}\nBuilt PWA: ${loop.pwaUrl}\nFixture directory: ${loop.fixture.root}\nLauncher PID: ${process.pid}; gateway PID: ${loop.fixture.gatewayPid}\nThe built PWA serves web/dist. HMR serves current source; it deliberately registers no service worker.\nNo real T3, inference or account credentials are used.\n\nAndroid port setup (substitute only the serial of your own device):\n  adb -s SERIAL reverse tcp:${hmrPort} tcp:${hmrPort}\n  adb -s SERIAL reverse tcp:${pwaPort} tcp:${pwaPort}\nThen use the device-bound agent-device to open ${deviceUrl(loop.hmrUrl)} or ${deviceUrl(loop.pwaUrl)}.\nCommands: restart, reset, quit. Ctrl-C also stops only this invocation's servers.`);
   const input = createInterface({ input: process.stdin });
   let queue = Promise.resolve();
-  let stopping;
+  let stopping: Promise<void> | undefined;
   stop = () => stopping ??= (async () => {
     input.close();
     process.stdin.pause();
@@ -146,7 +154,8 @@ async function main() {
   input.on('line', (line) => {
     const command = line.trim();
     if (stopping) return;
-    if (command === 'quit' || command === 'q') { void stop().catch(fail); return; }
+    // By now stop is the async one assigned above.
+    if (command === 'quit' || command === 'q') { void (stop() as Promise<void>).catch(fail); return; }
     queue = queue.then(async () => {
       if (command === 'restart') await loop.fixture.restart();
       else if (command === 'reset') await loop.fixture.reset();

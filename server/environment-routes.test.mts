@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createEnvironmentRouter, environmentPath } from './environment-routes.mts';
 
 test('remote credentials are bound to an explicit environment and verified origin', async () => {
-  const reads = [], calls = [];
+  const reads: string[] = [], calls: { url: string; options: RequestInit }[] = [];
   const router = createEnvironmentRouter({ local: { baseUrl: 'http://local', token: 'local-only' }, file: 'routes',
     readPrivate: async file => { reads.push(file); return file === 'routes' ? JSON.stringify({ remote: { baseUrl: 'https://peer.test', tokenFile: 'peer-token' } }) : 'remote-only'; },
     fetcher: async (url, options) => { calls.push({ url, options }); return Response.json({ environmentId: 'remote' }); },
@@ -39,6 +39,6 @@ test('private route and token files are required without exposing their contents
     const file = path.join(root, 'routes.json');
     await writeFile(file, '{"remote":{"baseUrl":"https://peer.test","tokenFile":"private"}}', { mode: 0o644 });
     const router = createEnvironmentRouter({ file });
-    await assert.rejects(router('remote'), error => error.status === 403 && !error.message.includes('private"'));
+    await assert.rejects(router('remote'), (error: Error & { status?: number }) => error.status === 403 && !error.message.includes('private"'));
   } finally { await rm(root, { recursive: true }); }
 });

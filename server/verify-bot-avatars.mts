@@ -36,7 +36,7 @@ try {
       headers: { authorization: `Bearer ${client.token}` },
     });
     assert.equal(response.status, 200);
-    assert.match(response.headers.get("content-type"), /image\/svg\+xml/);
+    assert.match(response.headers.get("content-type")!, /image\/svg\+xml/);
     assert.equal(await response.text(), expected);
     console.log(`Verified ${bot.name}: ${project.faviconPath}`);
     verified++;

@@ -13,11 +13,11 @@ const found = (version = "0.2.0") => ({ updateAvailable: true, error: null, chec
 
 test("the automatic update is off until it's switched on, and the setting is saved on the server", async () => {
   const f = file();
-  const installs = [];
+  const installs: string[] = [];
   const updater = createAutoUpdater({ store: createAutoUpdateStore(f), version: "0.1.0", isBusy: async () => [], install: async (v) => { installs.push(v); } });
   assert.equal((await updater.status()).auto, false);
   await updater.consider(found());
-  assert.deepEqual(installs, [], "off by default: a newer release isn't installed");
+  assert.deepEqual<string[]>(installs, [], "off by default: a newer release isn't installed");
   await updater.setAuto(true);
   assert.equal(JSON.parse(readFileSync(f, "utf8")).auto, true);
   const reopened = createAutoUpdater({ store: createAutoUpdateStore(f), version: "0.1.0", isBusy: async () => [], install: async (v) => { installs.push(v); } });
@@ -38,7 +38,7 @@ test("a Bot thread that is running or waiting on a request counts as busy; other
 
 test("while a Bot is busy the update waits for the next check, and stops waiting after the cap", async () => {
   let t = 0, busy = [thread({ status: "running" })];
-  const installs = [];
+  const installs: string[] = [];
   const updater = createAutoUpdater({ store: createAutoUpdateStore(file()), version: "0.1.0", now: () => t, isBusy: async () => busy, install: async (v) => { installs.push(v); } });
   await updater.setAuto(true);
   const first = found();
@@ -62,7 +62,7 @@ test("while a Bot is busy the update waits for the next check, and stops waiting
 });
 
 test("T3 not answering counts as busy, never as idle", async () => {
-  const installs = [];
+  const installs: string[] = [];
   const updater = createAutoUpdater({ store: createAutoUpdateStore(file()), version: "0.1.0", isBusy: async () => { throw new Error("T3 timed out"); }, install: async (v) => { installs.push(v); } });
   await updater.setAuto(true);
   await updater.consider(found());
@@ -78,34 +78,34 @@ test("after the restart the new version says it updated once; a rollback says so
   const after = createAutoUpdater({ store: createAutoUpdateStore(f), version: "0.2.0", isBusy: async () => [], install: async () => {} });
   await after.settle();
   const { notice } = await after.status();
-  assert.deepEqual([notice.kind, notice.version, notice.from, notice.url], ["updated", "0.2.0", "0.1.0", "https://example.test/v0.2.0"]);
-  await after.dismiss(notice.at);
+  assert.deepEqual([notice!.kind, notice!.version, notice!.from, notice!.url], ["updated", "0.2.0", "0.1.0", "https://example.test/v0.2.0"]);
+  await after.dismiss(notice!.at);
   assert.equal((await after.status()).notice, null, "shown once");
 
-  const installs = [];
+  const installs: string[] = [];
   const old = createAutoUpdater({ store: createAutoUpdateStore(f), version: "0.2.0", isBusy: async () => [], install: async (v) => { installs.push(v); } });
   await old.consider(found("0.3.0"));
   const back = createAutoUpdater({ store: createAutoUpdateStore(f), version: "0.2.0", installed: (v) => v === "0.3.0", isBusy: async () => [], install: async (v) => { installs.push(v); } });
   await back.settle();
-  assert.deepEqual([(await back.status()).notice.kind, (await back.status()).notice.from], ["rolledBack", "0.2.0"]);
+  assert.deepEqual([(await back.status()).notice!.kind, (await back.status()).notice!.from], ["rolledBack", "0.2.0"]);
   await back.consider(found("0.3.0"));
   assert.deepEqual(installs, ["0.3.0"], "a release that rolled back isn't installed again automatically");
 });
 
 test("an updater that fails before switching is reported and not retried", async () => {
-  const installs = [];
+  const installs: string[] = [];
   const updater = createAutoUpdater({ store: createAutoUpdateStore(file()), version: "0.1.0", isBusy: async () => [], install: async (v) => { installs.push(v); } });
   await updater.setAuto(true);
   await updater.consider(found());
   await updater.failed("0.2.0", new Error("Checksum mismatch"));
-  assert.equal((await updater.status()).notice.kind, "failed");
+  assert.equal((await updater.status()).notice!.kind, "failed");
   await updater.consider(found());
   assert.deepEqual(installs, ["0.2.0"]);
 });
 
 test("an update that never restarts the gateway (Linux can't see the updater exit) is given up after a while", async () => {
   let t = 0;
-  const installs = [];
+  const installs: string[] = [];
   const updater = createAutoUpdater({ store: createAutoUpdateStore(file()), version: "0.1.0", now: () => t, isBusy: async () => [], install: async (v) => { installs.push(v); } });
   await updater.setAuto(true);
   await updater.consider(found("0.2.0"));
@@ -113,6 +113,6 @@ test("an update that never restarts the gateway (Linux can't see the updater exi
   assert.deepEqual(installs, ["0.2.0"], "no second update while one is running");
   t = PENDING_MS; await updater.consider(found("0.2.1"));
   const { notice } = await updater.status();
-  assert.deepEqual([notice.kind, notice.version], ["failed", "0.2.0"]);
+  assert.deepEqual([notice!.kind, notice!.version], ["failed", "0.2.0"]);
   assert.deepEqual(installs, ["0.2.0", "0.2.1"], "the stuck one is skipped and the newer release goes ahead");
 });

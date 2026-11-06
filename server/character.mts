@@ -9,29 +9,30 @@ export const VIEW_HALF = RADIUS * 1.1;
 const POINTS = 96;
 const EYE_POINTS = 28;
 
-const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-const mix = (a, b, t) => a + (b - a) * t;
-const approach = (value, target, rate, dt) => value + (target - value) * (1 - Math.exp(-rate * dt));
-const wave = (t, speed, phase = 0) => Math.sin(t * speed * TAU + phase);
-const fixed = (n) => (Math.abs(n) < 1e-4 ? 0 : n).toFixed(2);
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const mix = (a: number, b: number, t: number) => a + (b - a) * t;
+const approach = (value: number, target: number, rate: number, dt: number) => value + (target - value) * (1 - Math.exp(-rate * dt));
+const wave = (t: number, speed: number, phase = 0) => Math.sin(t * speed * TAU + phase);
+const fixed = (n: number) => (Math.abs(n) < 1e-4 ? 0 : n).toFixed(2);
 
 // Silhouettes are radius functions of angle, so any two can morph without matching points.
-const superellipse = (n, ax = 1, ay = 1) => (a) => {
+type Silhouette = (a: number) => number;
+const superellipse = (n: number, ax = 1, ay = 1): Silhouette => (a) => {
   const c = Math.abs(Math.cos(a)) / ax, s = Math.abs(Math.sin(a)) / ay;
   return 1 / Math.pow(c ** n + s ** n, 1 / n);
 };
-const polygon = (sides, rotation, softness) => (a) => {
+const polygon = (sides: number, rotation: number, softness: number): Silhouette => (a) => {
   const step = TAU / sides, local = ((a - rotation) % step + step) % step - step / 2;
   return mix(Math.cos(Math.PI / sides) / Math.cos(local), 1, softness);
 };
-const lobes = (count, depth, phase = 0, sharpness = 1) => (a) => 1 - depth + depth * ((1 + Math.cos(count * a + phase)) / 2) ** sharpness;
+const lobes = (count: number, depth: number, phase = 0, sharpness = 1): Silhouette => (a) => 1 - depth + depth * ((1 + Math.cos(count * a + phase)) / 2) ** sharpness;
 // Measured from the top of the shape: a notch, two lobes, then in to a soft point.
-const heart = (a) => {
+const heart: Silhouette = (a) => {
   const x = Math.abs(Math.atan2(Math.cos(a), -Math.sin(a))) / Math.PI;
   if (x < 0.3) return 0.6 + 0.42 * Math.sin((x / 0.3) * (Math.PI / 2)) ** 0.8;
   return 1.02 - 0.3 * Math.sin(((x - 0.3) / 0.7) * Math.PI) ** 0.8 + 0.12 * Math.max(0, (x - 0.86) / 0.14);
 };
-const SILHOUETTES = {
+const SILHOUETTES: Record<string, Silhouette> = {
   ball: () => 1,
   blob: (a) => 0.94 + 0.05 * Math.sin(2 * a + 0.6) + 0.03 * Math.sin(3 * a + 1.4),
   pebble: superellipse(2.4, 1, 0.82),
@@ -51,14 +52,17 @@ const SILHOUETTES = {
   dome: (a) => (Math.sin(a) < 0 ? 0.98 : superellipse(5, 0.98, 0.84)(a)),
 };
 export const SILHOUETTE_NAMES = Object.keys(SILHOUETTES);
-const silhouette = (name) => SILHOUETTES[name] ?? SILHOUETTES.ball;
+const silhouette = (name: string) => SILHOUETTES[name] ?? SILHOUETTES.ball;
 
 // A face is two soft bars. gap and y place them, length and width size them, tilt leans
 // them (mirrored by lean), bend curves them, round takes them from bar to circle.
 const FACE = { gap: 30, y: -8, length: 60, width: 22, tilt: 0, lean: 0, bend: 0, round: 3.4, left: 1, right: 1, sweep: 0 };
 const LIFE = { squash: 0, bob: 0, bobSpeed: 0.5, rock: 0, rockSpeed: 0.4, spin: 0, breathe: 1, blink: true };
-const face = (values) => ({ ...FACE, ...values });
-const POSES = {
+// A pose is a face plus the life values (bob, rock, blink...) layered over it.
+type Pose = typeof FACE & typeof LIFE;
+type NumberKey = { [K in keyof Pose]: Pose[K] extends number ? K : never }[keyof Pose];
+const face = (values: Partial<Pose>) => ({ ...FACE, ...values });
+const POSES: Record<string, ReturnType<typeof face>> = {
   idle: face({}),
   waking: face({ length: 50, width: 18 }),
   sleeping: face({ y: 18, length: 7, width: 46, gap: 34, bend: 3, blink: false, breathe: 2 }),
@@ -86,13 +90,13 @@ const POSES = {
   dragging: face({ length: 44, width: 26, y: 8, rock: 8, rockSpeed: 1.6 }),
 };
 // Folded states pull the body down to a small planet and hand the frame to an effect.
-const FOLDS = { thinking: 1, orbit: 1, radar: 1, progress: 1, spawning: 1, loading: 1, dictating: 1, writing: 1, sending: 1, receiving: 1, uploading: 1, alerting: 1, bouncing: 1, "powering-down": 1 };
+const FOLDS: Record<string, number> = { thinking: 1, orbit: 1, radar: 1, progress: 1, spawning: 1, loading: 1, dictating: 1, writing: 1, sending: 1, receiving: 1, uploading: 1, alerting: 1, bouncing: 1, "powering-down": 1 };
 const FOLD_SCALE = 0.17;
-const pose = (state) => ({ ...LIFE, ...(POSES[state] ?? POSES.idle) });
+const pose = (state: string): Pose => ({ ...LIFE, ...(POSES[state] ?? POSES.idle) });
 
-function eyePath(cx, cy, length, width, tilt, bend, round) {
+function eyePath(cx: number, cy: number, length: number, width: number, tilt: number, bend: number, round: number) {
   const half = Math.max(length, 0.1) / 2, thick = Math.max(width, 0.1) / 2, turn = (tilt * Math.PI) / 180;
-  const cos = Math.cos(turn), sin = Math.sin(turn), points = [];
+  const cos = Math.cos(turn), sin = Math.sin(turn), points: string[] = [];
   const horizontal = thick > half;
   const major = Math.max(half, thick), minor = Math.min(half, thick);
   for (let i = 0; i < EYE_POINTS; i++) {
@@ -108,8 +112,8 @@ function eyePath(cx, cy, length, width, tilt, bend, round) {
 
 // Most attributes hold still between frames. Only touching the ones that moved keeps
 // the browser's style and layout work small when many avatars are on screen.
-const written = new WeakMap();
-function set(el, name, value) {
+const written = new WeakMap<Element, Map<string, string>>();
+function set(el: Element, name: string, value: string | number) {
   let cache = written.get(el);
   if (!cache) written.set(el, cache = new Map());
   const text = String(value);
@@ -120,8 +124,52 @@ function set(el, name, value) {
 
 let serial = 0;
 
+type Point = { x: number; y: number };
+export interface CharacterParts { body: SVGPathElement; eyes: SVGPathElement[] }
+export interface CharacterOptions {
+  shape?: string;
+  state?: string;
+  inkFlat?: string;
+  eyeColor?: string;
+  sizePx?: number;
+  reduceMotion?: boolean;
+  paused?: string;
+  badgeColor?: string;
+  random?: () => number;
+}
+
 export class Character {
-  constructor(svg, { shape = "ball", state = "idle", inkFlat = "#A97EFE", eyeColor = "#000", sizePx = 64, reduceMotion = false, paused, badgeColor, random = Math.random } = {}) {
+  declare svg: SVGSVGElement;
+  declare random: () => number;
+  declare document: Document;
+  declare state: string;
+  declare ink: string;
+  declare time: number;
+  declare stateTime: number;
+  declare blinkIn: number;
+  declare blink: number;
+  declare gazeTarget: Point | null;
+  declare gaze: Point;
+  declare overlay: { x: number };
+  declare from: string;
+  declare to: string;
+  declare morph: number;
+  declare frozen: boolean;
+  declare current: Pose;
+  declare rect: DOMRect | null;
+  declare rectAge: number;
+  declare spinAngle?: number;
+  declare clipBody: SVGPathElement;
+  declare back: SVGGElement;
+  declare figure: SVGGElement;
+  declare body: SVGPathElement;
+  declare eyes: SVGPathElement[];
+  declare front: SVGGElement;
+  declare dots: SVGCircleElement[];
+  declare rings: SVGCircleElement[];
+  declare ribbons: SVGPathElement[];
+
+  constructor(svg: SVGSVGElement, { shape = "ball", state = "idle", inkFlat = "#A97EFE", eyeColor = "#000", sizePx = 64, reduceMotion = false, paused, badgeColor, random = Math.random }: CharacterOptions = {}) {
     svg.replaceChildren?.();
     this.svg = svg;
     this.random = random;
@@ -164,30 +212,31 @@ export class Character {
     if (reduceMotion || paused) this.holdFrame();
   }
 
-  node(tag, attrs, parent) {
+  node<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number>, parent: Node): SVGElementTagNameMap[K] {
     const el = this.document.createElementNS(NS, tag);
     for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
     parent.appendChild(el);
     return el;
   }
 
-  parts() { return { body: this.body, eyes: this.eyes }; }
-  setInk(color) { this.ink = color; set(this.body, "fill", color); this.svg.style?.setProperty("--fg", color); }
-  setSize(size) { this.svg.setAttribute("width", String(size)); this.svg.setAttribute("height", String(size)); this.rectAge = 1; }
-  setGazeTarget(point) { this.gazeTarget = point; }
-  setShape(shape) { if (shape === this.to) return; this.from = this.to; this.to = shape; this.morph = 0; }
-  setState(state) { if (state !== this.state) { this.state = state; this.stateTime = 0; this.spinAngle = 0; } }
+  parts(): CharacterParts { return { body: this.body, eyes: this.eyes }; }
+  setInk(color: string) { this.ink = color; set(this.body, "fill", color); this.svg.style?.setProperty("--fg", color); }
+  setSize(size: number) { this.svg.setAttribute("width", String(size)); this.svg.setAttribute("height", String(size)); this.rectAge = 1; }
+  setGazeTarget(point: Point | null) { this.gazeTarget = point; }
+  setShape(shape: string) { if (shape === this.to) return; this.from = this.to; this.to = shape; this.morph = 0; }
+  setState(state: string) { if (state !== this.state) { this.state = state; this.stateTime = 0; this.spinAngle = 0; } }
   holdFrame() { this.frozen = true; this.morph = 1; this.current = pose(this.state); this.overlay.x = FOLDS[this.state] ? 1 : 0; this.blink = 0; this.gaze = { x: 0, y: 0 }; this.paint(0); }
   destroy() {}
 
-  step(seconds) {
+  step(seconds: number) {
     if (this.frozen) return;
     const dt = clamp(seconds, 0, 0.1);
     this.time += dt;
     this.stateTime += dt;
     this.morph = Math.min(1, this.morph + dt * 3.2);
     const target = pose(this.state);
-    for (const key of Object.keys(target)) if (typeof target[key] === "number") this.current[key] = approach(this.current[key], target[key], 13, dt);
+    // blink is the one non-number; the typeof check skips it.
+    for (const key of Object.keys(target) as NumberKey[]) if (typeof target[key] === "number") this.current[key] = approach(this.current[key], target[key], 13, dt);
     this.overlay.x = approach(this.overlay.x, FOLDS[this.state] ? 1 : 0, 10, dt);
     this.blinkIn -= dt;
     if (this.blinkIn <= 0 && target.blink) { this.blink = 0.14; this.blinkIn = 2.2 + this.random() * 3.6; }
@@ -202,8 +251,8 @@ export class Character {
     this.paint(dt);
   }
 
-  bodyPath(scale, sx, sy, dy) {
-    const a = silhouette(this.from), b = silhouette(this.to), m = this.morph * this.morph * (3 - 2 * this.morph), points = [];
+  bodyPath(scale: number, sx: number, sy: number, dy: number) {
+    const a = silhouette(this.from), b = silhouette(this.to), m = this.morph * this.morph * (3 - 2 * this.morph), points: [number, number][] = [];
     for (let i = 0; i < POINTS; i++) {
       const angle = (i / POINTS) * TAU, r = RADIUS * scale * mix(a(angle), b(angle), m);
       points.push([CENTER + Math.cos(angle) * r * sx, CENTER + dy + Math.sin(angle) * r * sy]);
@@ -232,7 +281,7 @@ export class Character {
     const blink = this.blink > 0 ? Math.abs(this.blink / 0.07 - 1) * 0.92 + 0.08 : 1;
     const sweep = p.sweep ? wave(t, 0.8) * p.sweep : 0;
     const x = this.gaze.x + sweep, y = this.gaze.y + bob;
-    const place = (index, side) => {
+    const place = (index: number, side: number) => {
       const size = side < 0 ? p.left : p.right;
       const d = eyePath(CENTER + side * p.gap + x, CENTER + p.y + y, p.length * size * blink * open, p.width * size * open, p.tilt * 1 + side * p.lean, p.bend, Math.max(p.round, 2));
       set(this.eyes[index], "d", d);
@@ -242,12 +291,12 @@ export class Character {
     this.effects(t, fold);
   }
 
-  effects(t, fold) {
+  effects(t: number, fold: number) {
     const state = this.state, dots = this.dots, rings = this.rings, ribbons = this.ribbons;
-    const touched = new Set(), rib = (i) => (touched.add(ribbons[i]), ribbons[i]);
-    const dot = (i, x, y, r, opacity = 1) => { const el = dots[i]; touched.add(el); set(el, "cx", fixed(CENTER + x)); set(el, "cy", fixed(CENTER + y)); set(el, "r", fixed(Math.max(r, 0))); set(el, "opacity", fixed(opacity * fold)); };
-    const ring = (i, r, width, opacity, dash, offset = 0) => { const el = rings[i]; touched.add(el); set(el, "cx", fixed(CENTER)); set(el, "cy", fixed(CENTER)); set(el, "r", fixed(r)); set(el, "stroke-width", fixed(width)); set(el, "opacity", fixed(opacity)); set(el, "stroke-dasharray", dash ?? "1 0"); set(el, "stroke-dashoffset", fixed(offset)); };
-    const pulse = (speed, phase) => (t * speed + phase) % 1;
+    const touched = new Set<Element>(), rib = (i: number) => (touched.add(ribbons[i]), ribbons[i]);
+    const dot = (i: number, x: number, y: number, r: number, opacity = 1) => { const el = dots[i]; touched.add(el); set(el, "cx", fixed(CENTER + x)); set(el, "cy", fixed(CENTER + y)); set(el, "r", fixed(Math.max(r, 0))); set(el, "opacity", fixed(opacity * fold)); };
+    const ring = (i: number, r: number, width: number, opacity: number, dash?: string, offset = 0) => { const el = rings[i]; touched.add(el); set(el, "cx", fixed(CENTER)); set(el, "cy", fixed(CENTER)); set(el, "r", fixed(r)); set(el, "stroke-width", fixed(width)); set(el, "opacity", fixed(opacity)); set(el, "stroke-dasharray", dash ?? "1 0"); set(el, "stroke-dashoffset", fixed(offset)); };
+    const pulse = (speed: number, phase: number) => (t * speed + phase) % 1;
     switch (state) {
       case "thinking":
         [-1, 1].forEach((side, i) => dot(i, side * 62, 0, 11 + 5 * Math.max(0, wave(t, 1.3, i * Math.PI)), 0.55 + 0.45 * Math.max(0, wave(t, 1.3, i * Math.PI))));
@@ -303,7 +352,7 @@ export class Character {
       case "celebrate":
         for (let i = 0; i < 6; i++) {
           const r = rib(i), a = t * (1.5 + i * 0.22) + (i * TAU) / 6, rx = RADIUS * (1.16 + (i % 3) * 0.13), ry = rx * (0.28 + (i % 3) * 0.2), start = a, end = a + 2.4;
-          const at = (v) => [CENTER + Math.cos(v) * rx, CENTER + Math.sin(v) * ry];
+          const at = (v: number) => [CENTER + Math.cos(v) * rx, CENTER + Math.sin(v) * ry];
           const turn = i * 31 + t * 26, [sx, sy] = at(start), [ex, ey] = at(end);
           set(r, "d", `M${fixed(sx)} ${fixed(sy)}A${fixed(rx)} ${fixed(ry)} 0 0 1 ${fixed(ex)} ${fixed(ey)}`);
           set(r, "transform", `rotate(${fixed(turn)} ${fixed(CENTER)} ${fixed(CENTER)})`);
@@ -324,6 +373,6 @@ export class Character {
   }
 }
 
-export function createEngine(svg, options) {
+export function createEngine(svg: SVGSVGElement, options?: CharacterOptions) {
   return new Character(svg, options);
 }

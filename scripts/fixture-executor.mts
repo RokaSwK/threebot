@@ -1,17 +1,31 @@
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+
+type Requirement = { scope: string; cardinality: string; provider: string; definition: { name: string } };
+type FixtureApp = { id: string; slug: string; name: string; requirements: { accounts: Record<string, Requirement> }; createdAt: string };
+type FixtureAccount = { id: string; provider: string; label: string; method: string; owner: string; createdAt: string };
+type FixtureConnection = {
+  id: string; owner: string; provider: { id: string; definition: { name: string } }; reconnectAccount: FixtureAccount | null | undefined;
+  target: { app: string; requirement: string; name: string }; createdAt: string; expiresAt: string;
+  state: { status: string; account?: FixtureAccount }; url: string; redirectUri: string;
+};
+type FixtureState = {
+  apps: Map<string, FixtureApp>; accounts: Map<string, FixtureAccount>; links: Map<string, Set<string>>; connections: Map<string, FixtureConnection>;
+  serial: number; installed: number; failures: Set<string>; counts: { installs: number; links: number; launches: number; completions: number };
+};
 
 export const EXECUTOR_FIXTURE_TOKEN = 'fixture-only';
 export const EXECUTOR_FIXTURE_IDS = { service: 'app_generic_service', single: 'app_generic_single', ready: 'app_generic_ready', catalog: 'catalog_generic_new' };
 const stamp = '2026-01-01T12:00:00.000Z';
-const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
-const escaped = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+const json = (res: http.ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(body)); };
+const escaped = (value: unknown) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[character]);
 
 /** Scripted account storage only. No OAuth provider, credentials or real Executor. */
 export async function startFakeExecutor(port = 0) {
-  let origin, state;
+  let origin: string, state: FixtureState;
   const seed = () => {
-    const app = (id, slug, name, accounts) => ({ id, slug, name, requirements: { accounts }, createdAt: stamp });
-    const requirement = (scope, cardinality, provider = 'provider_generic') => ({ scope, cardinality, provider, definition: { name: 'Generic service' } });
+    const app = (id: string, slug: string, name: string, accounts: Record<string, Requirement>): FixtureApp => ({ id, slug, name, requirements: { accounts }, createdAt: stamp });
+    const requirement = (scope: string, cardinality: string, provider = 'provider_generic'): Requirement => ({ scope, cardinality, provider, definition: { name: 'Generic service' } });
     state = { apps: new Map([
       ['app_fixture_executor', app('app_fixture_executor', 'executor', 'Executor', {})],
       [EXECUTOR_FIXTURE_IDS.service, app(EXECUTOR_FIXTURE_IDS.service, 'generic-service', 'Generic Service', { service: requirement('user', 'many') })],
@@ -23,18 +37,18 @@ export async function startFakeExecutor(port = 0) {
     ]), links: new Map(), connections: new Map(), serial: 0, installed: 0, failures: new Set(), counts: { installs: 0, links: 0, launches: 0, completions: 0 } };
   };
   seed();
-  const linkKey = (app, scope, requirement) => `${app}/${scope}/${requirement}`;
-  const linkAccount = (app, scope, requirement, id) => {
+  const linkKey = (app: string, scope: string, requirement: string) => `${app}/${scope}/${requirement}`;
+  const linkAccount = (app: string, scope: string, requirement: string, id: string) => {
     const key = linkKey(app, scope, requirement);
     const linked = state.links.get(key) ?? new Set();
-    if (state.apps.get(app).requirements.accounts[requirement].cardinality === 'one') linked.clear();
+    if (state.apps.get(app)!.requirements.accounts[requirement].cardinality === 'one') linked.clear();
     linked.add(id); state.links.set(key, linked);
   };
-  const publicConnection = (entry) => ({ ...entry, checkable: true });
-  const changeConnection = (entry, action) => {
+  const publicConnection = (entry: FixtureConnection) => ({ ...entry, checkable: true });
+  const changeConnection = (entry: FixtureConnection, action: string) => {
     if (entry.state.status !== 'pending') return;
     if (action === 'complete') {
-      const definition = state.apps.get(entry.target.app).requirements.accounts[entry.target.requirement];
+      const definition = state.apps.get(entry.target.app)!.requirements.accounts[entry.target.requirement];
       const saved = entry.reconnectAccount ?? { id: `acct_generic_${state.accounts.size + 1}`, provider: definition.provider,
         label: `Sample account ${state.accounts.size - 1}`, method: 'fixture', owner: 'fixture', createdAt: stamp };
       state.accounts.set(saved.id, saved);
@@ -42,14 +56,14 @@ export async function startFakeExecutor(port = 0) {
       entry.state = { status: 'completed', account: saved }; state.counts.completions++;
     } else entry.state = { status: action === 'cancel' ? 'cancelled' : 'expired' };
   };
-  const readBody = async (req) => {
-    let size = 0; const chunks = [];
+  const readBody = async (req: http.IncomingMessage) => {
+    let size = 0; const chunks: Buffer[] = [];
     for await (const chunk of req) { size += chunk.length; if (size > 4096) throw Error('Body too large'); chunks.push(chunk); }
     return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
   };
   const server = http.createServer(async (req, res) => {
     try {
-      const url = new URL(req.url, origin), pathname = url.pathname;
+      const url = new URL(req.url!, origin), pathname = url.pathname;
       const page = pathname.match(/^\/org\/fixture\/connections\/(con_[a-zA-Z0-9_-]+)(?:\/(complete|cancel|expire))?$/);
       if (page) {
         const entry = state.connections.get(page[1]);
@@ -75,7 +89,7 @@ export async function startFakeExecutor(port = 0) {
       }
       if (!pathname.startsWith('/api/organizations/fixture/')) return json(res, 404, { error: 'Unknown fixture route' });
       const route = pathname.slice('/api/organizations/fixture'.length);
-      const operation = route === '/apps/install' ? 'install' : route.endsWith('/connections') && req.method === 'POST' ? 'connect' : ['PUT', 'DELETE'].includes(req.method) ? 'link' : 'status';
+      const operation = route === '/apps/install' ? 'install' : route.endsWith('/connections') && req.method === 'POST' ? 'connect' : ['PUT', 'DELETE'].includes(req.method!) ? 'link' : 'status';
       if (state.failures.delete(operation)) return json(res, 503, { error: 'Sample operation failed once' });
       if (route === '/apps' && req.method === 'GET') return json(res, 200, [...state.apps.values()]);
       if (route === '/catalog' && req.method === 'GET') {
@@ -87,20 +101,20 @@ export async function startFakeExecutor(port = 0) {
         const input = await readBody(req);
         if (input.entry !== EXECUTOR_FIXTURE_IDS.catalog || typeof input.name !== 'string' || !input.name.trim()) return json(res, 400, { error: 'Invalid sample app' });
         const id = `app_generic_new_${++state.installed}`;
-        const installed = { ...structuredClone(state.apps.get(EXECUTOR_FIXTURE_IDS.service)), id, slug: `generic-new-${state.installed}`, name: input.name };
+        const installed = { ...structuredClone(state.apps.get(EXECUTOR_FIXTURE_IDS.service)!), id, slug: `generic-new-${state.installed}`, name: input.name };
         state.apps.set(id, installed); state.counts.installs++; return json(res, 200, installed);
       }
       const appRoute = route.match(/^\/apps\/([^/]+)$/);
       if (appRoute && req.method === 'GET') return state.apps.has(appRoute[1]) ? json(res, 200, state.apps.get(appRoute[1])) : json(res, 404, { error: 'Unknown sample app' });
       const poll = route.match(/^\/connections\/(con_[a-zA-Z0-9_-]+)$/);
-      if (poll && req.method === 'GET') return state.connections.has(poll[1]) ? json(res, 200, publicConnection(state.connections.get(poll[1]))) : json(res, 404, { error: 'Unknown sample connection' });
+      if (poll && req.method === 'GET') return state.connections.has(poll[1]) ? json(res, 200, publicConnection(state.connections.get(poll[1])!)) : json(res, 404, { error: 'Unknown sample connection' });
       const accounts = route.match(/^\/apps\/([^/]+)\/accounts\/(user|app)(?:\/([^/]+))?(?:\/([^/]+))?$/);
       if (!accounts) return json(res, 404, { error: 'Unknown fixture route' });
       const [, appId, scope, requirement, chosen] = accounts;
       const app = state.apps.get(appId);
       if (!app) return json(res, 404, { error: 'Unknown sample app' });
       if (!requirement && req.method === 'GET') {
-        const rows = [];
+        const rows: { requirement: string; account: FixtureAccount | undefined; createdAt: string; signIn: { state: string; reconnectAt: null } }[] = [];
         for (const [name, definition] of Object.entries(app.requirements.accounts)) {
           if (definition.scope !== scope) continue;
           for (const id of state.links.get(linkKey(appId, scope, name)) ?? []) rows.push({ requirement: name, account: state.accounts.get(id), createdAt: stamp, signIn: { state: 'saved', reconnectAt: null } });
@@ -113,7 +127,7 @@ export async function startFakeExecutor(port = 0) {
         const input = await readBody(req), previous = input.account ? state.accounts.get(input.account) : null;
         if (input.account && (!previous || previous.provider !== definition.provider)) return json(res, 400, { error: 'Invalid sample account' });
         const id = `con_fixture_${++state.serial}`;
-        const entry = { id, owner: 'fixture', provider: { id: definition.provider, definition: definition.definition }, reconnectAccount: previous,
+        const entry: FixtureConnection = { id, owner: 'fixture', provider: { id: definition.provider, definition: definition.definition }, reconnectAccount: previous,
           target: { app: appId, requirement, name: app.name }, createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
           state: { status: 'pending' }, url: `${origin}/org/fixture/connections/${id}`, redirectUri: `${origin}/fixture/callback` };
         state.connections.set(id, entry); state.counts.launches++; return json(res, 200, publicConnection(entry));
@@ -128,8 +142,8 @@ export async function startFakeExecutor(port = 0) {
       return json(res, 405, { error: 'Unsupported fixture method' });
     } catch { json(res, 400, { error: 'Invalid fixture request' }); }
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  origin = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const reset = () => {
     seed();
     state.connections.set('con_fixture_seed', { id: 'con_fixture_seed', owner: 'fixture', provider: { id: 'provider_generic', definition: { name: 'Generic service' } }, reconnectAccount: null,
@@ -139,7 +153,7 @@ export async function startFakeExecutor(port = 0) {
   };
   reset();
   let closed = false;
-  return { origin, get port() { return server.address()?.port; }, reset,
+  return { origin, get port() { return (server.address() as AddressInfo | null)?.port; }, reset,
     links: { app: `${origin}/org/fixture/apps/${EXECUTOR_FIXTURE_IDS.service}`, connection: `${origin}/org/fixture/connections/con_fixture_seed` },
     async close() { if (closed) return; closed = true; server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); } };
 }

@@ -3,9 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createThreadMeta, createThreadPreviews, latestPreview, previewText } from "./thread-meta.mts";
+import { createThreadMeta, createThreadPreviews, latestPreview, previewText, type TurnItem } from "./thread-meta.mts";
 
-const message = (ordinal, type, fields) => ({ ordinal, type, startedAt: `2026-10-30T10:00:0${ordinal}.000Z`, ...fields });
+const message = (ordinal: number, type: string, fields?: Partial<TurnItem>): TurnItem => ({ ordinal, type, startedAt: `2026-10-30T10:00:0${ordinal}.000Z`, ...fields });
 
 test("preview text reads as prose and hides reply context and attachment references", () => {
   assert.equal(previewText("<reply-context>\nOld\n</reply-context>\n\n**Ship** the [report](https://x.test) `now`"), "Ship the report now");
@@ -15,17 +15,17 @@ test("preview text reads as prose and hides reply context and attachment referen
 });
 
 test("the newest recognizable item wins, including attachments, questions and Bot sends", () => {
-  const preview = (...items) => latestPreview({ turnItems: items }, (id) => id === "peer" ? "Peer" : null);
+  const preview = (...items: TurnItem[]) => latestPreview({ turnItems: items }, (id) => id === "peer" ? "Peer" : null);
   assert.deepEqual(preview(message(1, "user_message", { text: "hi" }), message(2, "reasoning", { text: "hidden" })), { kind: "text", role: "user", text: "hi", at: "2026-10-30T10:00:01.000Z" });
-  assert.equal(preview(message(1, "assistant_message", { text: "", attachments: [{}] })).text, "Attachment");
-  assert.equal(preview(message(1, "user_input_request", { questions: [{ question: "Which one?" }] })).kind, "question");
-  assert.equal(preview(message(1, "dynamic_tool", { status: "completed", toolName: "mcp__t3__t3_thread_send", input: JSON.stringify({ threadId: "peer", message: "Done" }) })).text, "Messaged Peer: Done");
+  assert.equal(preview(message(1, "assistant_message", { text: "", attachments: [{}] }))!.text, "Attachment");
+  assert.equal(preview(message(1, "user_input_request", { questions: [{ question: "Which one?" }] }))!.kind, "question");
+  assert.equal(preview(message(1, "dynamic_tool", { status: "completed", toolName: "mcp__t3__t3_thread_send", input: JSON.stringify({ threadId: "peer", message: "Done" }) }))!.text, "Messaged Peer: Done");
   assert.equal(preview(message(1, "dynamic_tool", { status: "failed", toolName: "t3_thread_send", input: "{}" })), null);
-  assert.equal(latestPreview({ visibleTurnItems: [{ item: message(1, "assistant_message", { text: "wrapped" }) }] }).text, "wrapped");
+  assert.equal(latestPreview({ visibleTurnItems: [{ item: message(1, "assistant_message", { text: "wrapped" }) }] })!.text, "wrapped");
 });
 
 test("previews reload only moved threads and never pass an older stamp off as a fresh notification body", async () => {
-  const calls = [];
+  const calls: string[] = [];
   let failing = false;
   const previews = createThreadPreviews({
     nameFor: async () => () => null,

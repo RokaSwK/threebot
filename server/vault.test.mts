@@ -4,8 +4,11 @@ import { mkdtemp, mkdir, readFile, writeFile, stat, rm } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { createVault, matchesSite, siteDomain, redact, loadOrCreateKey, encrypt } from "./vault.mts";
-import { createBotTools, handleMcpHttp, TOOLS } from "./vault-mcp.mts";
+import { createBotTools, handleMcpHttp, TOOLS, type BotToolsDeps, type BrowserTab, type ToolResult } from "./vault-mcp.mts";
+
+type TempVault = Awaited<ReturnType<typeof tempVault>>;
 
 const PASSWORD = "hunter2-Sup3r$ecret";
 
@@ -45,14 +48,14 @@ test("vault encrypts at rest and round-trips", async () => {
     assert.equal(list.length, 2);
     assert.ok(!JSON.stringify(list).includes(PASSWORD), "list never includes passwords");
     const full = await again.get(login.id, { reveal: true });
-    assert.equal(full.password, PASSWORD);
-    assert.equal((await again.get(login.id)).password, undefined);
+    assert.equal(full!.password, PASSWORD);
+    assert.equal((await again.get(login.id))!.password, undefined);
 
     // Update keeps the password unless it's given.
     await again.update(login.id, { hints: "Personal" });
-    assert.equal((await again.get(login.id, { reveal: true })).password, PASSWORD);
+    assert.equal((await again.get(login.id, { reveal: true }))!.password, PASSWORD);
     await again.update(login.id, { password: "new-pass" });
-    assert.equal((await again.get(login.id, { reveal: true })).password, "new-pass");
+    assert.equal((await again.get(login.id, { reveal: true }))!.password, "new-pass");
 
     // Export (the "edit as a file" path) has the Chrome header and the password.
     const csv = await again.exportCsv("login");
@@ -77,7 +80,7 @@ test("vault refuses a wrong key or a tampered file without overwriting it", asyn
     await assert.rejects(() => createVault({ file: t.file, keyFile: otherKey }).list(), /key file is missing/);
     await writeFile(otherKey, Buffer.alloc(32, 7));
     const wrong = createVault({ file: t.file, keyFile: otherKey });
-    await assert.rejects(() => wrong.list(), (e) => /decrypt/.test(e.message) && !e.message.includes(PASSWORD));
+    await assert.rejects(() => wrong.list(), (e: Error) => /decrypt/.test(e.message) && !e.message.includes(PASSWORD));
     await assert.rejects(() => wrong.create({ type: "login", website: "x.com" }));
     assert.equal(await readFile(t.file, "utf8"), before, "file untouched");
 
@@ -132,8 +135,8 @@ test("domain matching allows subdomains and refuses lookalikes", () => {
   assert.ok(!matchesSite("https://google.com/", ""));
 });
 
-function fakeDeps(t, tabs) {
-  const typed = [];
+function fakeDeps(t: TempVault, tabs: BrowserTab[]) {
+  const typed: Parameters<BotToolsDeps["typeIntoTab"]>[0][] = [];
   const tools = createBotTools({
     vault: t.vault,
     findBotByThread: async (id) => (id === "thread-1" ? { slug: "scout", name: "Scout", mainThreadId: "thread-1" } : null),
@@ -145,7 +148,7 @@ function fakeDeps(t, tabs) {
   return { tools, typed };
 }
 
-const textOf = (result) => result.content.map((c) => c.text).join("\n");
+const textOf = (result: ToolResult) => result.content.map((c) => c.text).join("\n");
 
 test("MCP tools/list and vault_list never expose passwords", async () => {
   const t = await tempVault();
@@ -155,25 +158,27 @@ test("MCP tools/list and vault_list never expose passwords", async () => {
     const { tools } = fakeDeps(t, []);
 
     const init = await tools.handleRpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } } });
-    assert.equal(init.result.protocolVersion, "2025-06-18");
-    assert.ok(init.result.capabilities.tools);
+    const initResult = init!.result as { protocolVersion: string; capabilities: { tools?: unknown } };
+    assert.equal(initResult.protocolVersion, "2025-06-18");
+    assert.ok(initResult.capabilities.tools);
     assert.equal(await tools.handleRpc({ jsonrpc: "2.0", method: "notifications/initialized" }), null);
 
     const list = await tools.handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-    assert.deepEqual(list.result.tools.map((x) => x.name).sort(), ["vault_fill_password", "vault_fill_username", "vault_list", "vault_save_contact", "vault_save_login", "vault_secret_file"]);
-    for (const tool of list.result.tools) assert.equal(tool.inputSchema.type, "object");
+    const listed = (list!.result as { tools: { name: string; inputSchema: { type: string } }[] }).tools;
+    assert.deepEqual(listed.map((x) => x.name).sort(), ["vault_fill_password", "vault_fill_username", "vault_list", "vault_save_contact", "vault_save_login", "vault_secret_file"]);
+    for (const tool of listed) assert.equal(tool.inputSchema.type, "object");
 
     const res = await tools.handleRpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "vault_list", arguments: {} } });
-    const text = textOf(res.result);
+    const text = textOf(res!.result as ToolResult);
     assert.ok(!text.includes(PASSWORD));
     assert.ok(!/"password"/.test(text));
     const parsed = JSON.parse(text);
     assert.equal(parsed.items.length, 2);
-    assert.equal(parsed.items.find((i) => i.type === "login").username, "octo");
-    assert.equal(parsed.items.find((i) => i.type === "contact").email, "ada@example.com");
+    assert.equal(parsed.items.find((i: { type: string }) => i.type === "login").username, "octo");
+    assert.equal(parsed.items.find((i: { type: string }) => i.type === "contact").email, "ada@example.com");
 
     const missing = await tools.handleRpc({ jsonrpc: "2.0", id: 4, method: "nope" });
-    assert.equal(missing.error.code, -32601);
+    assert.equal(missing!.error!.code, -32601);
   } finally {
     await t.cleanup();
   }
@@ -231,8 +236,8 @@ test("vault_save_login moves a request_secret file into the Vault", async () => 
     assert.equal(out.saved, true);
     assert.equal(out.apiToken, true);
     const item = await t.vault.get(out.loginId, { reveal: true });
-    assert.equal(item.password, PASSWORD, "trailing newline dropped");
-    assert.equal(item.botCanRead, true);
+    assert.equal(item!.password, PASSWORD, "trailing newline dropped");
+    assert.equal(item!.botCanRead, true);
     await assert.rejects(() => stat(file), "T3's copy is deleted");
 
     // Same site and username updates instead of duplicating; title and hints stay unless given.
@@ -241,9 +246,9 @@ test("vault_save_login moves a request_secret file into the Vault", async () => 
     assert.equal(again.loginId, out.loginId);
     assert.equal(again.updated, true);
     const updated = await t.vault.get(out.loginId, { reveal: true });
-    assert.equal(updated.password, "rotated");
-    assert.equal(updated.title, "Home Assistant token");
-    assert.equal(updated.hints, "REST API");
+    assert.equal(updated!.password, "rotated");
+    assert.equal(updated!.title, "Home Assistant token");
+    assert.equal(updated!.hints, "REST API");
     assert.equal((await t.vault.list()).length, 1);
 
     // Only files in T3's secrets folder.
@@ -277,8 +282,8 @@ test("vault_secret_file hands out API tokens only", async () => {
     assert.match(textOf(refused), /vault_fill_password/);
 
     const list = JSON.parse(textOf(await tools.callTool("vault_list", {})));
-    assert.equal(list.items.find((i) => i.id === token.id).apiToken, true);
-    assert.equal(list.items.find((i) => i.id === site.id).apiToken, false);
+    assert.equal(list.items.find((i: { id: string }) => i.id === token.id).apiToken, true);
+    assert.equal(list.items.find((i: { id: string }) => i.id === site.id).apiToken, false);
   } finally {
     await t.cleanup();
   }
@@ -290,9 +295,9 @@ test("vault_save_contact saves contact fields", async () => {
     const { tools } = fakeDeps(t, []);
     const out = JSON.parse(textOf(await tools.callTool("vault_save_contact", { name: "Ada", email: "ada@example.com", city: "Madrid", kind: "home", password: "nope", threadId: "thread-1" })));
     const c = await t.vault.get(out.contactId);
-    assert.equal(c.type, "contact");
-    assert.equal(c.city, "Madrid");
-    assert.equal(c.password, undefined);
+    assert.equal(c!.type, "contact");
+    assert.equal(c!.city, "Madrid");
+    assert.equal(c!.password, undefined);
     assert.equal((await tools.callTool("vault_save_contact", { label: "Empty", threadId: "thread-1" })).isError, true);
   } finally {
     await t.cleanup();
@@ -302,15 +307,15 @@ test("vault_save_contact saves contact fields", async () => {
 test("MCP over HTTP needs the bearer, refuses tunnel traffic and GET", async () => {
   const t = await tempVault();
   const { tools } = fakeDeps(t, []);
-  const readBody = async (req) => {
+  const readBody = async (req: http.IncomingMessage) => {
     const chunks = [];
     for await (const c of req) chunks.push(c);
     return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
   };
   const server = http.createServer((req, res) => handleMcpHttp(req, res, { tools, token: "secret-token", readBody }));
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const url = `http://127.0.0.1:${server.address().port}/mcp/bot`;
-  const post = (body, headers = {}) => fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify(body) });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp/bot`;
+  const post = (body: unknown, headers: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify(body) });
   try {
     assert.equal((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" })).status, 401);
     assert.equal((await post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: "Bearer wrong" })).status, 401);
@@ -342,8 +347,8 @@ test("repeated values persist, mirror primary fields and fill only explicitly sa
     assert.equal(login.website, "https://example.invalid");
     assert.equal(login.password, undefined);
     const fresh = createVault({ file: t.file, keyFile: t.keyFile });
-    assert.deepEqual((await fresh.get(login.id)).websites, login.websites);
-    for (const [url,allowed] of [["https://sub.login.other.invalid/signin",true],["https://login.other.invalid.evil.test",false],["http://login.other.invalid",false],["https://other.invalid",false]]) {
+    assert.deepEqual((await fresh.get(login.id))!.websites, login.websites);
+    for (const [url,allowed] of [["https://sub.login.other.invalid/signin",true],["https://login.other.invalid.evil.test",false],["http://login.other.invalid",false],["https://other.invalid",false]] as [string, boolean][]) {
       const deps = fakeDeps(t, [{ tabId: "sample", url }]);
       const result = await deps.tools.callTool("vault_fill_password", { loginId: login.id, threadId: "thread-1" });
       assert.equal(deps.typed.length, allowed ? 1 : 0, url);
@@ -351,7 +356,7 @@ test("repeated values persist, mirror primary fields and fill only explicitly sa
       assert.ok(!textOf(result).includes(PASSWORD));
     }
     await t.vault.saveLogin({ website: "https://login.other.invalid", username: "sample", password: "synthetic-new-value" });
-    assert.deepEqual((await t.vault.get(login.id)).websites, login.websites, "updating a secret preserves secondary sites");
+    assert.deepEqual((await t.vault.get(login.id))!.websites, login.websites, "updating a secret preserves secondary sites");
     await t.vault.update(login.id, { websites: ["example.invalid"] });
     const removed = fakeDeps(t, [{ tabId: "sample", url: "https://login.other.invalid" }]);
     assert.equal((await removed.tools.callTool("vault_fill_password", { loginId: login.id, threadId: "thread-1" })).isError, true);
@@ -359,18 +364,18 @@ test("repeated values persist, mirror primary fields and fill only explicitly sa
     const tools = fakeDeps(t, []).tools;
     const toolContact = JSON.parse(textOf(await tools.callTool("vault_save_contact", { threadId: "thread-1", emails: ["primary@example.invalid", "other@example.invalid"], phones: ["+15555550101", "+15555550102"] })));
     const contact = await t.vault.get(toolContact.contactId);
-    assert.deepEqual(contact.emails, ["primary@example.invalid", "other@example.invalid"]);
-    assert.equal(contact.email, "primary@example.invalid");
-    await t.vault.update(contact.id, { emails: ["other@example.invalid", "primary@example.invalid"], phones: ["+15555550102"] });
-    const saved = await t.vault.get(contact.id);
-    assert.equal(saved.email, "other@example.invalid");
-    assert.equal(saved.phone, "+15555550102");
-    await t.vault.update(contact.id, { email: "legacy@example.invalid" });
-    assert.deepEqual((await t.vault.get(contact.id)).emails, ["legacy@example.invalid", "primary@example.invalid"], "legacy scalar edits preserve secondary values");
+    assert.deepEqual(contact!.emails, ["primary@example.invalid", "other@example.invalid"]);
+    assert.equal(contact!.email, "primary@example.invalid");
+    await t.vault.update(contact!.id, { emails: ["other@example.invalid", "primary@example.invalid"], phones: ["+15555550102"] });
+    const saved = await t.vault.get(contact!.id);
+    assert.equal(saved!.email, "other@example.invalid");
+    assert.equal(saved!.phone, "+15555550102");
+    await t.vault.update(contact!.id, { email: "legacy@example.invalid" });
+    assert.deepEqual((await t.vault.get(contact!.id))!.emails, ["legacy@example.invalid", "primary@example.invalid"], "legacy scalar edits preserve secondary values");
     for (const websites of ["example.invalid", [null], Array(21).fill("example.invalid"), [{ secret: "never echo this" }]]) {
-      await assert.rejects(t.vault.update(login.id, { websites }), error => error.status === 400 && !error.message.includes("never echo"));
+      await assert.rejects(t.vault.update(login.id, { websites }), (error: Error & { status?: number }) => error.status === 400 && !error.message.includes("never echo"));
     }
-    assert.equal((await t.vault.get(login.id)).website, "https://example.invalid");
+    assert.equal((await t.vault.get(login.id))!.website, "https://example.invalid");
   } finally { await t.cleanup(); }
 });
 
@@ -381,8 +386,8 @@ test("legacy encrypted records need no migration and repeated CSV exports retain
     await writeFile(t.file, JSON.stringify(encrypt(key, { items: [{id:"old",type:"login",title:"Old",website:"https://old.invalid",password:PASSWORD}] })));
     const legacy = createVault({ file: t.file, keyFile: t.keyFile });
     const old = await legacy.get("old");
-    assert.equal(old.website, "https://old.invalid");
-    assert.equal(old.password, undefined);
+    assert.equal(old!.website, "https://old.invalid");
+    assert.equal(old!.password, undefined);
     await legacy.update("old", { websites: ["old.invalid", "other.invalid"] });
     const csv = await legacy.exportCsv();
     assert.match(csv, /^name,url,username,password,note,websites/);

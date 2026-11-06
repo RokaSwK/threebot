@@ -1,26 +1,35 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
+import type { CloudExecutorProfile, ExecutorConfiguration, ExecutorProfile, SelfHostedExecutorProfile } from './executor-config.mts';
 import { checkExecutor, ExecutorProbeError, probeExecutorMcp } from './executor-probe.mts';
+
+interface FixtureOptions {
+  failAt?: string; fault?: string; linked?: boolean; httpAuthFailure?: boolean; cleanupStatus?: number; notificationStatus?: number;
+  authStatus?: number; version?: string; noSearch?: boolean; session?: boolean; sessionId?: string; sse?: boolean; batch?: boolean;
+}
+// The JSON-RPC body exactly as the probe sent it.
+interface RecordedRequest { path: string; method: string | undefined; headers: http.IncomingHttpHeaders; body: any }
 
 const TOKEN = 'fake-private-probe-token';
 const SESSION = 'probe-own-session';
 const CLI = new URL('../scripts/executor-check.mts', import.meta.url).pathname;
-const json = (res, value, status = 200, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(value)); };
+const json = (res: http.ServerResponse, value: unknown, status = 200, headers: http.OutgoingHttpHeaders = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(value)); };
 
-async function fixture(t, options = {}) {
-  const state = { requests: [], closed: [], searched: 0, failAt: options.failAt, fault: options.fault };
+async function fixture(t: TestContext, options: FixtureOptions = {}) {
+  const state: { requests: RecordedRequest[]; closed: string[]; searched: number; failAt?: string; fault?: string } = { requests: [], closed: [], searched: 0, failAt: options.failAt, fault: options.fault };
   const server = http.createServer(async (req, res) => {
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     const text = Buffer.concat(chunks).toString();
     const body = text ? JSON.parse(text) : null;
-    const url = new URL(req.url, 'http://fixture.invalid');
+    const url = new URL(req.url!, 'http://fixture.invalid');
     // The probe never requests `/`; local tools can probe any newly opened port.
-    if (req.url !== '/') state.requests.push({ path: req.url, method: req.method, headers: req.headers, body });
+    if (req.url !== '/') state.requests.push({ path: req.url!, method: req.method, headers: req.headers, body });
     if (!url.pathname.endsWith('/mcp')) {
       if (options.httpAuthFailure) return json(res, { error: TOKEN }, 401);
       const root = '/api/organizations/workspace';
@@ -64,15 +73,17 @@ async function fixture(t, options = {}) {
     if (options.batch) return json(res, [{ jsonrpc: '2.0', method: 'notifications/message', params: {} }, message], 200, headers);
     json(res, message, 200, headers);
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const origin = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
-  const profile = { kind: 'cloud', organization: 'workspace', apiUrl: origin, publicUrl: origin, mcpUrl: `${origin}/org/workspace/mcp?elicitation_mode=model`, credential: { source: 'environment', value: TOKEN } };
-  return { state, origin, profile, configuration: { active: 'cloud', profile, profiles: { cloud: profile, 'self-hosted': { apiUrl: 'http://127.0.0.1:1' } } } };
+  const profile: CloudExecutorProfile = { kind: 'cloud', organization: 'workspace', apiUrl: origin, publicUrl: origin, mcpUrl: `${origin}/org/workspace/mcp?elicitation_mode=model`, credential: { source: 'environment', value: TOKEN } };
+  // The unused backup is deliberately incomplete.
+  const configuration: ExecutorConfiguration = { active: 'cloud', profile, profiles: { cloud: profile, 'self-hosted': { apiUrl: 'http://127.0.0.1:1' } as SelfHostedExecutorProfile } };
+  return { state, origin, profile, configuration };
 }
 
-const sanitized = (value) => assert.doesNotMatch(JSON.stringify(value), /fake-private-probe-token|probe-own-session|Private app|Private account|private-fingerprint|serverInfo|description|redirectUri/);
-const rejects = async (operation, code) => assert.rejects(operation, (error) => { assert.ok(error instanceof ExecutorProbeError); if (code) assert.equal(error.code, code); sanitized(error.message); return true; });
+const sanitized = (value: unknown) => assert.doesNotMatch(JSON.stringify(value), /fake-private-probe-token|probe-own-session|Private app|Private account|private-fingerprint|serverInfo|description|redirectUri/);
+const rejects = async (operation: Promise<unknown>, code?: string) => assert.rejects(operation, (error) => { assert.ok(error instanceof ExecutorProbeError); if (code) assert.equal(error.code, code); sanitized(error.message); return true; });
 
 test('read-only HTTP and JSON MCP verification reports only counts, selected app state and fixed tool names', async (t) => {
   const { state, configuration } = await fixture(t, { linked: true });
@@ -165,13 +176,13 @@ test('cleanup405 is acceptable but an actual cleanup failure is not hidden', asy
 test('missing and unavailable credentials fail before any network request', async () => {
   let calls = 0; const network = async () => { calls++; throw Error(TOKEN); };
   await rejects(probeExecutorMcp(null, { fetch: network }), 'CREDENTIAL');
-  await rejects(checkExecutor({ active: 'cloud', profile: { kind: 'cloud', credential: null } }, { fetch: network }), 'CREDENTIAL');
-  await rejects(probeExecutorMcp({ credential: { source: 'file', path: '/missing/private/credential' } }, { fetch: network }), 'CREDENTIAL');
+  await rejects(checkExecutor({ active: 'cloud', profile: { kind: 'cloud', credential: null } } as ExecutorConfiguration, { fetch: network }), 'CREDENTIAL');
+  await rejects(probeExecutorMcp({ credential: { source: 'file', path: '/missing/private/credential' } } as ExecutorProfile, { fetch: network }), 'CREDENTIAL');
   assert.equal(calls, 0);
 });
 
-function cli(env, args = []) {
-  return new Promise((resolve) => execFile(process.execPath, [CLI, ...args], { env: { PATH: path.dirname(process.execPath), ...env }, timeout: 5000 }, (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr })));
+function cli(env: Record<string, string>, args: string[] = []) {
+  return new Promise<{ code: unknown; stdout: string; stderr: string }>((resolve) => execFile(process.execPath, [CLI, ...args], { env: { PATH: path.dirname(process.execPath), ...env }, timeout: 5000 }, (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr })));
 }
 
 test('CLI reads a private file, reports only selected-app counts and accepts no token arguments', async (t) => {

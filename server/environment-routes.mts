@@ -2,20 +2,27 @@
 // T3_ENVIRONMENTS_FILE: { "environment-id": { "baseUrl": "https://...", "tokenFile": "/private/..." } }
 import { readFile, lstat } from 'node:fs/promises';
 
-const failure = (message, status = 403) => Object.assign(new Error(message), { status });
-export function environmentPath(pathname) {
+/** Where a request goes, and the bearer it carries there. */
+export type EnvironmentTarget = { baseUrl: string; token: string };
+export type EnvironmentFetch = (url: string, init: RequestInit) => Promise<Response>;
+
+const failure = (message: string, status = 403) => Object.assign(new Error(message), { status });
+export function environmentPath(pathname: string): { environmentId: string | null; path: string } {
   const match = /^\/t3\/environments\/([a-zA-Z0-9_-]{1,128})(\/.*)$/.exec(pathname);
   if (pathname.startsWith('/t3/environments/') && !match) throw failure('Invalid environment route', 400);
   return match ? { environmentId: match[1], path: match[2] } : { environmentId: null, path: pathname.slice(3) };
 }
-async function privateFile(file) {
+async function privateFile(file: string): Promise<string> {
   const stat = await lstat(file);
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) throw failure('Environment credentials must be private files owned by the gateway user.');
   return readFile(file, 'utf8');
 }
-export function createEnvironmentRouter({ local, file, readPrivate = privateFile, fetcher = fetch }) {
-  return async (environmentId) => {
-    if (!environmentId) return local;
+export function createEnvironmentRouter<Local = EnvironmentTarget>({ local, file, readPrivate = privateFile, fetcher = fetch }: {
+  local?: Local; file?: string; readPrivate?: (file: string) => Promise<string>; fetcher?: EnvironmentFetch;
+})  {
+  return async (environmentId: string | null | undefined): Promise<Local | EnvironmentTarget> => {
+    // Callers that route local requests pass `local`; the others never ask for it.
+    if (!environmentId) return local as Local;
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(environmentId)) throw failure('Invalid environment', 400);
     if (!file) throw failure('This machine has no scoped gateway access. Configure a credential for this environment.');
     let routes;

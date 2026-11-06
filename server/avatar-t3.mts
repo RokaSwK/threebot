@@ -1,3 +1,5 @@
+import type { CharacterParts } from "./character.mts";
+
 // T3 Nightly world. Cloud silhouette and palette: ./t3-artwork/.
 // The engine keeps every face and shape-changing state; this skin dresses them in
 // the same night, so its rings, dots and ribbons belong to the sky and the folded
@@ -25,7 +27,8 @@ const JOY = { speed: 1.5, billow: 1.8, tide: -9, part: 8, light: 1.25, sparkle: 
 const SLEEP = { speed: 0.28, billow: 0.45, tide: 34, part: -14, light: 0.62, sparkle: 0.42, moon: 1 };
 const GLOOM = { speed: 0.7, billow: 0.7, tide: 12, part: -4, light: 0.74, sparkle: 0.5, storm: 0.5 };
 const STORM = { speed: 1.3, billow: 1.3, tide: 8, part: -3, light: 0.6, sparkle: 0.2, storm: 1 };
-const WEATHER = {
+type Weather = typeof CALM;
+const WEATHER: Record<string, Partial<Weather>> = {
   sleeping: SLEEP, drowsy: { ...SLEEP, tide: 20, speed: 0.4 }, "powering-down": { ...SLEEP, sparkle: 0.1, light: 0.5 },
   happy: JOY, playful: JOY, bouncing: JOY, laughing: JOY,
   excited: { ...JOY, shower: 1 }, celebrate: { ...JOY, shower: 1 }, proud: { ...JOY, aurora: 0.7, billow: 1.2 },
@@ -39,32 +42,40 @@ const WEATHER = {
   angry: { ...STORM, ember: 1 }, scared: STORM, alerting: { ...STORM, ember: 0.6 },
 };
 // Comet paths for the full-face busy states; folded states have the engine's glyphs.
-const ROUTES = { working: "sweep", searching: "sweep" };
+const ROUTES: Record<string, string | undefined> = { working: "sweep", searching: "sweep" };
 
-const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
-const lerp = (a, b, t) => a + (b - a) * t;
-const ease = t => t * t * (3 - 2 * t);
-const fract = n => n - Math.floor(n);
-const scatter = n => fract(Math.sin(n * 127.1) * 43758.5453);
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+const ease = (t: number) => t * t * (3 - 2 * t);
+const fract = (n: number) => n - Math.floor(n);
+const scatter = (n: number) => fract(Math.sin(n * 127.1) * 43758.5453);
 
-export function decorateT3Avatar(svg, { body, eyes }) {
+type Point = { x: number; y: number };
+type Attrs = Record<string, string | number>;
+// [offset, color, opacity]
+type Stop = [number, string, number?];
+type CloudName = keyof typeof PUFFS;
+interface Puff { el: SVGCircleElement; x: number; y: number; r: number; depth: number; phase: number; drift: number; ox: number; oy: number; vx: number; vy: number; dx: number; dy: number }
+
+export function decorateT3Avatar(svg: SVGSVGElement, { body, eyes }: CharacterParts) {
   const document = svg.ownerDocument;
   const defs = svg.querySelector("defs");
-  const clip = svg.querySelector("clipPath");
+  // The engine always draws its clip path first.
+  const clip = svg.querySelector("clipPath")!;
   const prefix = `${clip.id}-t3`;
-  const node = (tag, attrs, parent) => {
+  const node = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Attrs, parent?: Node | null): SVGElementTagNameMap[K] => {
     const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
     parent?.appendChild(el);
     return el;
   };
-  const gradient = (tag, name, attrs, stops) => {
+  const gradient = (tag: "radialGradient" | "linearGradient", name: string, attrs: Attrs, stops: Stop[]) => {
     const el = node(tag, { id: `${prefix}-${name}`, ...attrs }, defs);
     for (const [offset, color, opacity = 1] of stops) node("stop", { offset, "stop-color": color, "stop-opacity": opacity }, el);
     return `url(#${el.id})`;
   };
-  const radial = (name, attrs, stops) => gradient("radialGradient", name, attrs, stops);
-  const linear = (name, attrs, stops) => gradient("linearGradient", name, attrs, stops);
+  const radial = (name: string, attrs: Attrs, stops: Stop[]) => gradient("radialGradient", name, attrs, stops);
+  const linear = (name: string, attrs: Attrs, stops: Stop[]) => gradient("linearGradient", name, attrs, stops);
   const sky = linear("sky", { x1: "8%", y1: "0%", x2: "86%", y2: "100%" }, [[0, "#07152F"], [0.5, "#151443"], [1, "#32155B"]]);
   const skyLight = radial("sky-light", { cx: "68%", cy: "21%", r: "68%" }, [[0, "#5165D8", 0.42], [0.5, "#283075", 0.16], [1, "#111635", 0]]);
   const valleyLight = radial("valley-light", { cx: "54%", cy: "78%", r: "58%" }, [[0, "#a06df0", 0.5], [0.55, "#6646B6", 0.17], [1, "#352066", 0]]);
@@ -72,9 +83,9 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   // Banks are one soft mass: lobes lift gently at the crest and settle to a shared
   // base tone by mid-height, so they layer without reading as separate spheres.
   const CLOUD_BASE = { far: "#29296c", middle: "#413499", near: "#6048bf" };
-  const crest = (name, tip, mid) => linear(`crest-${name}`, { x1: 0, y1: 0, x2: 0, y2: 1 }, [[0, tip], [0.2, mid], [0.56, CLOUD_BASE[name]]]);
+  const crest = (name: CloudName, tip: string, mid: string) => linear(`crest-${name}`, { x1: 0, y1: 0, x2: 0, y2: 1 }, [[0, tip], [0.2, mid], [0.56, CLOUD_BASE[name]]]);
   const puffFills = { far: crest("far", "#36357f", "#2f2e76"), middle: crest("middle", "#5c4ec0", "#4c3faa"), near: crest("near", "#927ae5", "#7661d3") };
-  const auroraFills = [["#6d9bff", 0.62], ["#a578ff", 0.5], ["#d08cf7", 0.4]].map(([color, opacity], i) => linear(`aurora-${i}`, { gradientUnits: "userSpaceOnUse", x1: 0, y1: 0, x2: 0, y2: 112 }, [[0.1, color, 0], [0.7, color, opacity * 0.34], [1, color, opacity]]));
+  const auroraFills = ([["#6d9bff", 0.62], ["#a578ff", 0.5], ["#d08cf7", 0.4]] as const).map(([color, opacity], i) => linear(`aurora-${i}`, { gradientUnits: "userSpaceOnUse", x1: 0, y1: 0, x2: 0, y2: 112 }, [[0.1, color, 0], [0.7, color, opacity * 0.34], [1, color, opacity]]));
   const starHalo = radial("star-halo", {}, [[0, "#ffffff", 0.8], [0.18, "#d5ddff", 0.22], [1, "#b9c5ff", 0]]);
   const moonHalo = radial("moon-halo", {}, [[0.3, "#cfd6ff", 0.32], [1, "#8c8ef2", 0]]);
   const meteorTail = linear("meteor", { x1: "0%", x2: "100%", y1: "0%", y2: "0%" }, [[0, "#af9bff", 0], [0.65, "#c6cfff", 0.35], [1, "#ffffff", 0.95]]);
@@ -88,12 +99,12 @@ export function decorateT3Avatar(svg, { body, eyes }) {
 
   const planetGlow = radial("planet-glow", {}, [[0.34, "#a48cff", 0.5], [0.62, "#7a68e0", 0.14], [1, "#6a5cff", 0]]);
   const halo = node("circle", { "data-layer": "planet-glow", cx: CENTER, cy: CENTER, r: 58, fill: planetGlow, opacity: 0 });
-  body.parentNode.insertBefore(halo, body);
+  body.parentNode!.insertBefore(halo, body);
   body.setAttribute("fill", sky);
   body.removeAttribute("stroke");
   for (const eye of eyes) eye.setAttribute("fill", "#ffffff");
   const scene = node("g", { "data-avatar-skin": "t3", "clip-path": `url(#${clip.id})`, "pointer-events": "none" });
-  body.parentNode.insertBefore(scene, body.nextSibling);
+  body.parentNode!.insertBefore(scene, body.nextSibling);
   const full = { x: -20, y: -20, width: 270, height: 270 };
   const skyGlow = node("rect", { "data-layer": "sky-glow", ...full, fill: skyLight }, scene);
   const valleyGlow = node("rect", { "data-layer": "horizon-glow", ...full, fill: valleyLight }, scene);
@@ -139,20 +150,20 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   const drifterVolume = node("g", { transform: "scale(1.15) translate(-32 -18)" }, drifter);
   node("path", { d: CLOUD_FLOAT, fill: "#5550b4" }, drifterVolume);
 
-  const puffs = [];
-  const buildClouds = (name, depth) => {
+  const puffs: Puff[] = [];
+  const buildClouds = (name: CloudName, depth: number) => {
     const layer = node("g", { "data-layer": `clouds-${name}` }, scene);
     const list = PUFFS[name];
     // The mass keeps the valley solid while its puffs billow independently.
     const outline = [...list].sort((a, b) => a[0] - b[0]);
-    node("path", { "data-cloud-mass": name, d: `M-40 270L-40 ${outline[0][1]}${outline.map(([x, y]) => `L${x} ${y}`).join("")}L270 ${outline.at(-1)[1]}L270 270Z`, fill: CLOUD_BASE[name] }, layer);
+    node("path", { "data-cloud-mass": name, d: `M-40 270L-40 ${outline[0][1]}${outline.map(([x, y]) => `L${x} ${y}`).join("")}L270 ${outline.at(-1)![1]}L270 270Z`, fill: CLOUD_BASE[name] }, layer);
     list.forEach(([x, y, r], i) => {
       const el = node("circle", { "data-puff": `${name}-${i}`, r, fill: puffFills[name] }, layer);
       puffs.push({ el, x, y, r, depth, phase: x * 0.036 + depth * 2.1, drift: scatter(i + depth * 13) * 6.28, ox: 0, oy: 0, vx: 0, vy: 0, dx: x, dy: y });
     });
     return { layer, depth };
   };
-  const skies = [["far", 0.3], ["middle", 0.6]].map(([name, depth]) => buildClouds(name, depth));
+  const skies = ([["far", 0.3], ["middle", 0.6]] as const).map(([name, depth]) => buildClouds(name, depth));
 
   const lightning = node("g", { "data-layer": "lightning", opacity: 0 }, scene);
   node("rect", { ...full, fill: flashFill }, lightning);
@@ -181,28 +192,29 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   let time = 0;
   let stateTime = 0;
   let state = "idle";
-  let route = ROUTES.idle;
+  let route: string | null | undefined = ROUTES.idle;
   let target = { ...CALM };
   let motion = { ...CALM };
-  let pointer = null;
+  let pointer: Point | null = null;
   let gaze = { x: 0, y: 0 };
-  let rect = null;
+  let rect: DOMRect | null = null;
   let rectAge = 1;
   let detailed = true;
   let compact = false;
   let scenic = true;
   let frozen = false;
-  let bodyPath = null;
+  let bodyPath: string | null = null;
   let fold = 0;
   let strikeAt = 1.2;
   let strike = 0;
   let cometAlpha = 0;
   const comet = { x: 118, y: 240 };
-  const history = [];
+  const history: string[] = [];
 
-  const toScene = (px, py) => [CENTER + ((px - rect.left) / rect.width - 0.5) * VIEW_HALF * 2, CENTER + ((py - rect.top) / rect.height - 0.5) * VIEW_HALF * 2];
-  const curtainPath = ({ hem, phase, pace }) => {
-    const points = [];
+  // Only called once a measured rect is in hand.
+  const toScene = (px: number, py: number) => [CENTER + ((px - rect!.left) / rect!.width - 0.5) * VIEW_HALF * 2, CENTER + ((py - rect!.top) / rect!.height - 0.5) * VIEW_HALF * 2];
+  const curtainPath = ({ hem, phase, pace }: { hem: number; phase: number; pace: number }) => {
+    const points: [number, number][] = [];
     for (let x = -24; x <= 252; x += 34.5) points.push([x, hem + Math.sin(x * 0.021 + time * pace + phase) * 15 + Math.sin(x * 0.053 - time * pace * 1.6 + phase * 2) * 6]);
     let d = `M-24 -24L${points[0][0]} ${points[0][1].toFixed(1)}`;
     for (let i = 1; i < points.length; i++) {
@@ -248,7 +260,7 @@ export function decorateT3Avatar(svg, { body, eyes }) {
     drifter.setAttribute("transform", `translate(${(drift + gaze.x * 6).toFixed(2)} ${(68 + motion.tide * 0.2 + Math.sin(time * 0.3) * 1.5 + gaze.y * 4).toFixed(2)})`);
   };
 
-  const paintClouds = dt => {
+  const paintClouds = (dt: number) => {
     for (const { layer, depth } of skies) layer.setAttribute("transform", `translate(${(gaze.x * depth * 11).toFixed(2)} ${(gaze.y * depth * 7 + motion.tide * depth).toFixed(2)})`);
     const wake = pointer && rect?.width ? toScene(pointer.x, pointer.y) : null;
     for (const puff of puffs) {
@@ -287,7 +299,7 @@ export function decorateT3Avatar(svg, { body, eyes }) {
     for (const curtain of curtains) curtain.el.setAttribute("d", curtainPath(curtain));
   };
 
-  const paintComet = dt => {
+  const paintComet = (dt: number) => {
     const [x, y, want] = routePoint();
     const away = route === "launch" || route === "land";
     cometAlpha += ((frozen ? 0 : want) - cometAlpha) * (dt ? 1 - Math.exp(-dt * (away ? 22 : 6)) : 1);
@@ -329,7 +341,8 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   };
 
   const paintRim = () => {
-    const path = body.getAttribute("d");
+    // The engine paints the body path before the skin is attached.
+    const path = body.getAttribute("d")!;
     if (path !== bodyPath) { bodyPath = path; for (const el of [...rimStrokes, statusArc]) el.setAttribute("d", path); }
     // Small avatars can't show the sky's storm, so their rim glows red for it instead.
     const alarm = compact && motion.ember > 0.3;
@@ -338,7 +351,7 @@ export function decorateT3Avatar(svg, { body, eyes }) {
     halo.setAttribute("opacity", (fold * (0.82 + 0.18 * Math.sin(stateTime * 2.2))).toFixed(3));
   };
 
-  const paint = dt => {
+  const paint = (dt: number) => {
     paintSky();
     paintClouds(dt);
     paintAurora();
@@ -349,11 +362,11 @@ export function decorateT3Avatar(svg, { body, eyes }) {
   paint(0);
 
   return {
-    step(seconds) {
+    step(seconds: number) {
       if (frozen) return;
       const dt = clamp(seconds, 0, 0.1);
       const blend = 1 - Math.exp(-dt * 2.6);
-      for (const key of Object.keys(motion)) motion[key] += (target[key] - motion[key]) * blend;
+      for (const key of Object.keys(motion) as (keyof Weather)[]) motion[key] += (target[key] - motion[key]) * blend;
       time += dt * motion.speed;
       stateTime += dt;
       rectAge += dt;
@@ -371,24 +384,24 @@ export function decorateT3Avatar(svg, { body, eyes }) {
       for (const puff of puffs) puff.ox = puff.oy = puff.vx = puff.vy = 0;
       paint(0);
     },
-    setState(next) {
+    setState(next: string) {
       if (state !== next) { stateTime = 0; strikeAt = 1.2; strike = -9; }
       state = next; route = ROUTES[next] ?? null; target = { ...CALM, ...WEATHER[next] };
     },
-    setGazeTarget(point) { pointer = point; },
+    setGazeTarget(point: Point | null) { pointer = point; },
     // 0 is the full face, 1 the engine's folded overlay body.
-    setFold(amount) { fold = clamp(amount, 0, 1); },
+    setFold(amount: number) { fold = clamp(amount, 0, 1); },
     // The bot watches its comet unless a real pointer is around.
-    eyeTarget() {
+    eyeTarget(): Point | null {
       if (pointer) return pointer;
       if (cometAlpha < 0.4 || !rect?.width) return null;
       return { x: rect.left + ((comet.x - CENTER) / (VIEW_HALF * 2) + 0.5) * rect.width, y: rect.top + ((comet.y - CENTER) / (VIEW_HALF * 2) + 0.5) * rect.height };
     },
-    setSize(size) {
+    setSize(size: number) {
       detailed = size >= 64; compact = size < 64; rectAge = 1;
       scenic = size >= 40;
       meteorLayer.setAttribute("display", detailed ? "inline" : "none");
-      scene.querySelector('[data-layer="clouds-far"]').setAttribute("display", scenic ? "inline" : "none");
+      scene.querySelector('[data-layer="clouds-far"]')!.setAttribute("display", scenic ? "inline" : "none");
       drifter.setAttribute("display", scenic ? "inline" : "none");
     },
   };

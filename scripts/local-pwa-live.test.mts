@@ -4,6 +4,7 @@ import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
 import http from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,7 +15,7 @@ const webRequire = createRequire(new URL('../web/package.json', import.meta.url)
 const { WebSocket, WebSocketServer } = require('ws');
 const web = fileURLToPath(new URL('../web/', import.meta.url));
 const TOKEN = 'fixture.private.signature';
-let root, buildDir;
+let root: string, buildDir: string;
 before(async () => {
   root = await realpath(await mkdtemp(path.join(tmpdir(), 'bot-local-live-')));
   buildDir = path.join(root, 'built');
@@ -23,9 +24,14 @@ before(async () => {
 });
 after(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
+// What the fake gateway saw of each request or upgrade.
+type Captured = { url: string | undefined; headers: http.IncomingHttpHeaders };
+// `ws` comes from server/node_modules through require, untyped; this is the part of a socket used here.
+type FakeWs = { send(data: unknown): void; on(event: 'message', listener: (message: Buffer) => void): void };
+
 async function upstream() {
   let expected = TOKEN;
-  const requests = [], upgrades = [], sockets = new Set();
+  const requests: Captured[] = [], upgrades: Captured[] = [], sockets = new Set<Socket>();
   const server = http.createServer(async (request, response) => {
     // T3 Code probes / on every new local port; the proxy always sends the Access assertion.
     if (request.url !== '/' || request.headers['cf-access-jwt-assertion']) requests.push({ url: request.url, headers: { ...request.headers } });
@@ -44,18 +50,18 @@ async function upstream() {
   });
   server.on('connection', (socket) => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
   const wss = new WebSocketServer({ noServer: true });
-  wss.on('headers', (headers) => { headers.push(`Cf-Access-Jwt-Assertion: ${expected}`, 'Set-Cookie: CF_Authorization=must-not-reach-browser'); });
+  wss.on('headers', (headers: string[]) => { headers.push(`Cf-Access-Jwt-Assertion: ${expected}`, 'Set-Cookie: CF_Authorization=must-not-reach-browser'); });
   server.on('upgrade', (request, socket, head) => {
     upgrades.push({ url: request.url, headers: { ...request.headers } });
     if (request.headers['cf-access-jwt-assertion'] !== expected) { socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n'); return; }
-    wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.handleUpgrade(request, socket, head, (ws: FakeWs) => {
       ws.send(JSON.stringify({ ready: true }));
       ws.on('message', (message) => ws.send(message));
     });
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  return { origin: `http://127.0.0.1:${server.address().port}`, requests, upgrades,
-    setToken(value) { expected = value; },
+  return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, requests, upgrades,
+    setToken(value: string) { expected = value; },
     async close() { for (const client of wss.clients) client.terminate(); for (const socket of sockets) socket.destroy(); await new Promise((resolve) => server.close(resolve)); wss.close(); },
   };
 }
@@ -101,7 +107,7 @@ test('both actual local frontends proxy HTTP and WebSockets with private server-
       const beforeDiagnostics = remote.requests.length;
       const diagnostics = await fetch(origin + '/api/__local_pwa_diagnostics', { headers: { 'Cf-Access-Jwt-Assertion': 'browser-spoof', Cookie: 'private-local-cookie', Authorization: 'private-local-bearer' } });
       assert.equal(diagnostics.status, 200);
-      assert.match(diagnostics.headers.get('content-type'), /^text\/html/);
+      assert.match(diagnostics.headers.get('content-type')!, /^text\/html/);
       assert.equal(diagnostics.headers.get('cache-control'), 'no-store');
       assert.equal(diagnostics.headers.get('cf-access-jwt-assertion'), null);
       assert.equal(diagnostics.headers.get('set-cookie'), null);
@@ -115,17 +121,17 @@ test('both actual local frontends proxy HTTP and WebSockets with private server-
       assert.equal(response.headers.get('cf-access-jwt-assertion'), null);
       assert.equal(response.headers.get('set-cookie'), null);
       assert.deepEqual(await response.json(), { ok: true, body: '{"operation":"generic-test"}', cookie: null, authorization: null });
-      const outgoing = remote.requests.at(-1);
+      const outgoing = remote.requests.at(-1)!;
       assert.equal(outgoing.headers['cf-access-jwt-assertion'], TOKEN);
       const client = new WebSocket(origin.replace(/^http/, 'ws') + '/t3/ws', { headers: { 'Cf-Access-Jwt-Assertion': 'browser-spoof', Cookie: 'local-cookie=private', Authorization: 'local-bearer' } });
-      let handshake;
-      client.once('upgrade', (response) => { handshake = response.headers; });
+      let handshake!: http.IncomingHttpHeaders;
+      client.once('upgrade', (response: http.IncomingMessage) => { handshake = response.headers; });
       try {
         const [ready] = await once(client, 'message');
         assert.deepEqual(JSON.parse(ready), { ready: true });
         assert.equal(handshake['cf-access-jwt-assertion'], undefined);
         assert.equal(handshake['set-cookie'], undefined);
-        const outgoing = remote.upgrades.at(-1);
+        const outgoing = remote.upgrades.at(-1)!;
         assert.equal(outgoing.headers['cf-access-jwt-assertion'], TOKEN);
         assert.equal(outgoing.headers.cookie, undefined);
         assert.equal(outgoing.headers.authorization, undefined);
@@ -138,7 +144,7 @@ test('both actual local frontends proxy HTTP and WebSockets with private server-
     const module = await (await fetch(loop.hmrUrl + '/src/App.tsx')).text();
     assert.match(module, /import\.meta\.hot/);
     assert.doesNotMatch(module, /fixture\.private\.signature/);
-    const dependencyPath = module.match(/from "([^"]+\/react\.js\?[^"]+)"/)[1];
+    const dependencyPath = module.match(/from "([^"]+\/react\.js\?[^"]+)"/)![1];
     const dependency = await fetch(loop.hmrUrl + dependencyPath);
     assert.equal(dependency.status, 200);
     assert.match(await dependency.text(), /export/);
@@ -153,7 +159,7 @@ test('both actual local frontends proxy HTTP and WebSockets with private server-
     const replacement = 'replacement.private.signature';
     await writeFile(tokenFile, replacement); remote.setToken(replacement);
     assert.deepEqual(await (await fetch(loop.pwaUrl + '/api/session')).json(), { authenticated: true });
-    assert.equal(remote.requests.at(-1).headers['cf-access-jwt-assertion'], replacement);
+    assert.equal(remote.requests.at(-1)!.headers['cf-access-jwt-assertion'], replacement);
     const retained = new WebSocket(loop.pwaUrl.replace(/^http/, 'ws') + '/t3/ws');
     await once(retained, 'message');
     const retainedClosed = once(retained, 'close');
@@ -181,7 +187,7 @@ test('occupied frontend port is preserved and the other owned listener is cleane
   const tokenFile = await credentials('owner.token');
   const owner = http.createServer((_req, response) => response.end('existing owner'));
   owner.listen(0, '127.0.0.1'); await once(owner, 'listening');
-  const pwaPort = owner.address().port;
+  const pwaPort = (owner.address() as AddressInfo).port;
   try {
     await assert.rejects(startLivePwaDev({ gateway: remote.origin, tokenFile, buildDir, hmrPort: 0, pwaPort }), /already in use/);
     assert.equal(await (await fetch(`http://127.0.0.1:${pwaPort}`)).text(), 'existing owner');

@@ -2,7 +2,7 @@
 // version, a `current` link the service runs, and the version before it kept for a rollback.
 // Releases are GitHub release assets checked against the release's SHA256SUMS.
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
@@ -12,8 +12,33 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const REPO = "RokaSwK/threebot";
 
+export type Channel = "stable" | "preview";
+type Reply<Body> = ({ ok: true; status: number } & Body) | { ok: false; status: number };
+/** The parts of `fetch` this file uses, so a mirror or a test can stand in for it. */
+export type FetchJson = (url: string, init?: RequestInit) => Promise<Reply<{ json(): Promise<unknown> }>>;
+export type FetchBytes = (url: string, init?: RequestInit) => Promise<Reply<{ arrayBuffer(): Promise<ArrayBuffer> }>>;
+/** The fields of a GitHub release (from the releases API) this file reads. */
+interface GitHubRelease {
+  tag_name: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  body?: string | null;
+  html_url?: string | null;
+  published_at?: string | null;
+  assets?: { name: string; browser_download_url: string }[];
+}
+/** A release found by findRelease: its version, download links and what GitHub says about it. */
+export interface Release {
+  version: string;
+  archive: string;
+  sums: string;
+  notes: string;
+  url: string;
+  publishedAt: string | null;
+}
+
 export const packageRoot = path.resolve(here, "..");
-export function currentVersion(root = packageRoot) {
+export function currentVersion(root: string = packageRoot): string {
   // server/package.json carries the same version (pack-release writes both), for when only server/ is readable.
   for (const file of [path.join(root, "package.json"), path.join(root, "server", "package.json")]) {
     try { const version = JSON.parse(readFileSync(file, "utf8")).version; if (version) return version; } catch {}
@@ -24,20 +49,20 @@ export function currentVersion(root = packageRoot) {
 export function homeDir(env = process.env) {
   return env.THREEBOT_HOME || path.join(homedir(), ".threebot");
 }
-export function runtimePaths(home = homeDir()) {
+export function runtimePaths(home: string = homeDir()) {
   const runtime = path.join(home, "runtime");
   return { home, runtime, versions: path.join(runtime, "versions"), current: path.join(runtime, "current"), previous: path.join(runtime, "previous") };
 }
 
 /** True when this copy runs from an installed runtime, so it can update itself. */
-export function installedRuntime(root = packageRoot, home = homeDir()) {
+export function installedRuntime(root: string = packageRoot, home: string = homeDir()): boolean {
   // Compare real paths: Node resolves the running file's links (/tmp is /private/tmp on macOS).
-  const real = (p) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
+  const real = (p: string) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
   return path.dirname(real(root)) === real(runtimePaths(home).versions);
 }
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
-export function compareVersions(a, b) {
+export function compareVersions(a: string, b: string): number {
   const x = SEMVER.exec(String(a).replace(/^v/, "")), y = SEMVER.exec(String(b).replace(/^v/, ""));
   if (!x || !y) throw new Error(`Not a version: ${!x ? a : b}`);
   for (let i = 1; i <= 3; i++) if (Number(x[i]) !== Number(y[i])) return Number(x[i]) - Number(y[i]);
@@ -46,30 +71,30 @@ export function compareVersions(a, b) {
   return x[4].localeCompare(y[4], "en", { numeric: true });
 }
 
-export const assetName = (version) => `threebot-${version}.tar.gz`;
+export const assetName = (version: string) => `threebot-${version}.tar.gz`;
 
 /**
  * The release to install: the newest stable one, or an exact version. THREEBOT_RELEASES_URL points
  * at a GitHub-API-shaped list (for mirrors and tests); THREEBOT_RELEASE_BASE_URL swaps the download host.
  */
-export async function findRelease({ version, channel = "stable", env = process.env, fetchImpl = fetch } = {}) {
+export async function findRelease({ version, channel = "stable", env = process.env, fetchImpl = fetch }: { version?: string; channel?: Channel; env?: NodeJS.ProcessEnv; fetchImpl?: FetchJson } = {}): Promise<Release | null> {
   const api = env.THREEBOT_RELEASES_URL || `https://api.github.com/repos/${REPO}/releases?per_page=30`;
   const res = await fetchImpl(api, { headers: { accept: "application/vnd.github+json", "user-agent": "threebot-updater" } });
   if (!res.ok) throw new Error(`Couldn't list releases (HTTP ${res.status})`);
-  const releases = (await res.json()).filter((r) => !r.draft && (channel === "preview" || !r.prerelease));
+  const releases = ((await res.json()) as GitHubRelease[]).filter((r) => !r.draft && (channel === "preview" || !r.prerelease));
   const wanted = version ? releases.find((r) => r.tag_name.replace(/^v/, "") === String(version).replace(/^v/, "")) : releases
     .filter((r) => SEMVER.test(r.tag_name.replace(/^v/, "")))
     .sort((a, b) => compareVersions(b.tag_name, a.tag_name))[0];
   if (!wanted) return null;
   const v = wanted.tag_name.replace(/^v/, "");
   const base = env.THREEBOT_RELEASE_BASE_URL ? `${env.THREEBOT_RELEASE_BASE_URL.replace(/\/$/, "")}/v${v}` : null;
-  const asset = (name) => base ? `${base}/${name}` : wanted.assets?.find((a) => a.name === name)?.browser_download_url;
+  const asset = (name: string) => base ? `${base}/${name}` : wanted.assets?.find((a) => a.name === name)?.browser_download_url;
   const archive = asset(assetName(v)), sums = asset("SHA256SUMS");
   if (!archive || !sums) return null;
   return { version: v, archive, sums, notes: wanted.body ?? "", url: wanted.html_url ?? `https://github.com/${REPO}/releases/tag/v${v}`, publishedAt: wanted.published_at ?? null };
 }
 
-export function expectedSum(sumsText, name) {
+export function expectedSum(sumsText: string, name: string): string | null {
   for (const line of String(sumsText).split("\n")) {
     const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(.+)$/i);
     if (m && m[2].trim() === name) return m[1].toLowerCase();
@@ -77,13 +102,15 @@ export function expectedSum(sumsText, name) {
   return null;
 }
 
-async function download(url, fetchImpl) {
+async function download(url: string, fetchImpl: FetchBytes): Promise<Buffer> {
   const res = await fetchImpl(url, { headers: { "user-agent": "threebot-updater" }, redirect: "follow" });
   if (!res.ok) throw new Error(`Download failed: ${url} (HTTP ${res.status})`);
   return Buffer.from(await res.arrayBuffer());
 }
 
-export function run(command, args, options = {}) {
+/** What run() rejects with when the command fails: its exit code and output come along. */
+export type RunError = Error & { code?: number | string | null; stdout?: string; stderr?: string };
+export function run(command: string, args: string[], options: SpawnOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
     let out = "", err = "";
@@ -95,7 +122,7 @@ export function run(command, args, options = {}) {
 }
 
 /** Download, verify and unpack a release into versions/<version>, with its server dependencies installed. */
-export async function installRelease(release, { home = homeDir(), fetchImpl = fetch, log = () => {}, npm = "npm" } = {}) {
+export async function installRelease(release: Pick<Release, "version" | "archive" | "sums">, { home = homeDir(), fetchImpl = fetch, log = () => {}, npm = "npm" }: { home?: string; fetchImpl?: FetchBytes; log?: (line: string) => void; npm?: string } = {}): Promise<string> {
   const paths = runtimePaths(home);
   const target = path.join(paths.versions, release.version);
   if (existsSync(path.join(target, ".install-complete"))) return target;
@@ -126,18 +153,18 @@ export async function installRelease(release, { home = homeDir(), fetchImpl = fe
   return target;
 }
 
-async function swapLink(link, target) {
+async function swapLink(link: string, target: string) {
   const temp = `${link}.${process.pid}.tmp`;
   await fs.rm(temp, { force: true });
   await fs.symlink(target, temp);
   await fs.rename(temp, link); // rename over a link is atomic, so `current` is never missing.
 }
-export async function readLink(link) {
+export async function readLink(link: string): Promise<string | null> {
   try { return path.resolve(path.dirname(link), await fs.readlink(link)); } catch { return null; }
 }
 
 /** Point `current` at a version and remember the one it replaces. Returns that previous folder. */
-export async function activate(versionDir, home = homeDir()) {
+export async function activate(versionDir: string, home: string = homeDir()): Promise<string | null> {
   const paths = runtimePaths(home);
   await fs.mkdir(paths.runtime, { recursive: true });
   const before = await readLink(paths.current);
@@ -147,7 +174,7 @@ export async function activate(versionDir, home = homeDir()) {
 }
 
 /** Undo the last activate. */
-export async function rollback(home = homeDir()) {
+export async function rollback(home: string = homeDir()): Promise<string> {
   const paths = runtimePaths(home);
   const previous = await readLink(paths.previous);
   if (!previous || !existsSync(previous)) throw new Error("There is no earlier version to go back to.");
@@ -157,10 +184,10 @@ export async function rollback(home = homeDir()) {
 }
 
 /** Remove versions other than current and previous. */
-export async function prune(home = homeDir()) {
+export async function prune(home: string = homeDir()): Promise<string[]> {
   const paths = runtimePaths(home);
-  const keep = new Set([await readLink(paths.current), await readLink(paths.previous)].filter(Boolean).map((p) => path.resolve(p)));
-  const removed = [];
+  const keep = new Set([await readLink(paths.current), await readLink(paths.previous)].filter(Boolean).map((p) => path.resolve(p!)));
+  const removed: string[] = [];
   for (const name of await fs.readdir(paths.versions).catch(() => [])) {
     const dir = path.resolve(paths.versions, name);
     if (keep.has(dir)) continue;
@@ -170,7 +197,7 @@ export async function prune(home = homeDir()) {
   return removed;
 }
 
-export const channelFor = (version) => String(version).includes("-") ? "preview" : "stable";
+export const channelFor = (version: string): Channel => String(version).includes("-") ? "preview" : "stable";
 
 /**
  * What the app shows in Settings → Updates, and the footer's update button. The answer is stored and
@@ -178,11 +205,17 @@ export const channelFor = (version) => String(version).includes("-") ? "preview"
  * callers share one request. A failed check keeps the last good answer and waits longer each time
  * (up to `maxBackoffMs`) before trying again. A preview install follows previews.
  */
-export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlMs = 15 * 60 * 1000, maxBackoffMs = 2 * 60 * 60 * 1000, version = currentVersion(), now = Date.now } = {}) {
+export interface UpdateStatus {
+  latest: { version: string; url: string; notes: string; publishedAt: string | null } | null;
+  updateAvailable: boolean;
+  error: string | null;
+  checkedAt: string | null;
+}
+export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlMs = 15 * 60 * 1000, maxBackoffMs = 2 * 60 * 60 * 1000, version = currentVersion(), now = Date.now }: { env?: NodeJS.ProcessEnv; fetchImpl?: FetchJson; ttlMs?: number; maxBackoffMs?: number; version?: string; now?: () => number } = {}) {
   const channel = channelFor(version);
-  let value = { latest: null, updateAvailable: false, error: null, checkedAt: null };
-  let nextAt = 0, failures = 0, inflight = null;
-  const refresh = async () => {
+  let value: UpdateStatus = { latest: null, updateAvailable: false, error: null, checkedAt: null };
+  let nextAt = 0, failures = 0, inflight: Promise<UpdateStatus> | null = null;
+  const refresh = async (): Promise<UpdateStatus> => {
     const at = now();
     try {
       const latest = await findRelease({ env, fetchImpl, channel });
@@ -195,7 +228,7 @@ export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlM
     }
     return value;
   };
-  return async function check({ force = false } = {}) {
+  return async function check({ force = false }: { force?: boolean } = {}): Promise<UpdateStatus> {
     if (!force && now() < nextAt) return value;
     return inflight ??= refresh().finally(() => { inflight = null; });
   };
@@ -205,7 +238,7 @@ export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlM
  * Keep a checker's stored answer fresh with nobody asking: look now, then every `everyMs`. Each look
  * only reaches GitHub when the checker says a check is due. Returns a function that stops it.
  */
-export function startUpdateChecks(check, { everyMs = 60 * 1000 } = {}) {
+export function startUpdateChecks(check: () => unknown, { everyMs = 60 * 1000 }: { everyMs?: number } = {}): () => void {
   const tick = () => void check();
   tick();
   const timer = setInterval(tick, everyMs);

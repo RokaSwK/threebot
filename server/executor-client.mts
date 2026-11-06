@@ -1,17 +1,49 @@
-import { executorCredential } from './executor-config.mts';
+import { executorCredential, type ExecutorProfile } from './executor-config.mts';
 
-const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const string = (value) => typeof value === 'string' && value.length > 0;
-const failure = (message, status = 502) => Object.assign(new Error(message), { status });
-const segment = (value) => {
+// Executor's REST payloads are checked field by field below rather than described by a schema here.
+type Json = Record<string, any>;
+/** A JSON request body from the app, checked before use. */
+type RequestBody = Json;
+export type AccountScope = 'user' | 'app';
+export type SignInState = 'saved' | 'reconnect' | 'unavailable';
+export interface ExecutorAccount { id: string; name: string; linked: boolean; signIn: SignInState }
+export interface ExecutorRequirement { id: string; scope: AccountScope; name: string; cardinality: 'one' | 'many'; accounts: ExecutorAccount[] }
+export interface ExecutorApp {
+  id: string;
+  slug: string;
+  name: string;
+  requirements: ExecutorRequirement[];
+  status: 'connected' | 'needs-connection' | 'ready' | 'unknown';
+  error?: string;
+  /** The app's logo (a web address or a small inline image) and its sign-in site, when known. */
+  icon?: string;
+  domain?: string;
+}
+export type ResolvedExecutorLink = { kind: 'connection'; connection: ExecutorConnection } | { kind: 'app'; app: ExecutorApp } | { kind: 'apps' };
+export interface ExecutorConnection {
+  id: string;
+  backend: ExecutorProfile['kind'];
+  appId: string;
+  requirement: string;
+  scope: AccountScope;
+  url: string;
+  status: 'pending' | 'completed' | 'expired' | 'cancelled';
+  expiresAt: string;
+  error?: string;
+}
+
+const object = (value: unknown): value is Json => value !== null && typeof value === 'object' && !Array.isArray(value);
+const string = (value: unknown): boolean => typeof value === 'string' && value.length > 0;
+const failure = (message: string, status = 502) => Object.assign(new Error(message), { status });
+const segment = (value: string) => {
   if (!string(value) || value.length > 256 || /[\u0000-\u001f]/.test(value)) throw failure('Invalid Executor identifier', 400);
   return encodeURIComponent(value);
 };
-function account(value) {
+function account(value: unknown): { id: string; name: string } {
   if (!object(value) || !string(value.id)) throw failure('Executor returned an invalid account');
   return { id: value.id, name: string(value.label) ? value.label : string(value.name) ? value.name : value.id };
 }
-function requirements(value) {
+function requirements(value: unknown): Omit<ExecutorRequirement, 'accounts'>[] {
   if (!object(value)) throw failure('Executor account requirements are unavailable');
   return Object.entries(value).map(([id, item]) => {
     if (!object(item) || !['user', 'app'].includes(item.scope) || !['one', 'many'].includes(item.cardinality)) throw failure('Executor returned invalid account requirements');
@@ -21,7 +53,7 @@ function requirements(value) {
 
 const IMAGE_DATA = /^data:image\/(?:png|jpeg|gif|webp|svg\+xml)[;,]/i;
 /** A public logo for the app: a plain web address, or a small inline image Executor stores. */
-export function appIcon(icons) {
+export function appIcon(icons: unknown): string | null {
   if (!Array.isArray(icons)) return null;
   // Logos sit on a white tile, so a dark-theme variant is the last choice.
   for (const item of [...icons].sort((a, b) => Number(a?.theme === 'dark') - Number(b?.theme === 'dark'))) {
@@ -33,7 +65,7 @@ export function appIcon(icons) {
 }
 const HOST = /^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 /** The site behind an app's sign-in host, so mcp.example.com shows example.com's logo. */
-export function appSiteDomain(accounts) {
+export function appSiteDomain(accounts: unknown): string | null {
   if (!object(accounts)) return null;
   for (const item of Object.values(accounts)) {
     for (const value of Array.isArray(item?.definition?.hosts) ? item.definition.hosts : []) {
@@ -41,15 +73,15 @@ export function appSiteDomain(accounts) {
       if (!HOST.test(host)) continue;
       const labels = host.split('.');
       // Keep three labels for two-letter country suffixes such as example.co.uk.
-      const keep = labels.length > 2 && labels.at(-1).length === 2 && labels.at(-2).length <= 3 ? 3 : 2;
+      const keep = labels.length > 2 && labels.at(-1)!.length === 2 && labels.at(-2)!.length <= 3 ? 3 : 2;
       return labels.slice(-keep).join('.');
     }
   }
   return null;
 }
 
-async function concurrent(items, transform) {
-  const result = new Array(items.length);
+async function concurrent<T, R>(items: readonly T[], transform: (item: T) => Promise<R>): Promise<R[]> {
+  const result: R[] = new Array(items.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(4, items.length) }, async () => {
     while (next < items.length) { const index = next++; result[index] = await transform(items[index]); }
@@ -58,13 +90,13 @@ async function concurrent(items, transform) {
 }
 
 /** The same REST contract is hosted and self-hosted; identity and secrets stay separate. */
-export function createExecutorClient(profile, { fetch: request = globalThis.fetch } = {}) {
+export function createExecutorClient(profile: ExecutorProfile | null | undefined, { fetch: request = globalThis.fetch }: { fetch?: typeof globalThis.fetch } = {}) {
   if (!profile) throw failure('Executor is not configured', 503);
   const base = `${profile.apiUrl}/api/organizations/${segment(profile.organization)}`;
-  async function api(path, init = {}) {
+  async function api(path: string, init: RequestInit = {}): Promise<unknown> {
     const token = executorCredential(profile);
     if (!token) throw failure('Executor needs a server access token', 503);
-    let response;
+    let response: Response;
     try {
       response = await request(base + path, { ...init, redirect: 'error', signal: AbortSignal.timeout(20_000),
         headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } });
@@ -79,25 +111,25 @@ export function createExecutorClient(profile, { fetch: request = globalThis.fetc
     if (response.status === 204) return null;
     try { return await response.json(); } catch { throw failure('Executor returned an invalid response'); }
   }
-  const appPath = (id) => `/apps/${segment(id)}`;
-  async function app(id) {
+  const appPath = (id: string) => `/apps/${segment(id)}`;
+  async function app(id: string): Promise<ExecutorApp> {
     const raw = await api(appPath(id));
     if (!object(raw) || raw.id !== id || !string(raw.slug) || !string(raw.name)) throw failure('Executor returned an invalid app');
     const definitions = requirements(raw.requirements?.accounts);
     const scopes = [...new Set(definitions.map((item) => item.scope))];
-    const links = new Map(await concurrent(scopes, async (scope) => {
+    const links = new Map(await concurrent(scopes, async (scope): Promise<[AccountScope, Json[]]> => {
       const rows = await api(`${appPath(raw.id)}/accounts/${scope}`);
       if (!Array.isArray(rows) || rows.some((row) => !object(row) || !string(row.requirement) || !object(row.account) || !string(row.account.id))) throw failure('Executor account links are unavailable');
       return [scope, rows];
     }));
-    const choices = await concurrent(definitions, async (definition) => {
+    const choices = await concurrent(definitions, async (definition): Promise<ExecutorRequirement> => {
       const rawChoices = await api(`${appPath(raw.id)}/accounts/${definition.scope}/${segment(definition.id)}`);
       if (!object(rawChoices) || rawChoices.requirement !== definition.id || rawChoices.scope !== definition.scope ||
           rawChoices.cardinality !== definition.cardinality || !Array.isArray(rawChoices.accounts)) throw failure('Executor account choices are unavailable');
-      const accounts = rawChoices.accounts.map((choice) => {
+      const accounts = rawChoices.accounts.map((choice: unknown): ExecutorAccount => {
         if (!object(choice) || typeof choice.linked !== 'boolean') throw failure('Executor returned invalid account choices');
         const info = account(choice.account);
-        const link = links.get(definition.scope).find((row) => row.requirement === definition.id && row.account?.id === info.id);
+        const link = links.get(definition.scope)!.find((row) => row.requirement === definition.id && row.account?.id === info.id);
         const state = link?.signIn?.state;
         return { ...info, linked: choice.linked, signIn: choice.linked ? (['saved', 'reconnect', 'unavailable'].includes(state) ? state : 'unavailable') : 'saved' };
       });
@@ -111,29 +143,29 @@ export function createExecutorClient(profile, { fetch: request = globalThis.fetc
     return { id: raw.id, slug: raw.slug, name: raw.name, requirements: choices, status: choices.length ? (connected ? 'connected' : 'needs-connection') : 'ready',
       ...(icon ? { icon } : {}), ...(domain ? { domain } : {}) };
   }
-  async function apps() {
+  async function apps(): Promise<ExecutorApp[]> {
     const rows = await api('/apps');
     if (!Array.isArray(rows)) throw failure('Executor app list is unavailable');
-    return concurrent(rows.filter((entry) => object(entry) && !['executor', 'executor-admin'].includes(entry.slug)), async (entry) => {
+    return concurrent(rows.filter((entry): entry is Json => object(entry) && !['executor', 'executor-admin'].includes(entry.slug)), async (entry) => {
       if (!string(entry.id) || !string(entry.slug) || !string(entry.name)) throw failure('Executor returned an invalid app');
       try { return await app(entry.id); }
-      catch (error) { return { id: entry.id, slug: entry.slug, name: entry.name, requirements: [], status: 'unknown', error: error.message }; }
+      catch (error) { return { id: entry.id, slug: entry.slug, name: entry.name, requirements: [], status: 'unknown', error: (error as Error).message }; }
     });
   }
-  async function catalog(search = '') {
+  async function catalog(search: unknown = '') {
     // Executor returns every match when limit is omitted. The UI downloads once and
     // filters/pages locally, so a provider never disappears behind an upstream cap.
     const query = new URLSearchParams();
     if (typeof search === 'string' && search.trim()) query.set('search', search.trim().slice(0, 100));
     const entries = await api(`/catalog${query.size ? `?${query}` : ''}`);
     if (!Array.isArray(entries)) throw failure('Executor catalog is unavailable');
-    return { entries: entries.filter((entry) => object(entry) && entry.package !== 'executor').map((entry) => {
+    return { entries: entries.filter((entry): entry is Json => object(entry) && entry.package !== 'executor').map((entry) => {
       if (!string(entry.id) || !string(entry.name)) throw failure('Executor returned an invalid catalog entry');
-      const icon = Array.isArray(entry.icons) ? entry.icons.find((item) => {
+      const icon = Array.isArray(entry.icons) ? entry.icons.find((item: unknown) => {
         if (!object(item) || !string(item.src)) return false;
         try { const url = new URL(item.src); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password; } catch { return false; }
       }) : null;
-      const auth = Array.isArray(entry.auth) ? entry.auth.filter((item) => object(item) && string(item.method)) : [];
+      const auth: Json[] = Array.isArray(entry.auth) ? entry.auth.filter((item: unknown) => object(item) && string(item.method)) : [];
       // Keep positions aligned with methods: an unlabeled OAuth option must not
       // disappear beside a labeled API-key option.
       const authLabels = auth.map((item) => typeof item.label === 'string' ? item.label.trim() : '');
@@ -143,26 +175,26 @@ export function createExecutorClient(profile, { fetch: request = globalThis.fetc
         ...(authLabels.some(string) ? { authLabels } : {}) };
     }) };
   }
-  async function install(input) {
+  async function install(input: unknown) {
     if (!object(input) || !string(input.entry) || !string(input.name) || input.entry.length > 512 || input.name.length > 80) throw failure('App entry and name are required', 400);
     const result = await api('/apps/install', { method: 'POST', body: JSON.stringify({ entry: input.entry, name: input.name }) });
     if (!object(result) || !string(result.id)) throw failure('Executor did not return the installed app');
     return { app: await app(result.id) };
   }
-  async function requirement(appId, input) {
+  async function requirement(appId: string, input: RequestBody) {
     if (!object(input)) throw failure('An account requirement is required', 400);
     const selected = await app(appId);
     const found = selected.requirements.find((entry) => entry.id === input.requirement && entry.scope === input.scope);
     if (!found) throw failure('The app account requirement changed; refresh the app', 409);
     return found;
   }
-  async function link(appId, input) {
+  async function link(appId: string, input: RequestBody) {
     const selected = await requirement(appId, input);
     if (!string(input.account) || typeof input.linked !== 'boolean') throw failure('An account and link choice are required', 400);
     await api(`${appPath(appId)}/accounts/${selected.scope}/${segment(selected.id)}/${segment(input.account)}`, { method: input.linked ? 'PUT' : 'DELETE' });
     return { app: await app(appId) };
   }
-  async function normalizeConnection(raw, expected = {}) {
+  async function normalizeConnection(raw: unknown, expected: { id?: string; appId?: string; requirement?: string; scope?: string } = {}): Promise<ExecutorConnection> {
     if (!object(raw) || !string(raw.id) || !object(raw.target) || !object(raw.state) ||
         !['pending', 'completed', 'expired', 'cancelled'].includes(raw.state.status) || !string(raw.url) || !string(raw.expiresAt)) throw failure('Executor returned an invalid connection');
     const appId = typeof raw.target.app === 'string' ? raw.target.app : raw.target.app?.id;
@@ -171,34 +203,34 @@ export function createExecutorClient(profile, { fetch: request = globalThis.fetc
     const selected = await app(appId);
     const selectedRequirement = selected.requirements.find((entry) => entry.id === raw.target.requirement);
     if (!selectedRequirement || (expected.scope && expected.scope !== selectedRequirement.scope)) throw failure('The connection account requirement changed', 409);
-    let url;
+    let url: URL;
     try { url = new URL(raw.url); } catch { throw failure('Executor returned an invalid sign-in URL'); }
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== new URL(profile.publicUrl).origin) throw failure('Executor returned an invalid sign-in URL');
-    return { id: raw.id, backend: profile.kind, appId, requirement: selectedRequirement.id, scope: selectedRequirement.scope,
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== new URL(profile!.publicUrl).origin) throw failure('Executor returned an invalid sign-in URL');
+    return { id: raw.id, backend: profile!.kind, appId, requirement: selectedRequirement.id, scope: selectedRequirement.scope,
       url: url.href, status: raw.state.status, expiresAt: raw.expiresAt,
       ...(raw.state.failure ? { error: 'The connection could not be completed. Continue sign-in or start a new connection.' } : {}) };
   }
-  async function connection(id) { return normalizeConnection(await api(`/connections/${segment(id)}`), { id }); }
-  async function connect(appId, input) {
+  async function connection(id: string) { return normalizeConnection(await api(`/connections/${segment(id)}`), { id }); }
+  async function connect(appId: string, input: RequestBody) {
     const selected = await requirement(appId, input);
-    const body = {};
+    const body: { account?: string } = {};
     if (input.account !== undefined) { segment(input.account); body.account = input.account; }
     const result = await api(`${appPath(appId)}/accounts/${selected.scope}/${segment(selected.id)}/connections`, { method: 'POST', body: JSON.stringify(body) });
     return normalizeConnection(result, { appId, requirement: selected.id, scope: selected.scope });
   }
-  async function resolveLink(href) {
-    let url;
+  async function resolveLink(href: string): Promise<ResolvedExecutorLink> {
+    let url: URL;
     try { url = new URL(href); } catch { throw failure('Invalid Executor link', 400); }
-    if (url.username || url.password || url.origin !== new URL(profile.publicUrl).origin) throw failure('This link belongs to another service', 400);
+    if (url.username || url.password || url.origin !== new URL(profile!.publicUrl).origin) throw failure('This link belongs to another service', 400);
     const pieces = url.pathname.split('/').filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { throw failure('Invalid Executor link', 400); } });
     const connectionId = [...pieces, ...url.searchParams.values()].find((part) => /^con_[a-zA-Z0-9_-]+$/.test(part));
     if (connectionId) return { kind: 'connection', connection: await connection(connectionId) };
     const orgIndex = pieces.indexOf('org');
-    if (orgIndex >= 0 && pieces[orgIndex + 1] !== profile.organization) throw failure('This link belongs to another Executor organization', 409);
+    if (orgIndex >= 0 && pieces[orgIndex + 1] !== profile!.organization) throw failure('This link belongs to another Executor organization', 409);
     const index = pieces.indexOf('apps');
     if (index >= 0 && pieces[index + 1]) {
       const rows = await api('/apps');
-      const found = Array.isArray(rows) && rows.find((entry) => entry.id === pieces[index + 1] || entry.slug === pieces[index + 1]);
+      const found = Array.isArray(rows) && rows.find((entry: Json) => entry.id === pieces[index + 1] || entry.slug === pieces[index + 1]);
       if (!found) throw failure('This Executor app is unavailable', 404);
       return { kind: 'app', app: await app(found.id) };
     }

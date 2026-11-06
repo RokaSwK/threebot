@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import sharp, { type SharpOptions } from 'sharp';
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -6,16 +6,16 @@ import path from 'node:path';
 
 export const MAX_AVATAR_BYTES = 25 * 1024 * 1024;
 export const AVATAR_BODY_LIMIT = Math.ceil(MAX_AVATAR_BYTES / 3) * 4 + 65536;
-const fail = (message, status = 400) => Object.assign(new Error(message), { status });
+const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 const imagePath = /^\/api\/bots\/[a-z0-9][a-z0-9-]{0,62}\/avatar\/([a-f0-9]{64})\.png$/;
-export function avatarImageFile(image) {
+export function avatarImageFile(image: unknown) {
   const match = typeof image === 'string' && imagePath.exec(image);
   return match ? `.bot/avatar-images/${match[1]}.png` : null;
 }
 
 /** Decode the bytes, constrain decoded pixels, and re-encode a static PNG.
  * No user metadata, SVG, animation, filename, or executable payload is served. */
-export async function decodeAvatarImage(value) {
+export async function decodeAvatarImage(value: unknown) {
   if (typeof value !== 'string') throw fail('That image could not be loaded');
   const match = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
   if (!match) throw fail('That image could not be loaded');
@@ -29,20 +29,20 @@ export async function decodeAvatarImage(value) {
     : ['GIF87a', 'GIF89a'].includes(bytes.toString('ascii', 0, 6));
   if (!signature) throw fail('That image could not be loaded');
   try {
-    const options = { limitInputPixels: 40_000_000, failOn: 'warning', animated: false };
+    const options: SharpOptions = { limitInputPixels: 40_000_000, failOn: 'warning', animated: false };
     const metadata = await sharp(bytes, options).metadata();
     if (metadata.format !== match[1] || !['png', 'jpeg', 'webp', 'gif'].includes(metadata.format)) throw Error('format');
     return await sharp(bytes, options).rotate().resize(1024, 1024, { fit: 'cover', withoutEnlargement: true }).png().toBuffer();
   } catch { throw fail('That image could not be loaded'); }
 }
-export async function storeAvatarImage({ workspaceRoot, slug }, bytes) {
+export async function storeAvatarImage({ workspaceRoot, slug }: { workspaceRoot: string; slug: string }, bytes: Buffer) {
   const revision = createHash('sha256').update(bytes).digest('hex');
   const file = path.join(workspaceRoot, '.bot/avatar-images', revision + '.png');
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, bytes, { flag: 'wx', mode: 0o600 }).catch(error => { if (error.code !== 'EEXIST') throw error; });
   return `/api/bots/${slug}/avatar/${revision}.png`;
 }
-export async function readAvatarImage(bot, image) {
+export async function readAvatarImage(bot: { workspaceRoot: string }, image: unknown) {
   const relative = avatarImageFile(image);
   if (!relative) throw fail('not found', 404);
   const handle = await open(path.join(bot.workspaceRoot, relative), constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -51,7 +51,7 @@ export async function readAvatarImage(bot, image) {
 
 /** Only the gateway may mint image references. Existing URLs can be retained,
  * but a client cannot point a Bot at an arbitrary file or another Bot's image. */
-export async function avatarImagePatch(bot, patch) {
+export async function avatarImagePatch<T extends { avatarImage?: unknown; [key: string]: unknown }>(bot: { workspaceRoot: string; slug: string; avatarImage?: unknown }, patch: T): Promise<T> {
   if (!Object.hasOwn(patch, 'avatarImage') || patch.avatarImage === bot.avatarImage) return patch;
   return { ...patch, avatarImage: patch.avatarImage === null ? null : await storeAvatarImage(bot, await decodeAvatarImage(patch.avatarImage)) };
 }

@@ -1,29 +1,41 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { test } from 'node:test';
-import { appIcon, appSiteDomain, createExecutorClient } from './executor-client.mts';
+import type { AddressInfo } from 'node:net';
+import { test, type TestContext } from 'node:test';
+import { appIcon, appSiteDomain, createExecutorClient, type ResolvedExecutorLink } from './executor-client.mts';
+import type { CloudExecutorProfile } from './executor-config.mts';
+
+interface FixtureApp { id: string; slug: string; name: string; requirements: { accounts: Record<string, { scope: string; definition: { name: string; hosts?: string[] }; cardinality: string }>; icons?: { src: string }[] } }
+interface FixtureCatalogEntry {
+  id: string; name: string; package: string; description?: string; category?: string; privateSource?: string;
+  auth?: { method?: string; kind?: string; label?: string }[]; icons?: { src: string }[];
+}
+type LinkOf<K extends ResolvedExecutorLink['kind']> = Extract<ResolvedExecutorLink, { kind: K }>;
 
 const TOKEN = 'fake-executor-token-private';
-const account = (id) => ({ id, label: id === 'acct_a' ? 'Personal' : 'Work', provider: 'provider', method: 'oauth', credentialsFingerprint: 'private-fingerprint' });
-const definitions = {
+const account = (id: string) => ({ id, label: id === 'acct_a' ? 'Personal' : 'Work', provider: 'provider', method: 'oauth', credentialsFingerprint: 'private-fingerprint' });
+const definitions: Record<string, FixtureApp> = {
   app_many: { id: 'app_many', slug: 'many', name: 'Many', requirements: { accounts: { service: { scope: 'user', definition: { name: 'Sample service' }, cardinality: 'many' } } } },
   app_one: { id: 'app_one', slug: 'one', name: 'One', requirements: { accounts: { shared: { scope: 'app', definition: { name: 'Shared service' }, cardinality: 'one' } } } },
   app_ready: { id: 'app_ready', slug: 'ready', name: 'Ready', requirements: { accounts: {} } },
 };
 
-async function fixture(t) {
-  const state = { apps: structuredClone(definitions), catalog: [{ id: 'cat_sample', name: 'Sample', description: 'Generic service', package: 'sample', auth: [{ method: 'oauth', kind: 'oauth2' }], icons: [{ src: 'javascript:private' }, { src: 'https://example.invalid/icon.svg' }] }, { id: 'cat_executor', name: 'Executor', package: 'executor' }], linked: new Map(), connectionStatus: 'pending', signIn: 'saved', fault: null, requests: [] };
-  const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
-  let origin;
+async function fixture(t: TestContext) {
+  const state: {
+    apps: Record<string, FixtureApp>; catalog: FixtureCatalogEntry[]; linked: Map<string, Set<string>>; connectionStatus: string; signIn: string;
+    fault: string | null; requests: { path: string; method: string; authorization?: string; body: string }[];
+  } = { apps: structuredClone(definitions), catalog: [{ id: 'cat_sample', name: 'Sample', description: 'Generic service', package: 'sample', auth: [{ method: 'oauth', kind: 'oauth2' }], icons: [{ src: 'javascript:private' }, { src: 'https://example.invalid/icon.svg' }] }, { id: 'cat_executor', name: 'Executor', package: 'executor' }], linked: new Map(), connectionStatus: 'pending', signIn: 'saved', fault: null, requests: [] };
+  const json = (res: http.ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+  let origin: string;
   const server = http.createServer(async (req, res) => {
-    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk);
     const bodyText = Buffer.concat(chunks).toString();
     // T3 Code probes / on every new local port; the client never requests it.
-    if (req.url !== '/') state.requests.push({ path: req.url, method: req.method, authorization: req.headers.authorization, body: bodyText });
+    if (req.url !== '/') state.requests.push({ path: req.url!, method: req.method!, authorization: req.headers.authorization, body: bodyText });
     if (state.fault === 'unauth') return json(res, 401, { error: TOKEN });
     if (state.fault === 'forbidden') return json(res, 403, { error: TOKEN });
     if (state.fault === 'broken-json') { res.end(`private ${TOKEN}`); return; }
-    const url = new URL(req.url, origin), route = url.pathname.replace('/api/organizations/workspace', '');
+    const url = new URL(req.url!, origin), route = url.pathname.replace('/api/organizations/workspace', '');
     if (route === '/catalog') {
       const search = (url.searchParams.get('search') ?? '').toLowerCase();
       const matches = state.catalog.filter((entry) => [entry.id, entry.name, entry.package].some((value) => value?.toLowerCase().includes(search)));
@@ -52,7 +64,7 @@ async function fixture(t) {
         return json(res, 200, rows);
       }
       const linked = state.linked.get(key) ?? new Set();
-      if (chosen && ['PUT', 'DELETE'].includes(req.method)) {
+      if (chosen && ['PUT', 'DELETE'].includes(req.method!)) {
         if (req.method === 'DELETE') linked.delete(chosen);
         else { if (state.apps[id].requirements.accounts[requirement].cardinality === 'one') linked.clear(); linked.add(chosen); }
         state.linked.set(key, linked);
@@ -70,9 +82,9 @@ async function fixture(t) {
     }
     json(res, 404, { error: 'Unknown fixture route' });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
-  const profile = { kind: 'cloud', organization: 'workspace', apiUrl: origin, publicUrl: origin, mcpUrl: `${origin}/org/workspace/mcp`, credential: { source: 'environment', value: TOKEN } };
+  const profile: CloudExecutorProfile = { kind: 'cloud', organization: 'workspace', apiUrl: origin, publicUrl: origin, mcpUrl: `${origin}/org/workspace/mcp`, credential: { source: 'environment', value: TOKEN } };
   return { state, origin, client: createExecutorClient(profile), profile };
 }
 
@@ -111,7 +123,7 @@ test('installed requirements remain disconnected until linked and saved; no-acco
 
 test('one replaces, many adds, unlink preserves choices and exact PUT/DELETE paths carry no body', async (t) => {
   const { client, state } = await fixture(t);
-  const change = (id, scope, requirement, chosen, linked = true) => client.link(id, { scope, requirement, account: chosen, linked });
+  const change = (id: string, scope: string, requirement: string, chosen: string, linked = true) => client.link(id, { scope, requirement, account: chosen, linked });
   await change('app_one', 'app', 'shared', 'acct_a');
   const one = await change('app_one', 'app', 'shared', 'acct_b');
   assert.deepEqual(one.app.requirements[0].accounts.map(({ id, linked }) => ({ id, linked })), [{ id: 'acct_a', linked: false }, { id: 'acct_b', linked: true }]);
@@ -152,9 +164,9 @@ test('connection and reconnect use explicit bodies and retain authoritative pend
 
 test('resolve-link verifies origin and resource identity without fetching caller URLs or crossing organizations', async (t) => {
   const { client, state, origin } = await fixture(t);
-  assert.equal((await client.resolveLink(`${origin}/org/workspace/connections/con_fixture`)).connection.id, 'con_fixture');
+  assert.equal(((await client.resolveLink(`${origin}/org/workspace/connections/con_fixture`)) as LinkOf<'connection'>).connection.id, 'con_fixture');
   assert.equal((await client.resolveLink(`${origin}/org/workspace/apps/app_many?connection=con_fixture&view=accounts`)).kind, 'connection');
-  assert.equal((await client.resolveLink(`${origin}/org/workspace/apps/many`)).app.id, 'app_many');
+  assert.equal(((await client.resolveLink(`${origin}/org/workspace/apps/many`)) as LinkOf<'app'>).app.id, 'app_many');
   assert.deepEqual(await client.resolveLink(`${origin}/org/workspace/apps`), { kind: 'apps' });
   const before = state.requests.length;
   for (const url of ['http://example.invalid/org/workspace/apps', `http://user:pass@127.0.0.1:${new URL(origin).port}/`, `${origin}/org/other/apps/many`, `${origin}/unknown`]) await assert.rejects(client.resolveLink(url));
@@ -164,13 +176,13 @@ test('resolve-link verifies origin and resource identity without fetching caller
 
 test('upstream auth and schema failures remain backend errors and never expose echoed secrets', async (t) => {
   const { client, state } = await fixture(t);
-  for (const [fault, status] of [['unauth', 502], ['forbidden', 403], ['broken-json', 502]]) {
+  for (const [fault, status] of [['unauth', 502], ['forbidden', 403], ['broken-json', 502]] as [string, number][]) {
     state.fault = fault;
-    await assert.rejects(client.catalog(), (error) => { assert.equal(error.status, status); assert.doesNotMatch(error.message, /fake-executor|private|Bearer|JSON/); return true; });
+    await assert.rejects(client.catalog(), (error: Error & { status?: number }) => { assert.equal(error.status, status); assert.doesNotMatch(error.message, /fake-executor|private|Bearer|JSON/); return true; });
   }
   state.fault = 'requirements';
   const apps = await client.apps();
-  assert.equal(apps.find((entry) => entry.id === 'app_many').status, 'unknown');
+  assert.equal(apps.find((entry) => entry.id === 'app_many')!.status, 'unknown');
   assert.doesNotMatch(JSON.stringify(apps), /fake-executor|privateSource/);
 });
 
@@ -179,7 +191,7 @@ for (const fault of ['app-identity', 'choice-identity', 'connection-identity', '
   if (fault === 'target-identity') await client.install({ entry: 'cat_sample', name: 'New sample' });
   state.fault = fault;
   const operation = fault === 'connection-identity' ? () => client.connection('con_fixture') : fault === 'target-identity' ? () => client.connect('app_many', { requirement: 'service', scope: 'user' }) : () => client.app('app_many');
-  await assert.rejects(operation(), (error) => error.status === 502);
+  await assert.rejects(operation(), (error: Error & { status?: number }) => error.status === 502);
 });
 
 test('apps carry their own logo and sign-in site, so a card for a custom app can show it', async (t) => {

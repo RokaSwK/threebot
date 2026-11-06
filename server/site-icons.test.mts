@@ -7,9 +7,9 @@ import sharp from "sharp";
 import { createSiteIcons, iconLinks, isPublicAddress, normalizeDomain } from "./site-icons.mts";
 
 const png = await sharp({ create: { width: 180, height: 180, channels: 4, background: "#f00" } }).png().toBuffer();
-const reply = (body, type, status = 200, headers = {}) => new Response(body, { status, headers: { "content-type": type, ...headers } });
+const reply = (body: BodyInit, type: string, status = 200, headers: Record<string, string> = {}) => new Response(body, { status, headers: { "content-type": type, ...headers } });
 const publicDns = async () => [{ address: "93.184.216.34", family: 4 }];
-const withDir = async (run) => { const dir = await mkdtemp(path.join(os.tmpdir(), "site-icons-")); try { await run(dir); } finally { await rm(dir, { recursive: true, force: true }); } };
+const withDir = async (run: (dir: string) => Promise<void>) => { const dir = await mkdtemp(path.join(os.tmpdir(), "site-icons-")); try { await run(dir); } finally { await rm(dir, { recursive: true, force: true }); } };
 
 test("only real public hostnames are accepted", () => {
   assert.equal(normalizeDomain(" GitHub.com. "), "github.com");
@@ -27,20 +27,20 @@ test("the largest declared icon comes first", () => {
 });
 
 test("a site's own icon is re-encoded, cached and fetched once", async () => withDir(async (dir) => {
-  const seen = [];
-  const fetcher = async (url) => { seen.push(url.pathname); return url.pathname === "/" ? reply('<link rel="icon" href="/i.png">', "text/html") : reply(png, "image/png"); };
+  const seen: string[] = [];
+  const fetcher = async (url: URL) => { seen.push(url.pathname); return url.pathname === "/" ? reply('<link rel="icon" href="/i.png">', "text/html") : reply(png, "image/png"); };
   const icons = createSiteIcons({ dir, fetcher, resolve: publicDns });
   const icon = await icons.get("example.com");
-  assert.equal(icon.type, "image/png");
-  assert.equal((await sharp(icon.bytes).metadata()).width, 96);
+  assert.equal(icon!.type, "image/png");
+  assert.equal((await sharp(icon!.bytes).metadata()).width, 96);
   await icons.get("example.com");
   assert.deepEqual(seen, ["/", "/i.png"]);
 }));
 
 test("a redirect into the local network is not followed", async () => withDir(async (dir) => {
-  const seen = [];
-  const resolve = async (host) => [{ address: host === "example.com" ? "93.184.216.34" : "192.168.1.1", family: 4 }];
-  const fetcher = async (url) => { seen.push(url.hostname); return reply("", "text/plain", 302, { location: "https://router.example.org/" }); };
+  const seen: string[] = [];
+  const resolve = async (host: string) => [{ address: host === "example.com" ? "93.184.216.34" : "192.168.1.1", family: 4 }];
+  const fetcher = async (url: URL) => { seen.push(url.hostname); return reply("", "text/plain", 302, { location: "https://router.example.org/" }); };
   assert.equal(await createSiteIcons({ dir, fetcher, resolve }).get("example.com"), null);
   assert.ok(!seen.includes("router.example.org"));
 }));
@@ -59,8 +59,8 @@ test("files that aren't images are not served as logos", async () => withDir(asy
 
 test("a site that fails to answer is tried again instead of being remembered as having no logo", async () => withDir(async (dir) => {
   let calls = 0;
-  const fetcher = async (url) => { calls++; if (calls <= 2) throw new Error("timed out"); return url.pathname === "/" ? reply("<html></html>", "text/html") : reply(png, "image/png"); };
+  const fetcher = async (url: URL) => { calls++; if (calls <= 2) throw new Error("timed out"); return url.pathname === "/" ? reply("<html></html>", "text/html") : reply(png, "image/png"); };
   const icons = createSiteIcons({ dir, fetcher, resolve: publicDns });
   assert.equal(await icons.get("example.com"), null);
-  assert.equal((await icons.get("example.com")).type, "image/png");
+  assert.equal((await icons.get("example.com"))!.type, "image/png");
 }));

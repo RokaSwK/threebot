@@ -1,36 +1,46 @@
 // Deliberately small protocol-2 stub. Nothing here calls an agent or a real T3.
 import http from 'node:http';
 import { createRequire } from 'node:module';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { ACTIVITY_SAMPLES, AVATAR_SAMPLES, LANDING_SAMPLES, landingData, seedActivity, seedAvatars, seedInteractions, seedLatestT3, validateScenario } from './fixture-scenarios.mts';
+import type { FixtureInteractions, FixtureItem, FixtureModel, FixtureProject, FixtureRequest, FixtureRun, FixtureSample, FixtureThread } from './fixture-scenarios.mts';
 const require = createRequire(new URL('../server/package.json', import.meta.url));
 const { WebSocketServer } = require('ws');
 
-export const MODEL = { instanceId: 'fixture', model: 'fixture-idle' };
+// The parts of a ws WebSocket the fixture uses (ws ships no types here).
+type FixtureSocket = {
+  send(data: string): void; close(code?: number, reason?: string): void;
+  on(event: string, listener: (raw: unknown) => void): void;
+};
+
+export const MODEL: FixtureModel = { instanceId: 'fixture', model: 'fixture-idle' };
 export const STAMP = '2026-01-01T12:00:00.000Z';
-export const SAMPLES = [
+export const SAMPLES: FixtureSample[] = [
   { slug: 'alpha', name: 'Alpha', shape: 'sphere', color: 'teal', primary: true },
   { slug: 'beta', name: 'Beta', shape: 'clover', color: 'orange', primary: false },
   { slug: 'gamma', name: 'Gamma', shape: 'sparkle', color: 'purple', primary: false },
 ];
 export const SAMPLE_IMAGE = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#128c87"/><text x="40" y="190" font-size="40" fill="white">Generic fixture image</text></svg>');
 export const SAMPLE_TEXT = Buffer.from('Generic attachment. No user data.\n');
-export const samplesFor = (scenario) => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
+export const samplesFor = (scenario: string): FixtureSample[] => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
 
-export async function startFakeT3(root, port = 0, { scenario = 'basic', executor, environmentId = 'fixture-only' } = {}) {
+export async function startFakeT3(root: string, port = 0, { scenario = 'basic', executor, environmentId = 'fixture-only' }: {
+  scenario?: string; executor?: { app: string; connection: string }; environmentId?: string;
+} = {}) {
   validateScenario(scenario);
   const samples = samplesFor(scenario);
   const landing = scenario === 'landing' ? landingData() : null;
-  const projects = samples.map((bot) => ({ id: `project-${bot.slug}`, title: bot.name,
+  const projects = samples.map((bot): FixtureProject => ({ id: `project-${bot.slug}`, title: bot.name,
     workspaceRoot: landing ? `/Users/sam/Threebot/${bot.slug}` : path.join(root, 'bots', bot.slug), defaultModelSelection: MODEL, createdAt: STAMP, updatedAt: STAMP }));
-  const makeThread = (slug, child = false) => ({ id: `thread-${slug}${child ? '-child' : ''}`,
-    projectId: `project-${slug}`, title: child ? (landing?.child.title ?? 'Sample child review') : samples.find((bot) => bot.slug === slug).name,
+  const makeThread = (slug: string, child = false): FixtureThread => ({ id: `thread-${slug}${child ? '-child' : ''}`,
+    projectId: `project-${slug}`, title: child ? (landing?.child.title ?? 'Sample child review') : samples.find((bot) => bot.slug === slug)!.name,
     status: 'idle', activeRunId: null, latestRunId: null, modelSelection: MODEL, runtimeMode: 'auto',
     pendingRuntimeRequest: null, latestVisibleMessage: null, latestRunCompletedAt: STAMP, latestUserMessageAt: STAMP,
     lineage: { parentThreadId: child ? `thread-${slug}` : null, relationshipToParent: child ? 'subagent' : null, rootThreadId: `thread-${slug}` },
     archivedAt: null, settledOverride: null, settledAt: null, unsettledAt: null, snoozedUntil: null, autoSettleDisabledAt: null, lastVisitedAt: STAMP, createdAt: STAMP, updatedAt: STAMP });
   const threads = [...samples.map((bot) => makeThread(bot.slug)), ...(scenario === 'avatars' ? [] : [makeThread(landing?.child.parent ?? 'alpha', true)])];
-  const item = (threadId, ordinal, type, extra) => ({ id: `${threadId}-${ordinal}`, threadId, ordinal, type,
+  const item = (threadId: string, ordinal: number, type: string, extra: Partial<FixtureItem>): FixtureItem => ({ id: `${threadId}-${ordinal}`, threadId, ordinal, type,
     runId: null, status: 'completed', title: null, startedAt: STAMP, completedAt: STAMP,
     updatedAt: STAMP, parentItemId: null, ...extra });
   const attachments = new Map([
@@ -38,14 +48,14 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
     ['sample-file', { bytes: SAMPLE_TEXT, mimeType: 'text/plain' }],
   ]);
   // Synthetic Library resources; fixed IDs and no filesystem or provider access.
-  const library = new Map(scenario === 'library' ? [
+  const library = new Map<string, { mimeType: string; bytes: Buffer }>(scenario === 'library' ? [
     ['library/counter.html', { mimeType: 'text/html', bytes: Buffer.from('<!doctype html><html><body><h1>Sample counter card</h1><p>A disposable UI test with made-up data: increment the count or reset it to zero.</p><section style="margin-top:64px"><h2>Counter</h2><p id="count" style="font-size:48px;font-weight:600;margin:12px 0 28px">0</p><button onclick="document.getElementById(\'count\').textContent=++window.count">Increment</button> <button onclick="window.count=0;document.getElementById(\'count\').textContent=0">Reset</button><p style="margin-top:32px">The count lives only in this view and starts at zero each time the page opens.</p></section><script>window.count=0</script></body></html>') }],
     ['library/sample.csv', { mimeType: 'text/csv', bytes: Buffer.from('name,value\n"A,B",2\nC,3\n') }],
     ['library/photo.svg', { mimeType: 'image/svg+xml', bytes: SAMPLE_IMAGE }],
     ['library/notes.txt', { mimeType: 'text/plain', bytes: SAMPLE_TEXT }],
     ['library/audio.wav', { mimeType: 'audio/wav', bytes: (() => { const data=Buffer.alloc(44+1600);data.write('RIFF');data.writeUInt32LE(data.length-8,4);data.write('WAVEfmt ',8);data.writeUInt32LE(16,16);data.writeUInt16LE(1,20);data.writeUInt16LE(1,22);data.writeUInt32LE(8000,24);data.writeUInt32LE(16000,28);data.writeUInt16LE(2,32);data.writeUInt16LE(16,34);data.write('data',36);data.writeUInt32LE(1600,40);return data; })() }],
   ] : []);
-  const items = new Map(threads.map((thread) => [thread.id, [
+  const items = new Map<string, FixtureItem[]>(threads.map((thread) => [thread.id, [
     item(thread.id, 1, 'user_message', { text: 'Please review these generic examples. This is disposable local fixture data.',
       attachments: [{ id: 'sample-image', type: 'image', name: 'sample-image.svg', mimeType: 'image/svg+xml', sizeBytes: SAMPLE_IMAGE.length },
         { id: 'sample-file', type: 'file', name: 'sample-notes-with-a-long-generic-attachment-name.txt', mimeType: 'text/plain', sizeBytes: SAMPLE_TEXT.length }] }),
@@ -76,23 +86,23 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
   ]]));
   if (scenario === 'library') {
     const at = new Date(Date.now() - 86400000).toISOString();
-    for (const thread of threads) items.get(thread.id).push(item(thread.id, 10, 'assistant_message', {
+    for (const thread of threads) items.get(thread.id)!.push(item(thread.id, 10, 'assistant_message', {
       text: '[Sample counter card](library/counter.html) and [sample.csv](library/sample.csv)',
       startedAt: at, updatedAt: at, completedAt: at,
     }));
   }
   if (landing) {
     // Replace the generic transcripts with the invented personal ones, dated relative to now.
-    const requests = new Map(threads.map(({ id }) => [id, []]));
+    const requests = new Map<string, FixtureRequest[]>(threads.map(({ id }) => [id, []]));
     for (const thread of threads) {
       const slug = thread.id.slice('thread-'.length);
       const entries = landing.transcripts[slug] ?? [];
       items.set(thread.id, entries.map(({ type, at, text, requestId, questions, ...extra }, index) => {
         const base = item(thread.id, index + 1, type, { startedAt: at, completedAt: at, updatedAt: at, ...extra });
         if (type === 'user_input_request') {
-          requests.get(thread.id).push({ id: requestId, nodeId: `node-${requestId}`, providerTurnId: null, nativeRequestRef: null, kind: 'user_input', status: 'pending',
+          requests.get(thread.id)!.push({ id: requestId!, nodeId: `node-${requestId}`, providerTurnId: null, nativeRequestRef: null, kind: 'user_input', status: 'pending',
             responseCapability: { type: 'live', providerSessionId: 'fixture-session' }, createdAt: at, resolvedAt: null });
-          thread.pendingRuntimeRequest = { id: requestId, kind: 'user_input', blocking: true };
+          thread.pendingRuntimeRequest = { id: requestId!, kind: 'user_input', blocking: true };
           return { ...base, requestId, nodeId: `node-${requestId}`, questions, status: 'waiting', completedAt: null };
         }
         if (type === 'user_message') return { ...base, messageId: `${thread.id}-message-${index + 1}`, text, createdBy: 'user', creationSource: 'web', inputIntent: 'turn_start', attachments: [] };
@@ -107,48 +117,48 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
       Object.assign(thread, { createdAt: created, updatedAt: last, latestUserMessageAt: lastUser ?? created, latestRunCompletedAt: lastAssistant ?? created,
         lastVisitedAt: landing.unread.includes(slug) ? created : new Date(Date.parse(last) + 1000).toISOString() });
     }
-    var landingInteractions = { requests, inspect: () => ({ fixtureOnly: true, scenario: 'landing', liveDelivery: false }), armFailure: () => false, respond: () => null };
+    var landingInteractions: FixtureInteractions = { requests, inspect: () => ({ fixtureOnly: true, scenario: 'landing', liveDelivery: false }), armFailure: () => false, respond: () => null };
   }
-  const runs = new Map(threads.map(thread => [thread.id, []]));
+  const runs = new Map<string, FixtureRun[]>(threads.map(thread => [thread.id, []]));
   const latest = scenario === 'latest-t3' ? seedLatestT3({ threads, items, runs, projects, model: MODEL, stamp: STAMP }) : null;
   const avatars = scenario === 'avatars' ? seedAvatars({ threads, items, runs, model: MODEL }) : null;
   const activity = scenario === 'activity' ? seedActivity({ threads, items, runs, model: MODEL }) : null;
-  const interactions = scenario === 'interactions' ? seedInteractions({ threads, items, stamp: STAMP }) : landing ? landingInteractions : latest ?? avatars;
-  const receipts = new Map();
-  const subscriptions = new Map();
+  const interactions: FixtureInteractions | null = scenario === 'interactions' ? seedInteractions({ threads, items, stamp: STAMP }) : landing ? landingInteractions! : latest ?? avatars;
+  const receipts = new Map<string, { sequence: number }>();
+  const subscriptions = new Map<FixtureSocket, Map<string, { tag: string; threadId?: string }>>();
   let nextAttachment = 0;
   let sequence = 0;
   // T3 projections carry user messages beside turn items; Threebot counts them for PR chips.
-  const projection = (threadId) => ({ thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [] });
-  const chunk = (ws, id, value) => ws.send(JSON.stringify({ _tag: 'Chunk', requestId: id, values: [value] }));
-  const exit = (ws, id, value) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }));
-  const fail = (ws, id, message) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id,
+  const projection = (threadId: string) => ({ thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [] });
+  const chunk = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Chunk', requestId: id, values: [value] }));
+  const exit = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }));
+  const fail = (ws: FixtureSocket, id: string, message: string) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id,
     exit: { _tag: 'Failure', cause: [{ _tag: 'Fail', error: { message } }] } }));
   const publish = () => {
     for (const [ws, subs] of subscriptions) for (const [id, sub] of subs) {
       if (sub.tag === 'orchestration.subscribeShell') chunk(ws, id, { kind: 'snapshot', snapshot: { projects, threads: threads.filter((t) => !t.archivedAt) } });
-      if (sub.tag === 'orchestration.subscribeThread') chunk(ws, id, { kind: 'snapshot', projection: projection(sub.threadId) });
+      if (sub.tag === 'orchestration.subscribeThread') chunk(ws, id, { kind: 'snapshot', projection: projection(sub.threadId!) });
       if (sub.tag === 'scheduledTasks.subscribe' && latest) chunk(ws, id, { tasks: latest.tasks });
     }
   };
   const stopActivity = activity?.start(publish);
-  const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+  const json = (res: http.ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer(async (req, res) => {
     try {
-      const url = new URL(req.url, 'http://127.0.0.1');
+      const url = new URL(req.url!, 'http://127.0.0.1');
       if (url.pathname === '/api/auth/websocket-ticket/rpc' && req.method === 'POST') return json(res, 200, { ticket: 'fixture-only' });
       if (url.pathname === '/api/projects' && req.method === 'GET') return json(res, 200, { projects });
       if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId });
       if (interactions && url.pathname === '/fixture/interactions' && req.method === 'GET') return json(res, 200, interactions.inspect());
       if (interactions && url.pathname === '/fixture/interactions/fail-once' && req.method === 'POST') {
-        const chunks = [];
+        const chunks: Buffer[] = [];
         let size = 0;
         for await (const buffer of req) {
           size += buffer.length;
           if (size > 1024) return json(res, 413, { error: 'Fixture control body too large.' });
           chunks.push(buffer);
         }
-        let body;
+        let body: unknown;
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
         catch { return json(res, 400, { error: 'Invalid fixture control body.' }); }
         return interactions.armFailure(body) ? json(res, 200, { fixtureOnly: true, armed: true }) :
@@ -158,7 +168,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
         const resource = library.get('library/' + decodeURIComponent(url.pathname.slice('/fixture/library/'.length)));
         if (!resource) return json(res, 404, { error: 'File unavailable' });
         if (url.searchParams.get('signature') !== 'fixture+read/') return json(res, 403, { error: 'Invalid fixture signature' });
-        const headers = { 'content-type': resource.mimeType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'accept-ranges': 'bytes' };
+        const headers: Record<string, string> = { 'content-type': resource.mimeType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'accept-ranges': 'bytes' };
         if (url.searchParams.get('download') === '1') headers['content-disposition'] = 'attachment';
         if (req.headers.range) {
           const match = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range);
@@ -174,7 +184,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
       const match = /^\/fixture\/attachments\/([a-z0-9-]+)$/.exec(url.pathname);
       const attachment = match && attachments.get(match[1]);
       if (attachment && req.method === 'POST' && !match[1].startsWith('sample-')) {
-        const chunks = [];
+        const chunks: Buffer[] = [];
         let size = 0;
         for await (const buffer of req) {
           size += buffer.length;
@@ -189,11 +199,11 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
         return res.end(attachment.bytes);
       }
       json(res, 501, { error: interactions ? 'Unavailable in local fixture. No real T3 or model is connected.' : `Unavailable in local fixture: ${req.method} ${url.pathname}` });
-    } catch (error) { json(res, 500, { error: interactions ? 'Fixture HTTP request failed.' : error.message }); }
+    } catch (error) { json(res, 500, { error: interactions ? 'Fixture HTTP request failed.' : (error as Error).message }); }
   });
   const wss = new WebSocketServer({ server, path: '/ws' });
-  wss.on('connection', (ws) => {
-    const subs = new Map();
+  wss.on('connection', (ws: FixtureSocket) => {
+    const subs = new Map<string, { tag: string; threadId?: string }>();
     subscriptions.set(ws, subs);
     ws.on('close', () => subscriptions.delete(ws));
     ws.on('message', (raw) => {
@@ -225,11 +235,11 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
           subs.set(id, { tag, threadId: payload.threadId });
           return chunk(ws, id, { kind: 'snapshot', projection: projection(payload.threadId) });
         }
-        if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ?? avatars ? { environment: { capabilities: (latest ?? avatars).capabilities } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
+        if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ?? avatars ? { environment: { capabilities: (latest ?? avatars)!.capabilities } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
         if (tag === 'orchestration.getThreadFamily') return exit(ws, id, { threads: threads.filter((thread) => thread.lineage.rootThreadId === threads.find((t) => t.id === payload.threadId)?.lineage.rootThreadId) });
         if (tag === 'orchestration.getArchivedShellSnapshot') return exit(ws, id, { snapshotSequence: sequence, projects, threads: threads.filter((t) => t.archivedAt) });
-        if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt.localeCompare(a.settledAt) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
-        if (tag === 'orchestration.searchThreads') return exit(ws, id, { matches: threads.flatMap((t) => (items.get(t.id) ?? []).filter((item) => /^(user|assistant)_message$/.test(item.type) && item.text.toLowerCase().includes(payload.query.toLowerCase())).slice(0,1).map((item) => ({ threadId: t.id, projectId: t.projectId, messageId: item.id, snippet: item.text.slice(0,240), source: item.type === 'user_message' ? 'user' : 'assistant', messageCreatedAt: item.updatedAt }))).slice(0, payload.limit) });
+        if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt!.localeCompare(a.settledAt!) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
+        if (tag === 'orchestration.searchThreads') return exit(ws, id, { matches: threads.flatMap((t) => (items.get(t.id) ?? []).filter((item) => /^(user|assistant)_message$/.test(item.type) && item.text!.toLowerCase().includes(payload.query.toLowerCase())).slice(0,1).map((item) => ({ threadId: t.id, projectId: t.projectId, messageId: item.id, snippet: item.text!.slice(0,240), source: item.type === 'user_message' ? 'user' : 'assistant', messageCreatedAt: item.updatedAt }))).slice(0, payload.limit) });
         if (tag === 'orchestration.searchThread') { const match = (items.get(payload.threadId) ?? []).find((item) => item.text?.toLowerCase().includes(payload.query.toLowerCase())); return exit(ws, id, { snapshotSequence: sequence, totalMatches: match ? 1 : 0, activeIndex: 0, match: match ? { entryId: match.id, runId: match.runId, occurrence: 0 } : null, navigation: [] }); }
         if (tag === 'projects.searchEntries') return exit(ws, id, { entries: 'sample-notes.txt'.includes(payload.query.toLowerCase()) ? [{ path: 'sample-notes.txt', kind: 'file' }] : [], truncated: false });
         if (tag === 'projects.listEntries') return exit(ws, id, { entries: payload.directoryPath === 'library' && projects.some(p => p.workspaceRoot === payload.cwd) ? [...library.keys()].map(path => ({ path, kind: 'file' })) : [], truncated: false });
@@ -237,7 +247,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
         if (tag === 'projects.mutate' && payload.type === 'project.update') {
           const project = projects.find((p) => p.id === payload.projectId);
           if (!project) return fail(ws, id, 'Unknown fixture project');
-          for (const key of ['title', 'faviconPath', 'projectIcon', 'defaultModelSelection']) if (key in payload) project[key] = payload[key];
+          for (const key of ['title', 'faviconPath', 'projectIcon', 'defaultModelSelection'] as const) if (key in payload) project[key] = payload[key];
           if (typeof payload.archived === 'boolean') project.archivedAt = payload.archived ? (project.archivedAt ?? new Date().toISOString()) : null;
           publish();
           return exit(ws, id, { sequence: ++sequence });
@@ -248,7 +258,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
           if (!thread) return fail(ws, id, 'Unknown fixture thread');
           if (receipts.has(payload.commandId)) return exit(ws, id, receipts.get(payload.commandId));
           const now = new Date().toISOString();
-          const threadRuns = runs.get(thread.id);
+          const threadRuns = runs.get(thread.id)!;
           if (payload.type === 'message.dispatch') {
             if (typeof payload.text !== 'string' || typeof payload.messageId !== 'string') return fail(ws, id, 'Unavailable in local fixture: a scripted message requires an explicit message ID. No real T3 or model is connected.');
             let run = threadRuns.find(run => run.status === 'running');
@@ -256,7 +266,7 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
               run = { id: `fixture-run-${threadRuns.length + 1}-${thread.id}`, userMessageId: payload.messageId, ordinal: threadRuns.length + 1, status: 'running', requestedAt: now, startedAt: now, completedAt: null, modelSelection: MODEL };
               threadRuns.push(run);
             }
-            const entries = items.get(thread.id);
+            const entries = items.get(thread.id)!;
             entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: 'user', creationSource: 'web', attachments: payload.attachments ?? [], updatedAt: now }));
             Object.assign(thread, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: now });
             avatars?.afterMessage(thread, payload.text, publish);
@@ -313,9 +323,9 @@ export async function startFakeT3(root, port = 0, { scenario = 'basic', executor
       } catch { ws.close(1003, 'Invalid fixture RPC'); }
     });
   });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   return {
-    port: server.address().port,
+    port: (server.address() as AddressInfo).port,
     async close() {
       stopActivity?.();
       for (const ws of wss.clients) ws.terminate();

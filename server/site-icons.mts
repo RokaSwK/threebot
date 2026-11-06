@@ -12,13 +12,13 @@ const MAX_PAGE = 512 * 1024, MAX_ICON = 1024 * 1024, MAX_HOPS = 3, TIMEOUT = 800
 const FOUND_FOR = 30 * 864e5, MISSING_FOR = 864e5;
 const RASTER = /^image\/(png|jpeg|webp|gif|avif)\b/, ICO = /^image\/(x-icon|vnd\.microsoft\.icon)\b/, SVG = /^image\/svg\+xml\b/;
 
-export const normalizeDomain = (value) => {
+export const normalizeDomain = (value: unknown) => {
   const domain = String(value ?? "").trim().toLowerCase().replace(/\.$/, "");
   return DOMAIN.test(domain) ? domain : null;
 };
 
 /** Only public addresses: a saved login must never make the gateway probe the local network. */
-export function isPublicAddress(address) {
+export function isPublicAddress(address: string): boolean {
   if (net.isIPv4(address)) {
     const [a, b, c] = address.split(".").map(Number);
     return !(a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
@@ -31,10 +31,10 @@ export function isPublicAddress(address) {
   return !(value === "::" || value === "::1" || /^f[cd]/.test(value) || /^fe[89ab]/.test(value) || /^ff/.test(value) || value.startsWith("64:ff9b") || value.startsWith("::ffff:"));
 }
 
-async function readLimited(response, limit) {
+async function readLimited(response: Response, limit: number) {
   const reader = response.body?.getReader();
   if (!reader) return Buffer.alloc(0);
-  const chunks = []; let size = 0;
+  const chunks: Uint8Array[] = []; let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -46,8 +46,8 @@ async function readLimited(response, limit) {
 }
 
 /** Candidates from a page's <link> tags, best first. */
-export function iconLinks(html, base) {
-  const found = [];
+export function iconLinks(html: string, base: string | URL) {
+  const found: { url: URL; score: number }[] = [];
   for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
     const rel = /\brel\s*=\s*["']?([^"'>]+)/i.exec(tag)?.[1]?.toLowerCase() ?? "";
     const href = /\bhref\s*=\s*["']?([^"'\s>]+)/i.exec(tag)?.[1];
@@ -59,10 +59,14 @@ export function iconLinks(html, base) {
   return found.sort((a, b) => b.score - a.score).map((item) => item.url);
 }
 
-export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
-  const running = new Map();
+export interface SiteIcon { type: string; bytes: Buffer }
+type Fetcher = (url: URL, init: RequestInit) => Promise<Response>;
+type Resolver = (hostname: string, options: { all: true }) => Promise<{ address: string }[]>;
 
-  async function fetchPublic(start, limit) {
+export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }: { dir: string; fetcher?: Fetcher; resolve?: Resolver }) {
+  const running = new Map<string, Promise<SiteIcon | null>>();
+
+  async function fetchPublic(start: string | URL, limit: number) {
     let url = new URL(start);
     for (let hop = 0; hop <= MAX_HOPS; hop++) {
       if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) return null;
@@ -81,7 +85,7 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
     return null;
   }
 
-  async function toIcon({ type, bytes }) {
+  async function toIcon({ type, bytes }: { type: string; bytes: Buffer }): Promise<SiteIcon | null> {
     if (!bytes.length) return null;
     if (ICO.test(type)) return { type: "image/x-icon", bytes };
     if (!RASTER.test(type) && !SVG.test(type)) return null;
@@ -90,10 +94,10 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
     return png && { type: "image/png", bytes: png };
   }
 
-  async function find(domain) {
+  async function find(domain: string): Promise<{ icon?: SiteIcon; unsure?: boolean }> {
     // A slow or unreachable site isn't a site without a logo, so only an answer gets remembered.
     let unsure = false;
-    const attempt = (run) => run().catch(() => { unsure = true; return null; });
+    const attempt = <T,>(run: () => Promise<T>) => run().catch(() => { unsure = true; return null; });
     const page = await attempt(() => fetchPublic(`https://${domain}/`, MAX_PAGE));
     const links = page && /html/.test(page.type) ? iconLinks(page.bytes.toString("utf8"), page.url) : [];
     for (const url of [...links.slice(0, 4), new URL("/favicon.ico", page?.url ?? `https://${domain}/`)]) {
@@ -103,7 +107,7 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
     return { unsure };
   }
 
-  async function load(domain) {
+  async function load(domain: string): Promise<SiteIcon | null> {
     const key = createHash("sha256").update(domain).digest("hex").slice(0, 32);
     const file = path.join(dir, `${key}.json`);
     const cached = await stat(file).then(async (info) => ({ info, entry: JSON.parse(await readFile(file, "utf8")) })).catch(() => null);
@@ -119,11 +123,11 @@ export function createSiteIcons({ dir, fetcher = fetch, resolve = lookup }) {
   }
 
   return {
-    get(value) {
+    get(value: unknown): Promise<SiteIcon | null> {
       const domain = normalizeDomain(value);
       if (!domain) return Promise.resolve(null);
       if (!running.has(domain)) running.set(domain, load(domain).finally(() => running.delete(domain)));
-      return running.get(domain);
+      return running.get(domain)!;
     },
   };
 }

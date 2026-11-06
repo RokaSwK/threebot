@@ -36,7 +36,8 @@ test("existing bot shape names keep working and invalid metadata falls back", ()
   for (const [alias, shape] of Object.entries(config.shapeAliases)) {
     assert.equal(renderBotAvatar({ shape: alias, color: "blue" }), renderBotAvatar({ shape, color: "blue" }));
   }
-  for (const invalid of [undefined, null, "unknown", "__proto__", "toString"]) {
+  // Deliberately not strings: bot.json can hold anything.
+  for (const invalid of [undefined, null, "unknown", "__proto__", "toString"] as string[]) {
     assert.equal(renderBotAvatar({ shape: invalid, color: invalid }), renderBotAvatar({ shape: "blob", color: "teal" }));
   }
 });
@@ -68,9 +69,9 @@ test("project favicon follows edits, is readable from disk, and converges withou
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "bot-favicon-"));
   try {
     const bot = { workspaceRoot, shape: "cloud", color: "blue", name: "Cloud Bot" };
-    const project = { id: "project-test", title: "Old name", faviconPath: null, projectIcon: { kind: "emoji", emoji: "🤖" } };
-    const mutations = [];
-    const client = { async call(method, input) {
+    const project: { id: string; title: string; faviconPath: string | null; projectIcon: unknown } = { id: "project-test", title: "Old name", faviconPath: null, projectIcon: { kind: "emoji", emoji: "🤖" } };
+    const mutations: Record<string, unknown>[] = [];
+    const client = { async call(method: string, input: Record<string, unknown>) {
       assert.equal(method, "projects.mutate");
       mutations.push(input);
       Object.assign(project, input);
@@ -79,8 +80,8 @@ test("project favicon follows edits, is readable from disk, and converges withou
     assert.equal(mutations.length, 1);
     assert.equal(project.title, bot.name);
     assert.equal(project.projectIcon, null);
-    assert.match(project.faviconPath, /^\.bot\/avatar-[a-f0-9]{12}\.svg$/);
-    const firstFile = path.join(workspaceRoot, project.faviconPath);
+    assert.match(project.faviconPath!, /^\.bot\/avatar-[a-f0-9]{12}\.svg$/);
+    const firstFile = path.join(workspaceRoot, project.faviconPath!);
     assert.equal(await readFile(firstFile, "utf8"), renderBotAvatar(bot));
     const firstMtime = (await stat(firstFile)).mtimeMs;
     await syncBotProject(client, bot, project);
@@ -91,12 +92,12 @@ test("project favicon follows edits, is readable from disk, and converges withou
       Object.assign(bot, patch);
       await syncBotProject(client, bot, project);
       assert.notEqual(project.faviconPath, previousPath);
-      assert.equal(await readFile(path.join(workspaceRoot, project.faviconPath), "utf8"), renderBotAvatar(bot));
+      assert.equal(await readFile(path.join(workspaceRoot, project.faviconPath!), "utf8"), renderBotAvatar(bot));
     }
     // Recreate a missing icon after a restore without changing its revision.
-    await rm(path.join(workspaceRoot, project.faviconPath));
+    await rm(path.join(workspaceRoot, project.faviconPath!));
     assert.equal(await ensureBotFavicon(bot), project.faviconPath);
-    assert.equal(await readFile(path.join(workspaceRoot, project.faviconPath), "utf8"), renderBotAvatar(bot));
+    assert.equal(await readFile(path.join(workspaceRoot, project.faviconPath!), "utf8"), renderBotAvatar(bot));
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

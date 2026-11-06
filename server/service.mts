@@ -10,14 +10,14 @@ import { run } from "./release.mts";
 export const LAUNCHD_LABEL = "tools.threebot.gateway";
 export const SYSTEMD_UNIT = "threebot.service";
 
-const xml = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const xml = (value: string) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 /**
  * The node to run: the PATH entry that is this same node (/opt/homebrew/bin/node), not the
  * versioned folder it resolves to, which disappears when Homebrew or nvm upgrades Node.
  */
-export function stableNode(execPath = process.execPath, pathEnv = process.env.PATH ?? "") {
-  const real = (p) => { try { return realpathSync(p); } catch { return null; } };
+export function stableNode(execPath: string = process.execPath, pathEnv: string = process.env.PATH ?? ""): string {
+  const real = (p: string) => { try { return realpathSync(p); } catch { return null; } };
   const target = real(execPath);
   for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
     const candidate = path.join(dir, "node");
@@ -27,13 +27,16 @@ export function stableNode(execPath = process.execPath, pathEnv = process.env.PA
 }
 
 /** Everything a service needs to know: what to run, with which environment, and where logs go. */
-export function serviceSpec({ node = stableNode(), cli, home, pathEnv = process.env.PATH ?? "", label = LAUNCHD_LABEL, unit = SYSTEMD_UNIT }) {
+export function serviceSpec({ node = stableNode(), cli, home, pathEnv = process.env.PATH ?? "", label = LAUNCHD_LABEL, unit = SYSTEMD_UNIT }: { node?: string; cli: string; home: string; pathEnv?: string; label?: string; unit?: string }) {
   // A service starts with a bare PATH; keep the user's, so `t3`, `tailscale` and `cloudflared` are found.
   const dirs = [...new Set([path.dirname(node), ...pathEnv.split(":").filter(Boolean), "/usr/local/bin", "/usr/bin", "/bin"])];
   return { node, cli, home, label, unit, env: { PATH: dirs.join(":"), THREEBOT_HOME: home, THREEBOT_SERVICE: "1" }, log: path.join(home, "logs", "gateway.log") };
 }
 
-export function launchdPlist(spec) {
+export type ServiceSpec = ReturnType<typeof serviceSpec>;
+type ServiceOptions = { platform?: NodeJS.Platform; exec?: typeof run };
+
+export function launchdPlist(spec: ServiceSpec): string {
   const env = Object.entries(spec.env).map(([k, v]) => `      <key>${xml(k)}</key><string>${xml(v)}</string>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -62,8 +65,8 @@ ${env}
 `;
 }
 
-const quoteUnit = (value) => /[\s"\\]/.test(value) ? `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : value;
-export function systemdUnit(spec) {
+const quoteUnit = (value: string) => /[\s"\\]/.test(value) ? `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` : value;
+export function systemdUnit(spec: ServiceSpec): string {
   return `[Unit]
 Description=Threebot
 After=network-online.target
@@ -82,7 +85,7 @@ WantedBy=default.target
 `;
 }
 
-export function serviceFile(spec, platform = process.platform) {
+export function serviceFile(spec: ServiceSpec, platform: NodeJS.Platform = process.platform): string | null {
   if (platform === "darwin") return path.join(homedir(), "Library", "LaunchAgents", `${spec.label}.plist`);
   if (platform === "linux") return path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "systemd", "user", spec.unit);
   return null;
@@ -91,9 +94,9 @@ export function serviceFile(spec, platform = process.platform) {
 export const serviceSupported = (platform = process.platform) => platform === "darwin" || platform === "linux";
 const domain = () => `gui/${userInfo().uid}`;
 
-export async function installService(spec, { platform = process.platform, exec = run } = {}) {
+export async function installService(spec: ServiceSpec, { platform = process.platform, exec = run }: ServiceOptions = {}): Promise<string> {
   if (!serviceSupported(platform)) throw new Error("Background services are supported on macOS and Linux.");
-  const file = serviceFile(spec, platform);
+  const file = serviceFile(spec, platform)!;
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.mkdir(path.dirname(spec.log), { recursive: true });
   if (platform === "darwin") {
@@ -109,7 +112,7 @@ export async function installService(spec, { platform = process.platform, exec =
   return file;
 }
 
-export async function uninstallService(spec, { platform = process.platform, exec = run } = {}) {
+export async function uninstallService(spec: ServiceSpec, { platform = process.platform, exec = run }: ServiceOptions = {}): Promise<void> {
   const file = serviceFile(spec, platform);
   if (platform === "darwin") await exec("launchctl", ["bootout", `${domain()}/${spec.label}`]).catch(() => {});
   if (platform === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]).catch(() => {});
@@ -117,13 +120,13 @@ export async function uninstallService(spec, { platform = process.platform, exec
   if (platform === "linux") await exec("systemctl", ["--user", "daemon-reload"]).catch(() => {});
 }
 
-export async function restartService(spec, { platform = process.platform, exec = run } = {}) {
+export async function restartService(spec: ServiceSpec, { platform = process.platform, exec = run }: ServiceOptions = {}): Promise<string> {
   if (platform === "darwin") return exec("launchctl", ["kickstart", "-k", `${domain()}/${spec.label}`]);
   if (platform === "linux") return exec("systemctl", ["--user", "restart", spec.unit]);
   throw new Error("Background services are supported on macOS and Linux.");
 }
 
-export function serviceInstalled(spec, platform = process.platform) {
+export function serviceInstalled(spec: ServiceSpec, platform: NodeJS.Platform = process.platform): boolean {
   const file = serviceFile(spec, platform);
   return Boolean(file && existsSync(file));
 }

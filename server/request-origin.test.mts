@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 
-const request = (headers) => ({ headers: { host: "bot.swk.tools", ...headers } });
+const request = (headers: Record<string, string>) => ({ headers: { host: "bot.swk.tools", ...headers } });
 
 test("the app's own pages are allowed", () => {
   assert.equal(sameOriginRequest(request({ origin: "https://bot.swk.tools" })), true);

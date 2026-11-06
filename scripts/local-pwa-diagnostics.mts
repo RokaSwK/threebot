@@ -1,4 +1,6 @@
 // Served only by the loopback development launchers, before auth/API proxies.
+import type { IncomingMessage, ServerResponse } from 'node:http';
+
 export const LOCAL_PWA_DIAGNOSTICS_PATH = '/api/__local_pwa_diagnostics';
 export const LOCAL_PWA_DIAGNOSTICS_HTML = `<!doctype html>
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Local PWA diagnostics</title>
@@ -94,13 +96,14 @@ export const LOCAL_PWA_DIAGNOSTICS_HTML = `<!doctype html>
 </script></html>`;
 
 export function localPwaDiagnosticsPlugin() {
-  const install = (server) => { server.middlewares.use((request, response, next) => {
+  // The part of a Vite dev or preview server this uses (Vite's types aren't available to scripts/).
+  const install = (server: { middlewares: { use(handler: (request: IncomingMessage, response: ServerResponse, next: () => void) => void): unknown } }) => { server.middlewares.use((request, response, next) => {
     if (request.url?.split('?')[0] !== LOCAL_PWA_DIAGNOSTICS_PATH) return next();
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; worker-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
-    if (!['GET', 'HEAD'].includes(request.method)) { response.writeHead(405, { Allow: 'GET, HEAD' }); response.end(); return; }
+    if (!['GET', 'HEAD'].includes(request.method!)) { response.writeHead(405, { Allow: 'GET, HEAD' }); response.end(); return; }
     response.writeHead(200);
     response.end(request.method === 'HEAD' ? undefined : LOCAL_PWA_DIAGNOSTICS_HTML);
   }); };

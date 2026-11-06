@@ -6,14 +6,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const defaultDist = fileURLToPath(new URL('../web/dist/', import.meta.url));
-const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const urlPath = (parts) => '/' + parts.map(encodeURIComponent).join('/');
+const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+const urlPath = (parts: string[]) => '/' + parts.map(encodeURIComponent).join('/');
 
 /** Index and all generated assets, including lazy chunks. No timestamps or host paths. */
-export async function createAssetManifest(dist = defaultDist) {
+export async function createAssetManifest(dist: string = defaultDist) {
   const directory = path.resolve(dist);
-  const files = [];
-  async function inspect(parts) {
+  const files: string[][] = [];
+  async function inspect(parts: string[]) {
     const name = parts.length ? urlPath(parts) : 'build directory';
     let entry;
     try { entry = await lstat(path.join(directory, ...parts)); }
@@ -49,7 +49,7 @@ export async function createAssetManifest(dist = defaultDist) {
   return { files: manifest };
 }
 
-function parseOrigin(value) {
+function parseOrigin(value: unknown) {
   let origin;
   try {
     if (typeof value !== 'string' || !/^https?:\/\/[^/?#\\]+\/?$/i.test(value)) throw new Error();
@@ -63,14 +63,14 @@ function parseOrigin(value) {
 }
 
 /** Verify expected build files only; previous hashed assets may remain installed. */
-export async function verifyAssets(dist, origin, { concurrency = 4, timeoutMs = 10_000 } = {}) {
+export async function verifyAssets(dist: string, origin: unknown, { concurrency = 4, timeoutMs = 10_000 }: { concurrency?: number; timeoutMs?: number } = {}) {
   const base = parseOrigin(origin);
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) throw new Error('Concurrency must be between 1 and 16');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Timeout must be between 1 and 60000 milliseconds');
   const { files } = await createAssetManifest(dist);
   const stop = new AbortController();
   let next = 0;
-  let failure;
+  let failure: unknown;
   await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, async () => {
     while (!failure && next < files.length) {
       const file = files[next++];
@@ -103,7 +103,7 @@ export async function verifyAssets(dist, origin, { concurrency = 4, timeoutMs = 
   return { files: files.length, bytes: files.reduce((total, file) => total + file.bytes, 0) };
 }
 
-async function main(args) {
+async function main(args: string[]) {
   let dist = defaultDist;
   let origin;
   for (let i = 0; i < args.length; i++) {

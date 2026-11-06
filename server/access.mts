@@ -1,13 +1,18 @@
 // Verifies Cloudflare Access tokens (Cf-Access-Jwt-Assertion header or CF_Authorization cookie).
 // A valid token for an allowed email lets a request skip the app password.
-import { createPublicKey, verify } from "node:crypto";
+import { createPublicKey, verify, type KeyObject } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 
-export function createAccessVerifier({ teamDomain, aud, emails, fetchImpl = fetch, now = () => Date.now() }) {
+export function createAccessVerifier({ teamDomain, aud, emails, fetchImpl = fetch, now = () => Date.now() }: {
+  teamDomain?: string; aud?: string; emails?: string[];
+  fetchImpl?: (url: string, init: RequestInit) => Promise<{ ok: boolean; status?: number; json(): Promise<any> }>;
+  now?: () => number;
+}) {
   if (!teamDomain || !aud || !emails?.length) return null;
   const issuer = `https://${teamDomain}`;
   const certsUrl = `${issuer}/cdn-cgi/access/certs`;
   const allowed = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
-  let keys = new Map();
+  let keys = new Map<string, KeyObject>();
   let fetchedAt = 0;
 
   async function loadKeys(force = false) {
@@ -16,16 +21,16 @@ export function createAccessVerifier({ teamDomain, aud, emails, fetchImpl = fetc
     const res = await fetchImpl(certsUrl, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error(`Access certs ${res.status}`);
     const body = await res.json();
-    const next = new Map();
+    const next = new Map<string, KeyObject>();
     for (const jwk of body.keys ?? []) if (jwk.kid) next.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
     keys = next;
     fetchedAt = now();
   }
 
-  const b64 = (s) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  const b64 = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
   /** Returns the verified email, or null. */
-  return async function verifyAccessToken(token) {
+  return async function verifyAccessToken(token: unknown): Promise<string | null> {
     if (typeof token !== "string" || token.length > 8192) return null;
     const parts = token.split(".");
     if (parts.length !== 3) return null;
@@ -41,7 +46,7 @@ export function createAccessVerifier({ teamDomain, aud, emails, fetchImpl = fetc
       await loadKeys();
       if (!keys.has(header.kid)) await loadKeys(true);
     } catch (e) {
-      console.error("[access] could not load certs:", e.message);
+      console.error("[access] could not load certs:", (e as Error).message);
       return null;
     }
     const key = keys.get(header.kid);
@@ -58,6 +63,6 @@ export function createAccessVerifier({ teamDomain, aud, emails, fetchImpl = fetc
   };
 }
 
-export function accessTokenFrom(req, cookies) {
+export function accessTokenFrom(req: IncomingMessage, cookies: Record<string, string | undefined>) {
   return req.headers["cf-access-jwt-assertion"] || cookies.CF_Authorization || null;
 }

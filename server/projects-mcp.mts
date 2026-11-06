@@ -1,6 +1,20 @@
 // The Projects board as tools on the Bots' own MCP server ("bot"). Every change a Bot makes
 // here appears on the user's open Projects page straight away, labelled with the Bot's name.
-import { FIELD_NAMES, KINDS, LINK_TYPES, PRIORITIES, STATUSES, detail, find, itemLink, overview } from "./projects.mts";
+import { FIELD_NAMES, KINDS, LINK_TYPES, PRIORITIES, STATUSES, detail, find, itemLink, overview, type ProjectStore } from "./projects.mts";
+
+/** An MCP tool definition as listed by tools/list. */
+export type ProjectTool = {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
+};
+export type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+/** The Bot whose main thread is `threadId`; throws when it isn't one. */
+export type BotFor = (threadId: unknown) => Promise<{ name?: string; slug?: string }>;
+/** A tool call's arguments: the Bot's MCP JSON. Each tool checks what it uses. */
+type ToolArgs = Record<string, unknown>;
 
 const threadIdProp = { type: "string", description: "Your main conversation's T3 thread id (in AGENTS.md, or mainThreadId in .bot/bot.json). Changes are shown as made by you." };
 const statusHelp = Object.entries(STATUSES).filter(([, list]) => list.length).map(([kind, list]) => `${kind}: ${list.join("|")}`).join("; ");
@@ -47,7 +61,7 @@ const itemSchema = {
   },
 };
 
-export const PROJECT_TOOLS = [
+export const PROJECT_TOOLS: ProjectTool[] = [
   {
     name: "projects_overview",
     title: "Read the Projects board",
@@ -110,12 +124,12 @@ export const PROJECT_TOOLS = [
 
 export const PROJECT_TOOL_NAMES = new Set(PROJECT_TOOLS.map((tool) => tool.name));
 
-const toolJson = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
-const toolError = (text) => ({ content: [{ type: "text", text }], isError: true });
+const toolJson = (value: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+const toolError = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 
-export function createProjectTools({ projects, botFor: defaultBotFor = null, appUrl = "", log = () => {} }) {
+export function createProjectTools({ projects, botFor: defaultBotFor = null, appUrl = "", log = () => {} }: { projects: ProjectStore; botFor?: BotFor | null; appUrl?: string | (() => string); log?: (line: string) => void }) {
   const options = () => ({ appUrl: typeof appUrl === "function" ? appUrl() : appUrl });
-  return async function callProjectTool(name, args = {}, context = {}) {
+  return async function callProjectTool(name: string, args: ToolArgs = {}, context: { botFor?: BotFor | null } = {}): Promise<ToolResult> {
     const botFor = context.botFor ?? defaultBotFor;
     try {
       switch (name) {
@@ -148,7 +162,7 @@ export function createProjectTools({ projects, botFor: defaultBotFor = null, app
           return toolError(`Unknown tool ${name}`);
       }
     } catch (error) {
-      return toolError(String(error?.message ?? error));
+      return toolError(String((error as { message?: unknown } | null | undefined)?.message ?? error));
     }
   };
 }

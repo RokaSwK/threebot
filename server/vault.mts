@@ -22,18 +22,57 @@ const CONTACT_KINDS = ["home", "work", "other"];
 const MAX_FIELD = 4000;
 const MAX_ITEMS = 10000;
 
-function httpError(status, message) {
+export type VaultItemType = "login" | "contact";
+/** A saved item as stored (decrypted). Records written by older versions may lack newer fields. */
+export interface VaultItem {
+  id: string;
+  type: VaultItemType;
+  createdAt?: string;
+  updatedAt?: string;
+  title?: string;
+  // login
+  website?: string;
+  websites?: string[];
+  username?: string;
+  password?: string;
+  hints?: string;
+  botCanRead?: boolean;
+  // contact
+  label?: string;
+  name?: string;
+  email?: string;
+  emails?: string[];
+  phone?: string;
+  phones?: string[];
+  street?: string;
+  apt?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+  kind?: string;
+  [field: string]: unknown;
+}
+/** Item fields as the app, Bots or an import send them (a JSON body); normalize() checks every field it keeps. */
+export type VaultInput = Record<string, any>;
+export interface VaultEnvelope { format: string; version: number; cipher: string; iv: string; tag: string; data: string }
+interface VaultPayload { items?: unknown; updatedAt?: string }
+type RepeatedField = "website" | "email" | "phone";
+/** An item as the app list and Bots see it; logins also carry where they fill and whether a password is saved. */
+export interface RedactedItem extends VaultItem { domain?: string; hasPassword?: boolean }
+
+function httpError(status: number, message: string) {
   return Object.assign(new Error(message), { status });
 }
 
 // ---------- key ----------
-export async function loadOrCreateKey(keyFile, { create = true } = {}) {
+export async function loadOrCreateKey(keyFile: string, { create = true }: { create?: boolean } = {}): Promise<Buffer> {
   try {
     const key = await fs.readFile(keyFile);
     if (key.length !== 32) throw httpError(500, "The vault key file is not a 32-byte key.");
     return key;
   } catch (e) {
-    if (e.code !== "ENOENT") throw e;
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
   if (!create) throw httpError(500, "The vault key file is missing, so the vault can't be opened. Restore it (VAULT_KEY_FILE).");
   await fs.mkdir(path.dirname(keyFile), { recursive: true, mode: 0o700 });
@@ -43,13 +82,13 @@ export async function loadOrCreateKey(keyFile, { create = true } = {}) {
     return key;
   } catch (e) {
     // Another process created it first.
-    if (e.code === "EEXIST") return loadOrCreateKey(keyFile, { create: false });
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return loadOrCreateKey(keyFile, { create: false });
     throw e;
   }
 }
 
 // ---------- encryption ----------
-export function encrypt(key, payload) {
+export function encrypt(key: Buffer, payload: unknown): VaultEnvelope {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(AAD);
@@ -57,7 +96,7 @@ export function encrypt(key, payload) {
   return { format: FORMAT, version: VERSION, cipher: "aes-256-gcm", iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), data: data.toString("base64") };
 }
 
-export function decrypt(key, envelope) {
+export function decrypt(key: Buffer, envelope: VaultEnvelope | null | undefined): VaultPayload {
   if (envelope?.format !== FORMAT) throw httpError(500, "This file is not a Bot vault.");
   if (envelope.version !== VERSION || envelope.cipher !== "aes-256-gcm") throw httpError(500, `Unsupported vault version ${envelope.version}.`);
   try {
@@ -72,7 +111,7 @@ export function decrypt(key, envelope) {
   }
 }
 
-async function writeAtomic(file, text) {
+async function writeAtomic(file: string, text: string) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   const fh = await fs.open(tmp, "w", 0o600);
@@ -87,7 +126,7 @@ async function writeAtomic(file, text) {
 
 // ---------- sites ----------
 /** "https://www.GitHub.com/login" or "github.com" → URL, or null. */
-export function parseSite(input) {
+export function parseSite(input: unknown): URL | null {
   const s = String(input ?? "").trim();
   if (!s) return null;
   try {
@@ -101,7 +140,7 @@ export function parseSite(input) {
 }
 
 /** The domain a login fills on: the website's hostname without a leading "www.". */
-export function siteDomain(website) {
+export function siteDomain(website: unknown): string {
   const u = parseSite(website);
   if (!u) return "";
   return u.hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
@@ -112,10 +151,10 @@ export function siteDomain(website) {
  * Lookalikes (google.com.evil.io, accounts-google.com, xn--ggle-…) don't match.
  * A page served over plain http only matches a login saved with an explicit http:// address.
  */
-export function matchesSite(pageUrl, website) {
+export function matchesSite(pageUrl: unknown, website: unknown): boolean {
   const domain = siteDomain(website);
   if (!domain) return false;
-  let page;
+  let page: URL;
   try {
     page = new URL(String(pageUrl ?? ""));
   } catch {
@@ -128,12 +167,12 @@ export function matchesSite(pageUrl, website) {
 }
 
 // ---------- items ----------
-function clean(v, max = MAX_FIELD) {
+function clean(v: unknown, max = MAX_FIELD): string {
   if (v === undefined || v === null) return "";
   return String(v).slice(0, max);
 }
 
-function normalizeWebsite(w) {
+function normalizeWebsite(w: unknown): string {
   const s = clean(w, 2000).trim();
   if (!s) return "";
   const u = parseSite(s);
@@ -143,15 +182,15 @@ function normalizeWebsite(w) {
 }
 
 // Ordered values: first is primary. Scalar mirrors preserve existing records and callers.
-const REPEATED = { website: 'websites', email: 'emails', phone: 'phones' };
-export function repeatedValues(item, field) {
+const REPEATED = { website: 'websites', email: 'emails', phone: 'phones' } as const;
+export function repeatedValues(item: VaultItem, field: RepeatedField): string[] {
   const values = item[REPEATED[field]];
   return Array.isArray(values) ? values : item[field] ? [item[field]] : [];
 }
-function normalizeRepeated(input, out, field) {
+function normalizeRepeated(input: VaultInput, out: VaultItem, field: RepeatedField) {
   const plural = REPEATED[field];
   if (!(plural in input) && !(field in input)) return;
-  let values;
+  let values: unknown[];
   if (plural in input) {
     if (!Array.isArray(input[plural]) || input[plural].length > 20 || input[plural].some(value => typeof value !== 'string' || value.length > MAX_FIELD)) {
       throw httpError(400, `${plural} must contain at most 20 text values.`);
@@ -165,19 +204,19 @@ function normalizeRepeated(input, out, field) {
   out[field] = out[plural][0] ?? '';
 }
 
-function normalize(input, existing = null) {
+function normalize(input: VaultInput, existing: VaultItem | null = null): VaultItem {
   const type = existing?.type ?? input.type;
   if (type !== "login" && type !== "contact") throw httpError(400, "type must be login or contact");
   const fields = type === "login" ? LOGIN_FIELDS : CONTACT_FIELDS;
-  const out = existing ? { ...existing } : { id: randomUUID(), type, createdAt: new Date().toISOString() };
+  const out: VaultItem = existing ? { ...existing } : { id: randomUUID(), type, createdAt: new Date().toISOString() };
   for (const f of fields) {
-    if (!(f in input) || f in REPEATED || Object.values(REPEATED).includes(f)) continue;
+    if (!(f in input) || f in REPEATED || (Object.values(REPEATED) as readonly string[]).includes(f)) continue;
     if (f === "password") out.password = clean(input.password);
     else if (f === "botCanRead") out.botCanRead = input.botCanRead === true;
     else if (f === "kind") out.kind = CONTACT_KINDS.includes(input.kind) ? input.kind : "other";
     else out[f] = clean(input[f]).trim();
   }
-  for (const field of type === "login" ? ["website"] : ["email", "phone"]) normalizeRepeated(input, out, field);
+  for (const field of type === "login" ? ["website"] as const : ["email", "phone"] as const) normalizeRepeated(input, out, field);
   if (type === "login") {
     if (!out.website && !out.title) throw httpError(400, "A login needs a website or a title.");
     if (!out.title) out.title = siteDomain(out.website) || out.website;
@@ -190,36 +229,40 @@ function normalize(input, existing = null) {
 }
 
 /** What the app list and Bots may see: everything except the password. */
-export function redact(item) {
+export function redact(item: VaultItem): RedactedItem {
   if (item.type !== "login") return { ...item };
   const { password, ...rest } = item;
   return { ...rest, domain: siteDomain(item.website), hasPassword: Boolean(password) };
 }
 
 // ---------- CSV export ----------
-function csvCell(v) {
+function csvCell(v: unknown) {
   const s = String(v ?? "");
   return /[",\r\n]/.test(s) || /^\s|\s$/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-export function toCsv(rows) {
+export function toCsv(rows: unknown[][]) {
   return rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
 export const LOGIN_CSV_HEADER = ["name", "url", "username", "password", "note"];
 export const CONTACT_CSV_HEADER = ["label", "name", "email", "phone", "street", "apt", "city", "state", "zip", "country", "kind", "note"];
 
 // ---------- the store ----------
-export function createVault({ file, keyFile }) {
-  let key = null;
-  let items = null;
-  let queue = Promise.resolve();
+/** What a mutation hands back: the next item list and the caller's result. */
+type Mutation<T> = { next: VaultItem[]; result: T };
 
-  async function load() {
+export type Vault = ReturnType<typeof createVault>;
+export function createVault({ file, keyFile }: { file: string; keyFile: string }) {
+  let key: Buffer | null = null;
+  let items: VaultItem[] | null = null;
+  let queue: Promise<unknown> = Promise.resolve();
+
+  async function load(): Promise<VaultItem[]> {
     if (items) return items;
-    let raw = null;
+    let raw: string | null = null;
     try {
       raw = await fs.readFile(file, "utf8");
     } catch (e) {
-      if (e.code !== "ENOENT") throw e;
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
     // A new key is only made for a new vault; an existing vault without its key stays locked.
     key ??= await loadOrCreateKey(keyFile, { create: raw === null });
@@ -238,14 +281,15 @@ export function createVault({ file, keyFile }) {
     return items;
   }
 
-  async function save(next) {
-    const envelope = encrypt(key, { items: next, updatedAt: new Date().toISOString() });
+  async function save(next: VaultItem[]) {
+    // load() always runs first (in mutate), so the key is set.
+    const envelope = encrypt(key!, { items: next, updatedAt: new Date().toISOString() });
     await writeAtomic(file, JSON.stringify(envelope) + "\n");
     items = next;
   }
 
   /** Runs fn(items) → next items under a lock and persists the result. */
-  function mutate(fn) {
+  function mutate<T>(fn: (items: VaultItem[]) => Mutation<T>): Promise<T> {
     const run = queue.then(async () => {
       const current = await load();
       const { next, result } = await fn(current.slice());
@@ -257,7 +301,7 @@ export function createVault({ file, keyFile }) {
     return run;
   }
 
-  async function find(id) {
+  async function find(id: string) {
     const all = await load();
     return all.find((i) => i.id === id) ?? null;
   }
@@ -269,18 +313,18 @@ export function createVault({ file, keyFile }) {
       return (await load()).map(redact);
     },
     /** The full item; the password only with reveal. */
-    async get(id, { reveal = false } = {}) {
+    async get(id: string, { reveal = false }: { reveal?: boolean } = {}): Promise<VaultItem | null> {
       const item = await find(id);
       if (!item) return null;
       return reveal ? { ...item } : redact(item);
     },
-    create(input) {
+    create(input?: VaultInput | null) {
       return mutate((all) => {
         const item = normalize(input ?? {});
         return { next: [...all, item], result: redact(item) };
       });
     },
-    update(id, patch) {
+    update(id: string, patch?: VaultInput | null) {
       return mutate((all) => {
         const i = all.findIndex((x) => x.id === id);
         if (i === -1) throw httpError(404, "Not found");
@@ -289,7 +333,7 @@ export function createVault({ file, keyFile }) {
         return { next: all, result: redact(all[i]) };
       });
     },
-    remove(id) {
+    remove(id: string) {
       return mutate((all) => {
         const next = all.filter((x) => x.id !== id);
         if (next.length === all.length) throw httpError(404, "Not found");
@@ -300,13 +344,13 @@ export function createVault({ file, keyFile }) {
      * Saves a login a Bot collected with T3's secure card. A login with the same domain and username
      * is updated instead of duplicated.
      */
-    saveLogin(input) {
+    saveLogin(input?: VaultInput | null) {
       return mutate((all) => {
         const item = normalize({ ...(input ?? {}), type: "login" });
         const domain = siteDomain(item.website);
         const i = all.findIndex((x) => x.type === "login" && domain && repeatedValues(x, "website").some(site => siteDomain(site) === domain) && (x.username ?? "") === (item.username ?? ""));
         if (i === -1) return { next: [...all, item], result: { item: redact(item), updated: false } };
-        const patch = { ...input, ...("title" in (input ?? {}) ? {} : { title: all[i].title }) };
+        const patch: VaultInput = { ...input, ...("title" in (input ?? {}) ? {} : { title: all[i].title }) };
         // A password refresh through any already-saved site keeps the site's order.
         if (!("websites" in patch) && repeatedValues(all[i], "website").some(site => siteDomain(site) === domain)) delete patch.website;
         all[i] = normalize(patch, all[i]);
@@ -317,12 +361,12 @@ export function createVault({ file, keyFile }) {
      * Adds imported items. A login with the same domain and username as a saved one updates it
      * (password and hints); an identical one is skipped.
      */
-    importItems(list) {
+    importItems(list: unknown) {
       if (!Array.isArray(list)) throw httpError(400, "items must be a list");
       return mutate((all) => {
         let added = 0, updated = 0, skipped = 0;
         for (const raw of list.slice(0, MAX_ITEMS)) {
-          let item;
+          let item: VaultItem;
           try {
             item = normalize({ ...raw, type: raw?.type === "contact" ? "contact" : "login" });
           } catch {

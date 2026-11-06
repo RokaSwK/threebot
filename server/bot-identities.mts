@@ -2,7 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 /** Recoverable Bot metadata is enough to render old mentions without reviving a Bot. */
-export async function archivedBotIdentities(trashRoot) {
+export async function archivedBotIdentities(trashRoot: string) {
   const folders = await readdir(trashRoot, { withFileTypes: true }).catch(() => []);
   const identities = [];
   for (const folder of folders) {

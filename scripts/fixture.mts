@@ -2,13 +2,17 @@
 // Real built frontend + real gateway, with disposable state and a separate fake T3.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import type { ChildProcess, ChildProcessByStdio } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, realpathSync } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import type { Interface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MODEL, SAMPLE_IMAGE, SAMPLE_TEXT, samplesFor, STAMP, startFakeT3 } from './fixture-t3.mts';
 import { T3Client } from '../server/t3rpc.mts';
@@ -21,7 +25,7 @@ const staticDir = path.join(repo, 'web', 'dist');
 
 // Node's permission model forbids fsync even for an allowed FileHandle. On macOS,
 // enforce paths in the OS instead so the real Vault's atomic writes stay intact.
-function macSandboxProfile(root) {
+function macSandboxProfile(root: string) {
   const executable = realpathSync(process.execPath);
   const runtimeReads = [path.resolve(path.dirname(executable), '../lib')];
   const cellar = executable.match(/^(.*\/Cellar)\//)?.[1];
@@ -46,7 +50,7 @@ function macSandboxProfile(root) {
 
 // An allowlist, never {...process.env}: ignore production URLs, tokens, NODE_OPTIONS,
 // proxy settings, CF Access, executors, T3_CLI, and the user's actual HOME.
-export function gatewayInvocation(root, port, t3Port, executorPort) {
+export function gatewayInvocation(root: string, port: number, t3Port: number, executorPort?: number) {
   if (executorPort !== undefined && (!Number.isInteger(executorPort) || executorPort < 1 || executorPort > 65535)) throw new Error('Invalid local Executor fixture port');
   if (!process.allowedNodeEnvironmentFlags.has('--permission')) throw new Error('Use Node >= 22.13 with --permission support.');
   const osSandbox = process.platform === 'darwin';
@@ -74,7 +78,7 @@ export function gatewayInvocation(root, port, t3Port, executorPort) {
   };
 }
 
-async function seed(root, scenario = 'basic') {
+async function seed(root: string, scenario = 'basic') {
   for (const dir of ['home', 'codex', 'tmp', 'secrets', 'vault', 'samples', 'bots/.botapp']) await mkdir(path.join(root, dir), { recursive: true });
   await writeFile(path.join(root, 'tmp', 'openssl.cnf'), '# Disposable fixture: use the default OpenSSL providers.\n');
   await writeFile(path.join(root, 'samples/sample-image.svg'), SAMPLE_IMAGE);
@@ -98,12 +102,12 @@ async function freePort() {
   const socket = net.createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
-  const { port } = socket.address();
+  const { port } = socket.address() as AddressInfo;
   await new Promise((resolve) => socket.close(resolve));
   return port;
 }
 
-async function stopChild(child) {
+async function stopChild(child: ChildProcess | undefined) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
   const exited = once(child, 'exit');
   child.kill('SIGTERM');
@@ -111,7 +115,7 @@ async function stopChild(child) {
   try { await exited; } finally { clearTimeout(timer); }
 }
 
-export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
+export async function createFixture({ port = 0, scenario = 'basic' }: { port?: number; scenario?: string } = {}) {
   validateScenario(scenario);
   await access(path.join(staticDir, 'index.html')).catch(() => {
     throw new Error('Missing web/dist/index.html. Run npm ci --prefix web && npm run build --prefix web first.');
@@ -119,9 +123,9 @@ export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer between 0 and 65535.');
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'bot-parity-')));
   await writeFile(path.join(root, 'fixture.json'), JSON.stringify({ fixtureOnly: true, pid: process.pid, repo }) + '\n');
-  let fake;
-  let executor;
-  let child;
+  let fake: Awaited<ReturnType<typeof startFakeT3>> | undefined;
+  let executor: Awaited<ReturnType<typeof startFakeExecutor>> | undefined;
+  let child: ChildProcessByStdio<null, Readable, Readable> | undefined;
   let closed = false;
   let logs = '';
   const gatewayPort = port || await freePort();
@@ -132,7 +136,7 @@ export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
     get t3Port() { return fake?.port; },
     get executorUrl() { return executor?.origin ?? null; },
     get logs() { return logs; },
-    async request(route, method = 'GET', body) {
+    async request(route: string, method = 'GET', body?: unknown) {
       const response = await fetch(fixture.url + route, { method, signal: AbortSignal.timeout(5000),
         headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
       return { status: response.status, body: await response.json() };
@@ -140,23 +144,23 @@ export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
     async restart() {
       if (closed) throw new Error('Fixture already closed');
       await stopChild(child);
-      const invocation = gatewayInvocation(root, gatewayPort, fake.port, executor?.port);
+      const invocation = gatewayInvocation(root, gatewayPort, fake!.port, executor?.port);
       child = spawn(invocation.command, invocation.args, { env: invocation.env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
       logs = '';
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => finish(new Error(`Gateway startup timed out.\n${logs}`)), 30000);
-        const finish = (error) => {
+        const finish = (error?: Error) => {
           clearTimeout(timer);
-          child.off('error', onError);
-          child.off('exit', onExit);
+          child!.off('error', onError);
+          child!.off('exit', onExit);
           error ? reject(error) : resolve();
         };
-        const onError = (error) => finish(error);
-        const onExit = (code, signal) => finish(new Error(`Gateway exited (${code ?? signal}).\n${logs}`));
-        child.once('error', onError);
-        child.once('exit', onExit);
-        child.stderr.on('data', (data) => { logs = (logs + data).slice(-30000); });
-        child.stdout.on('data', (data) => {
+        const onError = (error: Error) => finish(error);
+        const onExit = (code: number | null, signal: NodeJS.Signals | null) => finish(new Error(`Gateway exited (${code ?? signal}).\n${logs}`));
+        child!.once('error', onError);
+        child!.once('exit', onExit);
+        child!.stderr.on('data', (data: Buffer) => { logs = (logs + data).slice(-30000); });
+        child!.stdout.on('data', (data: Buffer) => {
           logs = (logs + data).slice(-30000);
           if (logs.includes('bot gateway on')) finish();
         });
@@ -165,8 +169,8 @@ export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
     async reset() {
       if (closed) throw new Error('Fixture already closed');
       await stopChild(child);
-      const t3Port = fake.port;
-      await fake.close();
+      const t3Port = fake!.port;
+      await fake!.close();
       for (const dir of ['home', 'codex', 'tmp', 'secrets', 'vault', 'samples', 'bots']) await rm(path.join(root, dir), { recursive: true, force: true });
       await seed(root, scenario);
       executor?.reset();
@@ -191,9 +195,11 @@ export async function createFixture({ port = 0, scenario = 'basic' } = {}) {
   } catch (error) { await fixture.close(); throw error; }
 }
 
+type Fixture = Awaited<ReturnType<typeof createFixture>>;
+
 // API smoke evidence only. Confirm/Cancel gestures and mobile layout require root's UI check.
-export async function smokeFixture(fixture) {
-  const main = async () => (await fixture.request('/api/bots')).body.bots.filter((bot) => bot.primary).map((bot) => bot.slug);
+export async function smokeFixture(fixture: Fixture) {
+  const main = async () => (await fixture.request('/api/bots')).body.bots.filter((bot: { primary: boolean }) => bot.primary).map((bot: { slug: string }) => bot.slug);
   const page = await fetch(fixture.url);
   assert.equal(page.status, 200);
   assert.equal(await page.text(), await readFile(path.join(staticDir, 'index.html'), 'utf8'));
@@ -225,22 +231,23 @@ export async function smokeFixture(fixture) {
     const connected = await fixture.request('/api/executor');
     assert.equal(connected.status, 200);
     assert.equal(connected.body.backend, 'self-hosted');
-    assert.deepEqual(connected.body.connections.map(({ name, status }) => ({ name, status })), [
+    assert.deepEqual(connected.body.connections.map(({ name, status }: { name: string; status: string }) => ({ name, status })), [
       { name: 'Generic Service', status: 'needs-connection' }, { name: 'Generic Single', status: 'needs-connection' }, { name: 'Generic Ready', status: 'ready' },
     ]);
   }
   const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
-  const bounded = (promise) => new Promise((resolve, reject) => {
+  const bounded = <T,>(promise: Promise<T>) => new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Fixture RPC smoke timed out')), 5000);
     promise.then(resolve, reject).finally(() => clearTimeout(timer));
   });
   try {
     await bounded(rpc.connect());
     assert.equal((await bounded(rpc.call('server.getConfig'))).providers[0].models[0].slug, MODEL.model);
-    const firstChunk = async (tag, payload) => {
-      let handle;
+    const firstChunk = async (tag: string, payload: unknown) => {
+      let handle: ReturnType<typeof rpc.stream> | undefined;
       try {
-        return await bounded(new Promise((resolve) => { handle = rpc.stream(tag, payload, resolve); }));
+        // A stream chunk is an untyped RPC frame.
+        return await bounded(new Promise<any>((resolve) => { handle = rpc.stream(tag, payload, resolve); }));
       } finally { handle?.cancel(); }
     };
     const shell = await firstChunk('orchestration.subscribeShell', {});
@@ -289,7 +296,7 @@ async function main() {
     input?.close();
     process.stdin.pause();
   };
-  let input;
+  let input: Interface | undefined;
   process.once('SIGINT', () => void quit().catch(fatal));
   process.once('SIGTERM', () => void quit().catch(fatal));
   console.log(`Local URL: ${fixture.url}\nFixture directory: ${fixture.root}\nReal gateway PID: ${fixture.gatewayPid}\nFake T3: http://127.0.0.1:${fixture.t3Port}`);
@@ -317,5 +324,5 @@ async function main() {
   });
 }
 
-function fatal(error) { console.error(error); process.exitCode = 1; }
+function fatal(error: unknown) { console.error(error); process.exitCode = 1; }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main().catch(fatal);

@@ -2,41 +2,41 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
-import { createMainBotRegistry } from './main-bot.mts';
+import { test, type TestContext } from 'node:test';
+import { createMainBotRegistry, type Bot } from './main-bot.mts';
 import { archivedBotIdentities } from './bot-identities.mts';
 import { renderAgentsMd } from './bot-template.mts';
 
-async function fixture(t, entries) {
+async function fixture(t: TestContext, entries: Record<string, Record<string, unknown>>) {
   const botsRoot = await mkdtemp(path.join(tmpdir(), 'main-bot-'));
   t.after(() => rm(botsRoot, { recursive: true, force: true }));
-  const file = (slug) => path.join(botsRoot, slug, '.bot', 'bot.json');
+  const file = (slug: string) => path.join(botsRoot, slug, '.bot', 'bot.json');
   for (const [slug, meta] of Object.entries(entries)) {
     await mkdir(path.dirname(file(slug)), { recursive: true });
     await writeFile(file(slug), JSON.stringify({ name: slug, createdAt: '2026-01-01T00:00:00Z', ...meta }));
   }
-  const instructions = new Map();
+  const instructions = new Map<string, string>();
   const registry = createMainBotRegistry({ botsRoot, onBotChanged: async (bot) => {
     instructions.set(bot.slug, renderAgentsMd({ bot, settings: {}, botsRoot }));
   } });
   return { botsRoot, file, registry, instructions };
 }
-function assertMain(bots, slug) {
+function assertMain(bots: Bot[], slug: string | null) {
   assert.deepEqual(bots.filter((bot) => bot.primary).map((bot) => bot.slug), slug ? [slug] : []);
-  if (slug) assert.equal(bots.find((bot) => bot.slug === slug).hidden, false);
+  if (slug) assert.equal(bots.find((bot) => bot.slug === slug)!.hidden, false);
 }
 
 test('legacy duplicates migrate once to a deterministic visible main; selection survives restart and stale self-written flags', async (t) => {
   const { registry, botsRoot, file, instructions } = await fixture(t, { alpha: { primary: true }, beta: { primary: true }, gamma: { primary: true, hidden: true } });
   assertMain(await registry.list(), 'alpha');
   assertMain(await registry.select('beta'), 'beta');
-  assert.match(instructions.get('beta'), /You are the primary Bot/);
-  assert.doesNotMatch(instructions.get('alpha'), /You are the primary Bot/);
+  assert.match(instructions.get('beta')!, /You are the primary Bot/);
+  assert.doesNotMatch(instructions.get('alpha')!, /You are the primary Bot/);
   const alpha = JSON.parse(await readFile(file('alpha'), 'utf8'));
   await writeFile(file('alpha'), JSON.stringify({ ...alpha, primary: true }));
   const restarted = createMainBotRegistry({ botsRoot });
   assertMain(await restarted.list(), 'beta');
-  assert.equal((await restarted.get('alpha')).primary, false);
+  assert.equal((await restarted.get('alpha'))!.primary, false);
   assert.equal(JSON.parse(await readFile(file('alpha'), 'utf8')).primary, false);
   assert.deepEqual(JSON.parse(await readFile(path.join(botsRoot, '.botapp/main-bot.json'), 'utf8')), { slug: 'beta' });
 });
@@ -48,16 +48,16 @@ test('first creation supplies a main automatically; explicit creation replaces i
   await registry.save('alpha', { projectId: 'project-a', mainThreadId: 'thread-a' });
   await registry.save('beta', { projectId: 'project-b', mainThreadId: 'thread-b', model: null });
   assertMain(await registry.list(), 'beta');
-  assert.equal((await registry.get('alpha')).mainThreadId, 'thread-a');
+  assert.equal((await registry.get('alpha'))!.mainThreadId, 'thread-a');
 });
 
 test('concurrent selection and provisioning updates leave one main and retain unrelated identity metadata', async (t) => {
   const { registry, file } = await fixture(t, { alpha: { primary: true, shape: 'clover' }, beta: { label: 'Research', color: 'purple' } });
   await Promise.all([registry.select('beta'), registry.save('beta', { mainThreadId: 'thread-b' }), registry.select('alpha'), registry.save('alpha', { label: 'Planning' })]);
   assertMain(await registry.list(), 'alpha');
-  assert.equal((await registry.get('beta')).mainThreadId, 'thread-b');
-  assert.equal((await registry.get('beta')).color, 'purple');
-  assert.equal((await registry.get('alpha')).shape, 'clover');
+  assert.equal((await registry.get('beta'))!.mainThreadId, 'thread-b');
+  assert.equal((await registry.get('beta'))!.color, 'purple');
+  assert.equal((await registry.get('alpha'))!.shape, 'clover');
   assert.equal(JSON.parse(await readFile(file('beta'), 'utf8')).primary, false);
 });
 
@@ -69,7 +69,7 @@ test('hiding or deleting a main with other Bots requires explicit replacement; h
   assertMain(await registry.list(), 'alpha');
   assertMain(await registry.select('beta'), 'beta');
   await registry.save('alpha', { hidden: true });
-  assert.equal((await registry.get('alpha')).hidden, true);
+  assert.equal((await registry.get('alpha'))!.hidden, true);
   await registry.remove('alpha');
   assertMain(await registry.list(), 'beta');
   await registry.remove('beta');
@@ -121,6 +121,6 @@ test('a self-written hidden flag cannot silently replace the persisted main', as
 test('settings instruction refresh and replacement share the writer, so old prompts cannot overwrite the new main', async (t) => {
   const { registry, instructions } = await fixture(t, { alpha: { primary: true }, beta: {} });
   await Promise.all([registry.refreshInstructions(), registry.select('beta'), registry.refreshInstructions()]);
-  assert.doesNotMatch(instructions.get('alpha'), /You are the primary Bot/);
-  assert.match(instructions.get('beta'), /You are the primary Bot/);
+  assert.doesNotMatch(instructions.get('alpha')!, /You are the primary Bot/);
+  assert.match(instructions.get('beta')!, /You are the primary Bot/);
 });

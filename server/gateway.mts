@@ -1,25 +1,27 @@
 // Bot gateway: serves the web app, guards it with a password, proxies T3 Code,
 // and reads/writes the small JSON files that describe Bots. No database.
-import http from "node:http";
+import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
 import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer, WebSocket } from "ws";
-import { renderAgentsMd, mergeManaged } from "./bot-template.mts";
+import { WebSocketServer, WebSocket, type RawData } from "ws";
+import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
-import { createMainBotRegistry } from "./main-bot.mts";
-import { createEnvironmentRouter, environmentPath } from "./environment-routes.mts";
+import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
+import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from "./environment-routes.mts";
 import { createThreadLinkResolver } from "./thread-link.mts";
 import { accessTokenFrom, createAccessVerifier } from "./access.mts";
 import { createVault } from "./vault.mts";
 import { createBotTools, handleMcpHttp } from "./vault-mcp.mts";
 import { T3Client } from "./t3rpc.mts";
-import { executorConfiguration, executorMcpDefinition, publicExecutorConfiguration } from "./executor-config.mts";
+import { executorConfiguration, executorMcpDefinition, publicExecutorConfiguration, type ExecutorProfile } from "./executor-config.mts";
 import { createExecutorClient } from "./executor-client.mts";
 import { createThreadMeta, createThreadPreviews } from "./thread-meta.mts";
 import { createRoutineHistoryRoutes } from "./routine-history.mts";
@@ -28,7 +30,7 @@ import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
 import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks } from "./release.mts";
-import { busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled } from "./auto-update.mts";
+import { busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
@@ -36,10 +38,24 @@ import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
 
+/** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
+type HttpError = Error & { status?: number; code?: string };
+/** A browser tab as T3's preview.list reports it; only the fields used here. */
+type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: string; title?: string } };
+/** A new Bot as the app posts it. objectAvatarPatch and decodeAvatarImage check the avatar fields. */
+type NewBot = {
+  name?: string; label?: string; shape?: string; color?: string; avatarDefinition?: unknown; avatarImage?: unknown;
+  section?: string | null; pinned?: unknown; primary?: unknown; model?: unknown; [key: string]: unknown;
+};
+type McpServer = { type: string; url: string | undefined; headers: Record<string, string> };
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const resolveThreadLink = createThreadLinkResolver();
 const dataRoot = process.env.THREEBOT_HOME ?? path.join(homedir(), ".threebot");
-const cfg = {
+const cfg: {
+  port: number; host: string; t3Url: string; botsRoot: string; staticDir: string; password: string;
+  vaultFile: string; vaultKeyFile: string; t3SecretsDir: string; botMcpUrl?: string;
+} = {
   port: Number(process.env.PORT ?? 3780),
   host: process.env.HOST ?? "127.0.0.1",
   t3Url: (process.env.T3_URL ?? "http://127.0.0.1:3773").replace(/\/$/, ""),
@@ -93,13 +109,13 @@ const threadPreviews = createThreadPreviews({
   },
 });
 
-function readIfExists(p) {
+function readIfExists(p: string): string | null {
   try { return readFileSync(p, "utf8"); } catch { return null; }
 }
 
 // ---------- auth ----------
 const COOKIE = "bot_session";
-function sign(value) {
+function sign(value: string) {
   return createHmac("sha256", sessionSecret).update(value).digest("hex");
 }
 function makeSession() {
@@ -107,7 +123,7 @@ function makeSession() {
   const v = `v1.${exp}`;
   return `${v}.${sign(v)}`;
 }
-function validSession(raw) {
+function validSession(raw: string | undefined) {
   if (!raw) return false;
   const i = raw.lastIndexOf(".");
   const v = raw.slice(0, i), sig = raw.slice(i + 1);
@@ -115,8 +131,8 @@ function validSession(raw) {
   if (!safeEqual(sig, expected)) return false;
   return Number(v.split(".")[1]) > Date.now();
 }
-function cookies(req) {
-  const out = {};
+function cookies(req: IncomingMessage) {
+  const out: Record<string, string> = {};
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const [k, ...rest] = part.trim().split("=");
     if (k) out[k] = decodeURIComponent(rest.join("="));
@@ -124,21 +140,21 @@ function cookies(req) {
   return out;
 }
 // Login attempts per client: 5 failures lock that client out for 15 minutes.
-const attempts = new Map();
-function clientIp(req) {
+const attempts = new Map<string, { count: number; last: number }>();
+function clientIp(req: IncomingMessage) {
   // The last hop is the one our proxy (Tailscale Funnel) added; earlier entries come from the client.
-  return String(req.headers["x-forwarded-for"] ?? "").split(",").pop().trim() || req.socket.remoteAddress || "?";
+  return String(req.headers["x-forwarded-for"] ?? "").split(",").pop()!.trim() || req.socket.remoteAddress || "?";
 }
-function loginBlocked(ip) {
+function loginBlocked(ip: string) {
   const a = attempts.get(ip);
   return Boolean(a && a.count >= 5 && Date.now() - a.last < 15 * 60 * 1000);
 }
-function loginFailed(ip) {
+function loginFailed(ip: string) {
   const a = attempts.get(ip);
   const fresh = !a || Date.now() - a.last > 15 * 60 * 1000;
   attempts.set(ip, { count: fresh ? 1 : a.count + 1, last: Date.now() });
 }
-function isHttps(req) {
+function isHttps(req: IncomingMessage) {
   return req.headers["x-forwarded-proto"] === "https";
 }
 
@@ -156,13 +172,14 @@ const envTailnet = exposure.tailnetPort > 0;
 const version = currentVersion();
 const checkUpdates = createUpdateChecker({ version });
 const selfUpdating = installedRuntime() && process.env.THREEBOT_SERVICE === "1";
-let tailnetServer = null;
+let tailnetServer: http.Server | null = null;
 // Open WebSockets outlive the cookie or listener that let them in, so access changes close them.
-const upgraded = new Set();
-function dropUpgraded(match = () => true) {
+// Upgrade requests arrive on the server's TCP sockets, so these are net.Sockets (closeTailnet reads localPort).
+const upgraded = new Set<Socket>();
+function dropUpgraded(match: (socket: Socket) => boolean = () => true) {
   for (const socket of upgraded) if (match(socket)) socket.destroy();
 }
-async function openTailnet(port, users) {
+async function openTailnet(port: number, users: string[]) {
   // This port trusts the Tailscale-User-Login header, so only a local `tailscale serve` may reach it.
   if (!users.length) throw new Error("The Tailscale listener needs at least one allowed user");
   exposure.tailnetUsers = new Set(users.map((user) => String(user).toLowerCase()));
@@ -170,7 +187,7 @@ async function openTailnet(port, users) {
   await closeTailnet();
   const listener = http.createServer((req, res) => server.emit("request", req, res));
   listener.on("upgrade", (req, socket, head) => server.emit("upgrade", req, socket, head));
-  await new Promise((resolve, reject) => { listener.once("error", reject); listener.listen(port, "127.0.0.1", resolve); });
+  await new Promise<void>((resolve, reject) => { listener.once("error", reject); listener.listen(port, "127.0.0.1", resolve); });
   tailnetServer = listener;
   exposure.tailnetPort = port;
   console.log(`tailnet listener on 127.0.0.1:${port}`);
@@ -182,30 +199,31 @@ async function closeTailnet() {
   if (!listener) return;
   // closeAllConnections leaves upgraded sockets alone, and close() waits for them.
   dropUpgraded((socket) => socket.localPort === port);
-  await new Promise((resolve) => { listener.close(() => resolve()); listener.closeAllConnections?.(); });
+  await new Promise<void>((resolve) => { listener.close(() => resolve()); listener.closeAllConnections?.(); });
 }
 const remoteAccess = createRemoteAccess({
   store: createAccessStore(path.join(appDir, "access.json")),
   home: dataRoot, localPort: cfg.port, urlFile: path.join(appDir, "tunnel-url"), exposure, envPassword: cfg.password, envTailnet, openTailnet, closeTailnet,
 });
-let updating = null;
+let updating: { version: string; startedAt: number } | null = null;
 /**
  * Settings → Updates, and the automatic update: hand the update to `threebot update`, which swaps versions
  * and restarts this service. The automatic update passes the `target` it decided on, and `onExit` to hear
  * about an updater that ended while this gateway still runs (macOS: on Linux systemd-run returns at once).
  */
-async function startSelfUpdate({ target, onExit } = {}) {
+async function startSelfUpdate({ target, onExit }: { target?: string; onExit?: (version: string, code: number | null) => void } = {}) {
   if (!selfUpdating) {
     throw Object.assign(new Error("This copy can't update itself. Install Threebot with the installer and run it as a service, or update it with `git pull` and `npm run setup`."), { status: 409 });
   }
   const { updateAvailable, latest, error } = target ? { updateAvailable: true, latest: { version: target } } : await checkUpdates({ force: true });
   if (error) throw Object.assign(new Error(error), { status: 502 });
   if (!updateAvailable) return { started: false, version };
-  if (updating) return { started: true, version: latest.version };
+  // An available update always names its release.
+  if (updating) return { started: true, version: latest!.version };
   const logFile = path.join(dataRoot, "logs", "update.log");
   await fs.mkdir(path.dirname(logFile), { recursive: true });
   const out = await fs.open(logFile, "a");
-  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", ...(channelFor(version) === "preview" ? ["--preview"] : []), latest.version];
+  const args = [process.execPath, path.join(here, "cli.mjs"), "update", "--yes", ...(channelFor(version) === "preview" ? ["--preview"] : []), latest!.version];
   // systemd stops every process in the service's cgroup on restart, so the updater runs outside it.
   // systemd-run starts it with a clean environment, so pass on what the updater needs.
   const keep = ["PATH", "HOME", "THREEBOT_HOME", "THREEBOT_RELEASES_URL", "THREEBOT_RELEASE_BASE_URL"].filter((k) => process.env[k]).map((k) => `--setenv=${k}=${process.env[k]}`);
@@ -213,20 +231,20 @@ async function startSelfUpdate({ target, onExit } = {}) {
   const child = spawn(command[0], command.slice(1), { detached: true, stdio: ["ignore", out.fd, out.fd], env: process.env });
   child.unref();
   await out.close();
-  updating = { version: latest.version, startedAt: Date.now() };
-  child.on("exit", (code) => { updating = null; if (process.platform !== "linux") onExit?.(latest.version, code); });
-  return { started: true, version: latest.version };
+  updating = { version: latest!.version, startedAt: Date.now() };
+  child.on("exit", (code) => { updating = null; if (process.platform !== "linux") onExit?.(latest!.version, code); });
+  return { started: true, version: latest!.version };
 }
 
 /** The Bot threads a restart would interrupt, from one look at T3's thread list. */
 async function busyThreads() {
   const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
-  let stream;
-  const threads = await withTimeout(new Promise((resolve, reject) => {
+  let stream: ReturnType<T3Client["stream"]> | undefined;
+  const threads = await withTimeout(new Promise<BotThread[]>((resolve, reject) => {
     stream = client.stream("orchestration.subscribeShell", { omitIdleSubagents: true }, (event) => {
       if (event.kind === "snapshot") resolve(event.snapshot?.threads ?? []);
     });
-    stream.done.then(() => reject(new Error("T3 ended the thread list")), reject);
+    stream!.done.then(() => reject(new Error("T3 ended the thread list")), reject);
   }), 15000, "T3 timed out").finally(() => { try { stream?.cancel(); } catch {} });
   return busyBotThreads(threads, await listBots());
 }
@@ -238,12 +256,12 @@ const autoUpdate = createAutoUpdater({
   },
 });
 const passwordRequired = async () => Boolean(cfg.password) || (await remoteAccess.hasPassword());
-async function passwordMatches(password) {
+async function passwordMatches(password: string) {
   if (cfg.password) return safeEqual(password, cfg.password);
   return remoteAccess.verify(password);
 }
-const publicPortClosed = (req) => exposure.landingOnly && !onTailnet(req, exposure);
-async function authed(req) {
+const publicPortClosed = (req: IncomingMessage) => exposure.landingOnly && !onTailnet(req, exposure);
+async function authed(req: IncomingMessage) {
   // Tailscale identity is the only way in on this port, and it counts nowhere else.
   if (onTailnet(req, exposure)) return tailnetUserAllowed(req, exposure);
   const jar = cookies(req);
@@ -257,13 +275,14 @@ async function authed(req) {
 }
 
 // ---------- helpers ----------
-function send(res, status, body, headers = {}) {
+function send(res: ServerResponse, status: number, body: unknown, headers: OutgoingHttpHeaders = {}) {
   const isJson = typeof body !== "string" && !Buffer.isBuffer(body);
   res.writeHead(status, { "content-type": isJson ? "application/json" : "text/plain", "x-content-type-options": "nosniff", ...headers });
   res.end(isJson ? JSON.stringify(body) : body);
 }
-async function readBody(req, limit = 1 << 20) {
-  const chunks = [];
+// A request's JSON body, as the client sent it; each route reads the fields it needs.
+async function readBody(req: IncomingMessage, limit = 1 << 20): Promise<any> {
+  const chunks: Buffer[] = [];
   let size = 0;
   for await (const c of req) {
     size += c.length;
@@ -279,17 +298,18 @@ async function readBody(req, limit = 1 << 20) {
   }
 }
 /** Vault writes only accept JSON, so a cross-site form can't post to them. */
-function requireJson(req) {
+function requireJson(req: IncomingMessage) {
   if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) throw Object.assign(new Error("content-type must be application/json"), { status: 415 });
 }
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
-function slugify(name) {
+function slugify(name: string) {
   return name.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-").slice(0, 48) || "bot";
 }
-async function readJson(p, fallback) {
+// The JSON on disk, as it was written; callers read the fields they need.
+async function readJson<T>(p: string, fallback: T): Promise<any> {
   try { return JSON.parse(await fs.readFile(p, "utf8")); } catch { return fallback; }
 }
-async function writeJson(p, data) {
+async function writeJson(p: string, data: unknown) {
   await fs.mkdir(path.dirname(p), { recursive: true });
   const tmp = p + ".tmp";
   await fs.writeFile(tmp, JSON.stringify(data, null, 2) + "\n");
@@ -324,7 +344,7 @@ async function getSettings() {
 }
 /** The Projects board is a beta feature; off hides its routes, its Bot tools and its AGENTS.md section. */
 const projectsOn = async () => (await getSettings()).beta.projects;
-function botDir(slug) {
+function botDir(slug: string) {
   if (!SLUG_RE.test(slug)) throw Object.assign(new Error("bad slug"), { status: 400 });
   return path.join(cfg.botsRoot, slug);
 }
@@ -334,16 +354,16 @@ const mainBots = createMainBotRegistry({
     await writeAgentsMd(bot, await getSettings()).catch((error) => console.error("refreshing Bot instructions failed", error));
   },
 });
-const getBot = (slug) => mainBots.get(slug);
+const getBot = (slug: string) => mainBots.get(slug);
 const listBots = () => mainBots.list();
-const saveBot = async (slug, patch) => {
+const saveBot = async (slug: string, patch: BotPatch) => {
   const bot = await getBot(slug);
   if (!bot) throw Object.assign(new Error("Bot not found"), { status: 404 });
   return mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(patch)));
 };
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
-async function trustInCodex(dir) {
+async function trustInCodex(dir: string) {
   const existing = await fs.readFile(codexGlobalConfig, "utf8").catch(() => "");
   const header = `[projects.${JSON.stringify(dir)}]`;
   if (existing.includes(header)) return;
@@ -352,9 +372,9 @@ async function trustInCodex(dir) {
   await fs.writeFile(codexGlobalConfig, `${prefix}${header}\ntrust_level = "trusted"\n`, { mode: 0o600 });
 }
 
-async function writeMcpConfig(dir) {
+async function writeMcpConfig(dir: string) {
   // Every Bot gets its own tool server (the Vault); Executor when it's configured.
-  const servers = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botMcpToken}` } } };
+  const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botMcpToken}` } } };
   try { const definition = executorMcpDefinition(executorConfig.profile); if (definition) servers.executor = definition; }
   catch { console.error('Executor credential unavailable; managed Executor MCP is disabled.'); }
   const mcpPath = path.join(dir, ".mcp.json");
@@ -381,18 +401,19 @@ async function writeMcpConfig(dir) {
   return Boolean(servers.executor);
 }
 
-async function writeAgentsMd(bot, settings) {
+async function writeAgentsMd(bot: Bot, settings: TemplateSettings) {
   const dir = botDir(bot.slug);
   const executorReady = await writeMcpConfig(dir);
   const file = path.join(dir, "AGENTS.md");
   const existing = await fs.readFile(file, "utf8").catch(() => "");
-  const executor = executorReady ? { kind: executorConfig.profile.kind, publicUrl: executorConfig.profile.publicUrl,
-    organization: executorConfig.profile.organization, skippedApps: executorConfig.profile.skippedApps ?? [] } : null;
+  // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
+  const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
+    organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
   await fs.writeFile(file, mergeManaged(existing, renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor })));
   const claude = path.join(dir, "CLAUDE.md");
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
 }
-async function createBot(input) {
+async function createBot(input: NewBot) {
   input = objectAvatarPatch(input);
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
   const base = slugify(input.name ?? "bot");
@@ -433,21 +454,21 @@ async function refreshAllAgentsMd() {
 
 // ---------- Executor ----------
 async function executorStatus() {
-  const out = { ...publicExecutorConfiguration(executorConfig), connections: [] };
+  const out: ReturnType<typeof publicExecutorConfiguration> & { connections: unknown[]; error?: string } = { ...publicExecutorConfiguration(executorConfig), connections: [] };
   if (!out.configured) return out;
   if (!out.hasToken) return { ...out, error: 'Executor needs a server access token.' };
   try { out.connections = await executorClient().apps(); }
-  catch (error) { out.error = error.message; }
+  catch (error) { out.error = (error as Error).message; }
   return out;
 }
-function executorClient(backend = executorConfig.active) {
+function executorClient(backend: string = executorConfig.active) {
   if (backend !== executorConfig.active) throw Object.assign(new Error('This connection belongs to another Executor backend'), { status: 409 });
   return createExecutorClient(executorConfig.profile);
 }
 
 // ---------- Vault ----------
 // A T3 RPC connection for looking up the Bots' browser tabs, opened on first use.
-let rpcClient = null;
+let rpcClient: T3Client | null = null;
 async function t3rpc() {
   if (rpcClient) return rpcClient;
   const c = new T3Client({ baseUrl: cfg.t3Url, token, clientLabel: "bot-gateway-vault" });
@@ -458,11 +479,11 @@ async function t3rpc() {
   rpcClient = c;
   return c;
 }
-function withTimeout(promise, ms, message) {
-  let timer;
-  return Promise.race([promise, new Promise((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)))]).finally(() => clearTimeout(timer));
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([promise, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(message)), ms)))]).finally(() => clearTimeout(timer));
 }
-async function listServerTabs(threadId) {
+async function listServerTabs(threadId: string) {
   let r;
   try {
     const c = await withTimeout(t3rpc(), 10000, "timeout");
@@ -470,7 +491,7 @@ async function listServerTabs(threadId) {
   } catch {
     throw new Error("Couldn't reach your browser on T3 right now. Try again in a moment.");
   }
-  return (r?.sessions ?? []).filter((s) => s.runtime === "server").map((s) => ({ tabId: s.tabId, url: s.navStatus?.url ?? "", title: s.navStatus?.title ?? "" }));
+  return (r?.sessions ?? []).filter((s: PreviewSession) => s.runtime === "server").map((s: PreviewSession) => ({ tabId: s.tabId, url: s.navStatus?.url ?? "", title: s.navStatus?.title ?? "" }));
 }
 
 /**
@@ -478,15 +499,15 @@ async function listServerTabs(threadId) {
  * person using Take control: take control, insert the text, wait until it's applied, release.
  * Errors never include the text.
  */
-function typeIntoTab({ threadId, tabId, text }) {
-  return new Promise((resolve, reject) => {
+function typeIntoTab({ threadId, tabId, text }: { threadId: string; tabId: string; text: string }) {
+  return new Promise<void>((resolve, reject) => {
     const target = new URL(cfg.t3Url.replace(/^http/, "ws") + "/api/preview-stream/ws");
     for (const [k, v] of Object.entries({ threadId, tabId, interactive: "true", maxWidth: "320", maxHeight: "240", quality: "10" })) target.searchParams.set(k, v);
     const ws = new WebSocket(target, { headers: { authorization: `Bearer ${token}` } });
     let stage = "connecting"; // → taking → typing → releasing
     let settled = false;
-    const timers = [];
-    const finish = (err) => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const finish = (err?: Error) => {
       if (settled) return;
       settled = true;
       for (const t of timers) clearTimeout(t);
@@ -494,7 +515,7 @@ function typeIntoTab({ threadId, tabId, text }) {
       err ? reject(err) : resolve();
     };
     timers.push(setTimeout(() => finish(new Error(stage === "typing" ? "The browser didn't confirm the input. Take a fresh snapshot to check the field." : "The browser didn't respond in time.")), 15000));
-    const sendJson = (m) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
+    const sendJson = (m: Record<string, unknown>) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m));
     ws.on("open", () => {
       stage = "taking";
       sendJson({ type: "takeControl" });
@@ -537,7 +558,7 @@ const projectTools = {
 };
 const botTools = createBotTools({
   vault,
-  async findBotByThread(threadId) {
+  async findBotByThread(threadId: string) {
     return (await listBots()).find((b) => b.mainThreadId === threadId) ?? null;
   },
   listTabs: listServerTabs,
@@ -549,7 +570,7 @@ const botTools = createBotTools({
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 
-async function vaultRoutes(req, res, p, url) {
+async function vaultRoutes(req: IncomingMessage, res: ServerResponse, p: string, url: URL) {
   if (p === "/api/vault" && req.method === "GET") {
     const items = await vault.list();
     return send(res, 200, { items }, { "cache-control": "no-store" });
@@ -588,21 +609,22 @@ async function vaultRoutes(req, res, p, url) {
 }
 
 // ---------- T3 HTTP proxy ----------
-async function proxyT3(req, res, t3Path, target = { baseUrl: cfg.t3Url, token }) {
+async function proxyT3(req: IncomingMessage, res: ServerResponse, t3Path: string, target: EnvironmentTarget = { baseUrl: cfg.t3Url, token }) {
   const headers = { ...req.headers };
   delete headers.host;
   delete headers.cookie;
   delete headers.connection;
   headers.authorization = `Bearer ${target.token}`;
   delete headers["cf-access-jwt-assertion"];
+  // Node's fetch streams a request body from any async iterable (with duplex: "half"), which the DOM's RequestInit doesn't describe.
   const upstream = await fetch(target.baseUrl + t3Path, {
     method: req.method,
-    headers,
-    body: req.method === "GET" || req.method === "HEAD" ? undefined : req,
+    headers: headers as Record<string, string>,
+    body: (req.method === "GET" || req.method === "HEAD" ? undefined : req) as unknown as BodyInit | undefined,
     duplex: "half",
     redirect: "manual",
-  });
-  const out = {};
+  } as RequestInit);
+  const out: Record<string, string> = {};
   upstream.headers.forEach((v, k) => {
     if (!["content-encoding", "content-length", "transfer-encoding", "connection", "set-cookie"].includes(k)) out[k] = v;
   });
@@ -612,8 +634,8 @@ async function proxyT3(req, res, t3Path, target = { baseUrl: cfg.t3Url, token })
 }
 
 // ---------- static ----------
-const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
-async function serveStatic(req, res, urlPath) {
+const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
+async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string) {
   const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
   // The public landing page is the one route outside the single-page app.
   let file = path.join(cfg.staticDir, /^\/welcome\/?$/.test(safe) ? "welcome/index.html" : safe);
@@ -638,8 +660,9 @@ async function serveStatic(req, res, urlPath) {
 }
 
 // ---------- router ----------
+// A server request always has its url and method.
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
+  const url = new URL(req.url!, "http://x");
   const p = url.pathname;
   try {
     // Access leaves everything under /welcome public, so the landing page must be
@@ -653,11 +676,11 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/health" && req.method === "GET") return send(res, 200, { ok: true, version });
     if (publicPortClosed(req)) {
       if (p === "/mcp/bot" && !req.headers["cf-ray"]) return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
-      if (!["GET", "HEAD"].includes(req.method) || !landingPath(p)) return send(res, 404, "not found");
+      if (!["GET", "HEAD"].includes(req.method!) || !landingPath(p)) return send(res, 404, "not found");
       return await serveStatic(req, res, p === "/" ? "/welcome/" : p);
     }
     // Cookies travel on cross-site requests, so changes must also come from this app's own pages.
-    if ((p.startsWith("/api/") || p.startsWith("/t3/")) && !["GET", "HEAD"].includes(req.method) && !sameOriginRequest(req, originPolicy)) {
+    if ((p.startsWith("/api/") || p.startsWith("/t3/")) && !["GET", "HEAD"].includes(req.method!) && !sameOriginRequest(req, originPolicy)) {
       return send(res, 403, { error: "cross-site request refused" });
     }
     if (p === "/api/login" && req.method === "POST") {
@@ -791,7 +814,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
     if (await projectRoutes.handle(req, res, url)) return;
-    if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, await threadMeta.get(url.searchParams.get("thread")), { "cache-control": "no-store" });
+    if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, // A missing thread id is refused by threadMeta.get's own check.
+      await threadMeta.get(url.searchParams.get("thread") as string), { "cache-control": "no-store" });
     if (p === "/api/thread-meta/reactions" && req.method === "POST") {
       requireJson(req);
       return send(res, 200, await threadMeta.toggleReaction(await readBody(req)));
@@ -808,10 +832,10 @@ const server = http.createServer(async (req, res) => {
     }
     const avatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\/([a-f0-9]{64})\.png$/);
     if (avatar && req.method === "GET") {
-      const candidates = [await getBot(avatar[1]), ...await archivedBotIdentities(path.join(appDir, "trash"))].filter(b => b?.slug === avatar[1]);
+      const candidates = [await getBot(avatar[1]), ...await archivedBotIdentities(path.join(appDir, "trash"))].filter((b): b is NonNullable<typeof b> => b?.slug === avatar[1]);
       for (const bot of candidates) {
         try { return send(res, 200, await readAvatarImage(bot, p), { "content-type": "image/png", "content-security-policy": "default-src 'none'", "cache-control": "private, max-age=31536000, immutable" }); }
-        catch (error) { if (error.code !== "ENOENT") throw error; }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       }
       return send(res, 404, { error: "not found" });
     }
@@ -830,30 +854,30 @@ const server = http.createServer(async (req, res) => {
     return await serveStatic(req, res, p);
   } catch (err) {
     console.error(req.method, p, err);
-    if (!res.headersSent) send(res, err.status ?? 500, { error: String(err.message ?? err), ...(err.status && err.code ? { code: err.code } : {}) });
+    if (!res.headersSent) send(res, (err as HttpError).status ?? 500, { error: String((err as HttpError).message ?? err), ...((err as HttpError).status && (err as HttpError).code ? { code: (err as HttpError).code } : {}) });
     else res.end();
   }
 });
 
 // ---------- T3 browser stream (the Bots' computer screen) ----------
-function proxyPreviewStream(req, socket, head, url, environment) {
+function proxyPreviewStream(req: IncomingMessage, socket: Duplex, head: Buffer, url: URL, environment: EnvironmentTarget) {
   wss.handleUpgrade(req, socket, head, (client) => {
     const target = new URL(environment.baseUrl.replace(/^http/, "ws") + "/api/preview-stream/ws");
     for (const [k, v] of url.searchParams) target.searchParams.set(k, v);
     const upstream = new WebSocket(target, { headers: { authorization: `Bearer ${environment.token}` } });
-    const queue = [];
+    const queue: { data: RawData; binary: boolean }[] = [];
     upstream.on("open", () => { for (const m of queue.splice(0)) upstream.send(m.data, { binary: m.binary }); });
     client.on("message", (data, isBinary) => {
       if (upstream.readyState === WebSocket.OPEN) upstream.send(data, { binary: isBinary });
       else queue.push({ data, binary: isBinary });
     });
     upstream.on("message", (data, isBinary) => client.readyState === WebSocket.OPEN && client.send(data, { binary: isBinary }));
-    const close = (code, reason) => {
+    const close = (code: number, reason?: unknown) => {
       try { client.close(code >= 1000 && code < 5000 && code !== 1005 && code !== 1006 ? code : 1011, String(reason ?? "")); } catch {}
       try { upstream.close(); } catch {}
     };
     upstream.on("close", (code, reason) => close(code, reason));
-    upstream.on("unexpected-response", (_r, res) => close(4000 + (res.statusCode % 1000), `upstream ${res.statusCode}`));
+    upstream.on("unexpected-response", (_r, res) => close(4000 + (res.statusCode! % 1000), `upstream ${res.statusCode}`));
     upstream.on("error", () => close(1011, "upstream error"));
     client.on("close", () => { try { upstream.close(); } catch {} });
     client.on("error", () => { try { upstream.close(); } catch {} });
@@ -863,8 +887,8 @@ function proxyPreviewStream(req, socket, head, url, environment) {
 // ---------- T3 WebSocket proxy ----------
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", async (req, socket, head) => {
-  upgraded.add(socket);
-  socket.once("close", () => upgraded.delete(socket));
+  upgraded.add(socket as Socket);
+  socket.once("close", () => upgraded.delete(socket as Socket));
   if (publicPortClosed(req)) {
     socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
     return socket.destroy();
@@ -875,7 +899,7 @@ server.on("upgrade", async (req, socket, head) => {
     socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
     return socket.destroy();
   }
-  const url = new URL(req.url, "http://x");
+  const url = new URL(req.url!, "http://x");
   let route;
   try { route = environmentPath(url.pathname); } catch { socket.end("HTTP/1.1 400 Bad Request\r\n\r\n"); return; }
   const isPreview = route.path === "/api/preview-stream/ws";
@@ -883,9 +907,9 @@ server.on("upgrade", async (req, socket, head) => {
     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
     return socket.destroy();
   }
-  let environment;
+  let environment: EnvironmentTarget;
   try { environment = await resolveEnvironment(route.environmentId); } catch (error) {
-    socket.end(`HTTP/1.1 ${error.status ?? 502} Environment unavailable\r\nConnection: close\r\n\r\n`); return;
+    socket.end(`HTTP/1.1 ${(error as HttpError).status ?? 502} Environment unavailable\r\nConnection: close\r\n\r\n`); return;
   }
   if (isPreview) return proxyPreviewStream(req, socket, head, url, environment);
   wss.handleUpgrade(req, socket, head, (client) => {
@@ -894,7 +918,7 @@ server.on("upgrade", async (req, socket, head) => {
     target.searchParams.set("clientSurface", "web");
     target.searchParams.set("clientAppVersion", "bot-0.1.0");
     const upstream = new WebSocket(target, { headers: { authorization: `Bearer ${environment.token}` } });
-    const queue = [];
+    const queue: (RawData | string)[] = [];
     upstream.on("open", () => { for (const m of queue.splice(0)) upstream.send(m); });
     client.on("message", (data, isBinary) => {
       const msg = isBinary ? data : data.toString();

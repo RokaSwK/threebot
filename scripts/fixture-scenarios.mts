@@ -4,9 +4,66 @@
 // SecretRequestAnswerInput contracts.
 import { RICH_MESSAGES } from './fixture-rich-content.mts';
 
+// Loose shapes of the fake T3 records the fixtures build and mutate. Only the fields
+// the fixtures read are named; the rest pass through as plain JSON.
+export type FixtureModel = { instanceId: string; model: string };
+export type FixtureSample = { slug: string; name: string; shape: string; color: string; primary: boolean; pinned?: boolean; section?: string };
+export type FixtureOption = { label: string; value?: string; description?: string };
+export type FixtureQuestion = {
+  id: string; question: string; header?: string; options: FixtureOption[];
+  allowCustomAnswer?: boolean; multiSelect?: boolean; initialAnswer?: string;
+};
+export type FixtureApprovalOption = { decision: string; label: string; warning?: string };
+export interface FixtureItem {
+  id: string; threadId: string; ordinal: number; type: string; status: string; runId: string | null;
+  startedAt: string; completedAt: string | null; updatedAt: string; title?: string | null; parentItemId?: string | null;
+  text?: string; nodeId?: string | null; secretStatus?: string; questions?: FixtureQuestion[]; options?: FixtureApprovalOption[];
+  questionAnswer?: unknown;
+  [key: string]: unknown;
+}
+export type FixtureRequest = {
+  id: string; nodeId?: string | null; providerTurnId?: null; nativeRequestRef?: null; kind: string; status: string;
+  responseCapability: { type: string; providerSessionId?: string }; createdAt: string; resolvedAt: string | null;
+  decision?: string; answers?: Record<string, string | string[]>;
+};
+export interface FixtureThread {
+  id: string; projectId: string; title: string; status: string; activeRunId: string | null; latestRunId: string | null;
+  modelSelection: FixtureModel; runtimeMode: string; pendingRuntimeRequest: { id: string; kind: string; blocking: boolean } | null;
+  latestVisibleMessage: null; latestRunCompletedAt: string | null; latestUserMessageAt: string;
+  lineage: { parentThreadId: string | null; relationshipToParent: string | null; rootThreadId: string; sideChat?: boolean };
+  archivedAt: string | null; settledOverride: string | null; settledAt: string | null; unsettledAt: string | null;
+  snoozedUntil: string | null; autoSettleDisabledAt: string | null; lastVisitedAt: string; createdAt: string; updatedAt: string;
+  activityRunStatus?: string | null; latestRunStartedAt?: string;
+  pullRequests?: { host: string; repository: string; number: number; url: string; source: string; snapshot: { state: string; title: string }; watch: null }[];
+}
+export type FixtureRun = {
+  id: string; userMessageId?: string; ordinal: number; status: string; requestedAt: string; startedAt: string;
+  completedAt: string | null; modelSelection: FixtureModel;
+};
+export type FixtureProject = {
+  id: string; title: string; workspaceRoot: string; defaultModelSelection: FixtureModel; createdAt: string; updatedAt: string;
+  archivedAt?: string | null; faviconPath?: unknown; projectIcon?: unknown;
+};
+export type FixtureResponse = { error?: string; ok?: boolean; value?: unknown; tasks?: boolean };
+/** A scripted scenario's runtime-request handlers, as the fake T3 server calls them. */
+export interface FixtureInteractions {
+  requests: Map<string, FixtureRequest[]>;
+  inspect(): unknown;
+  // Fixture control body and RPC payloads are untyped JSON from the client.
+  armFailure(body: any): boolean;
+  respond(tag: string, payload: any, context?: { publish?: () => void }): FixtureResponse | null;
+  /** After a message lands in a thread (the avatars scenario answers drawing requests). */
+  afterMessage?(thread: FixtureThread, text: string, publish: () => void): void;
+  capabilities?: Record<string, boolean>;
+}
+type LandingEntry = {
+  type: string; at: string; text?: string; requestId?: string; questions?: FixtureQuestion[];
+  title?: string; childThreadId?: string; subagentId?: string;
+};
+
 export const DUMMY_SECRET = 'fixture-dummy-only';
 export const INITIAL_ANSWER = '  Proposed generic message\n\nKeep this second line  \n';
-export const APPROVAL_OPTIONS = [
+export const APPROVAL_OPTIONS: FixtureApprovalOption[] = [
   { decision: 'accept', label: 'Allow once' },
   { decision: 'acceptForSession', label: 'Allow for session', warning: 'Synthetic session only' },
   { decision: 'acceptAlways', label: 'Always allow', warning: 'Synthetic fixture only' },
@@ -19,13 +76,13 @@ export const INTERACTION_IDS = {
   save: 'fixture-secret-save', decline: 'fixture-secret-decline',
 };
 
-export function validateScenario(scenario) {
+export function validateScenario(scenario: string) {
   if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars', 'activity'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity.');
 }
 
 // A believable personal setup for product screenshots. Everything here is invented;
 // no provider runs and nothing can be sent or answered.
-export const LANDING_SAMPLES = [
+export const LANDING_SAMPLES: FixtureSample[] = [
   { slug: 'morning', name: 'Morning', shape: 't3', color: 'purple', primary: true },
   { slug: 'money', name: 'Money', shape: 'clover', color: 'pink', primary: false, pinned: true },
   { slug: 'trips', name: 'Trips', shape: 'sparkle', color: 'blue', primary: false, section: 'personal' },
@@ -35,8 +92,8 @@ export const LANDING_SECTIONS = ['personal', 'work'];
 export const LANDING_USER = 'Sam';
 
 export function landingData(now = new Date()) {
-  const at = (daysAgo, hour, minute = 0) => { const d = new Date(now); d.setDate(d.getDate() - daysAgo); d.setHours(hour, minute, 0, 0); return d.toISOString(); };
-  const transcripts = {
+  const at = (daysAgo: number, hour: number, minute = 0) => { const d = new Date(now); d.setDate(d.getDate() - daysAgo); d.setHours(hour, minute, 0, 0); return d.toISOString(); };
+  const transcripts: Record<string, LandingEntry[]> = {
     morning: [
       { type: 'user_message', at: at(0, 8, 2), text: 'What do I need to deal with today?' },
       { type: 'assistant_message', at: at(0, 8, 2), text: 'Two things.\n\n1. Your car insurance renews on Friday. The new quote is €412, up from €388 last year.\n2. The dentist moved you to Thursday at 4:30.\n\nThe rest of the week is clear.' },
@@ -75,31 +132,31 @@ export function landingData(now = new Date()) {
   return { samples: LANDING_SAMPLES, sections: LANDING_SECTIONS, userName: LANDING_USER, transcripts, tasks, unread: ['trips'], child: { parent: 'site', title: 'Safari regression check' } };
 }
 
-const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-const onlyKeys = (value, keys) => record(value) && Object.keys(value).every((key) => keys.includes(key));
+const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const onlyKeys = (value: unknown, keys: string[]) => record(value) && Object.keys(value).every((key) => keys.includes(key));
 
-export function seedInteractions({ threads, items, stamp }) {
-  const requests = new Map(threads.map(({ id }) => [id, []]));
-  const targets = new Map();
+export function seedInteractions({ threads, items, stamp }: { threads: FixtureThread[]; items: Map<string, FixtureItem[]>; stamp: string }): FixtureInteractions {
+  const requests = new Map<string, FixtureRequest[]>(threads.map(({ id }) => [id, []]));
+  const targets = new Map<string, { item: FixtureItem; request?: FixtureRequest }>();
   let tick = 0;
   const now = () => new Date(Date.parse(stamp) + ++tick * 1000).toISOString();
-  const append = (threadId, type, extra = {}) => {
-    const ordinal = Math.max(0, ...items.get(threadId).map((item) => item.ordinal)) + 1;
+  const append = (threadId: string, type: string, extra: Partial<FixtureItem> = {}) => {
+    const ordinal = Math.max(0, ...items.get(threadId)!.map((item) => item.ordinal)) + 1;
     const at = now();
-    const item = { id: `${threadId}-interaction-${ordinal}`, threadId, ordinal, type,
+    const item: FixtureItem = { id: `${threadId}-interaction-${ordinal}`, threadId, ordinal, type,
       runId: null, nodeId: null, providerThreadId: null, providerTurnId: null, nativeItemRef: null,
       parentItemId: null, status: 'completed', title: null, startedAt: at, completedAt: at, updatedAt: at, ...extra };
-    items.get(threadId).push(item);
+    items.get(threadId)!.push(item);
     return item;
   };
-  const message = (threadId, type, text, extra = {}) => append(threadId, type, {
-    messageId: `${threadId}-fixture-message-${items.get(threadId).length}`, text,
+  const message = (threadId: string, type: string, text: string, extra: Partial<FixtureItem> = {}) => append(threadId, type, {
+    messageId: `${threadId}-fixture-message-${items.get(threadId)!.length}`, text,
     ...(type === 'user_message' ? { createdBy: 'user', creationSource: 'web', inputIntent: 'turn_start', attachments: [] } : {}), ...extra,
   });
   for (let index = 1; index <= 12; index++) message('thread-alpha', 'assistant_message',
     `Generic history ${index}. This fixed paragraph gives the parent transcript a measurable scroll position.\n\nOnly disposable scripted data is present.`);
   message('thread-alpha', 'assistant_message', 'Exchange return anchor. Ask @Beta and @Gamma. Thread reference: t3-thread://v1/thread-beta.\n\nThese are paired synthetic messages, not live Bot delivery.');
-  const exchange = (sender, recipient, id, text) => {
+  const exchange = (sender: string, recipient: string, id: string, text: string) => {
     append(`thread-${sender.toLowerCase()}`, 'dynamic_tool', { toolName: 't3-code.t3_thread_send',
       input: { threadId: `thread-${recipient.toLowerCase()}`, message: `From ${sender}: ${text}` },
       output: { threadId: `thread-${recipient.toLowerCase()}`, messageId: id } });
@@ -111,19 +168,19 @@ export function seedInteractions({ threads, items, stamp }) {
   exchange('Alpha', 'Gamma', 'fixture-alpha-gamma', 'Please check the generic layout.');
   exchange('Beta', 'Alpha', 'fixture-beta-alpha', 'The generic sample is ready.');
 
-  const addRequest = (id, type, extra, status = 'pending', threadId = 'thread-alpha', decision) => {
+  const addRequest = (id: string, type: string, extra: Partial<FixtureItem>, status = 'pending', threadId = 'thread-alpha', decision?: string) => {
     const item = append(threadId, type, { id: `${id}-item`, requestId: id, nodeId: `node-${id}`,
       status: status === 'pending' ? 'waiting' : status === 'cancelled' || decision === 'decline' || decision === 'cancel' ? 'cancelled' : 'completed',
       ...(status === 'pending' ? { completedAt: null } : {}), ...extra });
-    const request = { id, nodeId: item.nodeId, providerTurnId: null, nativeRequestRef: null,
+    const request: FixtureRequest = { id, nodeId: item.nodeId, providerTurnId: null, nativeRequestRef: null,
       kind: type === 'user_input_request' ? 'user_input' : 'command', status,
       responseCapability: { type: 'live', providerSessionId: 'fixture-session' },
       createdAt: item.startedAt, resolvedAt: status === 'pending' ? null : item.completedAt,
       ...(decision ? { decision } : {}) };
-    requests.get(threadId).push(request);
+    requests.get(threadId)!.push(request);
     targets.set(id, { item, request });
   };
-  const initialQuestion = { id: 'draft', header: 'Generic draft', question: 'Review the proposed generic message',
+  const initialQuestion: FixtureQuestion = { id: 'draft', header: 'Generic draft', question: 'Review the proposed generic message',
     options: [], allowCustomAnswer: true, initialAnswer: INITIAL_ANSWER };
   addRequest(INTERACTION_IDS.initial, 'user_input_request', { questions: [initialQuestion] });
   addRequest(INTERACTION_IDS.multi, 'user_input_request', { questions: [
@@ -134,7 +191,7 @@ export function seedInteractions({ threads, items, stamp }) {
   ] });
   // Asynchronous questions resume the provider through a synthetic message.
   // The real transcript must fold that message into its answered question.
-  targets.get(INTERACTION_IDS.multi).request.responseCapability = { type: 'message' };
+  targets.get(INTERACTION_IDS.multi)!.request!.responseCapability = { type: 'message' };
   for (const id of INTERACTION_IDS.approvals) addRequest(id, 'approval_request', {
     requestKind: 'command', title: `Generic approval: ${id.slice('fixture-approval-'.length)}`,
     reason: 'Synthetic decision only. No command executes and no permission is granted.',
@@ -147,7 +204,7 @@ export function seedInteractions({ threads, items, stamp }) {
   }
   for (const status of ['resolved', 'expired', 'cancelled']) addRequest(`fixture-terminal-question-${status}`,
     'user_input_request', { questions: [{ ...initialQuestion, question: `Generic ${status} question` }] }, status, 'thread-beta');
-  const addSecret = (id, status = 'pending', threadId = 'thread-alpha') => {
+  const addSecret = (id: string, status = 'pending', threadId = 'thread-alpha') => {
     const item = append(threadId, 'secret_request', { id,
       label: `Generic secret: ${id.slice('fixture-secret-'.length)}`,
       reason: 'Synthetic only. Use DUMMY_SECRET from scripts/fixture-scenarios.mts. No value is stored or delivered.',
@@ -165,39 +222,39 @@ export function seedInteractions({ threads, items, stamp }) {
     question: 'Which layout do you prefer?', allowCustomAnswer: false,
     options: [{ label: 'Compact', value: 'compact' }, { label: 'Spacious', value: 'spacious' }],
   }] });
-  targets.get(INTERACTION_IDS.layout).request.responseCapability = { type: 'message' };
+  targets.get(INTERACTION_IDS.layout)!.request!.responseCapability = { type: 'message' };
 
   // Dedicated populated comparison lane; original Alpha acceptance specimens stay unchanged.
   message('thread-gamma', 'user_message', 'Please compare these disposable UI specimens.', { id: 'fixture-rich-user' });
   for (const [name, text] of RICH_MESSAGES) message('thread-gamma', 'assistant_message', text, {
     id: `fixture-rich-${name}`, runId: 'fixture-rich-request-id',
   });
-  const layout = { id: 'layout', question: 'Pick a layout', allowCustomAnswer: true,
+  const layout: FixtureQuestion = { id: 'layout', question: 'Pick a layout', allowCustomAnswer: true,
     options: [{ label: 'Compact', value: 'compact' }, { label: 'Spacious', value: 'spacious' }] };
   addRequest('fixture-rich-choice', 'user_input_request', { questions: [layout] }, 'pending', 'thread-gamma');
-  targets.get('fixture-rich-choice').request.responseCapability = { type: 'message' };
+  targets.get('fixture-rich-choice')!.request!.responseCapability = { type: 'message' };
   addRequest('fixture-rich-custom', 'user_input_request', { questions: [{...layout, question:'Choose format'}] }, 'pending', 'thread-gamma');
-  targets.get('fixture-rich-custom').request.responseCapability = { type: 'message' };
+  targets.get('fixture-rich-custom')!.request!.responseCapability = { type: 'message' };
   addRequest('fixture-rich-review', 'user_input_request', { questions: [layout, {
     id: 'sections', question: 'Pick sections', multiSelect: true, allowCustomAnswer: false,
     options: [{label:'Summary', value:'summary'}, {label:'Code sample', value:'code'}],
   }], questionAnswer: { requestId:'fixture-rich-review', answers: {layout:'compact', sections:['summary','code']} } }, 'resolved', 'thread-gamma');
-  targets.get('fixture-rich-review').request.answers = {layout:'compact', sections:['summary','code']};
+  targets.get('fixture-rich-review')!.request!.answers = {layout:'compact', sections:['summary','code']};
 
   const counters = new Map([...targets].map(([id]) => [id, { attempts: 0, accepted: 0, failed: 0, rejected: 0, failOnce: false }]));
-  const statusOf = ({ item, request }) => request?.status ?? item.secretStatus;
+  const statusOf = ({ item, request }: { item: FixtureItem; request?: FixtureRequest }) => request?.status ?? item.secretStatus;
   const updateShell = () => {
     for (const thread of threads) {
-      const pending = requests.get(thread.id).find((request) => request.status === 'pending');
+      const pending = requests.get(thread.id)!.find((request) => request.status === 'pending');
       thread.pendingRuntimeRequest = pending ? { id: pending.id, kind: pending.kind, blocking: true } : null;
     }
   };
   updateShell();
-  const validAnswers = (questions, answers) => onlyKeys(answers, questions.map(({ id }) => id)) &&
+  const validAnswers = (questions: FixtureQuestion[], answers: Record<string, unknown>) => onlyKeys(answers, questions.map(({ id }) => id)) &&
     Object.keys(answers).length === questions.length && questions.every((question) => {
       const answer = answers[question.id];
       const values = question.options.map((option) => option.value ?? option.label);
-      const text = (value) => typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
+      const text = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 4096 &&
         (question.allowCustomAnswer !== false || values.includes(value));
       return question.multiSelect
         ? typeof answer === 'string' ? question.allowCustomAnswer !== false && text(answer)
@@ -215,23 +272,23 @@ export function seedInteractions({ threads, items, stamp }) {
           ...(target.request?.answers ? { answerFields: Object.entries(target.request.answers).map(([id, value]) => ({ id, type: Array.isArray(value) ? 'array' : 'string' })) } : {}),
         })) };
     },
-    armFailure(body) {
+    armFailure(body: any) {
       if (!onlyKeys(body, ['targetId']) || typeof body.targetId !== 'string') return false;
       const target = targets.get(body.targetId);
       if (!target || statusOf(target) !== 'pending') return false;
-      counters.get(body.targetId).failOnce = true;
+      counters.get(body.targetId)!.failOnce = true;
       return true;
     },
     // Returns null for RPCs outside this deliberately narrow scenario.
-    respond(tag, payload) {
+    respond(tag: string, payload: any): FixtureResponse | null {
       const secret = tag === 'secrets.answerRequest';
       const dismiss = tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.user-input.dismiss';
       if (!secret && !dismiss && !(tag === 'orchestration.dispatchCommand' && payload?.type === 'runtime-request.respond')) return null;
       const target = targets.get(secret ? payload?.turnItemId : payload?.requestId);
       if (!target || target.item.threadId !== payload?.threadId || secret !== (target.item.type === 'secret_request')) return { error: 'Unknown fixture interaction target.' };
-      const count = counters.get(secret ? payload.turnItemId : payload.requestId);
+      const count = counters.get(secret ? payload.turnItemId : payload.requestId)!;
       count.attempts++;
-      const reject = (error) => { count.rejected++; return { error }; };
+      const reject = (error: string) => { count.rejected++; return { error }; };
       if (statusOf(target) !== 'pending') return reject('Fixture interaction already answered or terminal.');
       if (secret) {
         if (!onlyKeys(payload, ['threadId', 'turnItemId', 'answer']) ||
@@ -242,12 +299,12 @@ export function seedInteractions({ threads, items, stamp }) {
       } else {
         if (typeof payload.commandId !== 'string' || !payload.commandId.length) return reject('Fixture response requires a commandId.');
         if (dismiss) {
-          if (!onlyKeys(payload, ['commandId', 'type', 'threadId', 'requestId']) || target.request.kind !== 'user_input' ||
-            target.request.responseCapability.type !== 'message') return reject('This fixture question needs an answer.');
-        } else if (target.request.kind === 'user_input') {
-          if (!onlyKeys(payload, ['commandId', 'type', 'threadId', 'requestId', 'answers']) || !validAnswers(target.item.questions, payload.answers)) return reject('Fixture question requires complete valid answers.');
+          if (!onlyKeys(payload, ['commandId', 'type', 'threadId', 'requestId']) || target.request!.kind !== 'user_input' ||
+            target.request!.responseCapability.type !== 'message') return reject('This fixture question needs an answer.');
+        } else if (target.request!.kind === 'user_input') {
+          if (!onlyKeys(payload, ['commandId', 'type', 'threadId', 'requestId', 'answers']) || !validAnswers(target.item.questions!, payload.answers)) return reject('Fixture question requires complete valid answers.');
         } else if (!onlyKeys(payload, ['commandId', 'type', 'threadId', 'requestId', 'decision']) ||
-          !target.item.options.some(({ decision }) => decision === payload.decision)) return reject('Unsupported fixture approval decision.');
+          !target.item.options!.some(({ decision }) => decision === payload.decision)) return reject('Unsupported fixture approval decision.');
       }
       if (count.failOnce) {
         count.failOnce = false;
@@ -263,23 +320,23 @@ export function seedInteractions({ threads, items, stamp }) {
       target.item.updatedAt = at;
       if (secret) target.item.secretStatus = payload.answer.type === 'save' ? 'saved' : 'declined';
       else {
-        target.request.status = 'resolved';
-        target.request.resolvedAt = at;
-        if (dismiss) target.request.decision = 'cancel';
-        else if (target.request.kind === 'user_input') {
-          target.request.answers = structuredClone(payload.answers);
-          target.item.questionAnswer = { requestId: target.request.id, answers: structuredClone(payload.answers), attachmentsByQuestionId: {},
-            questionTextById: Object.fromEntries(target.item.questions.map(({ id, question }) => [id, question])) };
-          if (target.request.responseCapability.type === 'message') {
-            const text = target.item.questions.map(({ id, question }) => {
+        target.request!.status = 'resolved';
+        target.request!.resolvedAt = at;
+        if (dismiss) target.request!.decision = 'cancel';
+        else if (target.request!.kind === 'user_input') {
+          target.request!.answers = structuredClone(payload.answers);
+          target.item.questionAnswer = { requestId: target.request!.id, answers: structuredClone(payload.answers), attachmentsByQuestionId: {},
+            questionTextById: Object.fromEntries(target.item.questions!.map(({ id, question }) => [id, question])) };
+          if (target.request!.responseCapability.type === 'message') {
+            const text = target.item.questions!.map(({ id, question }) => {
               const answer = payload.answers[id];
               return `${question}\n${Array.isArray(answer) ? answer.join(', ') : answer}`;
             }).join('\n\n');
             message(target.item.threadId, 'user_message', text, {
-              messageId: `async-answer:${target.request.id}`, creationSource: 'server',
+              messageId: `async-answer:${target.request!.id}`, creationSource: 'server',
             });
           }
-        } else target.request.decision = payload.decision;
+        } else target.request!.decision = payload.decision;
       }
       count.accepted++;
       updateShell();
@@ -292,29 +349,31 @@ export function seedInteractions({ threads, items, stamp }) {
 // a child waiting on an approval, a Stop the agent ignored, one-time and policy-blocked
 // routines, and a Bot whose project was archived in T3 Code. Synthetic data only.
 export const LATEST_T3_IDS = { childApproval: 'fixture-child-approval', stuckRun: 'fixture-run-stuck', once: 'fixture-routine-once', blocked: 'fixture-routine-blocked' };
-export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
-  const requests = new Map(threads.map(({ id }) => [id, []]));
-  const ordinal = (threadId) => Math.max(0, ...items.get(threadId).map((item) => item.ordinal)) + 1;
-  const base = (threadId, type, extra) => ({ id: `${threadId}-latest-${ordinal(threadId)}`, threadId, ordinal: ordinal(threadId), type,
+export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
+  threads: FixtureThread[]; items: Map<string, FixtureItem[]>; runs: Map<string, FixtureRun[]>; projects: FixtureProject[]; model: FixtureModel; stamp: string;
+}) {
+  const requests = new Map<string, FixtureRequest[]>(threads.map(({ id }) => [id, []]));
+  const ordinal = (threadId: string) => Math.max(0, ...items.get(threadId)!.map((item) => item.ordinal)) + 1;
+  const base = (threadId: string, type: string, extra: Partial<FixtureItem>): FixtureItem => ({ id: `${threadId}-latest-${ordinal(threadId)}`, threadId, ordinal: ordinal(threadId), type,
     runId: null, status: 'completed', title: null, startedAt: stamp, completedAt: stamp, updatedAt: stamp, parentItemId: null, ...extra });
-  projects.find((p) => p.id === 'project-gamma').archivedAt = stamp;
+  projects.find((p) => p.id === 'project-gamma')!.archivedAt = stamp;
 
-  const child = threads.find((t) => t.id === 'thread-alpha-child');
+  const child = threads.find((t) => t.id === 'thread-alpha-child')!;
   const approval = base(child.id, 'approval_request', { requestId: LATEST_T3_IDS.childApproval, requestKind: 'command', status: 'waiting', completedAt: null,
     title: 'Delete the generic build folder', reason: 'Synthetic decision only. No command executes.', prompt: 'rm -rf ./generic-build',
     options: [{ decision: 'accept', label: 'Allow once' }, { decision: 'decline', label: 'Deny' }] });
-  items.get(child.id).push(approval);
-  const request = { id: LATEST_T3_IDS.childApproval, kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'fixture-session' }, createdAt: stamp, resolvedAt: null };
-  requests.get(child.id).push(request);
+  items.get(child.id)!.push(approval);
+  const request: FixtureRequest = { id: LATEST_T3_IDS.childApproval, kind: 'command', status: 'pending', responseCapability: { type: 'live', providerSessionId: 'fixture-session' }, createdAt: stamp, resolvedAt: null };
+  requests.get(child.id)!.push(request);
   child.pendingRuntimeRequest = { id: request.id, kind: 'command', blocking: true };
 
-  const beta = threads.find((t) => t.id === 'thread-beta');
-  const run = { id: LATEST_T3_IDS.stuckRun, ordinal: 1, status: 'running', requestedAt: stamp, startedAt: stamp, completedAt: null, modelSelection: model };
-  runs.get(beta.id).push(run);
+  const beta = threads.find((t) => t.id === 'thread-beta')!;
+  const run: FixtureRun = { id: LATEST_T3_IDS.stuckRun, ordinal: 1, status: 'running', requestedAt: stamp, startedAt: stamp, completedAt: null, modelSelection: model };
+  runs.get(beta.id)!.push(run);
   Object.assign(beta, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: stamp });
-  items.get(beta.id).push(base(beta.id, 'run_interrupt_request', { runId: run.id, message: 'Stop', unresponsiveAt: stamp }));
+  items.get(beta.id)!.push(base(beta.id, 'run_interrupt_request', { runId: run.id, message: 'Stop', unresponsiveAt: stamp }));
 
-  const task = (id, title, schedule, extra = {}) => ({ id, title, prompt: `Generic routine: ${title}`, enabled: false, schedule, projectId: 'project-alpha', threadId: 'thread-alpha',
+  const task = (id: string, title: string, schedule: { type: string; runAt?: string; timeOfDay?: string; weekdays?: number[] }, extra: { enabled?: boolean; blockedByPolicy?: string } = {}) => ({ id, title, prompt: `Generic routine: ${title}`, enabled: false, schedule, projectId: 'project-alpha', threadId: 'thread-alpha',
     workspaceStrategy: { type: 'root' }, modelSelection: model, runtimeMode: 'auto', interactionMode: 'default', nextRunAt: null, lastRunAt: null, lastRunStatus: null, lastRunError: null, runCount: 0, ...extra });
   const tasks = [
     task(LATEST_T3_IDS.once, 'Send the generic reminder once', { type: 'once', runAt: '2026-12-01T08:30:00.000Z' }),
@@ -322,21 +381,21 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
   ];
   // PR chips in every state. Snapshots are stale on purpose; pullRequests.detail is the truth.
   // #2, #10 and #11 finished before load (no chip); #24 merges after its first read (flips on focus).
-  const alpha = threads.find((t) => t.id === 'thread-alpha');
-  const prs = [
+  const alpha = threads.find((t) => t.id === 'thread-alpha')!;
+  const prs = ([
     [2, 'merged', false, [], 'open'], [10, 'merged', false, [], 'merged'], [11, 'closed', false, [], 'open'],
     [21, 'open', false, ['success', 'success'], 'open'], [22, 'open', true, ['pending'], 'open'],
     [23, 'open', false, ['success', 'failure'], 'open'], [24, 'open', false, ['pending', 'success'], 'open'],
-  ].map(([number, state, isDraft, checks, stale]) => ({ number, state, isDraft, checks, stale, reads: 0 }));
+  ] as [number, string, boolean, string[], string][]).map(([number, state, isDraft, checks, stale]) => ({ number, state, isDraft, checks, stale, reads: 0 }));
   alpha.pullRequests = prs.map(({ number, stale }) => ({ host: 'github.com', repository: 'example/generic', number,
     url: `https://github.com/example/generic/pull/${number}`, source: 'manual', snapshot: { state: stale, title: `Generic change ${number}` }, watch: null }));
-  const calls = [];
+  const calls: Record<string, unknown>[] = [];
   return {
     requests, tasks,
     capabilities: { sideChats: true, threadForceStop: true },
-    inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma').archivedAt, tasks: tasks.map(({ id, enabled }) => ({ id, enabled })), calls }),
+    inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma')!.archivedAt, tasks: tasks.map(({ id, enabled }) => ({ id, enabled })), calls }),
     armFailure: () => false,
-    respond(tag, payload) {
+    respond(tag: string, payload: any): FixtureResponse | null {
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'runtime-request.respond' && payload.requestId === request.id) {
         if (payload.threadId !== child.id) return { error: 'This approval belongs to the child thread.' };
         if (request.status !== 'pending') return { error: 'Fixture approval already answered.' };
@@ -351,7 +410,7 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
         const at = new Date().toISOString();
         Object.assign(run, { status: 'interrupted', completedAt: at });
         Object.assign(beta, { status: 'interrupted', activityRunStatus: null, activeRunId: null, updatedAt: at });
-        items.get(beta.id).push(base(beta.id, 'run_interrupt_result', { runId: run.id, scopeId: 'fixture', files: [] }));
+        items.get(beta.id)!.push(base(beta.id, 'run_interrupt_result', { runId: run.id, scopeId: 'fixture', files: [] }));
         calls.push({ tag, threadId: payload.threadId, runId: payload.runId });
         return { ok: true, value: { outcome: 'killed', sharedWithThreadIds: [] } };
       }
@@ -376,7 +435,7 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }) {
 
 // Many object avatars (the sidebar's live cost, the editor's shared objects) and side chats. A side
 // chat titled "Avatar drawing: …" answers with a scripted definition; no model draws anything.
-const definition = (id, name, path) => ({ version: 1, id, name, body: { path }, eyes: { x: 50, y: 50, spacing: 15, scale: 1 } });
+const definition = (id: string, name: string, path: string) => ({ version: 1, id, name, body: { path }, eyes: { x: 50, y: 50, spacing: 15, scale: 1 } });
 export const AVATAR_OWN = [
   definition('fixture-bean', 'Bean', 'M32 12 C56 6 86 16 88 42 C90 68 72 90 48 90 C24 90 10 72 12 50 C14 30 18 16 32 12 Z'),
   definition('fixture-pebble', 'Pebble', 'M50 14 C74 14 90 30 90 54 C90 76 74 88 50 88 C26 88 10 76 10 54 C10 30 26 14 50 14 Z'),
@@ -391,13 +450,13 @@ export const AVATAR_SAMPLES = [
 ];
 export const AVATAR_DRAWING_TITLE = 'Avatar drawing: ';
 
-export function seedAvatars({ threads, items, runs, model }) {
-  const calls = [];
-  const finish = (thread, text, publish) => {
+export function seedAvatars({ threads, items, runs, model }: { threads: FixtureThread[]; items: Map<string, FixtureItem[]>; runs: Map<string, FixtureRun[]>; model: FixtureModel }) {
+  const calls: Record<string, unknown>[] = [];
+  const finish = (thread: FixtureThread, text: string, publish: () => void) => {
     const now = new Date().toISOString();
     const run = runs.get(thread.id)?.find((candidate) => candidate.status === 'running');
     if (!run || !thread.title.startsWith(AVATAR_DRAWING_TITLE)) return;
-    const entries = items.get(thread.id);
+    const entries = items.get(thread.id)!;
     entries.push({ id: `${thread.id}-${entries.length + 1}`, threadId: thread.id, ordinal: entries.length + 1, type: 'assistant_message', messageId: `${thread.id}-reply-${entries.length + 1}`,
       runId: run.id, status: 'completed', title: null, text, startedAt: now, completedAt: now, updatedAt: now, parentItemId: null });
     Object.assign(run, { status: 'completed', completedAt: now });
@@ -405,11 +464,11 @@ export function seedAvatars({ threads, items, runs, model }) {
     publish();
   };
   return {
-    requests: new Map(threads.map(({ id }) => [id, []])),
+    requests: new Map<string, FixtureRequest[]>(threads.map(({ id }) => [id, []])),
     capabilities: { sideChats: true, threadForceStop: true },
     inspect: () => ({ fixtureOnly: true, scenario: 'avatars', liveDelivery: false, calls }),
     armFailure: () => false,
-    respond(tag, payload, { publish } = {}) {
+    respond(tag: string, payload: any, { publish }: { publish?: () => void } = {}): FixtureResponse | null {
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.fork') {
         const source = threads.find((thread) => thread.id === payload.sourceThreadId);
         if (!source || !payload.sideChat) return { error: 'Fixture forks are side chats of a known thread.' };
@@ -430,7 +489,7 @@ export function seedAvatars({ threads, items, runs, model }) {
       return null;
     },
     /** After a drawing request lands: a valid definition, or a broken one when asked for "broken". "slow" takes 30s. */
-    afterMessage(thread, text, publish) {
+    afterMessage(thread: FixtureThread, text: string, publish: () => void) {
       if (!thread.title.startsWith(AVATAR_DRAWING_TITLE)) return;
       calls.push({ type: 'message.dispatch', threadId: thread.id, text });
       const reply = /broken/i.test(thread.title)
@@ -463,7 +522,7 @@ export const ACTIVITY_SAMPLES = [
   { slug: 'xi', name: 'Xi', shape: 'star', color: 'green', primary: false },
 ];
 export const ACTIVITY_STEP_MS = 2600;
-const ALPHA_SCRIPT = [
+const ALPHA_SCRIPT: [string, { title?: string; [key: string]: unknown }][] = [
   ['reasoning', {}],
   ['web_search', { query: 'generic sample query' }],
   ['assistant_message', { text: 'Writing a generic sample reply…', streaming: true }],
@@ -475,20 +534,20 @@ const ALPHA_SCRIPT = [
   ['rest', {}],
 ];
 
-export function seedActivity({ threads, items, runs, model }) {
+export function seedActivity({ threads, items, runs, model }: { threads: FixtureThread[]; items: Map<string, FixtureItem[]>; runs: Map<string, FixtureRun[]>; model: FixtureModel }) {
   const now = () => new Date().toISOString();
-  const ago = (ms) => new Date(Date.now() - ms).toISOString();
-  const thread = (slug) => threads.find((t) => t.id === `thread-${slug}`);
-  const start = (t, status = 'running') => {
-    const list = runs.get(t.id);
-    const run = { id: `${t.id}-run-${list.length + 1}`, ordinal: list.length + 1, status, requestedAt: now(), startedAt: now(), completedAt: null, modelSelection: model };
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const thread = (slug: string) => threads.find((t) => t.id === `thread-${slug}`)!;
+  const start = (t: FixtureThread, status = 'running') => {
+    const list = runs.get(t.id)!;
+    const run: FixtureRun = { id: `${t.id}-run-${list.length + 1}`, ordinal: list.length + 1, status, requestedAt: now(), startedAt: now(), completedAt: null, modelSelection: model };
     list.push(run);
     Object.assign(t, { status, activityRunStatus: status, activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: run.startedAt, latestRunCompletedAt: null, updatedAt: now() });
     return run;
   };
-  const finish = (t, startedAgo = 0) => {
+  const finish = (t: FixtureThread, startedAgo = 0) => {
     const at = now();
-    for (const run of runs.get(t.id)) if (run.status === 'running') Object.assign(run, { status: 'completed', completedAt: at });
+    for (const run of runs.get(t.id)!) if (run.status === 'running') Object.assign(run, { status: 'completed', completedAt: at });
     Object.assign(t, { status: 'completed', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: at, lastVisitedAt: at, updatedAt: at,
       ...(startedAgo ? { latestRunStartedAt: ago(startedAgo) } : {}) });
   };
@@ -502,11 +561,11 @@ export function seedActivity({ threads, items, runs, model }) {
 
   const alpha = thread('alpha');
   let step = 0;
-  let run = null;
+  let run: FixtureRun | null = null;
   let thetaTicks = 0;
   const advance = () => {
     const [type, extra] = ALPHA_SCRIPT[step % ALPHA_SCRIPT.length];
-    const list = items.get(alpha.id);
+    const list = items.get(alpha.id)!;
     for (const item of list) if (item.runId && item.status === 'running') Object.assign(item, { status: 'completed', streaming: false, completedAt: now(), updatedAt: now() });
     if (type === 'done') { finish(alpha, 3 * 60_000); run = null; }
     else if (type !== 'rest') {
@@ -525,7 +584,7 @@ export function seedActivity({ threads, items, runs, model }) {
   };
   advance();
   return {
-    start(publish) {
+    start(publish: () => void) {
       const timer = setInterval(() => { advance(); publish(); }, ACTIVITY_STEP_MS);
       timer.unref?.();
       return () => clearInterval(timer);

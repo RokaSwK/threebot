@@ -5,11 +5,20 @@
 import { randomUUID } from "node:crypto";
 import { T3Client } from "./t3rpc.mts";
 import { syncBotProject } from "./bot-avatar.mts";
+import type { Bot, BotPatch } from "./main-bot.mts";
+
+/** A project as T3's /api/projects lists it; only the fields used here. */
+type T3Project = { id: string; workspaceRoot?: string; defaultModelSelection?: unknown; [key: string]: unknown };
+/** The global settings the provisioner reads. */
+type ProvisionerSettings = { defaultModel?: unknown; autoReview?: boolean };
 
 const DEFAULT_MODEL = { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] };
 
-export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings, intervalMs = 5000 }) {
-  let client = null;
+export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings, intervalMs = 5000 }: {
+  t3Url: string; token: string; listBots: () => Promise<Bot[]>; saveBot: (slug: string, patch: BotPatch) => Promise<unknown>;
+  getSettings: () => Promise<ProvisionerSettings>; intervalMs?: number;
+}) {
+  let client: T3Client | null = null;
   let busy = false;
 
   async function connect() {
@@ -30,20 +39,20 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
       const bots = await listBots();
       const c = await connect();
       const { projects } = await c.http("/api/projects");
-      const byId = new Map(projects.map((p) => [p.id, p]));
+      const byId = new Map<string, T3Project>(projects.map((p: T3Project) => [p.id, p]));
       const settings = await getSettings();
       for (const bot of bots) {
         if (!bot.projectId || !byId.has(bot.projectId)) {
           await provision(c, bot, settings, byId);
         } else {
-          const p = byId.get(bot.projectId);
+          const p = byId.get(bot.projectId)!;
           await syncBotProject(c, bot, p);
           if (!bot.mainThreadId) await launchMain(c, bot, settings, p.defaultModelSelection);
           else if (bot.pendingBrief) await deliverBrief(c, bot);
         }
       }
     } catch (err) {
-      console.error("[provisioner]", err.message ?? err);
+      console.error("[provisioner]", (err as Error).message ?? err);
       try { client?.close(); } catch {}
       client = null;
     } finally {
@@ -51,7 +60,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     }
   }
 
-  async function provision(c, bot, settings, byId) {
+  async function provision(c: T3Client, bot: Bot, settings: ProvisionerSettings, byId: Map<string, T3Project>) {
     const existing = [...byId.values()].find((p) => p.workspaceRoot === bot.workspaceRoot);
     const model = bot.model ?? settings.defaultModel ?? DEFAULT_MODEL;
     let projectId = existing?.id;
@@ -73,7 +82,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     await launchMain(c, { ...bot, projectId }, settings, model);
   }
 
-  async function launchMain(c, bot, settings, model) {
+  async function launchMain(c: T3Client, bot: Bot, settings: ProvisionerSettings, model: unknown) {
     const threadId = randomUUID();
     await c.call("orchestration.launchThread", {
       commandId: randomUUID(),
@@ -90,7 +99,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     if (bot.brief || bot.pendingBrief) await deliverBrief(c, { ...bot, mainThreadId: threadId });
   }
 
-  async function deliverBrief(c, bot) {
+  async function deliverBrief(c: T3Client, bot: Bot) {
     const brief = bot.pendingBrief ?? bot.brief;
     if (!brief) return;
     const from = bot.createdBy ? `From ${bot.createdBy}: ` : "";
@@ -107,7 +116,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     await saveBot(bot.slug, { brief: null, pendingBrief: null });
   }
 
-  let running = null;
+  let running: Promise<void> | null = null;
   const runNow = async () => {
     while (busy) await new Promise((r) => setTimeout(r, 100));
     running = tick();

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -13,6 +14,10 @@ import { startFakeT3 } from './fixture-t3.mts';
 import { APPROVAL_OPTIONS, DUMMY_SECRET, INITIAL_ANSWER, INTERACTION_IDS } from './fixture-scenarios.mts';
 import { T3Client } from '../server/t3rpc.mts';
 import { EXECUTOR_FIXTURE_IDS, EXECUTOR_FIXTURE_TOKEN } from './fixture-executor.mts';
+
+// Projections, inspection bodies, bundles and RPC results are untyped JSON from the fixture
+// servers and the real gateway; the assertions below check their shape.
+type Json = any;
 
 test('real built frontend and gateway persist selection/settings, proxy fixture RPC, reset and clean up', { timeout: 30000 }, async () => {
   const fixture = await createFixture();
@@ -38,7 +43,7 @@ test('the landing page is served by itself and shares nothing with the app', { t
     for (const route of ['/welcome', '/welcome/']) {
       const response = await fetch(fixture.url + route);
       assert.equal(response.status, 200);
-      assert.match(response.headers.get('content-type'), /text\/html/);
+      assert.match(response.headers.get('content-type')!, /text\/html/);
       const html = await response.text();
       assert.match(html, /<title>Threebot:/);
       assert.doesNotMatch(html, /\/assets\//, 'public page must not load the app bundle');
@@ -72,7 +77,7 @@ test('gateway permissions deny writes and reads outside fixture and deny subproc
     assert.equal(env.CODEX_HOME, path.join(fixture.root, 'codex'));
     assert.equal(env.HOST, '127.0.0.1');
     assert.equal(env.T3_URL, 'http://127.0.0.1:12346');
-    for (const key of ['NODE_OPTIONS', 'CF_ACCESS_TEAM_DOMAIN', 'EXECUTOR_TOKEN', 'T3_CLI', 'HTTPS_PROXY']) assert.equal(env[key], undefined);
+    for (const key of ['NODE_OPTIONS', 'CF_ACCESS_TEAM_DOMAIN', 'EXECUTOR_TOKEN', 'T3_CLI', 'HTTPS_PROXY']) assert.equal((env as Record<string, string | undefined>)[key], undefined);
     const probe = `
       const assert = require('node:assert/strict');
       const fs = require('node:fs');
@@ -117,7 +122,7 @@ test('real Vault contact and login writes are encrypted and survive gateway rest
     await fixture.restart();
     const list = await fixture.request('/api/vault');
     assert.equal(list.status, 200);
-    assert.deepEqual(list.body.items.map(({ id }) => id), [contact.body.id, login.body.id]);
+    assert.deepEqual(list.body.items.map(({ id }: Json) => id), [contact.body.id, login.body.id]);
     assert.equal(list.body.items[0].name, 'Generic Person');
     assert.equal(list.body.items[1].password, undefined);
     assert.equal((await fixture.request(`/api/vault/${login.body.id}?reveal=1`)).body.password, password);
@@ -134,8 +139,8 @@ test('real Vault contact and login writes are encrypted and survive gateway rest
 
 test('an occupied port fails without stopping the existing server', { timeout: 15000 }, async () => {
   const server = http.createServer((_req, res) => res.end('other server stays alive'));
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
   try {
     await assert.rejects(createFixture({ port }), /EADDRINUSE|Gateway exited/);
     assert.equal(await (await fetch(`http://127.0.0.1:${port}`)).text(), 'other server stays alive');
@@ -146,13 +151,13 @@ test('foreground CLI restarts/resets on command and SIGTERM removes only its own
   const child = spawn(process.execPath, [new URL('./fixture.mts', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
   let output = '';
   let fixtureRoot;
-  const lineWaiters = new Set();
+  const lineWaiters = new Set<() => void>();
   child.stdout.on('data', (data) => {
     output += data;
     for (const waiter of lineWaiters) waiter();
   });
   child.stderr.on('data', (data) => { output += data; });
-  const waitFor = (pattern) => new Promise((resolve, reject) => {
+  const waitFor = (pattern: RegExp) => new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => { lineWaiters.delete(check); reject(new Error(`CLI output missing ${pattern}\n${output}`)); }, 8000);
     const check = () => { if (pattern.test(output)) { clearTimeout(timer); lineWaiters.delete(check); resolve(); } };
     lineWaiters.add(check);
@@ -160,8 +165,8 @@ test('foreground CLI restarts/resets on command and SIGTERM removes only its own
   });
   try {
     await waitFor(/Commands: restart/);
-    fixtureRoot = /Fixture directory: (.+)/.exec(output)[1];
-    const url = /Local URL: (.+)/.exec(output)[1];
+    fixtureRoot = /Fixture directory: (.+)/.exec(output)![1];
+    const url = /Local URL: (.+)/.exec(output)![1];
     assert.equal((await fetch(url + '/api/session')).status, 200);
     child.stdin.write('restart\n');
     await waitFor(/Ready:/);
@@ -183,14 +188,14 @@ test('foreground CLI restarts/resets on command and SIGTERM removes only its own
   }
 });
 
-const bounded = (promise) => new Promise((resolve, reject) => {
+const bounded = <T,>(promise: Promise<T>) => new Promise<T>((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('Fixture test RPC timed out')), 5000);
   promise.then(resolve, reject).finally(() => clearTimeout(timer));
 });
 
-function watchThread(rpc, threadId) {
-  let latest;
-  const waiting = new Set();
+function watchThread(rpc: T3Client, threadId: string) {
+  let latest: Json;
+  const waiting = new Set<() => void>();
   const stream = rpc.stream('orchestration.subscribeThread', { threadId }, (event) => {
     assert.equal(event.kind, 'snapshot');
     latest = event.projection;
@@ -198,8 +203,8 @@ function watchThread(rpc, threadId) {
   });
   return {
     stream,
-    wait(predicate = () => true) {
-      return new Promise((resolve, reject) => {
+    wait(predicate: (projection: Json) => boolean = () => true) {
+      return new Promise<Json>((resolve, reject) => {
         const timer = setTimeout(() => { waiting.delete(check); reject(new Error('Fixture snapshot timed out')); }, 5000);
         const check = () => {
           if (latest && predicate(latest)) { clearTimeout(timer); waiting.delete(check); resolve(latest); }
@@ -218,9 +223,9 @@ test('activity scenario shows Bots in different activities and walks Alpha throu
     await bounded(rpc.connect());
     const watched = watchThread(rpc, 'thread-alpha');
     const first = await watched.wait();
-    const shells = Object.fromEntries((await bounded(rpc.call('orchestration.getThreadFamily', { threadId: 'thread-delta' }))).threads.map((t) => [t.id, t]));
+    const shells = Object.fromEntries((await bounded(rpc.call('orchestration.getThreadFamily', { threadId: 'thread-delta' }))).threads.map((t: Json) => [t.id, t]));
     assert.ok(shells['thread-delta'].pendingRuntimeRequest);
-    const live = (projection) => projection.turnItems.filter((item) => item.runId && item.status === 'running').map((item) => item.type);
+    const live = (projection: Json) => projection.turnItems.filter((item: Json) => item.runId && item.status === 'running').map((item: Json) => item.type);
     assert.deepEqual(live(first), ['reasoning']);
     const next = await watched.wait((projection) => live(projection)[0] === 'web_search');
     assert.equal(next.thread.status, 'running');
@@ -251,8 +256,8 @@ test('basic protocol remains unchanged and interaction handlers are opt-in', { t
 
 test('interactions use exact paired messages and runtime cards through the real gateway, with sanitized retry and terminal snapshots', { timeout: 45000 }, async () => {
   const fixture = await createFixture({ scenario: 'interactions' });
-  let rpc;
-  const streams = [];
+  let rpc!: T3Client;
+  const streams: ReturnType<T3Client['stream']>[] = [];
   const connect = async () => {
     rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
     await bounded(rpc.connect());
@@ -267,12 +272,12 @@ test('interactions use exact paired messages and runtime cards through the real 
     assert.ok(!JSON.stringify(response.body).includes(DUMMY_SECRET), 'inspection never includes a secret value');
     return response.body;
   };
-  const metadata = async (id) => (await inspect()).targets.find((target) => target.id === id);
-  const arm = async (targetId) => assert.equal((await fixture.request('/t3/fixture/interactions/fail-once', 'POST', { targetId })).status, 200);
-  const respond = (requestId, fields, threadId = 'thread-alpha') => bounded(rpc.dispatch({ type: 'runtime-request.respond', threadId, requestId, ...fields }));
-  const secret = (turnItemId, answer) => bounded(rpc.call('secrets.answerRequest', { threadId: 'thread-alpha', turnItemId, answer }));
-  const request = (projection, id) => projection.runtimeRequests.find((request) => request.id === id);
-  const item = (projection, id) => projection.turnItems.find((item) => item.id === id || item.requestId === id);
+  const metadata = async (id: string) => (await inspect()).targets.find((target: Json) => target.id === id);
+  const arm = async (targetId: string) => assert.equal((await fixture.request('/t3/fixture/interactions/fail-once', 'POST', { targetId })).status, 200);
+  const respond = (requestId: string, fields: object, threadId = 'thread-alpha') => bounded(rpc.dispatch({ type: 'runtime-request.respond', threadId, requestId, ...fields }));
+  const secret = (turnItemId: string, answer: object) => bounded(rpc.call('secrets.answerRequest', { threadId: 'thread-alpha', turnItemId, answer }));
+  const request = (projection: Json, id: string) => projection.runtimeRequests.find((request: Json) => request.id === id);
+  const item = (projection: Json, id: string) => projection.turnItems.find((item: Json) => item.id === id || item.requestId === id);
   const disconnect = () => { for (const stream of streams.splice(0)) stream.cancel(); rpc?.close(); };
   const pid = fixture.gatewayPid;
   const t3Port = fixture.t3Port;
@@ -286,8 +291,8 @@ test('interactions use exact paired messages and runtime cards through the real 
     }
     assert.equal(alpha.runtimeRequests.length, INTERACTION_IDS.approvals.length + 3);
     assert.equal(alpha.thread.pendingRuntimeRequest.id, INTERACTION_IDS.initial);
-    assert.ok(alpha.turnItems.some((item) => /Ask @Beta and @Gamma/.test(item.text)));
-    assert.ok(alpha.turnItems.filter((item) => item.type === 'assistant_message').length >= 26, 'enough parent history for a scroll restoration check');
+    assert.ok(alpha.turnItems.some((item: Json) => /Ask @Beta and @Gamma/.test(item.text)));
+    assert.ok(alpha.turnItems.filter((item: Json) => item.type === 'assistant_message').length >= 26, 'enough parent history for a scroll restoration check');
     const draft = item(alpha, INTERACTION_IDS.initial);
     assert.equal(draft.questions[0].initialAnswer, INITIAL_ANSWER);
     assert.equal(draft.status, 'waiting');
@@ -301,7 +306,7 @@ test('interactions use exact paired messages and runtime cards through the real 
     for (const id of INTERACTION_IDS.approvals) assert.deepEqual(item(alpha, id).options, APPROVAL_OPTIONS);
     for (const status of ['resolved', 'expired', 'cancelled']) assert.equal(request(beta, `fixture-terminal-question-${status}`).status, status);
     for (const status of ['saved', 'declined', 'cancelled']) assert.equal(item(gamma, `fixture-secret-${status}`).secretStatus, status);
-    assert.ok((await inspect()).targets.every(({ attempts, accepted }) => attempts === 0 && accepted === 0), 'seed and subscriptions do not submit anything');
+    assert.ok((await inspect()).targets.every(({ attempts, accepted }: Json) => attempts === 0 && accepted === 0), 'seed and subscriptions do not submit anything');
 
     // Exercise the same real transcript/exchange functions used by the frontend.
     const requireWeb = createRequire(new URL('../web/package.json', import.meta.url));
@@ -309,22 +314,22 @@ test('interactions use exact paired messages and runtime cards through the real 
     const bundle = await build({ configFile: false, logLevel: 'silent', build: {
       ssr: new URL('../web/src/lib/transcript.ts', import.meta.url).pathname, write: false,
     }, ssr: { noExternal: true } });
-    const entry = bundle.output.find((output) => output.type === 'chunk' && output.isEntry);
+    const entry = bundle.output.find((output: Json) => output.type === 'chunk' && output.isEntry);
     const { buildEntries } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
     const exchangeBundle = await build({ configFile: false, logLevel: 'silent', build: {
       ssr: new URL('../web/src/lib/botMessages.ts', import.meta.url).pathname, write: false,
     }, ssr: { noExternal: true } });
-    const exchangeEntry = exchangeBundle.output.find((output) => output.type === 'chunk' && output.isEntry);
+    const exchangeEntry = exchangeBundle.output.find((output: Json) => output.type === 'chunk' && output.isEntry);
     const { botExchange } = await import(`data:text/javascript;base64,${Buffer.from(exchangeEntry.code).toString('base64')}`);
     const bots = (await fixture.request('/api/bots')).body.bots;
-    const ctx = { bot: bots.find((bot) => bot.slug === 'alpha'), botsByThread: new Map(bots.map((bot) => [bot.mainThreadId, bot])), tasks: [], requests: Object.fromEntries(alpha.runtimeRequests.map((request) => [request.id, request])) };
+    const ctx = { bot: bots.find((bot: Json) => bot.slug === 'alpha'), botsByThread: new Map(bots.map((bot: Json) => [bot.mainThreadId, bot])), tasks: [], requests: Object.fromEntries(alpha.runtimeRequests.map((request: Json) => [request.id, request])) };
     const entries = buildEntries(alpha.turnItems, ctx);
-    assert.deepEqual(entries.filter((entry) => entry.kind === 'bot-event').map((entry) => [entry.direction, entry.bots.map((bot) => bot.name)]), [['sent', ['Beta', 'Gamma']], ['received', ['Beta']]]);
-    assert.equal(entries.filter((entry) => entry.kind === 'question').length, 3);
-    assert.equal(entries.filter((entry) => entry.kind === 'approval').length, 5);
-    assert.equal(entries.filter((entry) => entry.kind === 'secret').length, 2);
+    assert.deepEqual(entries.filter((entry: Json) => entry.kind === 'bot-event').map((entry: Json) => [entry.direction, entry.bots.map((bot: Json) => bot.name)]), [['sent', ['Beta', 'Gamma']], ['received', ['Beta']]]);
+    assert.equal(entries.filter((entry: Json) => entry.kind === 'question').length, 3);
+    assert.equal(entries.filter((entry: Json) => entry.kind === 'approval').length, 5);
+    assert.equal(entries.filter((entry: Json) => entry.kind === 'secret').length, 2);
     const pair = botExchange([...alpha.turnItems, ...beta.turnItems, ...gamma.turnItems], 'thread-alpha', 'thread-beta');
-    assert.deepEqual(pair.map(({ id, senderThreadId, recipientThreadId, text }) => ({ id, senderThreadId, recipientThreadId, text })), [
+    assert.deepEqual(pair.map(({ id, senderThreadId, recipientThreadId, text }: Json) => ({ id, senderThreadId, recipientThreadId, text })), [
       { id: 'fixture-alpha-beta', senderThreadId: 'thread-alpha', recipientThreadId: 'thread-beta', text: 'Please review the generic sample.' },
       { id: 'fixture-beta-alpha', senderThreadId: 'thread-beta', recipientThreadId: 'thread-alpha', text: 'The generic sample is ready.' },
     ]);
@@ -360,10 +365,10 @@ test('interactions use exact paired messages and runtime cards through the real 
     await bounded(rpc.call('orchestration.dispatchCommand', multiCommand));
     const multiAnswered = await watched.alpha.wait((projection) => request(projection, INTERACTION_IDS.multi).status === 'resolved');
     assert.deepEqual(request(multiAnswered, INTERACTION_IDS.multi).answers, multiAnswers);
-    const resumedAnswer = multiAnswered.turnItems.find((item) => item.messageId === `async-answer:${INTERACTION_IDS.multi}`);
+    const resumedAnswer = multiAnswered.turnItems.find((item: Json) => item.messageId === `async-answer:${INTERACTION_IDS.multi}`);
     assert.ok(resumedAnswer, 'message-capability questions include the actual runtime continuation record');
     assert.equal(resumedAnswer.type, 'user_message');
-    assert.ok(!buildEntries(multiAnswered.turnItems, ctx).some((entry) => entry.kind === 'user' && entry.id === resumedAnswer.id), 'the accepted choice is displayed only in its question card');
+    assert.ok(!buildEntries(multiAnswered.turnItems, ctx).some((entry: Json) => entry.kind === 'user' && entry.id === resumedAnswer.id), 'the accepted choice is displayed only in its question card');
     await assert.rejects(bounded(rpc.call('orchestration.dispatchCommand', multiCommand)), /already answered/);
     assert.equal((await metadata(INTERACTION_IDS.multi)).accepted, 1, 'identical command replay does not apply twice');
 
@@ -384,11 +389,11 @@ test('interactions use exact paired messages and runtime cards through the real 
     for (const terminal of beta.runtimeRequests) await assert.rejects(respond(terminal.id, terminal.kind === 'user_input' ? { answers: { draft: 'Generic' } } : { decision: 'accept' }, 'thread-beta'), /already answered or terminal/);
 
     await arm(INTERACTION_IDS.save);
-    let invalidError;
-    try { await secret(INTERACTION_IDS.save, { type: 'save', secret: 'unaccepted-generic-input' }); } catch (error) { invalidError = error; }
-    assert.match(invalidError?.message, /fixed dummy fixture value/);
-    assert.ok(!invalidError.message.includes('unaccepted-generic-input'), 'validation failure never echoes submitted data');
-    await assert.rejects(secret(INTERACTION_IDS.save, { type: 'save', secret: DUMMY_SECRET }), (error) => /failed once/.test(error.message) && !error.message.includes(DUMMY_SECRET));
+    let invalidError: Error | undefined;
+    try { await secret(INTERACTION_IDS.save, { type: 'save', secret: 'unaccepted-generic-input' }); } catch (error) { invalidError = error as Error; }
+    assert.match(invalidError?.message!, /fixed dummy fixture value/);
+    assert.ok(!invalidError!.message.includes('unaccepted-generic-input'), 'validation failure never echoes submitted data');
+    await assert.rejects(secret(INTERACTION_IDS.save, { type: 'save', secret: DUMMY_SECRET }), (error: Error) => /failed once/.test(error.message) && !error.message.includes(DUMMY_SECRET));
     assert.equal((await metadata(INTERACTION_IDS.save)).status, 'pending');
     await secret(INTERACTION_IDS.save, { type: 'save', secret: DUMMY_SECRET });
     const saved = await watched.alpha.wait((projection) => item(projection, INTERACTION_IDS.save).secretStatus === 'saved');
@@ -406,7 +411,7 @@ test('interactions use exact paired messages and runtime cards through the real 
     assert.equal(malformed.status, 400); assert.ok(!(await malformed.text()).includes(DUMMY_SECRET));
     const unknownTarget = await fixture.request('/t3/fixture/interactions/fail-once', 'POST', { targetId: DUMMY_SECRET });
     assert.equal(unknownTarget.status, 400); assert.ok(!JSON.stringify(unknownTarget.body).includes(DUMMY_SECRET));
-    await assert.rejects(bounded(rpc.call(DUMMY_SECRET, { type: DUMMY_SECRET })), (error) => /Unavailable in local fixture/.test(error.message) && !error.message.includes(DUMMY_SECRET));
+    await assert.rejects(bounded(rpc.call(DUMMY_SECRET, { type: DUMMY_SECRET })), (error: Error) => /Unavailable in local fixture/.test(error.message) && !error.message.includes(DUMMY_SECRET));
     const oversized = await fetch(fixture.url + '/t3/fixture/interactions/fail-once', { method: 'POST', body: 'x'.repeat(1025) });
     assert.equal(oversized.status, 413);
     for (const [tag, payload] of [
@@ -414,9 +419,9 @@ test('interactions use exact paired messages and runtime cards through the real 
       ['orchestration.dispatchCommand', { type: 'thread.create', threadId: 'new-fixture-thread' }],
       ['projects.createNew', {}], ['shell.execute', { command: 'ignored' }],
       ['secrets.consume', { secretRef: 'ignored' }], ['t3_thread_send', { threadId: 'thread-beta', message: 'Generic' }],
-    ]) await assert.rejects(bounded(rpc.call(tag, payload)), /Unavailable in local fixture/);
+    ] as [string, object][]) await assert.rejects(bounded(rpc.call(tag, payload)), /Unavailable in local fixture/);
     assert.equal((await fixture.request('/t3/api/not-supported')).status, 501);
-    assert.ok((await inspect()).targets.every(({ accepted }) => accepted <= 1));
+    assert.ok((await inspect()).targets.every(({ accepted }: Json) => accepted <= 1));
     assert.ok(!fixture.logs.includes(DUMMY_SECRET), 'gateway logs never contain a secret value');
 
     disconnect();
@@ -431,16 +436,16 @@ test('interactions use exact paired messages and runtime cards through the real 
     const reset = await connect();
     const resetAlpha = await reset.alpha.wait();
     assert.deepEqual(resetAlpha, alpha, 'reset restores the exact seed including timestamps and pending records');
-    assert.ok((await inspect()).targets.every(({ attempts, accepted, failOnce }) => attempts === 0 && accepted === 0 && !failOnce));
+    assert.ok((await inspect()).targets.every(({ attempts, accepted, failOnce }: Json) => attempts === 0 && accepted === 0 && !failOnce));
     await bounded(rpc.call('orchestration.dispatchCommand', { commandId: 'fixture-dismiss', type: 'thread.user-input.dismiss', threadId: 'thread-alpha', requestId: INTERACTION_IDS.multi }));
     const dismissed = await reset.alpha.wait((projection) => request(projection, INTERACTION_IDS.multi).status === 'resolved');
     assert.equal(item(dismissed, INTERACTION_IDS.multi).status, 'cancelled');
     assert.equal(item(dismissed, INTERACTION_IDS.multi).questionAnswer, undefined);
-    assert.ok(!dismissed.turnItems.some((item) => item.messageId === `async-answer:${INTERACTION_IDS.multi}`), 'dismissal does not send a synthetic answer');
+    assert.ok(!dismissed.turnItems.some((item: Json) => item.messageId === `async-answer:${INTERACTION_IDS.multi}`), 'dismissal does not send a synthetic answer');
   } finally { disconnect(); await fixture.close(); }
   await assert.rejects(access(fixture.root), { code: 'ENOENT' });
-  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
-  assert.throws(() => process.kill(fixture.gatewayPid, 0), { code: 'ESRCH' });
+  assert.throws(() => process.kill(pid!, 0), { code: 'ESRCH' });
+  assert.throws(() => process.kill(fixture.gatewayPid!, 0), { code: 'ESRCH' });
   await assert.rejects(fetch(fixture.url, { signal: AbortSignal.timeout(1000) }));
   await assert.rejects(fetch(`http://127.0.0.1:${t3Port}/api/projects`, { signal: AbortSignal.timeout(1000) }));
 });
@@ -448,7 +453,7 @@ test('interactions use exact paired messages and runtime cards through the real 
 test('Executor scenario drives real gateway account completion, restart/reset and all-listener cleanup', { timeout: 30000 }, async () => {
   const fixture = await createFixture({ scenario: 'executor' });
   const executorUrl = fixture.executorUrl, t3Port = fixture.t3Port;
-  const raw = async (route, method = 'GET', body) => {
+  const raw = async (route: string, method = 'GET', body?: unknown) => {
     const response = await fetch(executorUrl + route, { method, signal: AbortSignal.timeout(5000),
       headers: { authorization: `Bearer ${EXECUTOR_FIXTURE_TOKEN}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
     return { status: response.status, body: await response.json() };
@@ -458,12 +463,12 @@ test('Executor scenario drives real gateway account completion, restart/reset an
     assert.equal((await fetch(executorUrl + '/api/organizations/fixture/apps', { headers: { authorization: 'Bearer wrong-fixture-token' } })).status, 401);
     const initial = await fixture.request('/api/executor');
     assert.equal(initial.status, 200); assert.equal(initial.body.backend, 'self-hosted');
-    assert.deepEqual(initial.body.connections.map(({ id, status }) => ({ id, status })), [
+    assert.deepEqual(initial.body.connections.map(({ id, status }: Json) => ({ id, status })), [
       { id: EXECUTOR_FIXTURE_IDS.service, status: 'needs-connection' }, { id: EXECUTOR_FIXTURE_IDS.single, status: 'needs-connection' }, { id: EXECUTOR_FIXTURE_IDS.ready, status: 'ready' },
     ]);
     assert.doesNotMatch(JSON.stringify(initial.body), /fixture-only|credentialsFingerprint|access_token/);
     const catalog = await fixture.request('/api/executor/catalog?search=generic');
-    assert.deepEqual(catalog.body.entries.map(({ id }) => id), [EXECUTOR_FIXTURE_IDS.catalog]);
+    assert.deepEqual(catalog.body.entries.map(({ id }: Json) => id), [EXECUTOR_FIXTURE_IDS.catalog]);
     const input = { entry: EXECUTOR_FIXTURE_IDS.catalog, name: 'Installed sample' };
     await raw('/fixture/executor/fail-once', 'POST', { operation: 'install' });
     assert.equal((await fixture.request('/api/executor/install', 'POST', input)).status, 502);
@@ -488,7 +493,7 @@ test('Executor scenario drives real gateway account completion, restart/reset an
     assert.equal((await fixture.request(`/api/executor/connections/${connection.id}?backend=self-hosted`)).body.status, 'completed');
     const connected = (await fixture.request(`/api/executor/apps/${app}`)).body.app;
     assert.equal(connected.status, 'connected');
-    assert.deepEqual(connected.requirements[0].accounts.map(({ linked, signIn }) => ({ linked, signIn })), [{ linked: true, signIn: 'saved' }]);
+    assert.deepEqual(connected.requirements[0].accounts.map(({ linked, signIn }: Json) => ({ linked, signIn })), [{ linked: true, signIn: 'saved' }]);
     const accountId = connected.requirements[0].accounts[0].id;
     const unlinked = await fixture.request(`/api/executor/apps/${app}/accounts`, 'POST', { scope: 'user', requirement: 'service', account: accountId, linked: false });
     assert.equal(unlinked.body.app.status, 'needs-connection');
@@ -496,7 +501,7 @@ test('Executor scenario drives real gateway account completion, restart/reset an
     assert.equal((await fixture.request(`/api/executor/apps/${app}/accounts`, 'POST', { scope: 'user', requirement: 'service', account: accountId, linked: true })).body.app.status, 'connected');
     const one = EXECUTOR_FIXTURE_IDS.single;
     for (const account of ['acct_single_personal', 'acct_single_work']) assert.equal((await fixture.request(`/api/executor/apps/${one}/accounts`, 'POST', { scope: 'app', requirement: 'service', account, linked: true })).status, 200);
-    assert.deepEqual((await fixture.request(`/api/executor/apps/${one}`)).body.app.requirements[0].accounts.map(({ id, linked }) => ({ id, linked })), [
+    assert.deepEqual((await fixture.request(`/api/executor/apps/${one}`)).body.app.requirements[0].accounts.map(({ id, linked }: Json) => ({ id, linked })), [
       { id: 'acct_single_personal', linked: false }, { id: 'acct_single_work', linked: true },
     ]);
     for (const [action, status] of [['cancel', 'cancelled'], ['expire', 'expired']]) {
@@ -529,16 +534,16 @@ test('Executor scenario drives real gateway account completion, restart/reset an
   } finally { await fixture.close(); }
   await assert.rejects(access(fixture.root), { code: 'ENOENT' });
   await assert.rejects(fetch(fixture.url, { signal: AbortSignal.timeout(1000) }));
-  await assert.rejects(fetch(executorUrl, { signal: AbortSignal.timeout(1000) }));
+  await assert.rejects(fetch(executorUrl!, { signal: AbortSignal.timeout(1000) }));
   await assert.rejects(fetch(`http://127.0.0.1:${t3Port}/api/projects`, { signal: AbortSignal.timeout(1000) }));
 });
 
 test('Executor CLI startup failure closes its fake listeners and preserves occupied-port owner', { timeout: 15000 }, async () => {
   const server = http.createServer((_req, res) => res.end('existing owner'));
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${server.address().port}`;
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
-    const child = spawn(process.execPath, [new URL('./fixture.mts', import.meta.url).pathname, '--scenario', 'executor', '--port', String(server.address().port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [new URL('./fixture.mts', import.meta.url).pathname, '--scenario', 'executor', '--port', String((server.address() as AddressInfo).port)], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { output += chunk; });
     const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
     try { const [code, signal] = await once(child, 'exit'); assert.equal(code, 1, output); assert.equal(signal, null); }
@@ -550,7 +555,7 @@ test('Executor CLI startup failure closes its fake listeners and preserves occup
 
 test('inbox lifecycle reconciles across socket reloads and never changes Bot visibility', { timeout: 30000 }, async () => {
   const fixture = await createFixture();
-  let rpc;
+  let rpc: T3Client | undefined;
   const connect = async () => {
     const c = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
     await bounded(c.connect()); return c;
@@ -560,7 +565,7 @@ test('inbox lifecycle reconciles across socket reloads and never changes Bot vis
     const id = 'thread-beta';
     await bounded(rpc.dispatch({ type: 'thread.settle', threadId: id }));
     rpc.close(); rpc = await connect();
-    const read = async () => (await bounded(rpc.call('orchestration.getThreadProjection', { threadId: id }))).thread;
+    const read = async () => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId: id }))).thread;
     assert.equal((await read()).settledOverride, 'settled');
     await bounded(rpc.dispatch({ type: 'thread.unsettle', threadId: id, reason: 'user' }));
     assert.equal((await read()).settledOverride, 'active');
@@ -572,7 +577,7 @@ test('inbox lifecycle reconciles across socket reloads and never changes Bot vis
     assert.ok((await read()).autoSettleDisabledAt);
     await bounded(rpc.dispatch({ type: 'thread.archive', threadId: id }));
     assert.equal((await bounded(rpc.call('orchestration.getArchivedShellSnapshot'))).threads[0].id, id);
-    assert.equal((await fixture.request('/api/bots')).body.bots.find(bot => bot.slug === 'beta').hidden, false);
+    assert.equal((await fixture.request('/api/bots')).body.bots.find((bot: Json) => bot.slug === 'beta').hidden, false);
     await bounded(rpc.dispatch({ type: 'thread.unarchive', threadId: id }));
     assert.equal((await read()).archivedAt, null);
     await assert.rejects(bounded(rpc.dispatch({ type: 'message.dispatch', threadId: id, text: 'Must never run' })), /Unavailable in local fixture/);
@@ -604,16 +609,16 @@ test('scoped gateway HTTP, RPC and assets use only the requested machine; missin
 });
 
  test('scripted message receipts stay idempotent and running work requires Stop', {timeout:15000},async()=>{
- const fixture=await createFixture(); let rpc;
+ const fixture=await createFixture(); let rpc: T3Client | undefined;
  try {
   rpc=new T3Client({baseUrl:fixture.url+'/t3',token:'fixture-only'}); await rpc.connect();
   const command={commandId:'fixture-message-command',type:'message.dispatch',threadId:'thread-beta',messageId:'fixture-message',text:'Generic scripted running work',attachments:[]};
   const receipt=await rpc.dispatch(command);
   assert.deepEqual(await rpc.dispatch(command),receipt);
-  const read=()=>rpc.call('orchestration.getThreadProjection',{threadId:'thread-beta'});
+  const read=()=>rpc!.call('orchestration.getThreadProjection',{threadId:'thread-beta'});
   const running=await read();
   assert.equal(running.runs.length,1); assert.equal(running.runs[0].status,'running');
-  assert.equal(running.turnItems.filter(item=>item.messageId==='fixture-message').length,1);
+  assert.equal(running.turnItems.filter((item: Json)=>item.messageId==='fixture-message').length,1);
   await rpc.dispatch({type:'thread.stop',commandId:'fixture-stop-command',threadId:'thread-beta',stopDelegatedTasks:true});
   const stopped=await read(); assert.equal(stopped.thread.activeRunId,null); assert.equal(stopped.runs[0].status,'interrupted');
  } finally {rpc?.close();await fixture.close();}
@@ -625,9 +630,9 @@ test('Library fixture supplies real signed resources and rejects missing files a
   try {
     await bounded(rpc.connect());
     const bots = (await fixture.request('/api/bots')).body.bots;
-    const bot = bots.find(bot => bot.slug === 'beta');
+    const bot = bots.find((bot: Json) => bot.slug === 'beta');
     const listing = await bounded(rpc.call('projects.listEntries', { cwd: bot.workspaceRoot, directoryPath: 'library' }));
-    assert.deepEqual(listing.entries.map(entry => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/notes.txt', 'library/audio.wav']);
+    assert.deepEqual(listing.entries.map((entry: Json) => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/notes.txt', 'library/audio.wav']);
     const signed = await bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: bot.mainThreadId, path: 'library/counter.html' } }));
     const response = await fetch(fixture.url + '/t3' + signed.relativeUrl);
     assert.equal(response.status, 200);
@@ -678,24 +683,24 @@ test('repeatable Vault values survive real gateway restart and invalid arrays do
 test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway', { timeout: 30000 }, async () => {
   const fixture = await createFixture({ scenario: 'latest-t3' });
   const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
-  const first = (tag, payload) => new Promise((resolve) => { const handle = rpc.stream(tag, payload, (value) => { handle.cancel(); resolve(value); }); });
+  const first = (tag: string, payload: unknown) => new Promise<Json>((resolve) => { const handle = rpc.stream(tag, payload, (value) => { handle.cancel(); resolve(value); }); });
   try {
     await rpc.connect();
     assert.equal((await rpc.call('server.getConfig')).environment.capabilities.threadForceStop, true);
     const { tasks } = await first('scheduledTasks.subscribe', {});
-    assert.deepEqual(tasks.map((task) => task.schedule.type), ['once', 'fixed_time']);
+    assert.deepEqual(tasks.map((task: Json) => task.schedule.type), ['once', 'fixed_time']);
     assert.match(tasks[1].blockedByPolicy, /Example Org/);
     const shell = (await first('orchestration.subscribeShell', {})).snapshot;
-    assert.ok(shell.projects.find((p) => p.id === 'project-gamma').archivedAt);
-    assert.equal(shell.threads.find((t) => t.id === 'thread-alpha-child').pendingRuntimeRequest.kind, 'command');
+    assert.ok(shell.projects.find((p: Json) => p.id === 'project-gamma').archivedAt);
+    assert.equal(shell.threads.find((t: Json) => t.id === 'thread-alpha-child').pendingRuntimeRequest.kind, 'command');
     await assert.rejects(rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha', requestId: 'fixture-child-approval', decision: 'accept' }), /child thread/);
     await rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha-child', requestId: 'fixture-child-approval', decision: 'accept' });
     assert.deepEqual(await rpc.call('orchestration.forceStopThread', { threadId: 'thread-beta', runId: 'fixture-run-stuck' }), { outcome: 'killed', sharedWithThreadIds: [] });
-    assert.deepEqual(shell.threads.find((t) => t.id === 'thread-alpha').pullRequests.map((pr) => pr.number), [2, 10, 11, 21, 22, 23, 24]);
-    const pr = (number) => ({ projectId: 'project-alpha', host: 'github.com', repository: 'example/generic', number });
+    assert.deepEqual(shell.threads.find((t: Json) => t.id === 'thread-alpha').pullRequests.map((pr: Json) => pr.number), [2, 10, 11, 21, 22, 23, 24]);
+    const pr = (number: number) => ({ projectId: 'project-alpha', host: 'github.com', repository: 'example/generic', number });
     assert.equal((await rpc.call('pullRequests.detail', pr(2))).state, 'merged', 'stale open snapshot, merged upstream');
     assert.equal((await rpc.call('pullRequests.detail', pr(22))).isDraft, true);
-    assert.deepEqual((await rpc.call('pullRequests.checks', pr(23))).checks.map((c) => c.status), ['success', 'failure']);
+    assert.deepEqual((await rpc.call('pullRequests.checks', pr(23))).checks.map((c: Json) => c.status), ['success', 'failure']);
     assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'open');
     assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'merged', '#24 merges after its first read');
     await rpc.call('projects.mutate', { type: 'project.update', commandId: 'unarchive', projectId: 'project-gamma', archived: false });
@@ -711,15 +716,15 @@ test('avatars scenario draws in a hidden side chat and never touches the main th
     await rpc.connect();
     assert.equal((await rpc.call('server.getConfig')).environment.capabilities.sideChats, true);
     const bots = (await (await fetch(fixture.url + '/api/bots')).json()).bots;
-    assert.ok(bots.filter((bot) => bot.shape.startsWith('object:')).length >= 12);
-    assert.equal(bots.find((bot) => bot.slug === 'bean').avatarDefinition.name, 'Bean');
+    assert.ok(bots.filter((bot: Json) => bot.shape.startsWith('object:')).length >= 12);
+    assert.equal(bots.find((bot: Json) => bot.slug === 'bean').avatarDefinition.name, 'Bean');
     const main = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length;
     await rpc.dispatch({ type: 'thread.fork', createdBy: 'user', creationSource: 'web', sourceThreadId: 'thread-cat', targetThreadId: 'drawing', sourcePoint: { type: 'latest_stable' }, sideChat: true, title: 'Avatar drawing: an acorn' });
     await rpc.dispatch({ type: 'message.dispatch', threadId: 'drawing', messageId: 'drawing-1', text: 'Draw it', createdBy: 'user', creationSource: 'web' });
     let reply;
     for (let i = 0; i < 40 && !reply; i++) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      reply = (await rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' })).turnItems.find((item) => item.type === 'assistant_message');
+      reply = (await rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' })).turnItems.find((item: Json) => item.type === 'assistant_message');
     }
     assert.match(reply.text, /"name": "Acorn"/);
     assert.equal((await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length, main);
