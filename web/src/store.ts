@@ -4,7 +4,8 @@ import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, th
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { canStartSideChat, isAvatarDrawing, isSideChat, sideChatTitle } from "./lib/sideChats";
+import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
+import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
@@ -830,7 +831,8 @@ export async function archiveThread(threadId: string, archived: boolean) {
 export async function loadArchivedThreads() {
   try {
     const snapshot = await t3.call<{ threads: ThreadShell[]; projects: ProjectShell[] }>("orchestration.getArchivedShellSnapshot", {});
-    const archivedThreads = Object.fromEntries(snapshot.threads.map((t) => [t.id, t]));
+    // A drawing job thread is archived only to keep it out of sight.
+    const archivedThreads = Object.fromEntries(snapshot.threads.filter((t) => !isDrawingJob(t)).map((t) => [t.id, t]));
     set((s) => ({ archiveError: null, archivedThreads: { ...Object.fromEntries(Object.entries(s.archivedThreads).filter(([id]) => !!threadTarget(id).environmentId)), ...archivedThreads }, threads: { ...Object.fromEntries(Object.entries(s.threads).filter(([id,t]) => !!threadTarget(id).environmentId || !t.archivedAt)), ...archivedThreads }, projects: { ...s.projects, ...Object.fromEntries(snapshot.projects.map((p) => [p.id, p])) } }));
   } catch (error) { set({ archiveError: error instanceof Error ? error.message : "Couldn't load archived conversations" }); }
 }
@@ -902,27 +904,98 @@ export async function deleteSideChat(threadId: string) {
   if (get().sideChat?.threadId === threadId) set({ sideChat: null });
 }
 
-/** Ask the Bot to draw a new avatar in a hidden side chat. Replaces any earlier drawing. */
-export async function startAvatarDrawing(bot: Bot, title: string, prompt: string) {
-  const parentThreadId = bot.mainThreadId;
-  if (!get().runtimeFeatures.sideChats || !parentThreadId || !canStartSideChat(get().threads[parentThreadId])) throw new Error("Drawing needs a newer T3 Code, with side chats.");
-  for (const old of Object.values(get().threads)) if (isAvatarDrawing(old) && old.lineage.parentThreadId === parentThreadId) await discardAvatarDrawing(old.id);
-  const threadId = uuid();
+/** The model a Bot's drawing runs on: the Avatar drawing model setting, a fast model, or the Bot's own. */
+export function avatarDrawingModel(bot: Bot, s = get()) {
+  const own = (bot.mainThreadId ? s.threads[bot.mainThreadId]?.modelSelection : null) ?? (bot.projectId ? s.projects[bot.projectId]?.defaultModelSelection : null) ?? defaultModel(s);
+  return drawingModel(s.providers, s.settings?.avatarDrawingModel, own ?? null);
+}
+
+/**
+ * Draw a new avatar as its own small job (see lib/avatarDrawing): an empty, archived thread in the Bot's
+ * project on a fast model, with each option in a hidden side chat of it. Replaces any earlier drawing.
+ */
+export async function startAvatarDrawing(bot: Bot, description: string, options = DRAWING_OPTIONS) {
+  const main = bot.mainThreadId ? get().threads[bot.mainThreadId] : undefined;
+  if (!get().runtimeFeatures.sideChats || !bot.projectId || !canStartSideChat(main)) throw new Error("Drawing needs a newer T3 Code, with side chats.");
+  const model = avatarDrawingModel(bot);
+  if (!model) throw new Error("No model is available to draw with.");
+  await discardAvatarDrawing(drawingsOf(get().threads, bot));
+  const jobId = uuid();
+  const actor = { createdBy: "user", creationSource: "web" };
   try {
-    await t3.dispatch({ type: "thread.fork", createdBy: "user", creationSource: "web", sourceThreadId: parentThreadId, targetThreadId: threadId, sourcePoint: { type: "latest_stable" }, sideChat: true, title }, { timeoutMs: 30_000 });
-    if (!await threadArrives(threadId)) throw new Error("The drawing didn't reach this device. Try again.");
-    await sendMessage(bot.slug, prompt, [], threadId);
+    await t3.dispatch({ type: "thread.create", ...actor, threadId: jobId, projectId: bot.projectId, title: DRAWING_JOB_TITLE, modelSelection: model, runtimeMode: runtimeMode(), interactionMode: "default", branch: null, worktreePath: null }, { timeoutMs: 30_000 });
+    await t3.dispatch({ type: "thread.archive", threadId: jobId });
+    const started = await Promise.allSettled(Array.from({ length: options }, async (_, index) => {
+      const threadId = uuid();
+      await t3.dispatch({ type: "thread.fork", ...actor, sourceThreadId: jobId, targetThreadId: threadId, sourcePoint: { type: "latest_stable" }, sideChat: true, title: drawingTitle(description) }, { timeoutMs: 30_000 });
+      if (!await threadArrives(threadId)) throw new Error("The drawing didn't reach this device. Try again.");
+      await sendMessage(bot.slug, drawingPrompt(description, index + 1, options), [], threadId);
+      return threadId;
+    }));
+    const running = started.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    if (!running.length) throw (started[0] as PromiseRejectedResult).reason;
+    superviseDrawing(running);
   } catch (error) {
-    void t3.dispatch({ type: "thread.delete", threadId }).catch(() => {});
+    // Deleting the job takes any options that did start with it.
+    void t3.dispatch({ type: "thread.delete", threadId: jobId }).catch(() => {});
     throw error;
   }
 }
 
-/** Stop and remove a drawing side chat. */
-export async function discardAvatarDrawing(threadId: string) {
-  if (get().threads[threadId]?.activeRunId) await interrupt(threadId).catch(() => {});
-  await t3.dispatch({ type: "thread.delete", threadId });
-  set((s) => { const { [threadId]: _gone, ...threads } = s.threads; return { threads }; });
+// Read once per finished run, shared by the editor and the supervisor, so a fix is only ever asked once.
+const drawingReads = new Map<string, Promise<DrawingOption>>();
+const drawingReadKey = (thread: ThreadShell) => `${thread.id}:${thread.latestRunId}:${thread.latestRunCompletedAt ?? ""}`;
+
+/** A finished option: its avatar, or its error. A first reply that doesn't validate goes back once to be fixed. */
+export function readDrawingOption(thread: ThreadShell): Promise<DrawingOption> {
+  const key = drawingReadKey(thread);
+  const known = drawingReads.get(key);
+  if (known) return known;
+  const read = threadClient(thread.id).call<{ turnItems: TurnItem[]; runs?: Run[] }>("orchestration.getThreadProjection", { threadId: threadTarget(thread.id).threadId })
+    .then(async (projection): Promise<DrawingOption> => {
+      const { retry, ...result } = drawingResult(thread, projection.turnItems ?? [], projection.runs ?? []);
+      if (retry === undefined) return result;
+      const bot = Object.values(get().bots).find((candidate) => candidate.projectId === thread.projectId);
+      if (!bot) return { status: "failed", thread, error: retry };
+      await sendMessage(bot.slug, fixPrompt(retry), [], thread.id);
+      return result;
+    })
+    .catch((): DrawingOption => { drawingReads.delete(key); return { status: "failed", thread, error: "Couldn't read the drawing. Try again." }; });
+  drawingReads.set(key, read);
+  return read;
+}
+
+/** Reads each option as it finishes, so its fix goes out even while the editor is closed. */
+function superviseDrawing(threadIds: string[]) {
+  const settled = new Set<string>();
+  const seen = new Set<string>();
+  const check = (state: State) => {
+    for (const id of threadIds) {
+      const thread = state.threads[id];
+      if (!thread) { settled.add(id); continue; }
+      if (settled.has(id) || drawingPending(thread)) continue;
+      const key = drawingReadKey(thread);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      void readDrawingOption(thread).then((option) => { if (option.status !== "fixing") settled.add(id); });
+    }
+    if (threadIds.every((id) => settled.has(id))) { clearTimeout(timer); stop(); }
+  };
+  const stop = useApp.subscribe(check);
+  const timer = setTimeout(stop, 10 * 60_000);
+}
+
+/** Stop and remove drawings: their options, then the empty jobs they hang off. */
+export async function discardAvatarDrawing(options: ThreadShell[]) {
+  const mains = new Set(Object.values(get().bots).map((bot) => bot.mainThreadId));
+  const jobs = new Set(options.map((thread) => thread.lineage.parentThreadId).filter((id): id is string => !!id && !mains.has(id)));
+  await Promise.all(options.map(async (thread) => {
+    if (get().threads[thread.id]?.activeRunId) await interrupt(thread.id).catch(() => {});
+    await t3.dispatch({ type: "thread.delete", threadId: thread.id });
+  }));
+  for (const job of jobs) await t3.dispatch({ type: "thread.delete", threadId: job }).catch(() => {});
+  const gone = new Set(options.map((thread) => thread.id));
+  set((s) => ({ threads: Object.fromEntries(Object.entries(s.threads).filter(([id]) => !gone.has(id))) }));
 }
 
 export async function saveFallbackModel(selection: ModelSelection | null) {

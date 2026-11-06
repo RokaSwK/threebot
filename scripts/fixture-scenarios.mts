@@ -436,8 +436,9 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   };
 }
 
-// Many object avatars (the sidebar's live cost, the editor's shared objects) and side chats. A side
-// chat titled "Avatar drawing: …" answers with a scripted definition; no model draws anything.
+// Many object avatars (the sidebar's live cost, the editor's shared objects) and drawings. A drawing is
+// an empty, archived "Avatar drawing job" thread with one hidden side chat per option; each side chat
+// titled "Avatar drawing: …" answers with a scripted definition. No model draws anything.
 const definition = (id: string, name: string, path: string) => ({ version: 1, id, name, body: { path }, eyes: { x: 50, y: 50, spacing: 15, scale: 1 } });
 export const AVATAR_OWN = [
   definition('fixture-bean', 'Bean', 'M32 12 C56 6 86 16 88 42 C90 68 72 90 48 90 C24 90 10 72 12 50 C14 30 18 16 32 12 Z'),
@@ -452,6 +453,12 @@ export const AVATAR_SAMPLES = [
   ...AVATAR_OWN.map((own, index) => ({ slug: own.id.slice('fixture-'.length), name: own.name, shape: `object:${own.id}`, avatarDefinition: own, color: ['brown', 'gray'][index], primary: false, pinned: true })),
 ];
 export const AVATAR_DRAWING_TITLE = 'Avatar drawing: ';
+export const AVATAR_DRAWING_JOB = 'Avatar drawing job';
+/** What the avatars scenario says it offers, so the editor's automatic drawing model has a fast pick. */
+export const AVATAR_PROVIDERS = [{ instanceId: 'codex', driver: 'codex', displayName: 'Codex', enabled: true, status: 'ready', models: [
+  { slug: 'gpt-6-luna', name: 'GPT-6-Luna', capabilities: { optionDescriptors: [
+    { id: 'reasoningEffort', label: 'Reasoning', type: 'select', currentValue: 'medium', options: [{ id: 'low', label: 'Low' }, { id: 'medium', label: 'Medium' }] },
+    { id: 'serviceTier', label: 'Speed', type: 'select', currentValue: 'default', options: [{ id: 'default', label: 'Standard' }, { id: 'priority', label: 'Fast' }] }] } }] }];
 
 export function seedAvatars({ threads, items, runs, model }: { threads: FixtureThread[]; items: Map<string, FixtureItem[]>; runs: Map<string, FixtureRun[]>; model: FixtureModel }) {
   const calls: Record<string, unknown>[] = [];
@@ -472,33 +479,62 @@ export function seedAvatars({ threads, items, runs, model }: { threads: FixtureT
     inspect: () => ({ fixtureOnly: true, scenario: 'avatars', liveDelivery: false, calls }),
     armFailure: () => false,
     respond(tag: string, payload: any, { publish }: { publish?: () => void } = {}): FixtureResponse | null {
+      // A drawing's empty job: a thread in the Bot's project, archived at once.
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.create') {
+        if (payload.title !== AVATAR_DRAWING_JOB) return { error: 'Fixture creates only avatar drawing jobs.' };
+        const now = new Date().toISOString();
+        threads.push({ ...threads[0], id: payload.threadId, projectId: payload.projectId, title: payload.title, modelSelection: payload.modelSelection, runtimeMode: payload.runtimeMode, status: 'idle', activityRunStatus: null, activeRunId: null, latestRunId: null,
+          latestRunCompletedAt: null, latestVisibleMessage: null, lastVisitedAt: now, createdAt: now, updatedAt: now, lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: payload.threadId } });
+        items.set(payload.threadId, []); runs.set(payload.threadId, []);
+        calls.push({ type: 'thread.create', title: payload.title, modelSelection: payload.modelSelection });
+        return { value: { sequence: 0 } };
+      }
+      if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.archive') {
+        const job = threads.find((thread) => thread.id === payload.threadId && thread.title === AVATAR_DRAWING_JOB);
+        if (!job) return null;
+        job.archivedAt = new Date().toISOString();
+        calls.push({ type: 'thread.archive' });
+        return { value: { sequence: 0 } };
+      }
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.fork') {
         const source = threads.find((thread) => thread.id === payload.sourceThreadId);
         if (!source || !payload.sideChat) return { error: 'Fixture forks are side chats of a known thread.' };
         const now = new Date().toISOString();
-        threads.push({ ...source, id: payload.targetThreadId, title: payload.title ?? 'Side chat', status: 'idle', activityRunStatus: null, activeRunId: null, latestRunId: null,
+        // A side chat starts from its source's history; a drawing job has none.
+        threads.push({ ...source, archivedAt: null, id: payload.targetThreadId, title: payload.title ?? 'Side chat', status: 'idle', activityRunStatus: null, activeRunId: null, latestRunId: null,
           latestRunCompletedAt: null, lastVisitedAt: now, createdAt: now, updatedAt: now, lineage: { parentThreadId: source.id, relationshipToParent: 'fork', rootThreadId: source.lineage.rootThreadId, sideChat: true } });
         items.set(payload.targetThreadId, []); runs.set(payload.targetThreadId, []);
-        calls.push({ type: 'thread.fork', title: payload.title });
+        if (source.title !== AVATAR_DRAWING_JOB) items.set(payload.targetThreadId, [...(items.get(source.id) ?? [])]);
+        calls.push({ type: 'thread.fork', title: payload.title, sourceThreadId: source.id, history: items.get(payload.targetThreadId)!.length });
         return { value: { sequence: 0 } };
       }
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'thread.delete') {
         const index = threads.findIndex((thread) => thread.id === payload.threadId);
-        if (index < 0 || !threads[index].lineage.sideChat) return { error: 'Fixture deletes only side chats.' };
-        threads.splice(index, 1); items.delete(payload.threadId); runs.delete(payload.threadId);
+        if (index < 0 || !(threads[index].lineage.sideChat || threads[index].title === AVATAR_DRAWING_JOB)) return { error: 'Fixture deletes only side chats and drawing jobs.' };
+        // As in T3, deleting a thread takes its side chats with it.
+        for (const doomed of threads.filter((thread) => thread.id === payload.threadId || thread.lineage.parentThreadId === payload.threadId).map((thread) => thread.id)) {
+          threads.splice(threads.findIndex((thread) => thread.id === doomed), 1); items.delete(doomed); runs.delete(doomed);
+        }
         calls.push({ type: 'thread.delete' });
         return { value: { sequence: 0 } };
       }
       return null;
     },
-    /** After a drawing request lands: a valid definition, or a broken one when asked for "broken". "slow" takes 30s. */
+    /**
+     * After a drawing request lands: a valid definition. "broken" answers with an invalid one first and a
+     * valid one when asked to fix it; "hopeless" never validates. "slow" takes 30s; the rest take 6s.
+     */
     afterMessage(thread: FixtureThread, text: string, publish: () => void) {
       if (!thread.title.startsWith(AVATAR_DRAWING_TITLE)) return;
-      calls.push({ type: 'message.dispatch', threadId: thread.id, text });
-      const reply = /broken/i.test(thread.title)
-        ? 'Here it is:\n\n```json\n' + JSON.stringify({ ...AVATAR_DRAWN, body: { path: '' } }) + '\n```'
-        : 'Here it is:\n\n```json\n' + JSON.stringify(AVATAR_DRAWN, null, 2) + '\n```';
-      setTimeout(() => finish(thread, reply, publish), /slow/i.test(thread.title) ? 30000 : 6000);
+      calls.push({ type: 'message.dispatch', threadId: thread.id, text, model: thread.modelSelection });
+      const option = Number(text.match(/option (\d+) of/)?.[1] ?? 1);
+      const fixing = /didn't validate/.test(text);
+      const broken = /hopeless/i.test(thread.title) || (/broken/i.test(thread.title) && !fixing);
+      const drawn = { ...AVATAR_DRAWN, id: `${AVATAR_DRAWN.id}-${option}`, name: ['Acorn', 'Tall acorn', 'Round acorn'][option - 1] ?? 'Acorn' };
+      const reply = broken
+        ? 'Here it is:\n\n```json\n' + JSON.stringify({ ...drawn, body: { path: '' } }) + '\n```'
+        : 'Here it is:\n\n```json\n' + JSON.stringify(drawn, null, 2) + '\n```';
+      setTimeout(() => finish(thread, reply, publish), /slow/i.test(thread.title) ? 30000 : fixing ? 2000 : 6000);
     },
     model,
   };

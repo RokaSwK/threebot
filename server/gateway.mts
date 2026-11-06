@@ -327,6 +327,7 @@ const DEFAULT_SETTINGS = {
   rules: { alwaysAsk: [], allowWithoutAsking: [] },
   sections: [],
   defaultModel: null,
+  avatarDrawingModel: null,
   beta: BETA_DEFAULTS,
 };
 const settingsPath = path.join(appDir, "settings.json");

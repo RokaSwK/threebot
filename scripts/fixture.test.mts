@@ -709,27 +709,47 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
   } finally { rpc.close(); await fixture.close(); }
 });
 
-test('avatars scenario draws in a hidden side chat and never touches the main thread', { timeout: 60000 }, async () => {
+test('avatars scenario draws in side chats of an empty, archived job and never touches the main thread', { timeout: 60000 }, async () => {
   const fixture = await createFixture({ scenario: 'avatars' });
   const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+  const actor = { createdBy: 'user', creationSource: 'web' };
+  const replies = async (threadId: string, count: number) => {
+    for (let i = 0; i < 60; i++) {
+      const found = (await rpc.call('orchestration.getThreadProjection', { threadId })).turnItems.filter((item: Json) => item.type === 'assistant_message');
+      if (found.length >= count) return found;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(`no reply ${count} in ${threadId}`);
+  };
   try {
     await rpc.connect();
-    assert.equal((await rpc.call('server.getConfig')).environment.capabilities.sideChats, true);
+    const config = await rpc.call('server.getConfig');
+    assert.equal(config.environment.capabilities.sideChats, true);
+    assert.ok(config.providers.some((provider: Json) => provider.driver === 'codex' && provider.models.some((model: Json) => model.slug === 'gpt-6-luna')), 'a fast model to draw with');
     const bots = (await (await fetch(fixture.url + '/api/bots')).json()).bots;
     assert.ok(bots.filter((bot: Json) => bot.shape.startsWith('object:')).length >= 12);
     assert.equal(bots.find((bot: Json) => bot.slug === 'bean').avatarDefinition.name, 'Bean');
     const main = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length;
-    await rpc.dispatch({ type: 'thread.fork', createdBy: 'user', creationSource: 'web', sourceThreadId: 'thread-cat', targetThreadId: 'drawing', sourcePoint: { type: 'latest_stable' }, sideChat: true, title: 'Avatar drawing: an acorn' });
-    await rpc.dispatch({ type: 'message.dispatch', threadId: 'drawing', messageId: 'drawing-1', text: 'Draw it', createdBy: 'user', creationSource: 'web' });
-    let reply;
-    for (let i = 0; i < 40 && !reply; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      reply = (await rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' })).turnItems.find((item: Json) => item.type === 'assistant_message');
-    }
-    assert.match(reply.text, /"name": "Acorn"/);
+    const fast = { instanceId: 'codex', model: 'gpt-6-luna', options: [{ id: 'serviceTier', value: 'priority' }] };
+    await rpc.dispatch({ type: 'thread.create', ...actor, threadId: 'job', projectId: 'project-cat', title: 'Avatar drawing job', modelSelection: fast, runtimeMode: 'auto', interactionMode: 'default', branch: null, worktreePath: null });
+    await rpc.dispatch({ type: 'thread.archive', threadId: 'job' });
+    let shell: Json;
+    const stream = rpc.stream('orchestration.subscribeShell', {}, (item: Json) => { if (item.kind === 'snapshot') shell = item.snapshot; });
+    await new Promise((resolve) => setTimeout(resolve, 200)); stream.cancel();
+    assert.equal(shell.threads.some((thread: Json) => thread.id === 'job'), false, 'the job is archived, out of every list');
+    await rpc.dispatch({ type: 'thread.fork', ...actor, sourceThreadId: 'job', targetThreadId: 'drawing', sourcePoint: { type: 'latest_stable' }, sideChat: true, title: 'Avatar drawing: a broken acorn' });
+    assert.equal((await rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' })).turnItems.length, 0, 'none of the Bot conversation');
+    await rpc.dispatch({ type: 'message.dispatch', threadId: 'drawing', messageId: 'drawing-1', text: 'Draw one object avatar: a broken acorn.', ...actor });
+    const [first] = await replies('drawing', 1);
+    assert.match(first.text, /"path":""/, 'a broken drawing first');
+    await rpc.dispatch({ type: 'message.dispatch', threadId: 'drawing', messageId: 'drawing-2', text: "That avatar didn't validate: body.path: path is empty", ...actor });
+    const [, fixed] = await replies('drawing', 2);
+    assert.match(fixed.text, /"name": "Acorn"/, 'and a valid one once asked to fix it');
+    const inspect = await (await fetch(`http://127.0.0.1:${fixture.t3Port}/fixture/interactions`)).json();
+    assert.deepEqual(inspect.calls.find((call: Json) => call.type === 'message.dispatch').model, fast, 'the option runs on the job model');
     assert.equal((await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length, main);
-    await rpc.dispatch({ type: 'thread.delete', threadId: 'drawing' });
-    await assert.rejects(rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' }), /Unknown fixture thread/);
+    await rpc.dispatch({ type: 'thread.delete', threadId: 'job' });
+    await assert.rejects(rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' }), /Unknown fixture thread/, 'deleting the job takes its options');
   } finally { rpc.close(); await fixture.close(); }
 });
 

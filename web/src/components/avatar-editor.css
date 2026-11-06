@@ -6,12 +6,8 @@
 .avatar-editor-sheet .bot-modal-header > .pill { margin-left: 0; }
 .avatar-editor-sheet .bot-modal-header > button:last-child { margin-left: auto; }
 .dark .avatar-editor-sheet { background: var(--bg-app); }
-.dark .avatar-editor-card { background: var(--bg-card-inner); }
-.avatar-editor { --bot-eye-bg: var(--bg-card); padding: 16px 12px 12px; }
+.avatar-editor { --bot-eye-bg: var(--bg-elevated); padding: 16px 12px 12px; }
 .avatar-editor-preview { display: flex; justify-content: center; padding: 8px 0 26px; --bot-eye-bg: var(--bg-elevated); }
-.avatar-editor-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 28px; overflow: hidden; }
-.avatar-card-header { display: flex; align-items: center; padding: 14px; border-bottom: 1px solid var(--border); font-size: 24px; gap: 12px; }
-.avatar-card-header > button { margin-left: auto; padding: 8px 12px; color: var(--fg-muted); }
 .avatar-tabs { display: flex; gap: 2px; }
 .avatar-tabs button { border-radius: 999px; padding: 6px 14px; color: var(--fg-muted); }
 .avatar-tabs button[aria-selected="true"] { background: var(--bg-active); color: var(--fg); }
@@ -44,20 +40,17 @@
   .avatar-mobile { display: block; }
   .bot-modal-backdrop > .avatar-editor-sheet { width: 100%; max-width: 100%; height: 100%; max-height: 100%; border-radius: 28px 28px 0 0; }
   .dark .avatar-editor-sheet { background: var(--bg-elevated); }
-  .dark .avatar-editor-card { background: var(--bg-elevated); }
   .avatar-editor-sheet .bot-modal-header { padding: 46px 18px 0; min-height: 106px; }
   .avatar-editor-sheet .bot-modal-header > [aria-label="Back"] { display: grid; width: 44px; height: 44px; border: 1px solid var(--border-strong); border-radius: 50%; background: var(--bg-card); }
   .avatar-editor-sheet .bot-modal-dismiss { display: none; }
   .avatar-editor-sheet .bot-modal-title { position: static; clip-path: none; width: auto; height: auto; text-align: center; font-size: 18px; font-weight: 500; }
   .avatar-editor-sheet .bot-modal-header > button:last-child { min-width: 71px; height: 44px; font-size: 18px; }
   .avatar-editor { padding: 18px 23px 24px; }
-  .avatar-mobile-tabs { display: flex; justify-content: center; margin: 0 0 12px; }
   .avatar-tabs { font-size: 16px; gap: 2px; }
   .avatar-tabs button { padding: 10px 14px; }
   .avatar-editor-preview { padding: 0 0 28px; }
   .avatar-editor-preview > span { width: 96px !important; height: 96px !important; }
   .avatar-editor-preview > span > svg, .avatar-editor-preview img { width: 96px; height: 96px; }
-  .avatar-editor-card { border-radius: 18px; }
   .avatar-picker { padding: 22px 12px 20px; }
   .avatar-picker .avatar-shapes { gap: 14px 0; width: 300px; max-width: 100%; margin-inline: auto; }
   .avatar-shapes .avatar-choice { width: 46px; height: 46px; }
@@ -72,7 +65,6 @@
   .dark .avatar-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 5px var(--fg-muted); }
   .avatar-reset { display: block; width: 100%; margin: 0; border-top: 1px solid var(--border); padding: 15px 18px; color: var(--accent); font-size: 18px; text-align: left; }
   .avatar-upload { padding: 0; }
-  .avatar-editor-card:has(.avatar-photo-actions) { background: transparent; border: 0; overflow: visible; }
   .avatar-photo-actions { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
   .avatar-photo-actions button { display: flex; width: 100%; gap: 16px; align-items: center; padding: 12px 20px; font-size: 18px; text-align: left; }
   .avatar-photo-actions button + button { border-top: 1px solid var(--border); }
@@ -132,7 +124,6 @@
 .avatar-objects { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px 0; justify-items: center; }
 .avatar-object { width: 48px; height: 48px; }
 .avatar-object > span { width: 40px !important; height: 40px !important; }
-.avatar-picker .avatar-objects + .avatar-colors, .avatar-picker .avatar-draw + .avatar-colors, .avatar-picker .avatar-draw-card + .avatar-colors { margin-top: 28px; }
 .avatar-object-new { border: 1.5px dashed var(--border-strong); color: var(--fg-muted); }
 .avatar-object-new:enabled:hover, .avatar-object-new[aria-expanded="true"] { border-color: var(--fg-muted); color: var(--fg); }
 .avatar-object-draft { border: 1.5px dashed var(--accent); color: var(--fg-muted); }
@@ -174,27 +165,68 @@
   .avatar-draw-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
 
-/* Desktop gets its own layout: the preview on the left, every choice visible on the right. */
+/* The avatar editor is one surface: no card inside the dialog. The header row holds the tabs, Reset,
+   Done and close; the groups sit straight below, set apart by spacing and small labels, and every tile
+   grid shares one column grid (6 columns on mobile, 11 on desktop) so their edges line up. */
+.avatar-editor-sheet { --avatar-surface: var(--bg-elevated); --avatar-cols: 6; }
+.dark .avatar-editor-sheet { --avatar-surface: var(--bg-app); }
+.avatar-editor-sheet .avatar-editor { --bot-eye-bg: var(--avatar-surface); }
+.avatar-editor-head { display: flex; align-items: center; gap: 8px; }
+.avatar-editor-reset { height: 32px; padding: 0 12px; border-radius: 999px; color: var(--fg-muted); font-size: 13px; }
+.avatar-editor-reset:enabled:hover { background: var(--bg-hover); color: var(--fg); }
+.avatar-editor-reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.avatar-editor-sheet .avatar-picker { padding: 0; }
+.avatar-editor-sheet .avatar-section-title { margin: 22px 0 8px; padding: 0 2px; font-size: 12px; font-weight: 500; color: var(--fg-muted); }
+.avatar-editor-sheet .avatar-picker > .avatar-section-title:first-of-type { margin-top: 0; }
+.avatar-editor-sheet .avatar-picker .avatar-shapes,
+.avatar-editor-sheet .avatar-picker .avatar-objects,
+.avatar-editor-sheet .avatar-picker .avatar-colors { display: grid; grid-template-columns: repeat(var(--avatar-cols), minmax(0, 1fr)); gap: 4px 0; width: 100%; max-width: none; margin: 0; justify-items: center; }
+.avatar-editor-sheet .avatar-shapes .avatar-choice,
+.avatar-editor-sheet .avatar-shapes .avatar-choice:first-child,
+.avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(5),
+.avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(10),
+.avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(11),
+.avatar-editor-sheet .avatar-colors button,
+.avatar-editor-sheet .avatar-colors button:nth-child(7) { grid-column: auto; }
+.avatar-editor-sheet .avatar-tile { width: 48px; height: 48px; border-radius: 14px; }
+.avatar-editor-sheet .avatar-choice > span, .avatar-editor-sheet .avatar-object > span { width: 40px !important; height: 40px !important; }
+.avatar-editor-sheet .avatar-choice > span > svg { width: 40px; height: 40px; }
+.avatar-editor-sheet .avatar-picker .avatar-colors { gap: 12px 0; padding-block: 4px; }
+.avatar-editor-sheet .avatar-colors button { width: 28px; height: 28px; }
+.avatar-editor-sheet .avatar-colors button[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--avatar-surface), 0 0 0 5px var(--fg-muted); }
+/* A drawing: its options are tiles in the grid; the chosen one is ringed like any choice. */
+.avatar-object-draft[data-ready]:enabled:hover { background: var(--bg-hover); }
+.avatar-object-draft[data-ready][aria-pressed="true"] { border-style: solid; border-color: var(--fg-muted); background: var(--bg-active); }
+.avatar-editor-sheet .avatar-draw-card { margin-top: 10px; padding: 4px 0; border: 0; border-radius: 0; grid-template-columns: 56px minmax(0, 1fr) auto; }
+.avatar-editor-sheet .avatar-draw-preview { width: 56px; height: 56px; border-radius: 14px; }
+.avatar-editor-sheet .avatar-import { margin: 18px 0 0; }
+.avatar-editor-sheet .avatar-upload { padding: 4px 0 0; }
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .dark .avatar-editor-sheet { --avatar-surface: var(--bg-elevated); }
+  .avatar-editor-head { justify-content: center; margin: 0 0 14px; }
+  .avatar-editor-sheet .avatar-editor-preview { padding: 0 0 26px; }
+  .avatar-editor-sheet .avatar-tile { width: 52px; height: 52px; }
+  .avatar-editor-sheet .avatar-picker .avatar-colors { gap: 16px 0; }
+  .avatar-editor-sheet .avatar-colors button { width: 32px; height: 32px; }
+  .avatar-editor-sheet .avatar-import { margin: 20px 0 8px; }
+  .avatar-editor-sheet .avatar-import summary { justify-content: flex-start; }
+  .avatar-editor-sheet .avatar-reset { border-top: 0; padding: 14px 2px; }
+  .avatar-editor-sheet .avatar-draw-card { grid-template-columns: 56px minmax(0, 1fr); }
+}
+
+/* Desktop: the preview on the left; the header row and every choice on the right. */
 @media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
-  .bot-modal-backdrop > .avatar-editor-sheet { width: min(880px, calc(100vw - 48px)); max-width: none; }
-  .avatar-editor-sheet .avatar-editor { display: grid; grid-template-columns: 216px minmax(0, 1fr); gap: 8px 20px; align-items: center; padding: 0 20px 20px; }
-  .avatar-editor-sheet .avatar-editor-preview { padding: 0; }
-  .avatar-editor-sheet .avatar-editor-preview > span { width: 176px !important; height: 176px !important; }
-  .avatar-editor-sheet .avatar-editor-preview > span > img { width: 100%; height: 100%; }
-  .avatar-editor-sheet .avatar-editor-card { border-radius: 22px; }
-  .avatar-editor-sheet .avatar-card-header { padding: 10px 12px; font-size: 15px; }
-  .avatar-editor-sheet .avatar-editor-error { grid-column: 2; padding: 0 4px; }
-  .avatar-editor-sheet .avatar-picker { padding: 14px 16px 16px; }
-  .avatar-editor-sheet .avatar-picker .avatar-shapes { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-  .avatar-editor-sheet .avatar-shapes .avatar-choice, .avatar-editor-sheet .avatar-shapes .avatar-choice:nth-child(11) { grid-column: auto; width: 68px; height: 68px; }
-  .avatar-editor-sheet .avatar-choice > span { width: 52px !important; height: 52px !important; }
-  .avatar-editor-sheet .avatar-section-title { margin: 16px 2px 6px; font-size: 12px; }
-  .avatar-editor-sheet .avatar-objects { grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 2px 0; }
-  .avatar-object { width: 48px; height: 48px; border-radius: 14px; }
-  .avatar-object > span { width: 38px !important; height: 38px !important; }
-  .avatar-editor-sheet .avatar-picker .avatar-colors { grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 0; margin: 16px 0 0; }
-  .avatar-editor-sheet .avatar-colors button, .avatar-editor-sheet .avatar-colors button:nth-child(7) { grid-column: auto; width: 28px; height: 28px; }
-  .avatar-editor-sheet .avatar-colors button[aria-pressed="true"] { outline-offset: 3px; }
-  .avatar-editor-sheet .avatar-import { margin: 4px 16px 10px; }
-  .avatar-editor-sheet .avatar-editor-card > .avatar-picker + .avatar-import { border-top: 1px solid var(--border); margin: 0; padding: 6px 16px; }
+  .bot-modal-backdrop > .avatar-editor-sheet { width: min(860px, calc(100vw - 48px)); max-width: none; }
+  .avatar-editor-sheet { --avatar-cols: 11; }
+  .avatar-editor-sheet > .bot-modal-header { display: none; }
+  .avatar-editor-sheet .avatar-editor { display: grid; grid-template-columns: 200px minmax(0, 1fr); grid-template-areas: "preview head" "preview body" "preview error"; grid-template-rows: auto 1fr auto; gap: 0 28px; padding: 14px 16px 22px 24px; }
+  .avatar-editor-sheet .avatar-editor-head { grid-area: head; margin: 0 0 18px; }
+  .avatar-editor-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .avatar-editor-sheet .avatar-editor-preview { grid-area: preview; align-self: center; padding: 0 0 8px; }
+  .avatar-editor-sheet .avatar-editor-preview > span { width: 168px !important; height: 168px !important; }
+  .avatar-editor-sheet .avatar-editor-preview > span > svg, .avatar-editor-sheet .avatar-editor-preview > span > img { width: 100% !important; height: 100% !important; }
+  .avatar-editor-sheet .avatar-editor-body { grid-area: body; min-width: 0; padding-right: 8px; }
+  .avatar-editor-sheet .avatar-editor > .avatar-editor-error { grid-area: error; padding: 8px 2px 0; }
+  .avatar-editor-sheet .avatar-tabs button { padding: 6px 14px; font-size: 14px; }
+  .avatar-editor-sheet .avatar-editor-close { width: 32px; height: 32px; }
 }
