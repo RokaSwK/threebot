@@ -1,7 +1,7 @@
 import config from "../../../server/avatar-config.json";
-import { cutoutEyes } from "../../../server/avatar-eyes.mjs";
-import { decorateT3Avatar } from "../../../server/avatar-t3.mjs";
-import { Character as Engine } from "../../../server/character.mjs";
+import { cutoutEyes } from "../../../server/avatar-eyes.mts";
+import { decorateT3Avatar } from "../../../server/avatar-t3.mts";
+import { Character as Engine } from "../../../server/character.mts";
 
 export type AppAvatarState = "idle" | "working" | "thinking" | "waiting" | "sleeping" | "happy" | "failed";
 export type AvatarState = keyof typeof config.states;

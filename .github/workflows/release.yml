@@ -22,7 +22,7 @@ jobs:
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME doesn't match package.json $version"; exit 1; }
       - run: npm run setup
       - run: npm run check
-      - run: node scripts/pack-release.mjs --out release
+      - run: node scripts/pack-release.mts --out release
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

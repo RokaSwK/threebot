@@ -1,0 +1,20 @@
+{
+  // Type-checks the server and scripts/ (Node runs the .mts files as they are, by stripping types).
+  "compilerOptions": {
+    "target": "ES2023",
+    // DOM: the avatar modules (character, avatar-t3, avatar-eyes) also run in the browser, and the server
+    // drives them through linkedom.
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["*.mts", "../scripts/*.mts"]
+}

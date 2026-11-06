@@ -1,0 +1,150 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
+/** A Bot as the app sees it: its `.bot/bot.json`, with defaults filled in, plus where its folder is. */
+export interface Bot {
+  slug: string; workspaceRoot: string; name: string; label: string; shape: string; color: string;
+  section: string | null; pinned: boolean; hidden: boolean; primary: boolean; notifications: boolean;
+  projectId: string | null; mainThreadId: string | null; createdAt: string; updatedAt?: string;
+  // Whatever else the Bot or the app keeps in bot.json (model, brief, avatarImage, ...).
+  [key: string]: unknown;
+}
+/** Fields a caller asks to change. It comes from request bodies and provisioning, so nothing is assumed. */
+export type BotPatch = { [key: string]: unknown };
+
+const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const failure = (message: string, status = 409) => Object.assign(new Error(message), { status });
+
+// The parsed file is whatever JSON is on disk; callers check the fields they use.
+async function readJson<T>(file: string, fallback: T): Promise<any> {
+  try { return JSON.parse(await fs.readFile(file, "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return fallback; throw error; }
+}
+
+async function writeJson(file: string, value: unknown) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(`${file}.tmp`, JSON.stringify(value, null, 2) + "\n");
+  await fs.rename(`${file}.tmp`, file);
+}
+
+/** One writer owns the selection and its compatibility flags, including provisioning writes. */
+export function createMainBotRegistry({ botsRoot, onBotChanged = async () => {} }: { botsRoot: string; onBotChanged?: (bot: Bot) => Promise<unknown> }) {
+  const selectionFile = path.join(botsRoot, ".botapp", "main-bot.json");
+  let pending: Promise<unknown> = Promise.resolve();
+  function exclusive<T>(operation: () => T | Promise<T>): Promise<T> {
+    const result = pending.then(operation);
+    pending = result.catch(() => {});
+    return result;
+  }
+  function directory(slug: unknown): string {
+    if (typeof slug !== "string" || !SLUG.test(slug)) throw failure("bad slug", 400);
+    return path.join(botsRoot, slug);
+  }
+  const metadataFile = (slug: string) => path.join(directory(slug), ".bot", "bot.json");
+
+  async function loadBots() {
+    const entries = await fs.readdir(botsRoot, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const bots: Bot[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !SLUG.test(entry.name)) continue;
+      const meta = await readJson(metadataFile(entry.name), null);
+      if (!meta) continue;
+      const createdAt = meta.createdAt ?? (await fs.stat(metadataFile(entry.name))).birthtime.toISOString();
+      bots.push({
+        label: "", shape: "sphere", color: "teal", section: null, pinned: false,
+        hidden: false, primary: false, notifications: true, projectId: null, mainThreadId: null,
+        ...meta, name: typeof meta.name === "string" && meta.name.trim() ? meta.name : entry.name,
+        createdAt, slug: entry.name, workspaceRoot: directory(entry.name),
+      });
+    }
+    return bots.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slug.localeCompare(b.slug));
+  }
+
+  async function persistMetadata(bot: { slug: string; [key: string]: unknown }) {
+    const { slug, workspaceRoot: _workspace, ...metadata } = bot;
+    await writeJson(metadataFile(slug), metadata);
+  }
+
+  async function reconcile() {
+    const bots = await loadBots();
+    const selection = await readJson(selectionFile, null);
+    // A persisted choice outranks every legacy/self-written primary flag.
+    const visible = bots.filter((bot) => !bot.hidden);
+    const main = bots.find((bot) => bot.slug === selection?.slug)
+      ?? (selection === null ? visible.find((bot) => bot.primary) : null)
+      ?? visible[0] ?? bots[0] ?? null;
+    if (selection === null || selection.slug !== (main?.slug ?? null)) {
+      await writeJson(selectionFile, { slug: main?.slug ?? null });
+    }
+    for (const bot of bots) {
+      const primary = bot.slug === main?.slug;
+      if (bot.primary !== primary || (primary && bot.hidden)) {
+        bot.primary = primary;
+        if (primary) bot.hidden = false;
+        await persistMetadata(bot);
+        await onBotChanged(bot);
+      }
+    }
+    return bots;
+  }
+
+  async function choose(slug: string): Promise<Bot[]> {
+    directory(slug);
+    const bots = await reconcile();
+    const target = bots.find((bot) => bot.slug === slug);
+    if (!target) throw failure("Bot not found", 404);
+    // Commit the authority first. A restart repairs flags if interrupted afterward.
+    await writeJson(selectionFile, { slug });
+    if (target.hidden) {
+      target.hidden = false;
+      await persistMetadata(target);
+    }
+    return reconcile();
+  }
+
+  return {
+    list: () => exclusive(reconcile),
+    refreshInstructions: () => exclusive(async () => {
+      for (const bot of await reconcile()) await onBotChanged(bot);
+    }),
+    get: (slug: string) => exclusive(async () => {
+      directory(slug);
+      return (await reconcile()).find((bot) => bot.slug === slug) ?? null;
+    }),
+    select: (slug: string) => exclusive(() => choose(slug)),
+    save: (slug: string, patch: BotPatch, { create = false }: { create?: boolean } = {}) => exclusive(async () => {
+      directory(slug);
+      const bots = await reconcile();
+      const current = bots.find((bot) => bot.slug === slug);
+      if (!current && !create) throw failure("Bot not found", 404);
+      if ("primary" in patch && typeof patch.primary !== "boolean") throw failure("primary must be a boolean", 400);
+      if ("hidden" in patch && typeof patch.hidden !== "boolean") throw failure("hidden must be a boolean", 400);
+      if (current?.primary && (patch.hidden === true || patch.primary === false)) {
+        throw failure("Choose another main Bot first.");
+      }
+      const { slug: _slug, workspaceRoot: _workspace, primary: requestedMain, ...clean } = patch;
+      const next = { ...current, ...clean, slug, primary: current?.primary ?? false, updatedAt: new Date().toISOString() };
+      if (requestedMain === true) next.hidden = false;
+      await persistMetadata(next);
+      const updated = requestedMain === true ? await choose(slug) : await reconcile();
+      // Just written, so the reload has it.
+      const saved = updated.find((bot) => bot.slug === slug)!;
+      await onBotChanged(saved);
+      return saved;
+    }),
+    remove: (slug: string) => exclusive(async () => {
+      directory(slug);
+      const bots = await reconcile();
+      const current = bots.find((bot) => bot.slug === slug);
+      if (!current) throw failure("Bot not found", 404);
+      if (current.primary && bots.length > 1) throw failure("Choose another main Bot before deleting this Bot.");
+      const trash = path.join(botsRoot, ".botapp", "trash");
+      await fs.mkdir(trash, { recursive: true });
+      await fs.rename(directory(slug), path.join(trash, `${slug}-${Date.now()}`));
+      return reconcile();
+    }),
+  };
+}
