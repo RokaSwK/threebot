@@ -242,7 +242,8 @@ export function browserRecognition(): (() => RecognitionLike) | null {
 
 export const VOICE_SETTINGS_KEY = "bot.voice";
 export const VOICE_SETTINGS_EVENT = "bot-voice-settings-changed";
-export type VoiceSettings = { voice: string | null; rate: number; lang: string };
+/** `t3`: dictate through T3 Code even when the browser can recognise speech. */
+export type VoiceSettings = { voice: string | null; rate: number; lang: string; t3: boolean };
 
 /** The browser's language. A saved language only overrides it. */
 export function defaultVoiceLang(): string {
@@ -255,15 +256,16 @@ export function readVoiceSettings(): VoiceSettings {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) ?? "null");
     if (value && typeof value === "object") {
-      const { voice, rate, lang } = value as Partial<VoiceSettings>;
+      const { voice, rate, lang, t3 } = value as Partial<VoiceSettings>;
       return {
         voice: typeof voice === "string" ? voice : null,
         rate: typeof rate === "number" && rate >= 0.5 && rate <= 2 ? rate : 1,
         lang: typeof lang === "string" ? lang : "",
+        t3: t3 === true,
       };
     }
   } catch { /* Storage may be unavailable or hold an older value. */ }
-  return { voice: null, rate: 1, lang: "" };
+  return { voice: null, rate: 1, lang: "", t3: false };
 }
 
 export function saveVoiceSettings(patch: Partial<VoiceSettings>): VoiceSettings {

@@ -732,3 +732,24 @@ test('avatars scenario draws in a hidden side chat and never touches the main th
     await assert.rejects(rpc.call('orchestration.getThreadProjection', { threadId: 'drawing' }), /Unknown fixture thread/);
   } finally { rpc.close(); await fixture.close(); }
 });
+
+test('latest-t3 transcribes dictation audio carried by the real gateway', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'latest-t3' });
+  const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+  try {
+    await rpc.connect();
+    assert.equal((await rpc.call('server.getConfig')).environment.capabilities.voiceTranscription, true);
+    const voice = (path: string, init: RequestInit = {}) => fetch(fixture.url + '/t3/api/voice/' + path, { ...init, headers: { origin: fixture.url, 'content-type': 'application/octet-stream', ...(init.headers as Record<string, string>) } });
+    const status = await (await voice('status')).json();
+    assert.equal(status.supported, true); assert.equal(status.state, 'ready'); assert.deepEqual(status.languages, ['en', 'es']);
+    // Two minutes of audio, larger than any JSON body the gateway itself accepts.
+    const options = Buffer.from(JSON.stringify({ speechLanguage: 'es', speechTranslateToEnglish: false, speechCustomWords: [], speechRemoveFillerWords: true, speechSilenceFiltering: true }));
+    const pcm = Buffer.from(new Float32Array(16000 * 120).fill(0.1).buffer);
+    const head = Buffer.alloc(4); head.writeUInt32LE(options.length);
+    const res = await voice('transcribe', { method: 'POST', body: Buffer.concat([head, options, pcm]) });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { text: 'Fixture transcript: 120.0 seconds in es' });
+    const bad = await voice('transcribe', { method: 'POST', body: Buffer.concat([head, options, pcm.subarray(0, 6)]) });
+    assert.equal(bad.status, 400); assert.equal((await bad.json()).reason, 'invalid_audio');
+  } finally { rpc.close(); await fixture.close(); }
+});

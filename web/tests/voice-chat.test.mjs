@@ -235,7 +235,7 @@ test("a chosen language is saved, announced to other views, and read back", (t) 
   assert.equal(readVoiceSettings().lang, "", "nothing saved yet follows the browser");
   saveVoiceSettings({ rate: 1.25 });
   saveVoiceSettings({ lang: "es-ES", voice: null });
-  assert.deepEqual(readVoiceSettings(), { voice: null, rate: 1.25, lang: "es-ES" }, "a language change keeps the speed");
+  assert.deepEqual(readVoiceSettings(), { voice: null, rate: 1.25, lang: "es-ES", t3: false }, "a language change keeps the speed");
   assert.equal(JSON.parse(store.get(VOICE_SETTINGS_KEY)).lang, "es-ES");
   assert.equal(heard.at(-1).lang, "es-ES");
   store.set(VOICE_SETTINGS_KEY, JSON.stringify({ voice: null, rate: 1 }));

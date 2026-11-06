@@ -392,7 +392,10 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   const calls: Record<string, unknown>[] = [];
   return {
     requests, tasks,
-    capabilities: { sideChats: true, threadForceStop: true },
+    capabilities: { sideChats: true, threadForceStop: true, voiceTranscription: true },
+    voiceStatus: { supported: true, state: 'ready', modelId: 'fixture/speech', model: 'Fixture speech (no model)', size: 0, supportsStreaming: false, supportsTranslation: false,
+      languages: ['en', 'es'], supportsLanguageDetection: false, acceleration: 'auto', modelUnloadTimeout: 'min_5', gpuDevices: [] },
+    transcribe: fixtureTranscribe,
     inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma')!.archivedAt, tasks: tasks.map(({ id, enabled }) => ({ id, enabled })), calls }),
     armFailure: () => false,
     respond(tag: string, payload: any): FixtureResponse | null {
@@ -590,4 +593,21 @@ export function seedActivity({ threads, items, runs, model }: { threads: Fixture
       return () => clearInterval(timer);
     },
   };
+}
+
+// T3 0.1.8 nightly: 4-byte little-endian options length, options JSON, then 16 kHz mono Float32 PCM (at most 5 minutes).
+const SPEECH_MAX_PCM = 16000 * 4 * 300;
+export const FIXTURE_SPEECH_MAX_BODY = SPEECH_MAX_PCM + 128000 + 4;
+function fixtureTranscribe(body: Buffer): { status: number; body: Record<string, unknown> } {
+  const invalid = { status: 400, body: { _tag: 'EnvironmentRequestInvalidError', code: 'invalid_request', reason: 'invalid_audio', traceId: 'fixture' } };
+  if (body.length < 4) return invalid;
+  const length = body.readUInt32LE(0);
+  if (length > 128000 || 4 + length >= body.length) return invalid;
+  let options: Record<string, unknown>;
+  try { options = JSON.parse(body.subarray(4, 4 + length).toString('utf8')); } catch { return invalid; }
+  const keys = ['speechLanguage', 'speechTranslateToEnglish', 'speechCustomWords', 'speechRemoveFillerWords'];
+  if (!options || typeof options !== 'object' || keys.some((key) => !(key in options)) || typeof options.speechLanguage !== 'string' || options.speechLanguage.length < 2) return invalid;
+  const pcm = body.length - 4 - length;
+  if (pcm % 4 || pcm > SPEECH_MAX_PCM) return invalid;
+  return { status: 200, body: { text: `Fixture transcript: ${(pcm / 4 / 16000).toFixed(1)} seconds in ${options.speechLanguage}` } };
 }
