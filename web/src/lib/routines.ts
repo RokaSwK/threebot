@@ -1,4 +1,4 @@
-import { t3 } from "./t3";
+import { t3, uuid } from "./t3";
 import { useApp } from "../store";
 import type { Bot, ModelSelection, ScheduledTask } from "./types";
 
@@ -7,7 +7,10 @@ export type WebhookFilter = { path: string; op: "exists" } | { path: string; op:
 export type WebhookSchedule = { type: "webhook"; signature: { header: string; encoding: "hex" | "base64"; prefix: string; secret?: string } | null; maxDeliveryAgeMinutes?: number | null; dedupe?: { replayKey?: string; coalesceKey?: string; coalesceWindowSeconds?: number }; filters?: WebhookFilter[] };
 export type RoutineSchedule = Exclude<ScheduledTask["schedule"], { type: "webhook" }> | WebhookSchedule;
 export type RoutineTask = Omit<ScheduledTask, "schedule"> & { schedule: RoutineSchedule; workspaceStrategy: WorkspaceStrategy; modelSelection: ModelSelection; runtimeMode: "approval-required" | "auto-accept-edits" | "full-access" | "auto"; interactionMode: "default" | "plan"; lastRunError?: string | null; webhook?: { path: string; url: string | null; hasSecret: boolean } };
-export type RoutineInput = Pick<RoutineTask, "title" | "prompt" | "enabled" | "schedule" | "projectId" | "threadId" | "workspaceStrategy" | "modelSelection" | "runtimeMode" | "interactionMode"> & { id?: string; requireExisting?: boolean; commandId: string; createdBy: "user"; creationSource: "web" };
+export type RoutineInput = Pick<RoutineTask, "title" | "prompt" | "enabled" | "schedule" | "projectId" | "threadId" | "workspaceStrategy" | "modelSelection" | "runtimeMode" | "interactionMode"> & { threadMode?: ThreadMode; id?: string; requireExisting?: boolean; commandId: string; createdBy: "user"; creationSource: "web" };
+export type ThreadMode = NonNullable<ScheduledTask["threadMode"]>;
+/** As T3 reads it: servers before thread modes omit it, and their bound tasks continue the conversation. */
+export function threadMode(task: Pick<ScheduledTask, "threadId" | "threadMode">): ThreadMode { return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue"); }
 const record = (v: unknown): Record<string, unknown> => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("Incomplete routine data; reconnect before editing.");
   return Object.fromEntries(Object.entries(v));
@@ -61,7 +64,8 @@ export function parseRoutineTask(value: unknown): RoutineTask {
   const options = m.options === undefined ? undefined : Array.isArray(m.options) ? m.options.map((v) => { const o = record(v); if (typeof o.value !== "string" && typeof o.value !== "boolean") throw new Error("Invalid model option"); return { id: nonempty(o.id), value: o.value }; }) : (() => { throw new Error("Invalid model options"); })();
   let webhook: RoutineTask["webhook"];
   if (t.webhook !== undefined) { const w = record(t.webhook); if (typeof w.hasSecret !== "boolean" || !(w.url === null || typeof w.url === "string")) throw new Error("Invalid webhook endpoint"); webhook = { path: string(w.path), url: w.url, hasSecret: w.hasSecret }; }
-  return { id: nonempty(t.id), title: nonempty(t.title), prompt: nonempty(t.prompt), enabled: t.enabled, schedule: parseSchedule(t.schedule, true), projectId: nonempty(t.projectId), threadId: t.threadId, workspaceStrategy: parseWorkspace(t.workspaceStrategy), modelSelection: { instanceId: nonempty(m.instanceId), model: nonempty(m.model), ...(options ? { options } : {}) }, runtimeMode: t.runtimeMode, interactionMode: t.interactionMode, ...(webhook ? { webhook } : {}), nextRunAt: t.nextRunAt == null ? null : string(t.nextRunAt), lastRunAt: t.lastRunAt == null ? null : string(t.lastRunAt), lastRunStatus: t.lastRunStatus == null ? null : string(t.lastRunStatus), lastRunError: t.lastRunError == null ? null : string(t.lastRunError), runCount: integer(t.runCount, 0), ...(typeof t.blockedByPolicy === "string" && t.blockedByPolicy ? { blockedByPolicy: t.blockedByPolicy } : {}) };
+  if (t.threadMode !== undefined && t.threadMode !== "new_thread" && t.threadMode !== "continue" && t.threadMode !== "fresh_session") throw new Error("Unsupported routine destination; use T3 to edit this routine.");
+  return { id: nonempty(t.id), title: nonempty(t.title), prompt: nonempty(t.prompt), enabled: t.enabled, schedule: parseSchedule(t.schedule, true), projectId: nonempty(t.projectId), threadId: t.threadId, ...(t.threadMode === undefined ? {} : { threadMode: t.threadMode }), workspaceStrategy: parseWorkspace(t.workspaceStrategy), modelSelection: { instanceId: nonempty(m.instanceId), model: nonempty(m.model), ...(options ? { options } : {}) }, runtimeMode: t.runtimeMode, interactionMode: t.interactionMode, ...(webhook ? { webhook } : {}), nextRunAt: t.nextRunAt == null ? null : string(t.nextRunAt), lastRunAt: t.lastRunAt == null ? null : string(t.lastRunAt), lastRunStatus: t.lastRunStatus == null ? null : string(t.lastRunStatus), lastRunError: t.lastRunError == null ? null : string(t.lastRunError), runCount: integer(t.runCount, 0), ...(typeof t.blockedByPolicy === "string" && t.blockedByPolicy ? { blockedByPolicy: t.blockedByPolicy } : {}) };
 }
 export function routineInput({ task, bot, title, prompt, schedule, commandId }: { task?: ScheduledTask; bot: Bot; title: string; prompt: string; schedule: RoutineSchedule; commandId: string }): RoutineInput {
   const existing = task ? parseRoutineTask(task) : null;
@@ -74,6 +78,12 @@ export function routineInput({ task, bot, title, prompt, schedule, commandId }: 
 }
 function reconcile(task: RoutineTask) { useApp.setState((s) => ({ tasks: s.tasks.some((t) => t.id === task.id) ? s.tasks.map((t) => t.id === task.id ? task : t) : [...s.tasks, task] })); return task; }
 export async function saveRoutine(input: RoutineInput) { const result = record(await t3.call<unknown>("scheduledTasks.upsert", input)); return reconcile(parseRoutineTask(result.task)); }
+/** Runs keep posting in the same thread; a fresh session drops the earlier conversation from the model's context. Needs T3's `scheduledTaskThreadModes`. */
+export async function changeRoutineFreshSession(task: ScheduledTask, bot: Bot, fresh: boolean) {
+  const existing = parseRoutineTask(task);
+  if (threadMode(existing) === "new_thread") throw new Error("This routine starts a new conversation each run.");
+  return saveRoutine({ ...routineInput({ task: existing, bot, title: existing.title, prompt: existing.prompt, schedule: existing.schedule, commandId: uuid() }), threadMode: fresh ? "fresh_session" : "continue" });
+}
 export async function changeRoutineEnabled(task: ScheduledTask, enabled: boolean) { const result = record(await t3.call<unknown>("scheduledTasks.setEnabled", { id: task.id, enabled })); return reconcile(parseRoutineTask(result.task)); }
 export async function testRoutine(task: ScheduledTask) { if (task.schedule.type === "webhook") throw new Error("Webhook routines run when their sender calls the private URL."); const result = record(await t3.call<unknown>("scheduledTasks.runNow", { id: task.id })); return reconcile(parseRoutineTask(result.task)); }
 export async function removeRoutine(task: ScheduledTask) { const result = record(await t3.call<unknown>("scheduledTasks.delete", { id: task.id })); if (result.id !== task.id) throw new Error("The server did not confirm deletion"); useApp.setState((s) => ({ tasks: s.tasks.filter((t) => t.id !== task.id) })); }

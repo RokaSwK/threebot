@@ -84,7 +84,7 @@ type State = {
 };
 
 export const useApp = create<State>(() => ({
-  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false, voiceTranscription: false },
+  runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false, voiceTranscription: false, freshContext: false, scheduledTaskThreadModes: false },
   snoozePresets: [],
   fallbackModel: null,
   sideChat: null,
@@ -227,7 +227,7 @@ async function loadProviders() {
     set({
       providers: cfg.providers.filter((p: Provider) => p.enabled && p.status === "ready"),
       providerModelPreferences: cfg.settings?.providerModelPreferences ?? {},
-      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true, threadForceStop: cfg.environment?.capabilities?.threadForceStop === true, voiceTranscription: cfg.environment?.capabilities?.voiceTranscription === true },
+      runtimeFeatures: { shellOlderSettled: cfg.shellOlderSettled === true, threadFind: cfg.threadFind === true, threadResumeCompletionMarker: cfg.threadResumeCompletionMarker === true, sideChats: cfg.environment?.capabilities?.sideChats === true, threadForceStop: cfg.environment?.capabilities?.threadForceStop === true, voiceTranscription: cfg.environment?.capabilities?.voiceTranscription === true, freshContext: cfg.environment?.capabilities?.freshContext === true, scheduledTaskThreadModes: cfg.environment?.capabilities?.scheduledTaskThreadModes === true },
       snoozePresets: cfg.settings?.snoozePresets ?? [],
       fallbackModel: cfg.settings?.fallbackModelSelection ?? null,
     });
@@ -683,7 +683,8 @@ export async function uploadAttachment(file: File, environmentId?: string): Prom
   return { type, id: attachmentId, ...(environmentId ? { environmentId } : {}), name: file.name, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, previewUrl: type === "image" ? URL.createObjectURL(file) : undefined };
 }
 
-export async function sendMessage(slug: string, text: string, attachments: Attachment[] = [], threadId = get().bots[slug]?.mainThreadId, messageId = uuid()) {
+/** `fresh` starts a new provider session in the same thread (T3's `/clear`). Only send it where T3 reports `freshContext`. */
+export async function sendMessage(slug: string, text: string, attachments: Attachment[] = [], threadId = get().bots[slug]?.mainThreadId, messageId = uuid(), fresh = false) {
   if (!threadId) throw new Error("This Bot has no conversation yet");
   if (attachments.some((attachment) => attachment.environmentId !== threadTarget(threadId).environmentId)) throw new Error("Upload attachments to the conversation’s machine before sending");
   // Claude's Ultrathink is a prompt prefix rather than an effort setting (as in T3 Code).
@@ -701,6 +702,8 @@ export async function sendMessage(slug: string, text: string, attachments: Attac
     // Resolve against T3's live run, so stale browser state or saved defaults cannot queue a send.
     deliveryIntent: "steer",
     dispatchMode: { type: "start_immediately" },
+    // T3 queues a fresh send behind a running turn instead of steering it.
+    ...(fresh ? { freshContext: true } : {}),
   }, { timeoutMs: 30_000 });
 }
 
@@ -719,6 +722,11 @@ export async function unarchiveBotProject(bot: Bot) {
   if (!bot.projectId) return;
   await t3.call("projects.mutate", { type: "project.update", commandId: uuid(), projectId: bot.projectId, archived: false });
   set((s) => { const project = bot.projectId ? s.projects[bot.projectId] : undefined; return project ? { projects: { ...s.projects, [project.id]: { ...project, archivedAt: null } } } : {}; });
+}
+
+/** Whether a send to this thread can start a fresh session. Linked machines may run older T3 versions, so only the local one counts. */
+export function canStartFresh(threadId: string | null, state = get()) {
+  return !!threadId && state.runtimeFeatures.freshContext && !threadTarget(threadId).environmentId;
 }
 
 /** For a run that ignored Stop. Passing its runId means a newer run is never hit. */

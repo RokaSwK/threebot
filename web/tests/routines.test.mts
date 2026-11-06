@@ -142,3 +142,22 @@ test('a routine an administrator policy blocks says why',async()=>{
  await render(h(RoutineRow,{task,onOpen(){}}));assert.match(host.textContent,/Blocked · Weekdays/);
  await render(h(RoutineDetail,{task,onBack(){},onEdit(){}}));assert.match(host.textContent,/This routine can’t run: Webhooks are turned off by Example Org\./);
 });
+test('a bound routine can start fresh each run where T3 supports thread modes, and keeps everything else',async()=>{
+ const task={...original,threadId:'thread',threadMode:'continue',workspaceStrategy:{type:'root'}};
+ assert.equal(r.parseRoutineTask(task).threadMode,'continue');assert.equal('threadMode' in r.parseRoutineTask(original),false);
+ assert.throws(()=>r.parseRoutineTask({...task,threadMode:'elsewhere'}),/destination/);
+ assert.equal(r.threadMode(original),'new_thread');assert.equal(r.threadMode({...original,threadId:'thread'}),'continue');
+ const features=useApp.getState().runtimeFeatures;
+ useApp.setState({runtimeFeatures:{...features,scheduledTaskThreadModes:false}});
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));assert.doesNotMatch(host.textContent,/Start fresh each run/,'older T3 ignores the mode, so no switch');
+ await act(async()=>useApp.setState({runtimeFeatures:{...features,scheduledTaskThreadModes:true}}));
+ await render(h(RoutineDetail,{bot,task:original,onBack(){},onEdit(){}}));assert.doesNotMatch(host.textContent,/Start fresh each run/,'a routine that starts a new conversation each run has no switch');
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
+ const toggle=host.querySelector('[role="switch"][aria-label="Start fresh each run"]');assert.equal(toggle.getAttribute('aria-checked'),'false');assert.match(host.textContent,/continues the conversation/);
+ await click(toggle);
+ const saved=calls.find(c=>c.tag==='scheduledTasks.upsert');assert.ok(saved);
+ assert.equal(saved.payload.threadMode,'fresh_session');assert.equal(saved.payload.id,task.id);assert.equal(saved.payload.requireExisting,true);assert.equal(saved.payload.threadId,'thread');assert.equal(saved.payload.enabled,false);assert.deepEqual(saved.payload.modelSelection,model);assert.equal(saved.payload.runtimeMode,'auto');assert.deepEqual(saved.payload.schedule,task.schedule);
+ assert.equal(useApp.getState().tasks.find(t=>t.id===task.id).threadMode,'fresh_session');
+ await render(h(RoutineDetail,{bot,task:useApp.getState().tasks.find(t=>t.id===task.id),onBack(){},onEdit(){}}));
+ assert.equal(host.querySelector('[role="switch"]').getAttribute('aria-checked'),'true');assert.match(host.textContent,/Lab keeps its memory and files/);
+});

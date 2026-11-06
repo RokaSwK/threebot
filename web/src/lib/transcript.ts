@@ -125,6 +125,8 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
         const at = i.startedAt ?? i.updatedAt;
         const switched = ctx.modelSwitches?.get(i.messageId);
         if (switched) out.push({ kind: "model-switch", id: `model-${i.id}`, text: switched });
+        // T3 marks where a fresh session began (`/clear`, or a routine that starts fresh each run).
+        if (i.freshContext === true) out.push({ kind: "model-switch", id: `fresh-${i.id}`, text: "New session" });
         if (i.scheduledTaskId) {
           const task = ctx.tasks.find((t) => t.id === i.scheduledTaskId);
           stamp(at, i.id);

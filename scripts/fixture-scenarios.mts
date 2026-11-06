@@ -374,7 +374,7 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   items.get(beta.id)!.push(base(beta.id, 'run_interrupt_request', { runId: run.id, message: 'Stop', unresponsiveAt: stamp }));
 
   const task = (id: string, title: string, schedule: { type: string; runAt?: string; timeOfDay?: string; weekdays?: number[] }, extra: { enabled?: boolean; blockedByPolicy?: string } = {}) => ({ id, title, prompt: `Generic routine: ${title}`, enabled: false, schedule, projectId: 'project-alpha', threadId: 'thread-alpha',
-    workspaceStrategy: { type: 'root' }, modelSelection: model, runtimeMode: 'auto', interactionMode: 'default', nextRunAt: null, lastRunAt: null, lastRunStatus: null, lastRunError: null, runCount: 0, ...extra });
+    threadMode: 'continue', workspaceStrategy: { type: 'root' }, modelSelection: model, runtimeMode: 'auto', interactionMode: 'default', nextRunAt: null, lastRunAt: null, lastRunStatus: null, lastRunError: null, runCount: 0, ...extra });
   const tasks = [
     task(LATEST_T3_IDS.once, 'Send the generic reminder once', { type: 'once', runAt: '2026-12-01T08:30:00.000Z' }),
     task(LATEST_T3_IDS.blocked, 'Generic weekday check', { type: 'fixed_time', timeOfDay: '09:00', weekdays: [1, 2, 3, 4, 5] }, { enabled: true, blockedByPolicy: 'Scheduled tasks are turned off by Example Org.' }),
@@ -389,14 +389,16 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   ] as [number, string, boolean, string[], string][]).map(([number, state, isDraft, checks, stale]) => ({ number, state, isDraft, checks, stale, reads: 0 }));
   alpha.pullRequests = prs.map(({ number, stale }) => ({ host: 'github.com', repository: 'example/generic', number,
     url: `https://github.com/example/generic/pull/${number}`, source: 'manual', snapshot: { state: stale, title: `Generic change ${number}` }, watch: null }));
+  // T3 0.1.8 nightlies: a run can start a fresh session in the same thread.
+  items.get(alpha.id)!.push(base(alpha.id, 'user_message', { messageId: 'fixture-fresh-routine-run', text: tasks[0].prompt, scheduledTaskId: tasks[0].id, freshContext: true, createdBy: 'user', creationSource: 'web', attachments: [] }));
   const calls: Record<string, unknown>[] = [];
   return {
     requests, tasks,
-    capabilities: { sideChats: true, threadForceStop: true, voiceTranscription: true },
+    capabilities: { sideChats: true, threadForceStop: true, voiceTranscription: true, freshContext: true, scheduledTaskThreadModes: true },
     voiceStatus: { supported: true, state: 'ready', modelId: 'fixture/speech', model: 'Fixture speech (no model)', size: 0, supportsStreaming: false, supportsTranslation: false,
       languages: ['en', 'es'], supportsLanguageDetection: false, acceleration: 'auto', modelUnloadTimeout: 'min_5', gpuDevices: [] },
     transcribe: fixtureTranscribe,
-    inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma')!.archivedAt, tasks: tasks.map(({ id, enabled }) => ({ id, enabled })), calls }),
+    inspect: () => ({ fixtureOnly: true, scenario: 'latest-t3', liveDelivery: false, request: request.status, decision: request.decision ?? null, run: run.status, gammaArchived: !!projects.find((p) => p.id === 'project-gamma')!.archivedAt, tasks: tasks.map(({ id, enabled, threadMode }) => ({ id, enabled, threadMode })), calls }),
     armFailure: () => false,
     respond(tag: string, payload: any): FixtureResponse | null {
       if (tag === 'orchestration.dispatchCommand' && payload?.type === 'runtime-request.respond' && payload.requestId === request.id) {
@@ -423,6 +425,15 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
         if (tag === 'pullRequests.checks') return { value: { checks: pr.checks.map((status, i) => ({ name: `generic-check-${i + 1}`, status })) } };
         if (pr.number === 24 && pr.reads++ > 0) pr.state = 'merged';
         return { value: { number: pr.number, title: `Generic change ${pr.number}`, state: pr.state, isDraft: pr.isDraft } };
+      }
+      if (tag === 'scheduledTasks.upsert') {
+        const found = tasks.find((t) => t.id === payload?.id);
+        if (!found || payload.requireExisting !== true) return { error: 'Fixture routines can only be edited.' };
+        if (payload.threadMode !== undefined && !['new_thread', 'continue', 'fresh_session'].includes(payload.threadMode)) return { error: 'Unknown thread mode.' };
+        // Like T3: an omitted mode keeps the stored one.
+        Object.assign(found, { title: payload.title, prompt: payload.prompt, enabled: payload.enabled, schedule: payload.schedule, threadMode: payload.threadMode ?? found.threadMode });
+        calls.push({ tag, id: found.id, threadMode: payload.threadMode ?? null });
+        return { ok: true, value: { task: found }, tasks: true };
       }
       if (tag === 'scheduledTasks.setEnabled') {
         const found = tasks.find((t) => t.id === payload?.id);

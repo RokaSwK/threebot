@@ -111,3 +111,9 @@ test('phone history restores main-Bot picker intent and rejects malformed candid
   assert.equal(readNavigation({view:'overlay',slug:'alpha',threadId:null,details:false,dialog}),null);
  }
 });
+test('a fresh session shows a New session divider above the message or routine run that began it',()=>{
+ const tasks=[{id:'task',title:'Morning brief'}];
+ const entries=buildEntries([item({id:'old',type:'user_message',text:'Earlier',createdBy:'user'}),item({id:'clear',ordinal:2,type:'user_message',text:'Start over',createdBy:'user',freshContext:true}),item({id:'run',ordinal:3,type:'user_message',text:'Brief me',createdBy:'user',scheduledTaskId:'task',freshContext:true})],{...ctx,tasks});
+ const shape=entries.filter(e=>e.kind!=='date').map(e=>e.kind==='model-switch'?e.text:e.kind==='event'?e.strong:e.text);
+ assert.deepEqual(shape,['Earlier','New session','Start over','New session','Morning brief']);
+});

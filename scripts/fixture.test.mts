@@ -686,8 +686,10 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
   const first = (tag: string, payload: unknown) => new Promise<Json>((resolve) => { const handle = rpc.stream(tag, payload, (value) => { handle.cancel(); resolve(value); }); });
   try {
     await rpc.connect();
-    assert.equal((await rpc.call('server.getConfig')).environment.capabilities.threadForceStop, true);
+    const { capabilities } = (await rpc.call('server.getConfig')).environment;
+    assert.equal(capabilities.threadForceStop, true); assert.equal(capabilities.freshContext, true); assert.equal(capabilities.scheduledTaskThreadModes, true);
     const { tasks } = await first('scheduledTasks.subscribe', {});
+    assert.deepEqual(tasks.map((task: Json) => task.threadMode), ['continue', 'continue']);
     assert.deepEqual(tasks.map((task: Json) => task.schedule.type), ['once', 'fixed_time']);
     assert.match(tasks[1].blockedByPolicy, /Example Org/);
     const shell = (await first('orchestration.subscribeShell', {})).snapshot;
@@ -704,7 +706,14 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
     assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'open');
     assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'merged', '#24 merges after its first read');
     await rpc.call('projects.mutate', { type: 'project.update', commandId: 'unarchive', projectId: 'project-gamma', archived: false });
+    const once = tasks[0];
+    await rpc.call('scheduledTasks.upsert', { ...once, requireExisting: true, commandId: 'fresh-routine', threadMode: 'fresh_session' });
+    await rpc.call('scheduledTasks.upsert', { ...once, threadMode: undefined, requireExisting: true, commandId: 'keep-mode' });
+    await rpc.dispatch({ type: 'message.dispatch', commandId: 'fresh-send', threadId: 'thread-alpha', messageId: 'fresh-send', text: 'Start over', attachments: [], freshContext: true });
+    const sent = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-alpha' })).turnItems.filter((item: Json) => item.freshContext === true).map((item: Json) => item.messageId);
+    assert.deepEqual(sent, ['fixture-fresh-routine-run', 'fresh-send']);
     const inspect = await (await fetch(`http://127.0.0.1:${fixture.t3Port}/fixture/interactions`)).json();
+    assert.equal(inspect.tasks[0].threadMode, 'fresh_session');
     assert.equal(inspect.request, 'resolved'); assert.equal(inspect.decision, 'accept'); assert.equal(inspect.run, 'interrupted'); assert.equal(inspect.gammaArchived, false);
   } finally { rpc.close(); await fixture.close(); }
 });

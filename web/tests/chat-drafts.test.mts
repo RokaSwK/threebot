@@ -377,3 +377,36 @@ test("a pending runtime request still exposes Stop when the thinking indicator i
  await render();
  assert.ok(host.querySelector('[aria-label="Stop"]'));
 });
+
+test("/clear arms a fresh session only where T3 supports it, and the next send carries it once", async () => {
+  const features = runtime.useApp.getState().runtimeFeatures;
+  runtime.useApp.setState({ runtimeFeatures: { ...features, freshContext: false } });
+  await render(); await type("/clear"); await click(send());
+  assert.equal(sends.length, 0, "older T3 never receives /clear as a prompt");
+  assert.equal(textarea().value, "/clear");
+  assert.match(runtime.useApp.getState().toast ?? "", /newer T3 Code/);
+  await runtime.act(async () => runtime.useApp.setState({ runtimeFeatures: { ...features, freshContext: true } }));
+  await click(send());
+  assert.equal(sends.length, 0); assert.equal(textarea().value, "");
+  assert.match(host.textContent, /next message starts a fresh session/);
+  await click(host.querySelector('[aria-label="Keep the current session"]'));
+  assert.doesNotMatch(host.textContent, /fresh session/);
+  await click(host.querySelector('[aria-label="Composer actions"]'));
+  await click([...host.querySelectorAll('[role="menuitem"]')].find((el) => el.textContent.includes("Start fresh")));
+  assert.match(host.textContent, /next message starts a fresh session/);
+  await type("Start over"); await click(send());
+  assert.equal(sends[0].command.freshContext, true); assert.equal(sends[0].command.text, "Start over");
+  await rejectSend();
+  assert.match(host.textContent, /next message starts a fresh session/, "a failed fresh send restores the arm with its text");
+  await click(send());
+  assert.equal(sends[1].command.freshContext, true);
+  await runtime.act(async () => sends[1].resolve({ sequence: 2 }));
+  await type("Carry on"); await click(send());
+  assert.equal("freshContext" in sends[2].command, false);
+});
+
+test("a linked machine's thread never offers a fresh session", async () => {
+  runtime.useApp.setState({ runtimeFeatures: { ...runtime.useApp.getState().runtimeFeatures, freshContext: true } });
+  await render("environment:remote:thread"); await type("/clear"); await click(send());
+  assert.equal(sends.length, 0); assert.doesNotMatch(host.textContent, /fresh session/);
+});
