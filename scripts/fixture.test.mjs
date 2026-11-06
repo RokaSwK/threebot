@@ -674,6 +674,13 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
     await assert.rejects(rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha', requestId: 'fixture-child-approval', decision: 'accept' }), /child thread/);
     await rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha-child', requestId: 'fixture-child-approval', decision: 'accept' });
     assert.deepEqual(await rpc.call('orchestration.forceStopThread', { threadId: 'thread-beta', runId: 'fixture-run-stuck' }), { outcome: 'killed', sharedWithThreadIds: [] });
+    assert.deepEqual(shell.threads.find((t) => t.id === 'thread-alpha').pullRequests.map((pr) => pr.number), [2, 10, 11, 21, 22, 23, 24]);
+    const pr = (number) => ({ projectId: 'project-alpha', host: 'github.com', repository: 'example/generic', number });
+    assert.equal((await rpc.call('pullRequests.detail', pr(2))).state, 'merged', 'stale open snapshot, merged upstream');
+    assert.equal((await rpc.call('pullRequests.detail', pr(22))).isDraft, true);
+    assert.deepEqual((await rpc.call('pullRequests.checks', pr(23))).checks.map((c) => c.status), ['success', 'failure']);
+    assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'open');
+    assert.equal((await rpc.call('pullRequests.detail', pr(24))).state, 'merged', '#24 merges after its first read');
     await rpc.call('projects.mutate', { type: 'project.update', commandId: 'unarchive', projectId: 'project-gamma', archived: false });
     const inspect = await (await fetch(`http://127.0.0.1:${fixture.t3Port}/fixture/interactions`)).json();
     assert.equal(inspect.request, 'resolved'); assert.equal(inspect.decision, 'accept'); assert.equal(inspect.run, 'interrupted'); assert.equal(inspect.gammaArchived, false);

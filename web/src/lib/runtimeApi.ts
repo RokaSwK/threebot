@@ -785,17 +785,52 @@ export async function readPR(projectId: string, pr: WorkPR): Promise<WorkPR> {
     t3.call<unknown>("pullRequests.checks", reference),
   ]);
   const d = record(detail),
-    c = record(checks);
-  // Preserve unknown check outcomes instead of declaring an empty set passing.
+    statuses = new Set(
+      rows(record(checks).checks).map((check) => text(record(check).status)),
+    );
+  // Same rollup as T3 Code's checksState; no reported checks stays unknown.
   return {
     ...pr,
     title: text(d.title) || pr.title,
     state: text(d.state) || pr.state,
     draft: typeof d.isDraft === "boolean" ? d.isDraft : pr.draft,
-    checks: rows(c.checks).length
-      ? rows(c.checks)
-          .map((check) => text(record(check).status) || "unknown")
-          .join(", ")
-      : "Not reported",
+    checks:
+      statuses.has("failure") || statuses.has("cancelled")
+        ? "failing"
+        : statuses.has("pending") || statuses.has("action-required")
+          ? "pending"
+          : statuses.has("success")
+            ? "passing"
+            : "",
+  };
+}
+/** Merged or closed: nothing left to wait on. */
+export const prDone = (pr: WorkPR) => /^(merged|closed)$/i.test(pr.state);
+export type PRTone = "merged" | "open" | "draft" | "closed" | "unknown";
+const PR_STATES: Record<string, [string, PRTone]> = {
+  merged: ["Merged", "merged"],
+  closed: ["Closed", "closed"],
+  open: ["Open", "open"],
+};
+const PR_CHECKS: Record<string, string> = {
+  passing: "Checks passing",
+  failing: "Checks failing",
+  pending: "Checks running",
+};
+/** What a PR chip says: "PR #11 · Merged", "PR #4 · Open · Checks failing". */
+export function prStatus(pr: WorkPR): {
+  label: string;
+  tone: PRTone;
+  checks: string;
+} {
+  const known = PR_STATES[pr.state.toLowerCase()];
+  const [state, tone]: [string, PRTone] =
+    known?.[1] === "open" && pr.draft ? ["Draft", "draft"] : (known ?? ["", "unknown"]);
+  const checks =
+    tone === "open" || tone === "draft" ? PR_CHECKS[pr.checks.toLowerCase()] ?? "" : "";
+  return {
+    label: [`PR #${pr.number}`, state, checks].filter(Boolean).join(" · "),
+    tone,
+    checks: checks ? pr.checks.toLowerCase() : "",
   };
 }

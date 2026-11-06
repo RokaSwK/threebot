@@ -72,7 +72,7 @@ export { Chat } from ${JSON.stringify(src + "components/Chat.tsx")};
 export { QueuedWork } from ${JSON.stringify(src + "components/QueuedWork.tsx")};
 export { PlanMessage } from ${JSON.stringify(src + "components/PlanMessage.tsx")};
 export { GoalCard } from ${JSON.stringify(src + "components/GoalCard.tsx")};
-export { TaskChanges } from ${JSON.stringify(src + "components/TaskChanges.tsx")};
+export { TaskChanges, PR_DONE_LINGER_MS } from ${JSON.stringify(src + "components/TaskChanges.tsx")};
 export { supplementSubagents } from ${JSON.stringify(src + "lib/threadFamily.ts")};
 export { SubagentRow } from ${JSON.stringify(src + "components/ThreadFamily.tsx")};
 export { useApp } from ${JSON.stringify(src + "store.ts")}; export { t3 } from ${JSON.stringify(src + "lib/t3.ts")};`
@@ -94,6 +94,9 @@ const {
   createRoot,
   decodeWorkProjection,
   decodePlan,
+  decodePR,
+  prStatus,
+  PR_DONE_LINGER_MS,
   queuedWork,
   reduceWorkEvent,
   currentGoal,
@@ -151,12 +154,14 @@ const projection = (extra = {}) => ({
   checkpoints: [],
   ...extra,
 });
-let host, root, calls, p, streams, failDispatch;
+let host, root, calls, p, streams, failDispatch, prDetail, prChecks;
 beforeEach(() => {
   p = projection();
   calls = [];
   streams = [];
   failDispatch = false;
+  prDetail = {};
+  prChecks = {};
   t3.stream = (tag, payload, callback) => {
     const stream = { tag, payload, callback, cancelled: false };
     streams.push(stream);
@@ -174,6 +179,8 @@ beforeEach(() => {
       return { sequence: 1 };
     }
     if (tag === "orchestration.getThreadProjection") return p;
+    if (tag === "pullRequests.detail") return prDetail;
+    if (tag === "pullRequests.checks") return prChecks;
     if (tag === "orchestration.getThreadFamily") return { threads: [] };
     if (
       tag === "orchestration.getTurnDiff" ||
@@ -395,15 +402,82 @@ test("checkpoints and turn diffs render nothing and never read or restore worksp
   assert.deepEqual(state,before);
 });
 
-test("PR status keeps its link and stale-status warning without mutation", async () => {
-  const pr={host:'github.com',repository:'test/example',number:4,url:'https://github.com/test/example/pull/4',source:'manual',snapshot:{state:'open'},watch:{}};
-  const state=decodeWorkProjection(projection({thread:{...p.thread,pullRequests:[pr]}}));
-  await render(TaskChanges,{state});
-  const link=host.querySelector('a');
-  assert.equal(link.textContent,'Open PR #4');
-  assert.equal(link.href,pr.url);
-  assert.equal(link.title,'PR status may be stale');
-  assert.deepEqual(calls,[]);
+const prLink = (number, snapshot = { state: "open" }) => ({ host: "github.com", repository: "test/example", number, url: `https://github.com/test/example/pull/${number}`, source: "manual", snapshot, watch: {} });
+const withPRs = (prs, extra = {}) => decodeWorkProjection(projection({ thread: { ...p.thread, pullRequests: prs }, ...extra }));
+const chips = () => [...host.querySelectorAll("a")].map((a) => a.textContent);
+const settle = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
+
+test("PR chips map state, draft and checks to their label and tone", () => {
+  const pr = (snapshot) => decodePR(prLink(7, snapshot));
+  const cases = [
+    [{ state: "merged" }, "PR #7 · Merged", "merged", ""],
+    [{ state: "closed", checksState: "failing" }, "PR #7 · Closed", "closed", ""],
+    [{ state: "open", checksState: "passing" }, "PR #7 · Open · Checks passing", "open", "passing"],
+    [{ state: "open", checksState: "failing" }, "PR #7 · Open · Checks failing", "open", "failing"],
+    [{ state: "open", checksState: "pending" }, "PR #7 · Open · Checks running", "open", "pending"],
+    [{ state: "open" }, "PR #7 · Open", "open", ""],
+    [{ state: "open", isDraft: true, checksState: "pending" }, "PR #7 · Draft · Checks running", "draft", "pending"],
+    [{}, "PR #7", "unknown", ""],
+  ];
+  for (const [snapshot, label, tone, checks] of cases) assert.deepEqual(prStatus(pr(snapshot)), { label, tone, checks });
+});
+
+test("PR chips read live status on mount, keep the link and title, and refresh on focus", async () => {
+  prDetail = { title: "Fix Safari forms", state: "open", isDraft: false };
+  prChecks = { checks: [{ name: "ci", status: "success" }, { name: "lint", status: "pending" }] };
+  await render(TaskChanges, { state: withPRs([prLink(4)]) });
+  await settle();
+  const link = host.querySelector("a");
+  assert.equal(link.textContent, "PR #4 · Open · Checks running");
+  assert.equal(link.href, "https://github.com/test/example/pull/4");
+  assert.equal(link.title, "Fix Safari forms");
+  assert.equal(link.dataset.prState, "open");
+  assert.deepEqual(calls.map((c) => c.tag).sort(), ["pullRequests.checks", "pullRequests.detail"]);
+  assert.deepEqual(calls[0].payload, { projectId: "project", host: "github.com", repository: "test/example", number: 4 });
+  window.dispatchEvent(new Event("focus"));
+  await settle();
+  assert.equal(calls.length, 2, "focus inside the throttle window does not refetch");
+});
+
+test("PRs already merged or closed when the thread loads show no chip", async () => {
+  // #2's snapshot is stale ("open") but T3 reports it merged: that is how Roka's chips looked stuck.
+  prDetail = { state: "merged" };
+  await render(TaskChanges, { state: withPRs([prLink(2), prLink(10, { state: "merged" }), prLink(11, { state: "closed" })]) });
+  await settle();
+  assert.deepEqual(chips(), []);
+  assert.equal(host.querySelector("div")?.childElementCount ?? 0, 0);
+});
+
+test("a PR merged while open flips to Merged, then leaves at the next user message", async () => {
+  prDetail = { state: "open" };
+  const open = withPRs([prLink(4)]);
+  await render(TaskChanges, { state: open });
+  await settle();
+  assert.deepEqual(chips(), ["PR #4 · Open"]);
+  const merged = reduceWorkEvent(open, { type: "thread.pull-request-link-updated", payload: prLink(4, { state: "merged" }) });
+  await render(TaskChanges, { state: merged });
+  assert.deepEqual(chips(), ["PR #4 · Merged"]);
+  assert.equal(host.querySelector("a").dataset.prState, "merged");
+  await render(TaskChanges, { state: { ...merged } });
+  assert.deepEqual(chips(), ["PR #4 · Merged"], "other updates keep the flipped chip");
+  const next = reduceWorkEvent(merged, { type: "message.updated", payload: { id: "m-c", role: "user", text: "Thanks", attachments: [] } });
+  await render(TaskChanges, { state: next });
+  assert.deepEqual(chips(), []);
+  assert.ok(!calls.some((c) => !c.tag.startsWith("pullRequests.")), "display only: nothing is unlinked in T3");
+});
+
+test("a PR closed while open leaves after an hour without a new message", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  prDetail = { state: "open" };
+  const open = withPRs([prLink(5)]);
+  await render(TaskChanges, { state: open });
+  await settle();
+  await render(TaskChanges, { state: reduceWorkEvent(open, { type: "thread.pull-request-link-updated", payload: prLink(5, { state: "closed" }) }) });
+  assert.deepEqual(chips(), ["PR #5 · Closed"]);
+  await act(async () => t.mock.timers.tick(PR_DONE_LINGER_MS - 1));
+  assert.deepEqual(chips(), ["PR #5 · Closed"]);
+  await act(async () => t.mock.timers.tick(1));
+  assert.deepEqual(chips(), []);
 });
 
 test("subscription filters streaming deltas, reconciles children and releases stream", () => {
