@@ -65,7 +65,7 @@ const bundle = await build({
       load: (id) =>
         id === "\0package2-tests"
           ? `
-export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client';
+export { createElement, act, StrictMode } from 'react'; export { createRoot } from 'react-dom/client';
 export * from ${JSON.stringify(src + "lib/runtimeApi.ts")};
 export { buildEntries } from ${JSON.stringify(src + "lib/transcript.ts")};
 export { Chat } from ${JSON.stringify(src + "components/Chat.tsx")};
@@ -90,6 +90,7 @@ await writeFile(
 );
 const {
   createElement: h,
+  StrictMode,
   act,
   createRoot,
   decodeWorkProjection,
@@ -446,6 +447,20 @@ test("PRs already merged or closed when the thread loads show no chip", async ()
   await settle();
   assert.deepEqual(chips(), []);
   assert.equal(host.querySelector("div")?.childElementCount ?? 0, 0);
+});
+
+test("a stale finished snapshot still reads T3, so a reopened PR keeps its chip", async () => {
+  prDetail = { state: "open" };
+  await render(TaskChanges, { state: withPRs([prLink(6, { state: "closed" })]) });
+  await settle();
+  assert.deepEqual(chips(), ["PR #6 · Open"]);
+});
+
+test("chips appear under StrictMode's effect replay without waiting for a focus", async () => {
+  prDetail = { state: "open" };
+  await act(async () => root.render(h(StrictMode, null, h(TaskChanges, { state: withPRs([prLink(8)]) }))));
+  await settle();
+  assert.deepEqual(chips(), ["PR #8 · Open"]);
 });
 
 test("a PR merged while open flips to Merged, then leaves at the next user message", async () => {

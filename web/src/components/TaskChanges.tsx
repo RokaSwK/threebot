@@ -39,13 +39,14 @@ function PRChip({ pr, projectId, messages }: { pr: WorkPR; projectId: string; me
   useEffect(() => {
     if (!projectId) return;
     let alive = true;
-    const refresh = () => {
-      if (doneRef.current || Date.now() - last.current < FOCUS_REFRESH_MS) return;
+    const read = () => {
       const base = current.current;
       last.current = Date.now();
       readPR(projectId, base).then(value => alive && setFetched({ base, value }), () => {}).finally(() => alive && setChecked(true));
     };
-    refresh();
+    // Every mount reads, even from a finished snapshot (it may be stale); focus refreshes are throttled.
+    const refresh = () => { if (!doneRef.current && Date.now() - last.current >= FOCUS_REFRESH_MS) read(); };
+    read();
     window.addEventListener("focus", refresh);
     return () => { alive = false; window.removeEventListener("focus", refresh); };
   }, [projectId, pr.host, pr.repository, pr.number]);
