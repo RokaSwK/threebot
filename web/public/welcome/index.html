@@ -71,6 +71,11 @@ button { font: inherit; color: inherit; }
 .btn.off { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong); pointer-events: none; }
 .btn.sm { height: 34px; padding-inline: 14px; font-size: 14px; }
 .btn svg { width: 16px; height: 16px; }
+/* GitHub stars: a baked count the live one replaces when the API answers. */
+.stars { display: inline-flex; align-items: center; gap: 5px; margin-left: 4px; padding-left: 12px; box-shadow: inset 1px 0 0 var(--line-strong); color: var(--muted); font-variant-numeric: tabular-nums; }
+.stars[hidden] { display: none; }
+.stars svg { width: 13px; height: 13px; fill: currentColor; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 
 /* The one-line installer */
@@ -460,7 +465,7 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
       <p class="lede blur-in d2">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
       <div class="cta blur-in d3">
         <a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m-3.5-3.5L8 10l3.5-3.5M3 13h10"/></svg>Download</a>
-        <a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">View on GitHub</a>
+        <a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">View on GitHub<span class="stars" data-stars><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.95 3.95 4.35.63-3.15 3.07.74 4.34L8 11.54l-3.89 2.05.74-4.34L1.7 6.18l4.35-.63z"/></svg><span class="sr">, </span><span data-star-count>28</span><span class="sr"> stars</span></span></a>
         <a class="btn soft pre" href="https://t3.codes/" rel="noopener">t3.codes</a>
         <span class="btn off pre">On GitHub soon</span>
       </div>
@@ -689,7 +694,7 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
         <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" loading="lazy" /><i class="pill l"></i><i class="pill r"></i></button>
         <p class="ball-hint" data-ball-state>Click the ball</p>
         <h2>Give your thread a face</h2>
-        <div class="cta"><a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a><a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub</a><span class="btn off pre">On GitHub soon</span></div>
+        <div class="cta"><a class="btn post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener">Download</a><a class="btn soft post" href="https://github.com/RokaSwK/threebot" rel="noopener">GitHub<span class="stars" data-stars><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l1.95 3.95 4.35.63-3.15 3.07.74 4.34L8 11.54l-3.89 2.05.74-4.34L1.7 6.18l4.35-.63z"/></svg><span class="sr">, </span><span data-star-count>28</span><span class="sr"> stars</span></span></a><span class="btn off pre">On GitHub soon</span></div>
         <div class="install" data-install><code>curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh</code><button type="button" data-copy>Copy</button></div>
       </div>
     </div>
@@ -710,7 +715,20 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
   // The GitHub links turn on by themselves once the repository is public.
-  fetch("https://api.github.com/repos/RokaSwK/threebot").then((r) => { if (r.ok) root.classList.add("public"); }).catch(() => {});
+  // The star count in the HTML is a fallback from the last edit; the live one replaces it. A rate-limited
+  // API (403/429) still means the repository is public, so the page keeps the baked count.
+  const stars = (n) => {
+    const text = n >= 1000 ? new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n) : String(n);
+    for (const el of document.querySelectorAll("[data-star-count]")) el.textContent = text;
+    for (const el of document.querySelectorAll("[data-stars]")) el.hidden = n < 1;
+  };
+  fetch("https://api.github.com/repos/RokaSwK/threebot").then(async (r) => {
+    if (r.status === 403 || r.status === 429) return root.classList.add("public");
+    if (!r.ok) return;
+    root.classList.add("public");
+    const n = (await r.json()).stargazers_count;
+    if (Number.isFinite(n)) stars(n);
+  }).catch(() => {});
   for (const box of document.querySelectorAll("[data-install]")) {
     const button = box.querySelector("[data-copy]");
     button.addEventListener("click", async () => {
