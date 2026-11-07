@@ -2,6 +2,7 @@
 // `object:<id>`, naming a gallery object or the Bot's own `avatarDefinition`. Definitions can be
 // written by agents and reach innerHTML in the renderer, so nothing is used until it validates.
 import { readFileSync } from "node:fs";
+import { contrast } from "./avatar-color.mts";
 import { renderAvatarSvg, validateAvatar, type AvatarDefinition } from "open-bot-avatar";
 
 export const OBJECT_PREFIX = "object:";
@@ -32,9 +33,9 @@ export function objectAvatarPatch<T extends { shape?: unknown; avatarDefinition?
   return "shape" in patch || "avatarDefinition" in patch ? { ...patch, avatarDefinition: null } : patch as ObjectAvatarPatch<T>;
 }
 
+/** Painted eyes on an object: white or near-black, whichever contrasts more with the body. */
 export function objectEyeColor(hex: string) {
-  const [r, g, b] = [1, 3, 5].map((start) => Number.parseInt(hex.slice(start, start + 2), 16) / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.16 ? "#ffffff" : "#151515";
+  return contrast("#ffffff", hex) > contrast("#151515", hex) ? "#ffffff" : "#151515";
 }
 
 export function renderObjectIcon(definition: AvatarDefinition, fill: string) {

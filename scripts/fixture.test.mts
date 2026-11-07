@@ -738,6 +738,7 @@ test('avatars scenario draws in side chats of an empty, archived job and never t
     const bots = (await (await fetch(fixture.url + '/api/bots')).json()).bots;
     assert.ok(bots.filter((bot: Json) => bot.shape.startsWith('object:')).length >= 12);
     assert.equal(bots.find((bot: Json) => bot.slug === 'bean').avatarDefinition.name, 'Bean');
+    assert.deepEqual(['ink', 'paper', 'neon', 'plum'].map((slug) => bots.find((bot: Json) => bot.slug === slug).color), ['#15131c', '#fbf9f2', '#39ff14', '#5b2a86'], 'custom colours come back as stored');
     const main = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-cat' })).turnItems.length;
     const fast = { instanceId: 'codex', model: 'gpt-6-luna', options: [{ id: 'serviceTier', value: 'priority' }] };
     await rpc.dispatch({ type: 'thread.create', ...actor, threadId: 'job', projectId: 'project-cat', title: 'Avatar drawing job', modelSelection: fast, runtimeMode: 'auto', interactionMode: 'default', branch: null, worktreePath: null });

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { ArrowLeftRight, X } from "lucide-react";
-import { Avatar, botColor } from "./Avatar";
+import { Avatar } from "./Avatar";
+import { botTextColor } from "../lib/character";
 import { BotBubble } from "./Chat";
 import { IconButton, Spinner } from "./ui";
 import { openExchange, useApp, watchThread } from "../store";
@@ -35,7 +36,7 @@ export function BotExchange({ bot, other }: { bot: Bot; other: Bot }) {
         {loaded && !entries.length && <p className="py-8 text-center text-[13px] text-muted">No messages between these Bots yet.</p>}
         {entries.map((entry) => {
           const sender = entry.senderThreadId === bot.mainThreadId ? bot : other;
-          return <article key={entry.id} className="flex items-end gap-2"><Avatar shape={sender.shape} color={sender.color} picture={sender.avatarImage} size={23} /><div className="min-w-0"><div className="mb-1.5 ml-3 text-[12px]" style={{ color: botColor(sender.color) }}>{sender.name}<time className="ml-2 text-[11px] text-faint" dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div><BotBubble text={entry.text} /></div></article>;
+          return <article key={entry.id} className="flex items-end gap-2"><Avatar shape={sender.shape} color={sender.color} picture={sender.avatarImage} size={23} /><div className="min-w-0"><div className="mb-1.5 ml-3 text-[12px]" style={{ color: botTextColor(sender.color) }}>{sender.name}<time className="ml-2 text-[11px] text-faint" dateTime={entry.at}>{new Date(entry.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time></div><BotBubble text={entry.text} /></div></article>;
         })}
       </div>
     </div>

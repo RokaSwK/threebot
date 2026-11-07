@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import clsx from "clsx";
 import { Camera, ChevronRight, ImageIcon, LoaderCircle, Plus, TriangleAlert, X } from "lucide-react";
 import type { AvatarDefinition } from "open-bot-avatar";
 import { Avatar } from "./Avatar";
 import { IconButton, Modal, Pill } from "./ui";
-import { avatarShape, botColor, DEFAULT_AVATAR, PICKER_COLORS, PICKER_SHAPES } from "../lib/character";
+import { avatarShape, botColor, DEFAULT_AVATAR, isCustomColor, PICKER_COLORS, PICKER_SHAPES } from "../lib/character";
+import { colorHex } from "../../../server/avatar-color.mts";
+import { ColorPicker } from "./ColorPicker";
 import { importDefinition, OBJECT_AVATARS, objectShape } from "../lib/objectAvatars";
 import type { Drawing, DrawingOption } from "../lib/avatarDrawing";
 import "./avatar-editor.css";
@@ -41,6 +43,11 @@ export function AvatarPicker({ shape, color, onChange, disabled = false, shared 
   const [chosen, setChosen] = useState(0);
   // A drawn option is selected until another shape is picked: the shape it was picked over, or null.
   const [optionOver, setOptionOver] = useState<string | null>(shape);
+  const custom = isCustomColor(color);
+  const [picking, setPicking] = useState(false);
+  // A colour picked that is exactly a palette swatch is stored by its name, except black: the black
+  // swatch turns white in dark mode, and a picked #000000 means black.
+  const pickColor = (hex: string) => onChange(shape, PICKER_COLORS.find(c => c.id !== "black" && c.value.toLowerCase() === hex)?.id ?? hex);
   const drawing = draw?.drawing ?? null;
   const options = drawing?.options ?? [];
   // The chosen option, or the first one that is ready.
@@ -78,8 +85,15 @@ export function AvatarPicker({ shape, color, onChange, disabled = false, shared 
     </>}
     {labels && <p className="avatar-section-title" aria-hidden="true">Colour</p>}
     <div className="avatar-colors">
-      {PICKER_COLORS.map(c => <button key={c.id} type="button" disabled={disabled} onClick={() => onChange(shape, c.id)} style={{ background: botColor(c.id) }} aria-label={c.name} aria-pressed={color === c.id} />)}
+      {PICKER_COLORS.map(c => <button key={c.id} type="button" disabled={disabled} onClick={() => { setPicking(false); onChange(shape, c.id); }} style={{ background: botColor(c.id) }} aria-label={c.name} aria-pressed={color === c.id} />)}
+      <button type="button" className="avatar-color-custom" disabled={disabled} data-custom={custom || undefined} onClick={() => setPicking(value => !value)}
+        aria-label={custom ? `Custom colour ${color.toUpperCase()}` : "Custom colour"} aria-pressed={custom} aria-expanded={picking} title="Custom colour"
+        style={custom ? { "--custom-fill": color } as CSSProperties : undefined}>
+        <span>{!custom && <Plus aria-hidden="true" />}</span>
+      </button>
     </div>
+    {picking && <ColorPicker value={colorHex(color)} disabled={disabled} onChange={pickColor} onClose={() => setPicking(false)}
+      preview={<Avatar shape={shape} color={color} size={28} still />} />}
   </fieldset>;
 }
 

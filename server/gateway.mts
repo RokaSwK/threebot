@@ -25,6 +25,7 @@ import { createExecutorClient } from "./executor-client.mts";
 import { createThreadMeta, createThreadPreviews } from "./thread-meta.mts";
 import { createRoutineHistoryRoutes } from "./routine-history.mts";
 import { objectAvatarPatch } from "./object-avatars.mts";
+import { avatarColorPatch } from "./avatar-color.mts";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
@@ -387,10 +388,12 @@ const mainBots = createMainBotRegistry({
 });
 const getBot = (slug: string) => mainBots.get(slug);
 const listBots = () => mainBots.list();
+/** A palette name or any hex spelling, stored as a name or "#rrggbb"; anything else is a 400. */
+const colorPatch = <T extends { color?: unknown }>(patch: T): T => patch && patch.color !== undefined ? { ...patch, color: avatarColorPatch(patch.color) } : patch;
 const saveBot = async (slug: string, patch: BotPatch) => {
   const bot = await getBot(slug);
   if (!bot) throw Object.assign(new Error("Bot not found"), { status: 404 });
-  return mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(patch)));
+  return mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(colorPatch(patch))));
 };
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
@@ -445,7 +448,7 @@ async function writeAgentsMd(bot: Bot, settings: TemplateSettings) {
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
 }
 async function createBot(input: NewBot) {
-  input = objectAvatarPatch(input);
+  input = objectAvatarPatch(colorPatch(input));
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
   const base = slugify(input.name ?? "bot");
   let slug = base, n = 2;

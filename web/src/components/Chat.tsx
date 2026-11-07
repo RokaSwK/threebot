@@ -2,7 +2,8 @@ import { memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternal
 import clsx from "clsx";
 import { defaultUrlTransform } from "react-markdown";
 import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
-import { Avatar, botColor } from "./Avatar";
+import { Avatar } from "./Avatar";
+import { botTextColor, bubbleColors } from "../lib/character";
 import { BotMention, BotEvent } from "./BotMention";
 import { BotExchange } from "./BotExchange";
 import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
@@ -247,7 +248,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
           {entry.text && (
             <div
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
-              style={accent === "bot" && bot.color !== "white" && bot.color !== "gray" && bot.color !== "black" ? { background: botColor(bot.color), color: "#fff" } : { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
+              style={(accent === "bot" && bubbleColors(bot.color)) || { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
             >
               {entry.text}
             </div>
@@ -332,7 +333,7 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
     const owner = thread && Object.values(bots).find((b) => b.projectId === thread.projectId);
     if (thread && owner) {
       const identity = threadIdentity(owner, thread.id, threads);
-      return <button className="bot-mention inline-flex items-center gap-1 align-baseline font-medium hover:underline" style={{ color: botColor(owner.color) }} onClick={() => selectThread(owner, thread.id)}><Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={14} />{identity.name}</button>;
+      return <button className="bot-mention inline-flex items-center gap-1 align-baseline font-medium hover:underline" style={{ color: botTextColor(owner.color) }} onClick={() => selectThread(owner, thread.id)}><Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={14} />{identity.name}</button>;
     }
     return <a className="md-link" href={reference.environmentId ? threadLink({ kind: "remote", ...reference, environmentId: reference.environmentId, label: "T3 Code" }) : undefined} target="_blank" rel="noreferrer">{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}</a>;
   }

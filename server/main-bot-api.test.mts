@@ -71,6 +71,16 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.equal((await request('/api/main-bot', 'PUT', { slug: 'missing' })).status, 404);
     assert.equal((await request('/api/main-bot', 'PUT', null)).status, 400);
     assert.equal((await request('/api/bots/missing', 'PUT', { primary: true })).status, 404);
+    // A colour is a palette name or a hex colour, stored as "#rrggbb"; anything else is refused.
+    assert.equal((await request('/api/bots/alpha', 'PUT', { color: '#3FA7D6' })).body.color, '#3fa7d6');
+    assert.equal((await request('/api/bots/alpha', 'PUT', { color: '#3fa' })).body.color, '#33ffaa');
+    assert.equal((await request('/api/bots/alpha', 'PUT', { color: 'violet' })).body.color, 'violet');
+    for (const color of ['3fa7d6', '#3fa7d', 'rgb(1, 2, 3)', 'url(#x)', '__proto__', 12, null]) {
+      const refused = await request('/api/bots/alpha', 'PUT', { color });
+      assert.equal(refused.status, 400, `${JSON.stringify(color)} should be refused`);
+      assert.match(refused.body.error, /Invalid colour/);
+    }
+    assert.equal((await request('/api/bots/alpha')).body.color, 'violet');
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
     const instructions = await readFile(path.join(botsRoot, 'alpha/AGENTS.md'), 'utf8');
     assert.doesNotMatch(instructions, /You are the primary Bot/);
