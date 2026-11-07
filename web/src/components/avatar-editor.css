@@ -133,7 +133,7 @@
 .avatar-draw input::placeholder { color: var(--fg-faint); }
 .avatar-draw input:focus { outline: none; border-color: var(--border-strong); }
 .avatar-draw-card { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; margin-top: 12px; padding: 10px 10px 10px 12px; border: 1px solid var(--border); border-radius: 18px; }
-.avatar-draw-preview { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 16px; background: var(--bg-hover); color: var(--fg-muted); --bot-eye-bg: var(--bg-hover); }
+.avatar-draw-preview { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 16px; background: var(--bg-hover); color: var(--fg-muted); }
 .avatar-draw-preview:has(> svg[class*="triangle"]) { color: var(--danger); }
 .avatar-draw-text { display: flex; min-width: 0; flex-direction: column; gap: 2px; font-size: 13px; }
 .avatar-draw-text strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
