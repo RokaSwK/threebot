@@ -14,6 +14,7 @@ import { BoardItemChip } from "./Projects";
 import { parseItemLink } from "../lib/projects";
 import { ChatMessageActions } from "./ChatMessageActions";
 import { ChatAttachmentList } from "./ChatAttachments";
+import { MessageImages } from "./ImageViewer";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
 import { useVoiceSettings, VoiceDock, voiceChatSupported } from "./VoiceDock";
 import { requestMicrophone, readVoiceSettings, voiceLang } from "../lib/voiceChat";
@@ -242,6 +243,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
       return <BotEvent direction={entry.direction} bots={entry.bots} />;
     case "user":
       return (
+        <MessageImages>
         <ChatMessageActions text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} side="user" className={clsx("fade-up flex flex-col items-end", tight ? "mt-1" : "mt-3")}>
           {entry.replyTo && <ReplyChip quote={entry.replyTo} />}
           {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} />}
@@ -254,22 +256,25 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
             </div>
           )}
         </ChatMessageActions>
+        </MessageImages>
       );
     case "peer":
       return (
         <div className="chat-peer fade-up mt-1 flex items-end gap-2">
           {entry.fromBot ? <Avatar shape={entry.fromBot.shape} color={entry.fromBot.color} picture={entry.fromBot.avatarImage} size={22} /> : <span className="size-[22px]" />}
           <div className="md bubble rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px]">
-            <MessageContent text={entry.text} />
+            <MessageImages><MessageContent text={entry.text} /></MessageImages>
           </div>
         </div>
       );
     case "bot":
       return (
-        <div className={tight ? "mt-1" : "mt-3"}>
-          {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" />}
-          {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} />}
-        </div>
+        <MessageImages>
+          <div className={tight ? "mt-1" : "mt-3"}>
+            {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" />}
+            {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} />}
+          </div>
+        </MessageImages>
       );
     case "approval":
       return <ApprovalCard entry={entry} threadId={threadId} />;
@@ -297,13 +302,15 @@ export function BotBubble({ text, threadId, itemId, runId, onReply }: { text: st
   const parts = splitBubbles(text);
   return (
     <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} side="bot">
-      <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
-        {parts.map((p, i) => (
-          <div key={i} className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
-            <MessageContent text={p} />
-          </div>
-        ))}
-      </div>
+      <MessageImages>
+        <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
+          {parts.map((p, i) => (
+            <div key={i} className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
+              <MessageContent text={p} />
+            </div>
+          ))}
+        </div>
+      </MessageImages>
     </ChatMessageActions>
   );
 }

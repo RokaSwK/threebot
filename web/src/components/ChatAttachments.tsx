@@ -4,6 +4,7 @@ import { Download, File, FileCode, FileImage, FileSpreadsheet, FileText, FileVid
 import { assetUrl } from "../store";
 import { workspaceFileKind } from "../lib/workspaceLinks";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
+import { useOpenImage } from "./ImageViewer";
 
 type FileKind = ReturnType<typeof workspaceFileKind>;
 type ChatAttachment = { id: string; name: string; type: "image" | "file"; fileKind: FileKind; mimeType: string | null; sizeBytes: number | null; previewUrl?: string };
@@ -105,10 +106,13 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
     }
   };
   const image = attachment.type === "image" && thumbnail;
+  // Image attachments join their message's gallery; other files open in the resource sheet.
+  const { ref, open, viewer } = useOpenImage(attachment.fileKind === "image" ? { key: `attachment:${attachment.id}`, alt: attachment.name, name: attachment.name,
+    resource: { _tag: "attachment", attachmentId: attachment.id, disposition: "inline" }, download: { _tag: "attachment", attachmentId: attachment.id, disposition: "attachment" } } : null);
   const { name, detail, Icon } = presentation(attachment);
   return <div className="min-w-0 max-w-full">
     <div className={clsx("chat-attachment group relative flex min-w-0 max-w-full items-center gap-1 rounded-2xl", !image && "bg-card pr-1")}>
-      <button type="button" onClick={onOpen} aria-label={`Open ${attachment.name}`} title={attachment.name} className={clsx("min-w-0 overflow-hidden rounded-2xl text-left hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent", !image && "flex items-center gap-2.5 px-3 py-2.5 text-[13px]")}>
+      <button type="button" ref={ref} onClick={attachment.fileKind === "image" ? open : onOpen} aria-label={`Open ${attachment.name}`} title={attachment.name} className={clsx("min-w-0 overflow-hidden rounded-2xl text-left hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent", !image && "flex items-center gap-2.5 px-3 py-2.5 text-[13px]")}>
         {image ? <img src={thumbnail} alt={attachment.name} onError={() => setThumbnail(null)} className="chat-attachment-image max-h-56 max-w-[260px] rounded-2xl border border-line object-cover" />
           : <><Icon size={22} aria-hidden="true" className="shrink-0 text-muted" /><span className="min-w-0"><span className="block break-words leading-5">{name}</span><span className="block text-[11px] leading-4 text-muted">{detail}</span></span></>}
       </button>
@@ -118,6 +122,7 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
       </button>
     </div>
     {downloadState === "error" && <p role="alert" className="px-2 pt-1 text-[12px] text-muted">Couldn't download. Try again.</p>}
+    {viewer}
     <span role="status" className="sr-only">{downloadState === "started" ? "Download started." : downloadState === "preparing" ? "Preparing download…" : ""}</span>
   </div>;
 }

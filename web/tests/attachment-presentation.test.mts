@@ -13,7 +13,7 @@ import { buildOnce, domWindow, entryChunk } from "./support.mts";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: "https://attachment-presentation.test/", settings: { navigation: { disableChildFrameNavigation: true }, enableImageFileLoading: false } }));
-for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
+for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "history"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const src = new URL("../src/", import.meta.url).pathname;

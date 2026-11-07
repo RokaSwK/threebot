@@ -1,0 +1,49 @@
+/* Full-screen image viewer: always dark, flat, like the app's dark theme. */
+.image-viewer {
+  position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+  background: #000000f2; color: #f5f5f7; outline: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  animation: image-viewer-in 140ms ease-out;
+}
+@keyframes image-viewer-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .image-viewer { animation: none; } }
+.image-viewer-bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 4px; min-height: 56px; padding: 8px 8px 8px 16px; }
+.image-viewer-count { flex: 1; font-size: 13px; font-variant-numeric: tabular-nums; color: #f5f5f7b3; }
+.image-viewer-button {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 999px;
+  color: #f5f5f7; background: #ffffff14; transition: background 120ms;
+}
+.image-viewer-button:hover { background: #ffffff29; }
+.image-viewer-button:focus-visible, .image-viewer-retry:focus-visible { outline: 2px solid #f5f5f7; outline-offset: 2px; }
+.image-viewer-stage {
+  position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden;
+  padding: 0 16px; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.image-viewer-image {
+  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px;
+  cursor: zoom-in; transform-origin: center; transition: transform 180ms ease-out; will-change: transform;
+  -webkit-user-drag: none; -webkit-touch-callout: none;
+}
+.image-viewer-stage[data-zoomed] .image-viewer-image { cursor: grab; border-radius: 0; }
+.image-viewer-image[data-gesturing] { transition: none; }
+.image-viewer-stage[data-zoomed] .image-viewer-image[data-gesturing] { cursor: grabbing; }
+.image-viewer-nav { position: absolute; top: 50%; translate: 0 -50%; width: 44px; height: 44px; }
+.image-viewer-nav[data-side="prev"] { left: 12px; }
+.image-viewer-nav[data-side="next"] { right: 12px; }
+/* Phones swipe; the arrows would sit on the image. */
+@media (hover: none) and (pointer: coarse) { .image-viewer-nav { display: none; } }
+.image-viewer-note { max-width: 320px; text-align: center; font-size: 14px; color: #f5f5f7b3; }
+.image-viewer-retry { margin-top: 12px; border-radius: 999px; padding: 8px 16px; background: #ffffff1f; color: #f5f5f7; }
+.image-viewer-caption {
+  position: relative; z-index: 2; margin: 0 auto; max-width: 720px; max-height: 30dvh; overflow-y: auto;
+  padding: 12px 20px 18px; text-align: center; font-size: 14px; line-height: 20px; color: #f5f5f7d9; overflow-wrap: anywhere;
+}
+
+/* Inline chat image: a rounded, tappable thumbnail. */
+.chat-inline-image {
+  display: inline-block; max-width: 100%; padding: 0; border: 0; border-radius: 12px; background: none;
+  vertical-align: top; cursor: zoom-in; line-height: 0;
+}
+.chat-inline-image img { display: block; max-width: 100%; max-height: 320px; width: auto; height: auto; border-radius: 12px; object-fit: contain; }
+.chat-inline-image:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chat-inline-image:hover img { filter: brightness(0.94); }
