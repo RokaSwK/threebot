@@ -59,4 +59,4 @@ export function workspaceFileKind(path: string): "image" | "video" | "audio" | "
 }
 
 export type WorkspaceResource = { _tag: "workspace-file"; threadId: string; path: string };
-export type LibraryResource = WorkspaceResource | { _tag: "attachment"; attachmentId: string };
+export type LibraryResource = WorkspaceResource | { _tag: "attachment"; attachmentId: string; disposition?: "inline" | "attachment" };

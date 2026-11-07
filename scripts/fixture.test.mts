@@ -632,7 +632,7 @@ test('Library fixture supplies real signed resources and rejects missing files a
     const bots = (await fixture.request('/api/bots')).body.bots;
     const bot = bots.find((bot: Json) => bot.slug === 'beta');
     const listing = await bounded(rpc.call('projects.listEntries', { cwd: bot.workspaceRoot, directoryPath: 'library' }));
-    assert.deepEqual(listing.entries.map((entry: Json) => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/notes.txt', 'library/audio.wav']);
+    assert.deepEqual(listing.entries.map((entry: Json) => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/bars.svg', 'library/notes.txt', 'library/audio.wav']);
     const signed = await bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: bot.mainThreadId, path: 'library/counter.html' } }));
     const response = await fetch(fixture.url + '/t3' + signed.relativeUrl);
     assert.equal(response.status, 200);
@@ -653,6 +653,9 @@ test('Library fixture supplies real signed resources and rejects missing files a
       } else assert.match(bytes.toString(), name === 'notes.txt' ? /Generic/ : /name,value/);
       assert.equal((await fetch(url.replace('fixture%2Bread%2F', 'wrong'))).status, 403);
     }
+    // The chat image sample: a Bot-posted workspace image the image viewer opens.
+    const bars = await bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: bot.mainThreadId, path: 'library/bars.svg' } }));
+    assert.equal((await fetch(fixture.url + '/t3' + bars.relativeUrl)).headers.get('content-type'), 'image/svg+xml');
     assert.equal((await fetch(fixture.url + '/t3/fixture/library/missing.html')).status, 404);
     await assert.rejects(bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: 'unknown', path: 'library/counter.html' } })), /Unknown fixture thread/);
     assert.deepEqual((await bounded(rpc.call('projects.listEntries', { cwd: '/unknown', directoryPath: 'library' }))).entries, []);

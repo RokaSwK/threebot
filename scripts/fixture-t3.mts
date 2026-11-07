@@ -22,6 +22,7 @@ export const SAMPLES: FixtureSample[] = [
   { slug: 'gamma', name: 'Gamma', shape: 'sparkle', color: 'purple', primary: false },
 ];
 export const SAMPLE_IMAGE = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#128c87"/><text x="40" y="190" font-size="40" fill="white">Generic fixture image</text></svg>');
+export const SAMPLE_BARS = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="600"><rect width="480" height="600" fill="#f4f1ea"/><rect x="60" y="340" width="90" height="200" fill="#e0703a"/><rect x="195" y="200" width="90" height="340" fill="#3a7be0"/><rect x="330" y="110" width="90" height="430" fill="#7a4fd0"/><text x="60" y="80" font-size="34" fill="#222">Generic sample bars</text></svg>');
 export const SAMPLE_TEXT = Buffer.from('Generic attachment. No user data.\n');
 export const samplesFor = (scenario: string): FixtureSample[] => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
 
@@ -52,6 +53,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     ['library/counter.html', { mimeType: 'text/html', bytes: Buffer.from('<!doctype html><html><body><h1>Sample counter card</h1><p>A disposable UI test with made-up data: increment the count or reset it to zero.</p><section style="margin-top:64px"><h2>Counter</h2><p id="count" style="font-size:48px;font-weight:600;margin:12px 0 28px">0</p><button onclick="document.getElementById(\'count\').textContent=++window.count">Increment</button> <button onclick="window.count=0;document.getElementById(\'count\').textContent=0">Reset</button><p style="margin-top:32px">The count lives only in this view and starts at zero each time the page opens.</p></section><script>window.count=0</script></body></html>') }],
     ['library/sample.csv', { mimeType: 'text/csv', bytes: Buffer.from('name,value\n"A,B",2\nC,3\n') }],
     ['library/photo.svg', { mimeType: 'image/svg+xml', bytes: SAMPLE_IMAGE }],
+    ['library/bars.svg', { mimeType: 'image/svg+xml', bytes: SAMPLE_BARS }],
     ['library/notes.txt', { mimeType: 'text/plain', bytes: SAMPLE_TEXT }],
     ['library/audio.wav', { mimeType: 'audio/wav', bytes: (() => { const data=Buffer.alloc(44+1600);data.write('RIFF');data.writeUInt32LE(data.length-8,4);data.write('WAVEfmt ',8);data.writeUInt32LE(16,16);data.writeUInt16LE(1,20);data.writeUInt16LE(1,22);data.writeUInt32LE(8000,24);data.writeUInt32LE(16000,28);data.writeUInt16LE(2,32);data.writeUInt16LE(16,34);data.write('data',36);data.writeUInt32LE(1600,40);return data; })() }],
   ] : []);
@@ -88,6 +90,9 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     const at = new Date(Date.now() - 86400000).toISOString();
     for (const thread of threads) items.get(thread.id)!.push(item(thread.id, 10, 'assistant_message', {
       text: '[Sample counter card](library/counter.html) and [sample.csv](library/sample.csv)',
+      startedAt: at, updatedAt: at, completedAt: at,
+    }), item(thread.id, 11, 'assistant_message', {
+      text: 'Two sample images from the Bot folder:\n\n![Generic fixture image: a teal card with white text](library/photo.svg)\n\n![Generic sample bars: three rising bars in orange, blue and purple](library/bars.svg)',
       startedAt: at, updatedAt: at, completedAt: at,
     }));
   }

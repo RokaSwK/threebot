@@ -13,7 +13,7 @@ import { buildOnce, domWindow, entryChunk } from "./support.mts";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: "https://chat-actions.test/", width: 390, height: 844, settings: { navigation: { disableChildFrameNavigation: true }, enableImageFileLoading: false } }));
-for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
+for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "history"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;

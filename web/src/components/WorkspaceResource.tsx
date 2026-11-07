@@ -6,6 +6,7 @@ import { themedWorkspacePage } from "../lib/workspacePage";
 import { parseCsv } from "../lib/vaultCsv";
 import { useApp } from "../store";
 import { Modal } from "./ui";
+import { ImageViewer, useOpenImage, type ViewerImage } from "./ImageViewer";
 
 export const WorkspaceFileContext = createContext<{ workspaceRoot: string; threadId: string | null; fromPath?: string; openFile: (path: string) => void } | null>(null);
 
@@ -13,9 +14,13 @@ export function WorkspaceMessageImage({ src, alt }: { src?: string | Blob; alt?:
   const workspace = useContext(WorkspaceFileContext);
   const path = typeof src === "string" && workspace ? workspaceLinkPath(src, workspace.workspaceRoot, workspace.fromPath) : null;
   const threadId = workspace?.threadId;
+  const remote = !path && typeof src === "string" && /^(https?:)?\/\//i.test(src) ? src : null;
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const viewerImage: ViewerImage | null = path && threadId ? { key: `workspace:${path}`, alt: alt ?? "", name: path.split("/").at(-1), resource: { _tag: "workspace-file", threadId, path } }
+    : remote ? { key: `remote:${remote}`, alt: alt ?? "", src: remote } : null;
+  const { ref, open, viewer } = useOpenImage(viewerImage);
   useEffect(() => {
     setUrl(null); setError(false);
     if (!path) return;
@@ -27,10 +32,23 @@ export function WorkspaceMessageImage({ src, alt }: { src?: string | Blob; alt?:
     }).catch(() => { if (live) setError(true); });
     return () => { live = false; };
   }, [path, threadId, attempt]);
-  if (!path || !workspace) return typeof src === "string" && /^(https?:)?\/\//i.test(src) ? <img src={src} alt={alt} /> : <span>{alt ?? "Image unavailable"}</span>;
+  if (!path || !workspace) {
+    if (!remote) return <span>{alt ?? "Image unavailable"}</span>;
+    return <InlineImage buttonRef={ref} src={remote} alt={alt} onOpen={open} viewer={viewer} />;
+  }
   if (error) return <span role="status">Couldn't load image. <button className="underline" onClick={() => setAttempt((value) => value + 1)}>Retry</button></span>;
   if (!url) return <span role="status">Loading image…</span>;
-  return <img src={url} alt={alt} onError={() => setError(true)} />;
+  return <InlineImage buttonRef={ref} src={url} alt={alt} onOpen={open} viewer={viewer} onError={() => setError(true)} />;
+}
+
+/** The tappable thumbnail of a chat image. Enter and Space open it, as on any button. */
+function InlineImage({ buttonRef, src, alt, onOpen, onError, viewer }: { buttonRef: (element: HTMLElement | null) => void; src: string; alt?: string; onOpen: () => void; onError?: () => void; viewer: ReactNode }) {
+  return <>
+    <button type="button" ref={buttonRef} className="chat-inline-image" onClick={onOpen} aria-label={alt ? `Open image: ${alt}` : "Open image"} title={alt || undefined}>
+      <img src={src} alt={alt ?? ""} onError={onError} draggable={false} />
+    </button>
+    {viewer}
+  </>;
 }
 
 type ResourceState = { kind: "loading" } | { kind: "error" } | { kind: "ready"; url: string; content: string | null };
@@ -41,8 +59,18 @@ function reportResourceFailure(stage: string, resource: LibraryResource | null, 
   console.error("[workspace-resource]", { stage, resourceType: resource?._tag, fileKind, message });
 }
 
-/** Use T3's signed resource endpoint for reads and previews, retaining the mounted conversation. */
-export function WorkspaceResourceViewer({ resource, title, fileKind, onClose, renderText, scopeThreadId }: { scopeThreadId?: string | null; resource: LibraryResource | null; title: string; fileKind?: ReturnType<typeof workspaceFileKind>; onClose: () => void; renderText?: (text: string) => ReactNode }) {
+type ResourceViewerProps = { scopeThreadId?: string | null; resource: LibraryResource | null; title: string; fileKind?: ReturnType<typeof workspaceFileKind>; onClose: () => void; renderText?: (text: string) => ReactNode };
+
+/** Use T3's signed resource endpoint for reads and previews, retaining the mounted conversation. Images open full screen. */
+export function WorkspaceResourceViewer(props: ResourceViewerProps) {
+  const workspaceContext = useContext(WorkspaceFileContext);
+  const { resource, title, fileKind, onClose, scopeThreadId } = props;
+  const kind = fileKind ?? workspaceFileKind(resource?._tag === "workspace-file" ? resource.path : title);
+  if (kind !== "image" || !resource) return <ResourceSheet {...props} />;
+  return <ImageViewer images={[{ key: JSON.stringify(resource), alt: title, name: title, resource }]} initialIndex={0} onClose={onClose} scopeThreadId={scopeThreadId ?? workspaceContext?.threadId ?? null} />;
+}
+
+function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeThreadId }: ResourceViewerProps) {
   const sidebarWidth = useApp(s => s.sidebarCompact ? 72 : s.sidebarWidth);
   const workspaceContext = useContext(WorkspaceFileContext);
   const ownerThreadId = scopeThreadId ?? workspaceContext?.threadId ?? null;
@@ -89,7 +117,6 @@ export function WorkspaceResourceViewer({ resource, title, fileKind, onClose, re
       {state.kind === "loading" && <p role="status" className="p-6 text-center text-[14px] text-muted">Loading file…</p>}
       {state.kind === "error" && <div role="alert" className="p-6 text-center text-[14px] text-muted"><p>Couldn't open this file. It may be unavailable or access may have expired.</p><button className="mt-3 rounded-full bg-active px-4 py-2 text-fg" onClick={() => setAttempt((value) => value + 1)}>Retry</button></div>}
       {state.kind === "ready" && <>
-        {resolvedFileKind === "image" && <img src={state.url} alt={title} className="mx-auto max-w-full p-4" onError={failed} />}
         {resolvedFileKind === "audio" && <audio src={state.url} preload="metadata" controls aria-label={title} className="mx-auto my-6 max-w-full" onError={(event) => failed(new Error(`Media error ${event.currentTarget.error?.code ?? "unknown"}`))} />}
         {resolvedFileKind === "video" && <video src={state.url} preload="metadata" controls className="mx-auto max-h-full max-w-full" onError={(event) => failed(new Error(`Media error ${event.currentTarget.error?.code ?? "unknown"}`))} />}
         {(resolvedFileKind === "html" || resolvedFileKind === "pdf") && <iframe src={state.url} srcDoc={resolvedFileKind === "html" && state.content !== null ? themedWorkspacePage(state.content, dark) : undefined} title={title} sandbox="allow-scripts" className="size-full border-0 bg-white" onError={failed} />}
