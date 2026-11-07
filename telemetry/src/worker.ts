@@ -42,6 +42,13 @@ function authorized(request: Request, token: string | undefined): boolean {
 }
 
 /** Installs by version and tokens by model, per day, for the last `days` days. */
+/** Retention: keep 400 days (PRIVACY.md). Runs from the daily Cron Trigger. */
+export const RETENTION_DAYS = 400;
+export async function prune(db: D1Database, today: string): Promise<void> {
+  const cutoff = utcDay(Date.parse(`${today}T00:00:00Z`) - RETENTION_DAYS * 86_400_000);
+  await db.batch([db.prepare("DELETE FROM pings WHERE day < ?").bind(cutoff), db.prepare("DELETE FROM tokens WHERE day < ?").bind(cutoff)]);
+}
+
 export async function stats(db: D1Database, days: number, today: string) {
   const from = utcDay(Date.parse(today) - (days - 1) * 86400000);
   const [installs, versions, tokens] = await Promise.all([
@@ -72,5 +79,8 @@ export default {
       return json(200, await stats(env.DB, days, utcDay(Date.now())));
     }
     return json(404, { error: "not found" });
+  },
+  async scheduled(_event: unknown, env: Env): Promise<void> {
+    await prune(env.DB, utcDay(Date.now()));
   },
 };

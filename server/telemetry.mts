@@ -9,10 +9,10 @@ import path from "node:path";
 /** Bump when the payload's shape changes; the collector refuses schemas it doesn't know. */
 export const TELEMETRY_SCHEMA = 1;
 /**
- * Where pings go. Empty until the collector in telemetry/ is deployed: with no endpoint nothing is sent,
- * even when the user has turned stats on. THREEBOT_TELEMETRY_URL overrides it (for testing a collector).
+ * Where pings go: the collector in telemetry/, deployed at stats.swk.tools. Nothing is sent unless the user
+ * has turned stats on. THREEBOT_TELEMETRY_URL overrides it (for testing a collector).
  */
-export const TELEMETRY_ENDPOINT = "";
+export const TELEMETRY_ENDPOINT = "https://stats.swk.tools/v1/ping";
 export const SEND_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** A failed or quiet day doesn't make the next ping cover months: token counts look back a week at most. */
 export const MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
