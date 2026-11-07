@@ -1,9 +1,10 @@
-import { Avatar, botColor } from "./Avatar";
+import { Avatar } from "./Avatar";
+import { botTextColor } from "../lib/character";
 import { botReferenceKey, openExchange, select } from "../store";
 import type { Bot } from "../lib/types";
 
 export function BotMention({ bot, exchange = false, muted = false }: { bot: Bot; exchange?: boolean; muted?: boolean }) {
-  return <button type="button" className="bot-mention inline-flex max-w-full items-baseline gap-1 whitespace-nowrap rounded-md align-baseline font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" style={muted ? undefined : { color: botColor(bot.color) }} onClick={() => exchange ? openExchange(botReferenceKey(bot)) : select(botReferenceKey(bot))} aria-label={exchange ? `Open exchange with ${bot.name}` : `Open ${bot.name}'s chat`}>
+  return <button type="button" className="bot-mention inline-flex max-w-full items-baseline gap-1 whitespace-nowrap rounded-md align-baseline font-medium hover:underline focus-visible:outline-2 focus-visible:outline-offset-2" style={muted ? undefined : { color: botTextColor(bot.color) }} onClick={() => exchange ? openExchange(botReferenceKey(bot)) : select(botReferenceKey(bot))} aria-label={exchange ? `Open exchange with ${bot.name}` : `Open ${bot.name}'s chat`}>
     <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={14} className="self-center" /><span className="truncate">{bot.name}</span>
   </button>;
 }

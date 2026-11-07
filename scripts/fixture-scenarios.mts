@@ -476,6 +476,11 @@ export const AVATAR_SAMPLES = [
     slug: id, name: id[0].toUpperCase() + id.slice(1), shape: `object:${id}`, primary: false, pinned: true,
     color: ['orange', 'purple', 'blue', 'pink', 'green', 'red', 'yellow', 'teal', 'green', 'violet'][index] })),
   ...AVATAR_OWN.map((own, index) => ({ slug: own.id.slice('fixture-'.length), name: own.name, shape: `object:${own.id}`, avatarDefinition: own, color: ['brown', 'gray'][index], primary: false, pinned: true })),
+  // Custom colours at the edges: near-black, near-white and very saturated, on a shape and an object.
+  { slug: 'ink', name: 'Ink', shape: 'ball', color: '#15131c', primary: false, pinned: true },
+  { slug: 'paper', name: 'Paper', shape: 'squircle', color: '#fbf9f2', primary: false, pinned: true },
+  { slug: 'neon', name: 'Neon', shape: 'star', color: '#39ff14', primary: false, pinned: true },
+  { slug: 'plum', name: 'Plum', shape: 'object:ghost', color: '#5b2a86', primary: false, pinned: true },
 ];
 export const AVATAR_DRAWING_TITLE = 'Avatar drawing: ';
 export const AVATAR_DRAWING_JOB = 'Avatar drawing job';

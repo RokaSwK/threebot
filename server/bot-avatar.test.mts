@@ -18,7 +18,8 @@ test("the blob fills its icon instead of keeping the study playground's margins"
 test("every reference shape and color renders a standalone SVG with transparent eyes", () => {
   const silhouettes = new Set();
   for (const shape of config.shapes) {
-    for (const [color, fill] of Object.entries(config.colors)) {
+    // White and black blend into one of T3's themes, so they paint their eyes (see avatar-color.test).
+    for (const [color, fill] of Object.entries(config.colors).filter(([color]) => color !== "white" && color !== "black")) {
       const svg = renderBotAvatar({ shape, color });
       const document = new DOMParser().parseFromString(svg, "image/svg+xml");
       const body = document.querySelector("path[mask]");

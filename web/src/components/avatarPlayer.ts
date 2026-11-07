@@ -1,5 +1,5 @@
 // One shared, visibility-aware clock drives the character engine from the reference.
-import { COLORS, avatarShape, characterState, createCharacter, type AvatarState } from "../lib/character";
+import { applyInk, avatarShape, characterState, createCharacter, paintsEyes, type AvatarState } from "../lib/character";
 
 const FRAME_MS = 1000 / 60;
 export const FOLLOW_MIN_SIZE = 48;
@@ -133,7 +133,8 @@ export class AvatarPlayer {
   update(next: AvatarProps) {
     const prev = this.props;
     this.props = next;
-    if (prev.shape !== next.shape && (prev.shape === "t3" || next.shape === "t3")) {
+    // Entering or leaving T3, or switching between cut-out and painted eyes, rebuilds the character.
+    if ((prev.shape !== next.shape && (prev.shape === "t3" || next.shape === "t3")) || (next.shape !== "t3" && paintsEyes(prev.fill) !== paintsEyes(next.fill))) {
       this.character.destroy();
       this.character = createCharacter(this.svg, next);
       this.still = false;
@@ -144,8 +145,7 @@ export class AvatarPlayer {
     this.character.setShape(avatarShape(next.shape));
     if (prev.fill !== next.fill && next.shape !== "t3") {
       this.character.setInk(next.fill);
-      this.character.parts().body.setAttribute("stroke", next.fill === COLORS.white ? "var(--border-strong)" : "none");
-      this.character.parts().body.setAttribute("stroke-width", "1");
+      applyInk(this.svg, this.character, next.fill);
     }
     if (prev.size !== next.size) this.character.setSize(next.size);
     if (prev.state !== next.state) this.character.setState(characterState(next.state), { resetEyes: true });

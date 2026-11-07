@@ -1,0 +1,95 @@
+/* The custom colour picker sits flat in the editor, under the swatches: no card, just the controls. */
+.color-picker {
+  --picker-handle: 22px;
+  --picker-ring: color-mix(in srgb, var(--fg) 12%, transparent);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
+  margin-top: 16px; padding: 2px 2px 4px;
+  animation: color-picker-in 160ms ease-out;
+}
+@keyframes color-picker-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .color-picker { animation: none; } }
+
+.color-picker-field { display: grid; gap: 14px; min-width: 0; }
+/* Saturation runs left to right, brightness bottom to top, over the current hue. */
+.color-picker-area {
+  position: relative; height: 168px; border-radius: 14px; cursor: crosshair; touch-action: none; outline: none;
+  background: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, var(--hue));
+  box-shadow: inset 0 0 0 1px var(--picker-ring);
+}
+.color-picker-hue {
+  position: relative; height: 14px; margin-inline: 2px; border-radius: 999px; cursor: pointer; touch-action: none; outline: none;
+  background: linear-gradient(to right, #f00 0%, #ff0 16.66%, #0f0 33.33%, #0ff 50%, #00f 66.66%, #f0f 83.33%, #f00 100%);
+  box-shadow: inset 0 0 0 1px var(--picker-ring);
+}
+/* A bigger invisible target for thumbs and the pointer, without making the track look heavier. */
+.color-picker-hue::before { content: ""; position: absolute; inset: -12px -4px; }
+.color-picker-handle {
+  position: absolute; width: var(--picker-handle); height: var(--picker-handle); border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%); border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.32);
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+.color-picker-hue .color-picker-handle { top: 50%; }
+[data-dragging] > .color-picker-handle { transform: translate(-50%, -50%) scale(1.14); box-shadow: 0 0 0 1px rgb(0 0 0 / 0.18), 0 4px 14px rgb(0 0 0 / 0.38); }
+.color-picker-area:focus-visible > .color-picker-handle, .color-picker-hue:focus-visible > .color-picker-handle { box-shadow: 0 0 0 1px rgb(0 0 0 / 0.18), 0 0 0 4px var(--accent), 0 2px 8px rgb(0 0 0 / 0.32); }
+.color-picker-area[aria-disabled], .color-picker-hue[aria-disabled] { opacity: 0.5; cursor: default; }
+
+.color-picker-side { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.color-picker-row { display: flex; align-items: center; gap: 8px; }
+.color-picker-hex {
+  display: flex; flex: 1; min-width: 0; height: 40px; align-items: center; gap: 10px; padding: 0 12px 0 8px;
+  border-radius: 12px; background: var(--bg-hover); box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms;
+  cursor: text;
+}
+.color-picker-hex:focus-within { box-shadow: inset 0 0 0 1.5px var(--fg-muted); }
+.color-picker-hex[data-invalid] { box-shadow: inset 0 0 0 1.5px var(--danger); }
+.color-picker-chip { width: 24px; height: 24px; flex-shrink: 0; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--picker-ring); }
+.color-picker-hash { margin-right: -8px; color: var(--fg-faint); font: 500 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.color-picker-preview { display: grid; width: 28px; height: 28px; flex-shrink: 0; place-items: center; --bot-eye-bg: var(--bg-elevated); }
+.color-picker-hex input {
+  min-width: 0; flex: 1; border: 0; background: transparent; color: var(--fg); outline: none;
+  font: 500 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.06em;
+}
+.color-picker-dropper {
+  display: grid; width: 40px; height: 40px; flex-shrink: 0; place-items: center; border-radius: 12px;
+  background: var(--bg-hover); color: var(--fg-muted); transition: background-color 120ms, color 120ms;
+}
+.color-picker-dropper:enabled:hover { background: var(--bg-active); color: var(--fg); }
+.color-picker-dropper:focus-visible, .color-picker-recent button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.color-picker-label { margin: 6px 2px 0; font-size: 12px; font-weight: 500; color: var(--fg-muted); }
+.color-picker-recent { display: flex; flex-wrap: wrap; gap: 10px; padding: 3px 2px; }
+.color-picker-recent button { width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--picker-ring); transition: box-shadow 120ms, transform 120ms; }
+.color-picker-recent button:enabled:hover { transform: scale(1.1); }
+.color-picker-recent button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--avatar-surface, var(--bg-elevated)), 0 0 0 3.5px var(--fg-muted); }
+
+/* The last swatch opens the picker: a hue ring around the custom colour, or around a plus. */
+.avatar-colors .avatar-color-custom {
+  position: relative; display: grid; place-items: center;
+  background: conic-gradient(from 90deg, #ff3b30, #ffcc00, #34c759, #00c7be, #007aff, #af52de, #ff2d92, #ff3b30);
+  box-shadow: none;
+}
+.avatar-color-custom > span {
+  position: absolute; inset: 3px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--custom-fill, var(--avatar-surface, var(--bg-elevated))); color: var(--fg-muted);
+  box-shadow: inset 0 0 0 1px var(--picker-ring, color-mix(in srgb, var(--fg) 12%, transparent));
+}
+.avatar-color-custom > span > svg { width: 55%; height: 55%; }
+.avatar-color-custom[data-custom] > span { inset: 3.5px; }
+
+/* Desktop: the field on the left, the hex row and recent colours beside it. */
+@media (width > 760px) and (not (pointer: coarse)), (width > 1024px) {
+  .avatar-editor-sheet .color-picker { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+  .avatar-editor-sheet .color-picker-area { height: 148px; }
+}
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .color-picker { --picker-handle: 26px; gap: 18px; }
+  .color-picker-area { height: 184px; border-radius: 16px; }
+  .color-picker-hue { height: 18px; }
+  .color-picker-hex, .color-picker-dropper { height: 46px; }
+  .color-picker-dropper { width: 46px; }
+  .color-picker-hash { margin-right: -8px; color: var(--fg-faint); font: 500 14px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.color-picker-preview { display: grid; width: 28px; height: 28px; flex-shrink: 0; place-items: center; --bot-eye-bg: var(--bg-elevated); }
+.color-picker-hex input { font-size: 16px; }
+  .color-picker-recent { gap: 12px; }
+  .color-picker-recent button { width: 30px; height: 30px; }
+}

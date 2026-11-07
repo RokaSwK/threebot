@@ -198,6 +198,82 @@ test("T3 is the final unlabeled grid tile and keeps the color palette visible", 
   assert.equal(saved.shape, "cloud"); assert.equal(saved.color, "blue");
 });
 
+test("a custom colour previews live while it is picked and is saved, and remembered, only with Done", async () => {
+  let saved = { ...avatarBot };
+  useApp.setState({ bots: { example: saved } });
+  handleRequest = async (url, init) => {
+    if (url === "/api/bots/example" && init.method === "PUT") { saved = { ...saved, ...JSON.parse(init.body) }; return Response.json(saved); }
+    if (url === "/api/bots") return Response.json({ bots: [saved] });
+    throw Error(`Unexpected request ${url}`);
+  };
+  localStorage.removeItem("bot.avatar.recentColors");
+  await render(h(AvatarDialog, { bot: saved, onClose() {} }));
+  const custom = labeled("Custom colour");
+  assert.equal(custom.parentElement.lastElementChild, custom, "the custom swatch comes after the presets");
+  assert.equal(custom.getAttribute("aria-expanded"), "false");
+  await click(custom);
+  const area = labeled("Saturation and brightness"), hue = labeled("Hue");
+  const hex = document.querySelector<HTMLInputElement>(".color-picker-hex input");
+  const fill = () => document.querySelector<SVGSVGElement>(".avatar-editor-preview svg").querySelector("path[mask], g[data-figure] > path").getAttribute("fill");
+  assert.equal(hex.value, avatarConfig.colors.teal.slice(1).toUpperCase(), "starts from the current colour");
+  // Keyboard: Home on the hue is red, End on the area is full saturation, PageUp full brightness.
+  await key(hue, "Home"); await key(area, "End"); await key(area, "PageUp");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  assert.equal(hex.value, "FF0000");
+  assert.equal(fill(), "#ff0000", "the big preview follows");
+  assert.equal(labeled("Custom colour #FF0000").getAttribute("aria-pressed"), "true");
+  // Typing six digits applies; three apply on Enter; a bad value reverts on blur.
+  await input(hex, "3fa7d6");
+  assert.equal(fill(), "#3fa7d6");
+  await input(hex, "zz"); await act(async () => { hex.dispatchEvent(new window.FocusEvent("blur", { bubbles: false })); hex.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true })); });
+  assert.equal(hex.value, "3FA7D6");
+  // Pasting "#rgb" anywhere in the picker.
+  await act(async () => {
+    const event = new window.Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData: { getData: () => string } };
+    event.clipboardData = { getData: () => " #F3A ", files: [] } as never;
+    area.dispatchEvent(event);
+  });
+  assert.equal(hex.value, "FF33AA");
+  assert.equal(requests.length, 0, "nothing is saved while picking");
+  assert.equal(localStorage.getItem("bot.avatar.recentColors"), null, "nor remembered");
+  await click(button("Done"));
+  assert.equal(saved.color, "#ff33aa");
+  assert.deepEqual(JSON.parse(localStorage.getItem("bot.avatar.recentColors")), ["#ff33aa"]);
+  await act(async () => root.unmount()); root = createRoot(host);
+  await render(h(AvatarDialog, { bot: saved, onClose() {} }));
+  assert.equal(labeled("Custom colour #FF33AA").getAttribute("aria-pressed"), "true");
+  await click(labeled("Custom colour #FF33AA"));
+  assert.equal(labeled("#ff33aa").getAttribute("aria-pressed"), "true", "a recent colour");
+  // A picked colour that is exactly a swatch is stored by its name.
+  await input(document.querySelector<HTMLInputElement>(".color-picker-hex input"), avatarConfig.pickerColors.find((c) => c.id === "blue").value);
+  assert.equal(labeled("blue").getAttribute("aria-pressed"), "true");
+});
+
+test("near-white and near-black fills get an outline, painted eyes and visible ink in each theme", () => {
+  for (const [fill, light, dark] of [["#fbf9f2", true, false], ["#15131c", false, true], ["#39ff14", true, false]] as const) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
+    document.body.append(svg);
+    const character = createCharacter(svg, { shape: "ball", state: "idle", fill, size: 64 });
+    const { body, eyes } = character.parts();
+    const stroke = body.getAttribute("stroke");
+    assert.match(stroke, /^light-dark\(/, `${fill}: outline`);
+    assert.equal(stroke.startsWith("light-dark(transparent"), !light, `${fill}: outline in light`);
+    assert.equal(stroke.endsWith("transparent)"), !dark, `${fill}: outline in dark`);
+    assert.equal(svg.querySelector("mask"), null, `${fill}: eyes are painted`);
+    for (const eye of eyes) assert.match(eye.style.fill, /light-dark\(/);
+    assert.match(svg.style.getPropertyValue("--fg"), /light-dark\(/, `${fill}: overlay ink`);
+    character.destroy(); svg.remove();
+  }
+  // A mid colour keeps cut-out eyes and no outline.
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg") as SVGSVGElement;
+  document.body.append(svg);
+  const character = createCharacter(svg, { shape: "ball", state: "idle", fill: "#3fa7d6", size: 64 });
+  assert.equal(character.parts().body.getAttribute("stroke"), "none");
+  assert.ok(svg.querySelector("mask"));
+  assert.equal(svg.style.getPropertyValue("--fg"), "#3fa7d6");
+  character.destroy(); svg.remove();
+});
+
 test("T3 plays every engine state, folding into a glowing planet with sky-toned glyphs", () => {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   host.append(svg);
@@ -232,7 +308,8 @@ test("T3 plays every engine state, folding into a glowing planet with sky-toned 
 test("reduced-motion T3 stays still and switching editions cleans up the skin and eye masks", () => {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   host.append(svg);
-  const props = { shape: "t3", fill: "#ffffff", state: "idle", size: 184 };
+  // A mid fill: a near-white one paints its eyes instead of cutting them out.
+  const props = { shape: "t3", fill: "#1084fe", state: "idle", size: 184 };
   const player = new AvatarPlayer(svg, props);
   try {
     assert.equal(player.wantsFrames(), false);
@@ -519,7 +596,7 @@ test("New Bot keeps a live draft avatar and disables creation for empty or white
   await click(labeled("Edit Bot avatar"));
   await click(document.querySelector('.avatar-editor-sheet [aria-label="blue"]')); assert.equal(document.querySelector('.avatar-editor-sheet [aria-label="blue"]').getAttribute("aria-pressed"), "true");
   assert.equal(document.querySelectorAll(".avatar-editor-sheet .avatar-shapes button").length, 14);
-  assert.equal(document.querySelectorAll(".avatar-editor-sheet .avatar-colors button").length, 11);
+  assert.equal(document.querySelectorAll(".avatar-editor-sheet .avatar-colors button").length, 12, "eleven swatches and the custom one");
   assert.equal(requests.length, 0, "editing the draft has no external writes");
 });
 

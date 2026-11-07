@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import type { AvatarDefinition } from "open-bot-avatar";
 import { mountAvatar, type MountedAvatar } from "open-bot-avatar/dom";
-import { botColor, type AvatarState } from "../lib/character";
+import { botColor, fillInk, type AvatarState } from "../lib/character";
 import { objectColors, objectMood } from "../lib/objectAvatars";
 import { useApp } from "../store";
 
@@ -17,7 +17,9 @@ export function ObjectAvatar({ definition, color, size, state, still = false }: 
   const live = !still && size >= LIVE_FROM;
   // A live canvas reads CSS colors itself every frame, so it follows the theme. A still one is an SVG
   // string that needs hex, resolved against the current theme.
-  const colors = () => live ? { color: botColor(color), eyeColor: EYE } : objectColors(host.current!, botColor(color), EYE);
+  // Eyes are painted in the page colour, or in one derived from the fill when that would vanish into it.
+  const fill = botColor(color), ink = fillInk(fill), eye = ink?.eye ?? EYE;
+  const colors = () => live ? { color: fill, eyeColor: eye } : objectColors(host.current!, fill, eye);
   const options = () => ({ definition, ...colors(), mood: objectMood(state), still: !live, followPointer: live, label: "" });
   const latest = useRef(options);
   latest.current = options;
@@ -39,5 +41,7 @@ export function ObjectAvatar({ definition, color, size, state, still = false }: 
     return () => cancelAnimationFrame(frame);
   }, [definition, color, state, live, theme, palette]);
 
-  return <span ref={host} className="block size-full" />;
+  // The renderer draws no outline, so a fill that blends into the page gets one as a tight shadow.
+  const outline = ink?.edge ? { filter: `drop-shadow(0 0 0.6px ${ink.edge}) drop-shadow(0 0 0.6px ${ink.edge})` } : undefined;
+  return <span ref={host} className="block size-full" style={outline} />;
 }

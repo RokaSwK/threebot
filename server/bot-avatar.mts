@@ -4,13 +4,12 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { parseHTML } from "linkedom";
 import config from "./avatar-config.json" with { type: "json" };
+import { avatarInk, colorHex, NAMED_COLORS } from "./avatar-color.mts";
 import { cutoutEyes } from "./avatar-eyes.mts";
 import { decorateT3Avatar } from "./avatar-t3.mts";
 import { avatarImageFile } from "./avatar-images.mts";
 import { Character } from "./character.mts";
 import { objectDefinition, renderObjectIcon } from "./object-avatars.mts";
-
-const colors: Record<string, string> = { ...config.colors, ...Object.fromEntries(config.pickerColors.filter(c => c.id !== "black").map(c => [c.id, c.value])) };
 
 // The same engine as the web app, on a DOM with no animation loop. A fixed seed keeps
 // the generated file stable across restarts.
@@ -19,32 +18,42 @@ const { document } = parseHTML("<!doctype html><html><body></body></html>");
 // The fields a Bot's look is drawn from, as bot.json stores them. Unknown or invalid values fall back.
 export interface AvatarBot { shape: string; color: string; avatarDefinition?: unknown }
 
+// An icon is shown on T3's page in either theme, so a fill that blends into one of them gets an
+// outline and painted eyes (cut-out eyes would show the page through a body of the same colour).
+const iconInk = (fill: string) => {
+  const { light, dark } = avatarInk(fill);
+  return { edge: light.edge ?? dark.edge, eye: light.eye ?? dark.eye };
+};
+
 const icons = new Map<string, string>();
 export function renderBotAvatar(bot: AvatarBot): string {
   const object = objectDefinition(bot);
   if (object) {
-    const fill = Object.hasOwn(colors, bot.color) ? colors[bot.color] : colors.teal;
+    const fill = colorHex(bot.color);
     const key = `object:${object.body.path}:${JSON.stringify(object.eyes)}:${fill}`;
     if (!icons.has(key)) icons.set(key, renderObjectIcon(object, fill));
     return icons.get(key)!;
   }
   const special = config.specialShapes.find(avatar => avatar.id === bot.shape);
   const shape = special ? special.id : config.shapes.includes(bot.shape) || config.pickerShapes.includes(bot.shape) ? bot.shape : Object.hasOwn(config.shapeAliases, bot.shape) ? (config.shapeAliases as Record<string, string>)[bot.shape] : "blob";
-  const fill = special ? colors[special.color] : Object.hasOwn(colors, bot.color) ? colors[bot.color] : colors.teal;
+  const fill = special ? NAMED_COLORS[special.color] : colorHex(bot.color);
   const key = special ? shape : `${shape}:${fill}`;
   if (icons.has(key)) return icons.get(key)!;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   // Without this a browser won't draw the file as an image, and T3 falls back to initials.
   svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   const character = new Character(svg, { shape: special ? "ball" : shape, state: "idle", inkFlat: fill, eyeColor: "#ffffff", sizePx: 64, paused: "hold-pose", random: () => 0.5 });
+  const ink = special ? null : iconInk(fill);
   if (special) decorateT3Avatar(svg, character.parts()).holdFrame();
-  else cutoutEyes(svg, character.parts());
+  else if (!ink?.eye) cutoutEyes(svg, character.parts());
   character.destroy();
-  // Regular silhouettes export literal body colors with transparent eye cutouts.
-  if (!special) character.parts().body.setAttribute("fill", fill);
-  if (!special && (bot.color === "white" || bot.color === "black")) {
-    character.parts().body.setAttribute("stroke", "#959595");
-    character.parts().body.setAttribute("stroke-width", "1.5");
+  // Regular silhouettes export literal body colors with transparent eye cutouts, or painted eyes
+  // and an outline when the fill is too close to a page colour.
+  if (ink) {
+    const { body, eyes } = character.parts();
+    body.setAttribute("fill", fill);
+    if (ink.eye) for (const eye of eyes) eye.setAttribute("fill", ink.eye);
+    if (ink.edge) { body.setAttribute("stroke", ink.edge); body.setAttribute("stroke-width", "1.5"); }
   }
   const content = svg.outerHTML;
   icons.set(key, content);

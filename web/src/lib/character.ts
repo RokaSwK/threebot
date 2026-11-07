@@ -1,4 +1,5 @@
 import config from "../../../server/avatar-config.json";
+import { avatarInk, contrast, isCustomColor, isNamedColor, NAMED_COLORS, normalizeHex, textInk } from "../../../server/avatar-color.mts";
 import { cutoutEyes } from "../../../server/avatar-eyes.mts";
 import { decorateT3Avatar } from "../../../server/avatar-t3.mts";
 import { Character as Engine } from "../../../server/character.mts";
@@ -10,7 +11,7 @@ export const SPECIAL_AVATARS = config.specialShapes;
 export const PICKER_SHAPES = config.pickerShapes;
 export const PICKER_COLORS = config.pickerColors;
 export const DEFAULT_AVATAR = config.defaultAvatar;
-export const COLORS: Record<string, string> = { ...config.colors, ...Object.fromEntries(PICKER_COLORS.filter(c => c.id !== "black").map(c => [c.id, c.value])) };
+export const COLORS: Record<string, string> = NAMED_COLORS;
 export const COLOR_NAMES = Object.keys(COLORS);
 const shapeAliases: Record<string, string> = config.shapeAliases;
 
@@ -18,9 +19,60 @@ export function avatarShape(name: string) {
   return SHAPE_NAMES.includes(name) || PICKER_SHAPES.includes(name) ? name : Object.hasOwn(shapeAliases, name) ? shapeAliases[name] : "blob";
 }
 
+const BLACK = "light-dark(#000000, #FFFFFF)";
+/** The fill for a stored colour: a palette name or "#rrggbb". Anything else is teal. */
 export function botColor(name: string | undefined) {
-  if (name === "black") return "light-dark(#000000, #FFFFFF)";
-  return name && Object.hasOwn(COLORS, name) ? COLORS[name] : COLORS.teal;
+  if (name === "black") return BLACK;
+  if (isNamedColor(name)) return COLORS[name];
+  return (isCustomColor(name) && normalizeHex(name)) || COLORS.teal;
+}
+export { isCustomColor };
+
+/** Text in a Bot's colour, such as its name in a mention, kept readable on both themes. */
+export function botTextColor(name: string | undefined) {
+  const fill = botColor(name);
+  if (fill === BLACK) return fill;
+  const light = textInk(fill, "light"), dark = textInk(fill, "dark");
+  return light === dark ? light : `light-dark(${light}, ${dark})`;
+}
+
+/** A user bubble in the Bot's colour, or null for the default bubble (colours that read as neutral or vanish into a page). */
+export function bubbleColors(name: string | undefined) {
+  if (name === "white" || name === "gray" || name === "black") return null;
+  const fill = botColor(name);
+  if (!isCustomColor(name)) return { background: fill, color: "#fff" };
+  if (fillInk(fill)?.edge) return null;
+  return { background: fill, color: contrast("#ffffff", fill) >= contrast("#141414", fill) ? "#fff" : "#141414" };
+}
+
+const EYE_BG = "var(--bot-eye-bg, var(--bg-chat))";
+const pair = (light: string | null, dark: string | null, fallback: string) => light === dark ? light ?? fallback : `light-dark(${light ?? fallback}, ${dark ?? fallback})`;
+/** How a fill stays readable on the page in each theme: CSS colours, or null where nothing is needed. */
+export function fillInk(fill: string) {
+  if (!fill.startsWith("#")) return null;
+  const { light, dark } = avatarInk(fill);
+  return {
+    edge: light.edge || dark.edge ? pair(light.edge, dark.edge, "transparent") : null,
+    // Cut-out eyes show the page, so a fill close to the page gets painted eyes instead.
+    eye: light.eye || dark.eye ? pair(light.eye, dark.eye, EYE_BG) : null,
+    // An untouched fill stays exactly as given.
+    ink: light.ink === dark.ink && light.ink === normalizeHex(fill) ? fill : pair(light.ink, dark.ink, fill),
+  };
+}
+/** Whether this fill paints its eyes (true) or cuts them out (false): switching rebuilds the character. */
+export const paintsEyes = (fill: string) => !!fillInk(fill)?.eye;
+
+/** The outline, eye and overlay colours for a fill, on an existing character. */
+export function applyInk(svg: SVGSVGElement, character: Pick<Character, "parts">, fill: string) {
+  const ink = fillInk(fill);
+  const { body, eyes } = character.parts();
+  if (ink?.edge) {
+    body.setAttribute("stroke", ink.edge);
+    body.setAttribute("stroke-width", "1.25");
+    body.setAttribute("vector-effect", "non-scaling-stroke");
+  } else body.setAttribute("stroke", "none");
+  if (ink?.eye) for (const eye of eyes) eye.style.fill = ink.eye;
+  svg.style.setProperty("--fg", ink?.ink ?? fill);
 }
 
 interface Character {
@@ -40,7 +92,7 @@ export function createCharacter(svg: SVGSVGElement, props: { shape: string; stat
   const t3 = props.shape === "t3";
   const character: Character = new Engine(svg, {
     shape: t3 ? "ball" : avatarShape(props.shape), state: config.states[props.state], inkFlat: t3 ? COLORS.purple : props.fill,
-    eyeColor: t3 ? "#ffffff" : "var(--bot-eye-bg, var(--bg-chat))", sizePx: props.size,
+    eyeColor: t3 ? "#ffffff" : EYE_BG, sizePx: props.size,
   });
   if (t3) {
     const skin = decorateT3Avatar(svg, character.parts());
@@ -61,11 +113,8 @@ export function createCharacter(svg: SVGSVGElement, props: { shape: string; stat
       destroy: character.destroy.bind(character),
     };
   }
-  cutoutEyes(svg, character.parts());
-  if (props.fill === COLORS.white) {
-    character.parts().body.setAttribute("stroke", "var(--border-strong)");
-    character.parts().body.setAttribute("stroke-width", "1");
-  }
+  if (!paintsEyes(props.fill)) cutoutEyes(svg, character.parts());
+  applyInk(svg, character, props.fill);
   return character;
 }
 

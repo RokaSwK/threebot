@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { api } from "./lib/api";
+import { isCustomColor } from "../../server/avatar-color.mts";
+import { rememberColor } from "./lib/recentColors";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -611,6 +613,7 @@ export async function createBot(input: { name: string; shape: string; color: str
   // The gateway creates the folder, the T3 project and the main thread.
   const bot = await mutateBots(async () => {
     const created = await api.createBot({ ...input, section: input.section ?? null, model });
+    if (isCustomColor(input.color)) rememberColor(input.color);
     publishBots(await api.bots());
     if (!created.mainThreadId) throw new Error("The Bot was created but T3 didn't start its conversation");
     return created;
@@ -645,6 +648,7 @@ export function updateBot(slug: string, patch: Partial<Bot>) {
     const bot = get().bots[slug];
     if (!bot) return;
     await api.saveBot(slug, patch);
+    if (isCustomColor(patch.color)) rememberColor(patch.color);
     publishBots(await api.bots());
     if (patch.name && bot.projectId) {
       await t3.call("projects.mutate", { type: "project.update", commandId: uuid(), projectId: bot.projectId, title: patch.name }).catch(() => {});
