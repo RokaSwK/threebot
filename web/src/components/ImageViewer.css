@@ -1,7 +1,7 @@
 /* Full-screen image viewer: always dark, flat, like the app's dark theme. */
 .image-viewer {
   position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
-  background: #000000eb; color: #f5f5f7; outline: none;
+  background: #000000f2; color: #f5f5f7; outline: none;
   padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   animation: image-viewer-in 140ms ease-out;
 }

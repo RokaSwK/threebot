@@ -182,7 +182,8 @@ export function ImageViewer({ images, initialIndex, onClose, scopeThreadId = nul
   };
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || (event.target as Element).closest("button")) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    // Capture keeps a drag going outside the stage; it is optional, and throws for pointers the browser no longer tracks.
+    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* keep the gesture without capture */ }
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     setGesturing(true);
     if (pointers.current.size === 2) pinchStart();
