@@ -245,8 +245,19 @@ test("a custom colour previews live while it is picked and is saved, and remembe
   await click(labeled("Custom colour #FF33AA"));
   assert.equal(labeled("#ff33aa").getAttribute("aria-pressed"), "true", "a recent colour");
   // A picked colour that is exactly a swatch is stored by its name.
-  await input(document.querySelector<HTMLInputElement>(".color-picker-hex input"), avatarConfig.pickerColors.find((c) => c.id === "blue").value);
+  const field = document.querySelector<HTMLInputElement>(".color-picker-hex input");
+  await input(field, avatarConfig.pickerColors.find((c) => c.id === "blue").value);
   assert.equal(labeled("blue").getAttribute("aria-pressed"), "true");
+  // Except black, whose swatch turns white in dark mode: a picked #000000 stays black.
+  await input(field, "000000");
+  assert.equal(labeled("black").getAttribute("aria-pressed"), "false");
+  assert.equal(labeled("Custom colour #000000").getAttribute("aria-pressed"), "true");
+  // Escape cancels a half-typed value instead of committing it.
+  await act(async () => field.focus());
+  await input(field, "abc");
+  await key(field, "Escape");
+  assert.equal(field.value, "000000");
+  assert.ok(labeled("Custom colour #000000"));
 });
 
 test("near-white and near-black fills get an outline, painted eyes and visible ink in each theme", () => {

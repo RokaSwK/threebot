@@ -25,13 +25,23 @@ const iconInk = (fill: string) => {
   return { edge: light.edge ?? dark.edge, eye: light.eye ?? dark.eye };
 };
 
+// The object renderer draws no outline: grow the drawing's shape by a hair in the edge colour, under it.
+function outlined(svg: string, edge: string) {
+  const open = svg.indexOf(">") + 1, close = svg.lastIndexOf("</svg>");
+  const filter = `<filter id="threebot-edge" x="-10%" y="-10%" width="120%" height="120%">`
+    + `<feMorphology in="SourceAlpha" operator="dilate" radius="1.4" result="grown"/><feFlood flood-color="${edge}"/><feComposite operator="in" in2="grown"/>`
+    + `<feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  return `${svg.slice(0, open)}<defs>${filter}</defs><g filter="url(#threebot-edge)">${svg.slice(open, close)}</g></svg>`;
+}
+
 const icons = new Map<string, string>();
 export function renderBotAvatar(bot: AvatarBot): string {
   const object = objectDefinition(bot);
   if (object) {
     const fill = colorHex(bot.color);
     const key = `object:${object.body.path}:${JSON.stringify(object.eyes)}:${fill}`;
-    if (!icons.has(key)) icons.set(key, renderObjectIcon(object, fill));
+    const edge = iconInk(fill).edge;
+    if (!icons.has(key)) icons.set(key, edge ? outlined(renderObjectIcon(object, fill), edge) : renderObjectIcon(object, fill));
     return icons.get(key)!;
   }
   const special = config.specialShapes.find(avatar => avatar.id === bot.shape);

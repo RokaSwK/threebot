@@ -75,6 +75,9 @@ test("the favicon renderer draws a hex fill, with an outline and painted eyes wh
     for (const eye of eyes) assert.ok(contrast(eye.getAttribute("fill"), colorHex(color)) >= 3, `${color}: eyes contrast`);
     assert.ok(body.getAttribute("stroke"), `${color}: outlined`);
   }
+  // Object icons draw no outline of their own: one that would vanish into a page gets a grown edge.
+  for (const color of ["#f9f8fd", "#16141f", "white"]) assert.match(renderBotAvatar({ shape: "object:ghost", color }), /<g filter="url\(#threebot-edge\)">/, color);
+  assert.doesNotMatch(renderBotAvatar({ shape: "object:ghost", color: "#3fa7d6" }), /threebot-edge/);
   // A hex fill reaches object avatars too.
   assert.match(renderBotAvatar({ shape: "object:ghost", color: "#5b2a86" }), /#5b2a86/i);
   assert.notEqual(renderBotAvatar({ shape: "ball", color: "#3fa7d6" }), renderBotAvatar({ shape: "ball", color: "teal" }));

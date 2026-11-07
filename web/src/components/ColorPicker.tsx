@@ -109,6 +109,8 @@ export function ColorPicker({ value, onChange, onClose, disabled = false, previe
     e.preventDefault(); set(prev => ({ ...prev, h: clamp(move(prev.h), 0, 359) }));
   };
   const typed = normalizeHex(text);
+  // Escape blurs the field to cancel: that blur must not commit what was typed.
+  const cancelled = useRef(false);
   const dropper = eyeDropper();
   const pick = async () => {
     if (!dropper) return;
@@ -139,8 +141,8 @@ export function ColorPicker({ value, onChange, onClose, disabled = false, previe
             onFocus={e => { setEditing(true); e.currentTarget.select(); }}
             onChange={e => { const next = e.target.value; setText(next); const hex6 = /^#?[0-9a-f]{6}$/i.test(next.trim()) && normalizeHex(next); if (hex6) setHex(hex6); }}
             onPaste={e => { const pasted = hexIn(e.clipboardData.getData("text")); if (pasted) { e.preventDefault(); setHex(pasted); } }}
-            onBlur={() => { setEditing(false); if (typed && typed !== hex) setHex(typed); else setText(hex); }}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (typed) setHex(typed); e.currentTarget.blur(); } if (e.key === "Escape") { e.stopPropagation(); setText(hex); e.currentTarget.blur(); } }} />
+            onBlur={() => { setEditing(false); if (!cancelled.current && typed && typed !== hex) setHex(typed); else setText(hex); cancelled.current = false; }}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (typed) setHex(typed); e.currentTarget.blur(); } if (e.key === "Escape") { e.stopPropagation(); cancelled.current = true; setText(hex); e.currentTarget.blur(); } }} />
         </label>
         {dropper && <button type="button" className="color-picker-dropper" disabled={disabled} onClick={() => void pick()} aria-label="Pick a colour from the screen" title="Pick from the screen"><Pipette size={16} aria-hidden="true" /></button>}
       </div>

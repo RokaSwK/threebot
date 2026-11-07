@@ -45,8 +45,9 @@ export function AvatarPicker({ shape, color, onChange, disabled = false, shared 
   const [optionOver, setOptionOver] = useState<string | null>(shape);
   const custom = isCustomColor(color);
   const [picking, setPicking] = useState(false);
-  // A colour picked that is exactly a palette swatch is stored by its name.
-  const pickColor = (hex: string) => onChange(shape, PICKER_COLORS.find(c => c.value.toLowerCase() === hex)?.id ?? hex);
+  // A colour picked that is exactly a palette swatch is stored by its name, except black: the black
+  // swatch turns white in dark mode, and a picked #000000 means black.
+  const pickColor = (hex: string) => onChange(shape, PICKER_COLORS.find(c => c.id !== "black" && c.value.toLowerCase() === hex)?.id ?? hex);
   const drawing = draw?.drawing ?? null;
   const options = drawing?.options ?? [];
   // The chosen option, or the first one that is ready.
