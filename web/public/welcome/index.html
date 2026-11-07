@@ -459,7 +459,7 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
 <main id="top">
   <header class="hero">
     <div class="wrap">
-      <a class="badge blur-in post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener"><b>Threebot 0.1.1</b> Release notes <i aria-hidden="true">&#8599;</i></a>
+      <a class="badge blur-in post" href="https://github.com/RokaSwK/threebot/releases/latest" rel="noopener" data-release><b data-release-name>Threebot 0.1.5</b> Release notes <i aria-hidden="true">&#8599;</i></a>
       <button type="button" class="ball" data-live-ball aria-label="Show the ball's next animation"><img src="/welcome/img/ball.webp" width="720" height="720" alt="" fetchpriority="high" /><i class="pill l"></i><i class="pill r"></i></button>
       <h1 class="blur-in d1">Your Bot is a T3 thread</h1>
       <p class="lede blur-in d2">Threebot gives a T3 Code thread a face, a memory and a place on your phone. On your machine, on the plans you already pay for.</p>
@@ -728,6 +728,14 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
     root.classList.add("public");
     const n = (await r.json()).stargazers_count;
     if (Number.isFinite(n)) stars(n);
+  }).catch(() => {});
+  // The release pill: the version in the HTML is the latest one when the page was deployed (the Pages
+  // workflow writes it in), and the live latest release replaces it.
+  fetch("https://api.github.com/repos/RokaSwK/threebot/releases/latest").then((r) => r.ok ? r.json() : null).then((release) => {
+    const version = /^v?(\d+\.\d+\.\d+)$/.exec(release?.tag_name || "")?.[1];
+    if (!version) return;
+    document.querySelector("[data-release-name]").textContent = `Threebot ${version}`;
+    if (release.html_url?.startsWith("https://github.com/RokaSwK/threebot/releases/")) document.querySelector("[data-release]").href = release.html_url;
   }).catch(() => {});
   for (const box of document.querySelectorAll("[data-install]")) {
     const button = box.querySelector("[data-copy]");

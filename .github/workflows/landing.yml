@@ -6,6 +6,10 @@ on:
     branches: [main]
     paths: ["web/public/welcome/**", "web/src/landing/**", "install.sh", ".github/workflows/landing.yml"]
   workflow_dispatch:
+  # Redeploy after each release so the page's fallback release version is the new one.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 permissions:
   contents: read
   pages: write
@@ -15,6 +19,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -37,6 +42,18 @@ jobs:
           cp install.sh _site/install.sh
           printf 'bot.swk.tools\n' > _site/CNAME
           touch _site/.nojekyll
+      # The page reads the latest release live; this writes it in too, for when GitHub can't be reached.
+      - name: Write in the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null | sed 's/^v//')" || true
+          if printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            sed -i "s|<b data-release-name>Threebot [^<]*</b>|<b data-release-name>Threebot $version</b>|" _site/index.html _site/welcome/index.html
+            grep -c "Threebot $version</b>" _site/index.html
+          else
+            echo "No latest release found; keeping the version in the page."
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
