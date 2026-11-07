@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { validatePing } from "../src/schema.ts";
-import worker, { stats, type D1Database, type D1PreparedStatement, type D1Result } from "../src/worker.ts";
+import worker, { prune, stats, storePing, type D1Database, type D1PreparedStatement, type D1Result } from "../src/worker.ts";
 
 const ID = "3f6c2a51-8d1e-4b7a-9c0f-2e5d7a1b4c93";
 const ping = (extra: Record<string, unknown> = {}) => ({
@@ -90,4 +90,15 @@ test("dashboard queries run against the schema", () => {
   const queries = readFileSync(new URL("../queries.sql", import.meta.url), "utf8").split(";").map((q) => q.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
   assert.ok(queries.length >= 8);
   for (const query of queries) db.sqlite.prepare(query).all();
+});
+
+test("the daily prune drops rows older than 400 days and keeps the rest", async () => {
+  const db = fakeD1();
+  const old = validatePing(ping()); assert.ok(old.ok);
+  await storePing(db, old.ping, "2025-10-01");
+  await storePing(db, old.ping, "2026-11-07");
+  await prune(db, "2026-11-07");
+  const days = (table: string) => (db.sqlite.prepare(`SELECT day FROM ${table} ORDER BY day`).all() as { day: string }[]).map((r) => r.day);
+  assert.deepEqual(days("pings"), ["2026-11-07"]);
+  assert.deepEqual(days("tokens"), ["2026-11-07"]);
 });

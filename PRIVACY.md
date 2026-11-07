@@ -51,4 +51,4 @@ Messages, prompts or replies, thread or routine titles, Bot names, file names or
 
 ### Where it goes
 
-To a small collector in this repository ([`telemetry/`](telemetry)): a Cloudflare Worker that checks every ping against the format above, drops any other field, keeps one ping per install ID per day, and stores no IP addresses or request headers. Pings are kept for at most 400 days.
+To `https://stats.swk.tools`, a small collector in this repository ([`telemetry/`](telemetry)): a Cloudflare Worker that checks every ping against the format above, drops any other field, keeps one ping per install ID per day, and stores no IP addresses or request headers. Pings are kept for at most 400 days; a daily job deletes older ones.

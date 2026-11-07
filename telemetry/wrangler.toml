@@ -1,8 +1,13 @@
-# Not deployed. See README.md for the steps; the database_id comes from `wrangler d1 create`.
+# Deployed at https://stats.swk.tools (account of the Threebot maintainer). See README.md.
 name = "threebot-telemetry"
 main = "src/worker.ts"
 compatibility_date = "2026-10-01"
-workers_dev = true
+workers_dev = false
+routes = [{ pattern = "stats.swk.tools", custom_domain = true }]
+
+# Daily retention: drop pings and token rows older than 400 days.
+[triggers]
+crons = ["17 3 * * *"]
 
 # Don't keep request logs (they would include IP addresses).
 [observability]
@@ -11,6 +16,6 @@ enabled = false
 [[d1_databases]]
 binding = "DB"
 database_name = "threebot-telemetry"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "479f90a7-251a-4719-8808-35d603863abe"
 
 # STATS_TOKEN (for GET /v1/stats) is a secret: `npx wrangler secret put STATS_TOKEN`.

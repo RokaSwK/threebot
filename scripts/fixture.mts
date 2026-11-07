@@ -72,6 +72,8 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
       T3_TOKEN_FILE: path.join(root, 'unused-token'), T3_SECRETS_DIR: path.join(root, 'secrets'),
       VAULT_FILE: path.join(root, 'vault', 'vault.enc'), VAULT_KEY_FILE: path.join(root, 'vault', 'vault-key'),
       BOT_MCP_URL: `http://127.0.0.1:${port}/mcp/bot`,
+      // Never send a fixture's usage-stats ping to the real collector (port 9 is discard; the send just fails).
+      THREEBOT_TELEMETRY_URL: 'http://127.0.0.1:9/v1/ping',
       ...(executorPort === undefined ? {} : { EXECUTOR_BACKEND: 'self-hosted', EXECUTOR_URL: `http://127.0.0.1:${executorPort}`,
         EXECUTOR_PUBLIC_URL: `http://127.0.0.1:${executorPort}`, EXECUTOR_ORG: 'fixture', EXECUTOR_TOKEN: 'fixture-only' }),
     },
