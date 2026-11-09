@@ -98,6 +98,10 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     const alphaToken = String(alphaMcp.mcpServers.bot.headers.Authorization).replace(/^Bearer\s+/u, '');
     assert.match(alphaToken, /^[a-f0-9]{64}$/u);
     assert.notEqual(alphaToken, 'fixture-only');
+    const alphaPi = JSON.parse(await readFile(path.join(botsRoot, 'alpha/.pi/mcp.json'), 'utf8'));
+    assert.equal(alphaPi.mcpServers.bot.url, `http://127.0.0.1:${port}/mcp/bot`);
+    assert.equal(alphaPi.mcpServers.bot.type, 'streamable-http');
+    assert.equal(alphaPi.mcpServers.bot.headers.Authorization, `Bearer ${alphaToken}`);
     const listed = await mcp(alphaToken, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
     assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === 'memory_read'));
     const readMemory = await mcp(alphaToken, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });

@@ -437,6 +437,23 @@ async function writeMcpConfig(dir: string, slug: string) {
   const cs = (await readJson(claudeSettings, {})) ?? {};
   cs.enableAllProjectMcpServers = true;
   await writeJson(claudeSettings, cs);
+  // Pi reads project MCP servers from .pi/mcp.json once the project is trusted.
+  // T3 launches a Bot in its own folder, so this keeps the per-Bot bearer local to it.
+  const piPath = path.join(dir, ".pi", "mcp.json");
+  await fs.mkdir(path.dirname(piPath), { recursive: true });
+  const pi = (await readJson(piPath, {})) ?? {};
+  pi.mcpServers = { ...(pi.mcpServers ?? {}) };
+  for (const [name, definition] of Object.entries(servers)) {
+    if (!definition.url) continue;
+    pi.mcpServers[name] = {
+      type: "streamable-http",
+      url: definition.url,
+      headers: definition.headers,
+      description: name === "bot" ? "Threebot memory, Vault and Projects tools." : "The user's connected apps.",
+    };
+  }
+  await writeJson(piPath, pi);
+  await fs.chmod(piPath, 0o600).catch(() => {});
   return Boolean(servers.executor);
 }
 
