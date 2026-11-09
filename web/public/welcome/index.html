@@ -714,6 +714,9 @@ footer a { color: var(--muted); text-decoration: underline; text-underline-offse
   const face = (shape, color = "purple", size, state) => `<i class="av" data-bot data-shape="${shape}" data-color="${color}"${state ? ` data-state="${state}"` : ""} style="--c:${COLORS[color] || COLORS.purple}${size ? `;--s:${size}px` : ""}"></i>`;
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
+  // bot.swk.tools once ran a real Threebot; drop its leftover service worker (sw.js there now retires it too).
+  // Only on that host: this page is also served by every Threebot at /welcome, under the app's own worker.
+  if (location.hostname === "bot.swk.tools") navigator.serviceWorker?.getRegistrations().then((all) => all.forEach((r) => r.unregister())).catch(() => {});
   // The GitHub links turn on by themselves once the repository is public.
   // The star count in the HTML is a fallback from the last edit; the live one replaces it. A rate-limited
   // API (403/429) still means the repository is public, so the page keeps the baked count.
