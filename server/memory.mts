@@ -515,6 +515,49 @@ export async function writeMemoryStateFile(file: string, state: MemoryState): Pr
   await writeTextAtomic(file, `${JSON.stringify(state, null, 2)}\n`, 0o600);
 }
 
+/** What the Memory tab shows: facts split into bot/shared, with their provenance. */
+export type MemoryFactView = ParsedFact & {
+  line: string;
+  hash: string;
+  provenance: MemoryProvenance | null;
+};
+export type MemoryView = {
+  bot: { text: string; revision: string; truncated: boolean; facts: MemoryFactView[] };
+  shared: { text: string; revision: string; truncated: boolean; facts: MemoryFactView[] };
+  notes: MemoryNote[];
+  forgotten: number;
+  limits: MemoryLimits;
+};
+
+/** Read both memory layers, their parsed facts and provenance for the Memory tab. */
+export async function readMemoryView({ botDir, sharedFile, limits = {} }: { botDir: string; sharedFile: string; limits?: Partial<MemoryLimits> }): Promise<MemoryView> {
+  const merged = { ...MEMORY_LIMITS, ...limits };
+  const [bot, shared, botState, sharedState, notes] = await Promise.all([
+    readMemoryText({ botDir, sharedFile, scope: "bot", limits: merged }),
+    readMemoryText({ botDir, sharedFile, scope: "shared", limits: merged }),
+    readMemoryState(botDir),
+    readMemoryStateFile(path.join(path.dirname(sharedFile), "shared-memory.state.json")),
+    listMemoryNotes(botDir, merged),
+  ]);
+  const parse = (text: string, state: MemoryState): MemoryFactView[] =>
+    normalizeText(text)
+      .split("\n")
+      .filter((line) => /^\s*[-*+]\s+/u.test(line))
+      .map((raw) => {
+        const line = raw.trim();
+        const parsed = parseFact(line);
+        const hash = hashFact(parsed.text);
+        return { ...parsed, line, hash, provenance: state.provenance[hash] ?? null };
+      });
+  return {
+    bot: { ...bot, facts: parse(bot.text, botState) },
+    shared: { ...shared, facts: parse(shared.text, sharedState) },
+    notes,
+    forgotten: new Set([...botState.forgotten, ...sharedState.forgotten]).size,
+    limits: merged,
+  };
+}
+
 /** A memory file changed by the user or another process, not through the core. */
 export function revisionOf(content: string): string {
   return hashContent(normalizeText(content));
@@ -642,6 +685,8 @@ export type MemoryMutationInput = {
   content?: string;
   validFrom?: string | null;
   restore?: boolean;
+  /** The Memory tab acts as the signed-in user; no transcript quote is involved. */
+  trustedUser?: boolean;
   now?: Date;
 };
 
@@ -950,8 +995,12 @@ async function writeNote(input: MemoryMutationInput, ctx: MemoryFileContext, now
  */
 export async function mutateMemory(input: MemoryMutationInput): Promise<MemoryMutationResult> {
   const now = input.now ?? new Date();
-  const evidence = checkOwnerEvidence(input.sourceText, input.sourceQuote);
-  if (!evidence.ok) return { ok: false, code: "invalid", message: evidence.message };
+  if (!input.trustedUser) {
+    const evidence = checkOwnerEvidence(input.sourceText, input.sourceQuote);
+    if (!evidence.ok) return { ok: false, code: "invalid", message: evidence.message };
+  } else if (input.author !== "user") {
+    return { ok: false, code: "invalid", message: "A trusted memory action must be made by the user." };
+  }
   if (typeof input.expectedRevision !== "string") return { ok: false, code: "invalid", message: "expectedRevision is required. Read the memory first." };
   if (!input.author.trim()) return { ok: false, code: "invalid", message: "A memory write needs an author." };
   const ctx = memoryFileContext(input.botDir, input.sharedFile, input.scope);

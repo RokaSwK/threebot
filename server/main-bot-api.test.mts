@@ -105,6 +105,15 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     const legacyMemory = await mcp('fixture-only', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });
     assert.equal(legacyMemory.result.isError, true);
     assert.match(legacyMemory.result.content[0].text, /legacy token/iu);
+    const memoryView = await request('/api/memory?slug=alpha');
+    assert.equal(memoryView.status, 200);
+    assert.equal(memoryView.body.bot.facts[0].text, 'Prefers short answers.');
+    assert.equal(memoryView.body.bot.facts[0].category, 'preference');
+    const forgotten = await request('/api/memory/forget', 'POST', { slug: 'alpha', scope: 'bot', fact: '- [preference] Prefers short answers.', expectedRevision: memoryView.body.bot.revision });
+    assert.equal(forgotten.status, 200);
+    assert.equal(forgotten.body.ok, true);
+    const afterForget = await request('/api/memory?slug=alpha');
+    assert.equal(afterForget.body.bot.facts.length, 0);
     assert.match(await readFile(path.join(botsRoot, 'beta/AGENTS.md'), 'utf8'), /You are the primary Bot/);
     await stop();
     await start();

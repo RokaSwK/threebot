@@ -5,6 +5,7 @@ import { ModelPicker } from "./ModelPicker";
 import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
 import { Library } from "./Library";
+import { MemoryTab } from "./Memory";
 import { ThreadFamily } from "./ThreadFamily";
 import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
@@ -55,7 +56,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
     <aside className={clsx("bot-details flex h-full shrink-0 flex-col border-l border-line bg-details", (showRoutines || openRoutine) && "routine-page")} style={{ width }} aria-label="Conversation details">
       <div className="details-header flex h-[52px] shrink-0 items-center justify-end px-3">
         <IconButton onClick={() => { if (openRoutine) { setRoutine(null); return; } if (tab !== "details" || showRoutines) { useApp.setState({ detailsTab: "details" }); setShowRoutines(false); } else setDetailsOpen(false); }} title="Back" className="details-back mr-auto hidden"><ChevronLeft size={20} /></IconButton>
-        <span className="details-page-title hidden flex-1 text-center text-[17px] font-medium">{openRoutine ? "Routine" : tab === "library" ? "Library" : tab === "computer" ? "Computer" : showRoutines ? "Routines" : ""}</span>
+        <span className="details-page-title hidden flex-1 text-center text-[17px] font-medium">{openRoutine ? "Routine" : tab === "library" ? "Library" : tab === "computer" ? "Computer" : tab === "memory" ? "Memory" : showRoutines ? "Routines" : ""}</span>
         <IconButton onClick={() => setDetailsOpen(false)} title="Hide details" className="details-close"><ChevronsRight size={16} /></IconButton>
       </div>
       {openRoutine ? (
@@ -85,7 +86,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
           </div>
 
           <div className="details-tabs mb-4 flex justify-center gap-1">
-            {(["details", "library", "computer"] as const).map((t) => (
+            {(["details", "library", "computer", "memory"] as const).map((t) => (
               <button key={t} onClick={() => useApp.setState({ detailsTab: t })} className={clsx("rounded-full px-3 py-1 text-[13px] capitalize", tab === t ? "bg-active text-fg" : "text-muted hover:text-fg")}>
                 {t}
               </button>
@@ -106,6 +107,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
           </>}
           {tab === "library" && <Library bot={bot} />}
           {tab === "computer" && <ComputerTab bot={bot} />}
+          {tab === "memory" && <MemoryTab bot={bot} />}
         </div>
       )}
       {picker && <AvatarDialog key={bot.slug} bot={bot} onClose={() => setPicker(false)} />}

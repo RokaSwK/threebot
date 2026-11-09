@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { readMemoryNoteWithRevision, readMemoryView, mutateMemory } from "./memory.mts";
 import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage } from "./memory-mcp.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
@@ -988,6 +989,38 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await threadMeta.addVoiceCall(await readBody(req)));
     }
     if (p === "/api/bots" && req.method === "GET") return send(res, 200, { bots: await listBots() }, { "cache-control": "no-store" });
+    if (p === "/api/memory" && req.method === "GET") {
+      const bot = await getBot(url.searchParams.get("slug") ?? "");
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      return send(res, 200, await readMemoryView({ botDir: botDir(bot.slug), sharedFile: path.join(appDir, "shared-memory.md") }), { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/note" && req.method === "GET") {
+      const bot = await getBot(url.searchParams.get("slug") ?? "");
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      return send(res, 200, await readMemoryNoteWithRevision(botDir(bot.slug), url.searchParams.get("path") ?? ""), { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/forget" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      const scope = body?.scope === "shared" ? "shared" : "bot";
+      if (typeof body?.fact !== "string" || typeof body?.expectedRevision !== "string") return send(res, 400, { error: "fact and expectedRevision are required" });
+      const result = await mutateMemory({
+        botDir: botDir(bot.slug),
+        sharedFile: path.join(appDir, "shared-memory.md"),
+        scope,
+        op: "forget",
+        expectedRevision: body.expectedRevision,
+        author: "user",
+        sourceMessageId: "memory-tab",
+        sourceQuote: "forget from the memory tab",
+        sourceText: "forget from the memory tab",
+        fact: body.fact,
+        trustedUser: true,
+      });
+      return send(res, result.ok ? 200 : 409, result, { "cache-control": "no-store" });
+    }
     if (p === "/api/bot-identities" && req.method === "GET") return send(res, 200, { bots: await archivedBotIdentities(path.join(appDir, "trash")) }, { "cache-control": "no-store" });
     if (p === "/api/bots" && req.method === "POST") {
       requireJson(req);

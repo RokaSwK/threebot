@@ -10,6 +10,7 @@ import {
   mutateMemory,
   readMemoryNoteWithRevision,
   readMemoryState,
+  readMemoryView,
   readMemoryText,
   recoverMemoryJournals,
   revisionOf,
@@ -275,6 +276,27 @@ test("search finds facts and notes", async () => {
   const hits = await searchMemory({ botDir, sharedFile, query: "short answers" });
   assert.equal(hits[0]?.path, "MEMORY.md");
   assert.match(hits[0]?.text ?? "", /short answers/iu);
+});
+
+test("the Memory view returns both layers with provenance", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const before = await readMemoryText({ botDir, sharedFile, scope: "bot" });
+  const added = await mutateMemory({
+    botDir, sharedFile, scope: "bot", op: "add", expectedRevision: before.revision,
+    author: "alpha", sourceMessageId: "m1", sourceQuote, sourceText,
+    fact: "Prefers short answers.", category: "preference", now,
+  });
+  assert.equal(added.ok, true);
+  if (!added.ok) return;
+  const view = await readMemoryView({ botDir, sharedFile });
+  assert.equal(view.bot.revision, added.revision);
+  assert.equal(view.bot.facts.length, 1);
+  assert.equal(view.bot.facts[0]?.text, "Prefers short answers.");
+  assert.equal(view.bot.facts[0]?.category, "preference");
+  assert.equal(view.bot.facts[0]?.provenance?.author, "alpha");
+  assert.equal(view.bot.facts[0]?.provenance?.sourceMessageId, "m1");
+  assert.equal(view.shared.facts.length, 0);
+  assert.equal(view.forgotten, 0);
 });
 
 test("closeFactRange preserves the source and opens an unknown start", () => {
