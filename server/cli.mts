@@ -10,6 +10,7 @@ import { activate, compareVersions, currentVersion, findRelease, homeDir, instal
 import { installService, restartService, serviceInstalled, serviceSpec, serviceSupported, uninstallService } from "./service.mts";
 import { randomBytes } from "node:crypto";
 import { createAccessStore, createTailscale, findCloudflared, hashPassword, installCloudflared, MIN_PASSWORD, pickServePort, serveOwner, tailnetUrl } from "./remote-access.mts";
+import { antigravityBridgeStatus, installAntigravityBridge, uninstallAntigravityBridge } from "./harness-bridge.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `threebot ${currentVersion()}
@@ -31,6 +32,7 @@ Usage: threebot <command> [options]
   service <install|uninstall|restart|status>
   tailscale <on|off|status>   Private link for your tailnet, through Tailscale Serve.
   tunnel <on|off|status>      Public Cloudflare quick-tunnel link. Needs a password.
+  bridge <install|uninstall|status>  Configure Antigravity's global MCP bridge.
   password           Set the password the app asks for (reads it from the terminal or stdin).
   version            Print the version.
 
@@ -353,6 +355,25 @@ async function passwordCommand() {
   await restartIfManaged();
 }
 
+async function bridgeCommand(args: string[]) {
+  const action = args[0] ?? "status";
+  if (!["install", "uninstall", "status"].includes(action)) fail(`Unknown bridge action: ${action}`);
+  const bridgePath = path.join(here, "threebot-mcp-bridge.mts");
+  if (action !== "status" && !existsSync(bridgePath)) fail(`The bridge is missing: ${bridgePath}`);
+  const options = { bridgePath };
+  const result = action === "install" ? await installAntigravityBridge(options)
+    : action === "uninstall" ? await uninstallAntigravityBridge(options)
+      : { changed: false, status: await antigravityBridgeStatus(options), backup: null };
+  if (flags.json) return say(JSON.stringify({ action, ...result }, null, 2));
+  const { status } = result;
+  say(`Antigravity config: ${status.configPath}`);
+  say(`Bridge: ${status.bridgePath}`);
+  say(`Status: ${status.installed ? "installed" : "not installed"}${status.bridgeExists ? "" : " (bridge file missing)"}`);
+  if (status.otherServers.length) say(`Other MCP servers kept: ${status.otherServers.join(", ")}`);
+  if (result.backup) say(`Backup: ${result.backup}`);
+  if (action === "install" && result.changed) say("Restart Antigravity or start a new T3 thread to load it.");
+}
+
 // Every command reads THREEBOT_HOME/.env, without overriding the real environment.
 for (const [k, v] of Object.entries(readEnvFile())) if (process.env[k] === undefined) process.env[k] = v;
 const { flags, rest } = parseArgs(process.argv.slice(2));
@@ -368,6 +389,7 @@ try {
   else if (command === "service") await serviceCommand(args);
   else if (command === "tailscale") await tailscaleCommand(args);
   else if (command === "tunnel") await tunnelCommand(args);
+  else if (command === "bridge") await bridgeCommand(args);
   else if (command === "password") await passwordCommand();
   else fail(`Unknown command: ${command}. Run \`threebot help\`.`);
 } catch (error) {

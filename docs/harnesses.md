@@ -47,7 +47,17 @@ gateway still checks the per-Bot bearer, the user quote, the revision and tombst
 ## Antigravity
 
 Antigravity's ACP `session/new` only receives T3's `t3-code` server. It does, however, load
-`~/.gemini/config/mcp_config.json` for every session. Point that file at the bridge once:
+`~/.gemini/config/mcp_config.json` for every session. Install the bridge once:
+
+```bash
+threebot bridge install
+threebot bridge status     # config path, bridge path, installed?
+threebot bridge uninstall  # removes only the Threebot entry
+```
+
+`install` merges the `threebot` entry into any existing MCP servers, keeps a timestamped backup and
+writes the file atomically. Use `GEMINI_HOME` when Antigravity uses a non-default home. The manual
+equivalent is:
 
 ```json
 {
@@ -60,7 +70,7 @@ Antigravity's ACP `session/new` only receives T3's `t3-code` server. It does, ho
 }
 ```
 
-Restart Antigravity (or start a new T3 thread) after writing it. The bridge:
+Restart Antigravity (or start a new T3 thread) after installing. The bridge:
 
 - reads the Bot's `.mcp.json` from the session's working directory;
 - only accepts a directory that also has `.bot/bot.json`, so a normal T3 project does not expose
