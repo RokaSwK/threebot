@@ -40,6 +40,8 @@ jobs:
           cp -R web/public/welcome _site/welcome
           cp web/public/welcome/index.html _site/index.html
           cp install.sh _site/install.sh
+          # Retires the old app's service worker in browsers that visited bot.swk.tools when it was a Threebot.
+          cp web/src/landing/sw-reset.js _site/sw.js
           printf 'bot.swk.tools\n' > _site/CNAME
           touch _site/.nojekyll
       # The page reads the latest release live; this writes it in too, for when GitHub can't be reached.
