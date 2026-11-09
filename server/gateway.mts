@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
+import { memorySignature, readSnapshot, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
@@ -435,7 +436,7 @@ async function writeMcpConfig(dir: string) {
   return Boolean(servers.executor);
 }
 
-async function writeAgentsMd(bot: Bot, settings: TemplateSettings) {
+async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   const dir = botDir(bot.slug);
   const executorReady = await writeMcpConfig(dir);
   const file = path.join(dir, "AGENTS.md");
@@ -443,9 +444,40 @@ async function writeAgentsMd(bot: Bot, settings: TemplateSettings) {
   // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
   const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
     organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
-  await fs.writeFile(file, mergeManaged(existing, renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor })));
+  const memory = snapshot ?? await readSnapshot({ botDir: dir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
+  const content = mergeManaged(existing, renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor, memory }));
+  await writeTextAtomic(file, content);
+  if (Buffer.byteLength(content, "utf8") > 24_000) console.warn(`[memory] ${bot.slug}'s AGENTS.md is over 24 KB; some harnesses may cut it`);
   const claude = path.join(dir, "CLAUDE.md");
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
+}
+/** Rewrites a Bot's instructions when its memory changed, so a fresh session sees the new snapshot. */
+function startMemoryWatcher() {
+  const seen = new Map<string, string>();
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const [bots, settings] = await Promise.all([listBots(), getSettings()]);
+      for (const bot of bots) {
+        try {
+          const snapshot = await readSnapshot({ botDir: botDir(bot.slug), sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
+          const signature = memorySignature(snapshot);
+          if (seen.get(bot.slug) === signature) continue;
+          await writeAgentsMd(bot, settings, snapshot);
+          seen.set(bot.slug, signature);
+        } catch (error) {
+          console.error(`refreshing ${bot.slug}'s memory snapshot failed`, error);
+        }
+      }
+    } catch (error) {
+      console.error("refreshing memory snapshots failed", error);
+    } finally {
+      busy = false;
+    }
+  }, 3_000);
+  timer.unref();
 }
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
@@ -976,6 +1008,7 @@ const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBo
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
+startMemoryWatcher();
 
 if (envTailnet) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");

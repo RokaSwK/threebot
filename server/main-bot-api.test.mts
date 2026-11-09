@@ -19,6 +19,8 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'bot.json'), JSON.stringify({ name: slug, mainThreadId: `thread-${slug}`, primary: true, createdAt: '2026-01-01T00:00:00Z' }));
   }
+  await mkdir(path.join(botsRoot, 'alpha', 'memory'), { recursive: true });
+  await writeFile(path.join(botsRoot, 'alpha', 'memory', 'MEMORY.md'), '# Alpha memory\n\n- [preference] Prefers short answers.\n');
   const socket = net.createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
@@ -84,6 +86,8 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
     const instructions = await readFile(path.join(botsRoot, 'alpha/AGENTS.md'), 'utf8');
     assert.doesNotMatch(instructions, /You are the primary Bot/);
+    assert.match(instructions, /<memory>/);
+    assert.match(instructions, /Prefers short answers/);
     assert.match(await readFile(path.join(botsRoot, 'beta/AGENTS.md'), 'utf8'), /You are the primary Bot/);
     await stop();
     await start();
