@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createMemoryTools } from "./memory-mcp.mts";
@@ -18,9 +18,16 @@ async function fixture() {
   const messages: MemoryMessage[] = [
     { id: "m1", text: "I prefer short answers, please.", createdBy: "user", creationSource: "web" },
   ];
+  const reflected = () => messages.map((message, position) => ({ ...message, position, at: "2026-11-09T10:00:00.000Z" }));
   const source = {
     async latestOwnerMessage() { return messages.at(-1) ?? null; },
     async messageById(_slug: string, id: string) { return messages.find((message) => message.id === id) ?? null; },
+    async reflectMessages(_slug: string, afterPosition: number, limit: number) {
+      const list = reflected().filter((message) => message.position > afterPosition).slice(0, limit);
+      const last = list.at(-1) ?? null;
+      return { messages: list, nextPosition: last?.position ?? null, lastMessageId: last?.id ?? null };
+    },
+    async reflectMessageById(_slug: string, id: string) { return reflected().find((message) => message.id === id) ?? null; },
   };
   const call = createMemoryTools({ botsRoot, sharedFile, source });
   return { botsRoot, botDir, sharedFile, messages, call };
@@ -105,6 +112,44 @@ test("shared scope and note reads", async () => {
   const topic = parse(await call("memory_read", { topic: "memory/notes/projects/alpha.md" }, { botSlug: "alpha", legacy: false }));
   assert.match(topic.content, /Runs on the HP server/u);
   assert.ok(topic.revision);
+});
+
+test("memory_reflect returns a bookmark and memory_reflect_apply audits and advances it", async () => {
+  const { call, botDir, messages } = await fixture();
+  const packet = parse(await call("memory_reflect", {}, { botSlug: "alpha", legacy: false }));
+  assert.equal(packet.messages.length, 1);
+  assert.equal(packet.nextPosition, 0);
+  assert.equal(packet.lastMessageId, "m1");
+  assert.ok(packet.revision);
+
+  const applied = await call("memory_reflect_apply", {
+    operations: [{ op: "add", fact: "Prefers short answers.", category: "preference", sourceMessageId: "m1", sourceQuote: "prefer short answers" }],
+    expectedRevision: packet.revision,
+    throughPosition: packet.nextPosition,
+    lastMessageId: packet.lastMessageId,
+  }, { botSlug: "alpha", legacy: false });
+  assert.equal(applied.isError, undefined);
+  const result = parse(applied);
+  assert.equal(result.ok, true);
+  assert.equal(result.applied.length, 1);
+  assert.match(await readFile(path.join(botDir, "memory", "MEMORY.md"), "utf8"), /Prefers short answers/u);
+  assert.match(await readFile(path.join(botDir, "memory", "DREAMS.md"), "utf8"), /reflect 1 applied/u);
+  const state = JSON.parse(await readFile(path.join(botDir, "memory", ".state.json"), "utf8"));
+  assert.equal(state.reflection.lastPosition, 0);
+  assert.equal(state.reflection.lastMessageId, "m1");
+
+  const next = parse(await call("memory_reflect", {}, { botSlug: "alpha", legacy: false }));
+  assert.equal(next.messages.length, 0);
+
+  messages.push({ id: "m2", text: "My framework for tests is Vue.", createdBy: "user", creationSource: "web" });
+  const second = parse(await call("memory_reflect", {}, { botSlug: "alpha", legacy: false }));
+  assert.equal(second.messages[0].id, "m2");
+  const stale = await call("memory_reflect_apply", {
+    operations: [{ op: "add", fact: "Uses Vue.", sourceMessageId: "m1", sourceQuote: "prefer short answers" }],
+    expectedRevision: second.revision, throughPosition: second.nextPosition, lastMessageId: second.lastMessageId,
+  }, { botSlug: "alpha", legacy: false });
+  assert.equal(stale.isError, true);
+  assert.match(stale.content[0]!.text, /before the reflection bookmark/iu);
 });
 
 test("memory_forget removes a fact and memory_search finds notes", async () => {

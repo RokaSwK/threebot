@@ -6,8 +6,11 @@ import {
   MEMORY_LIMITS,
   checkOwnerEvidence,
   listMemoryNotes,
+  appendDream,
   mutateMemory,
   readMemoryNoteWithRevision,
+  readMemoryState,
+  writeReflectionBookmark,
   readMemoryText,
   searchMemory,
   type MemoryMessage,
@@ -20,7 +23,13 @@ export type { MemoryMessage } from "./memory.mts";
 export type MemoryMessageSource = {
   latestOwnerMessage(botSlug: string): Promise<MemoryMessage | null>;
   messageById(botSlug: string, messageId: string): Promise<MemoryMessage | null>;
+  /** Reflection reads the owner's messages after the bookmark, not just the latest one. */
+  reflectMessages?: (botSlug: string, afterPosition: number, limit: number) => Promise<{ messages: ReflectedMessage[]; nextPosition: number | null; lastMessageId: string | null }>;
+  reflectMessageById?: (botSlug: string, messageId: string) => Promise<ReflectedMessage | null>;
 };
+
+/** An owner message with its transcript position, used by reflection. */
+export type ReflectedMessage = MemoryMessage & { position: number; at: string | null };
 
 /** The authenticated caller of the tool server. `legacy` is the old shared bearer. */
 export type MemoryToolContext = { botSlug?: string | null; legacy?: boolean };
@@ -99,6 +108,55 @@ export const MEMORY_TOOLS: MemoryTool[] = [
         threadId: { type: "string", description: threadIdHelp },
       },
       required: ["fact", "expectedRevision", "sourceQuote"],
+    },
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: "memory_reflect",
+    title: "Read new messages for reflection",
+    description:
+      "Read the user's owner-written messages after the last reflection bookmark, bounded. Use this only when asked to reflect or tidy memory: read the packet, then propose small add/replace/supersede operations to memory_reflect_apply. Do not use old messages as ordinary memory_edit evidence.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Maximum messages to return; default 40, maximum 80." },
+        threadId: { type: "string", description: threadIdHelp },
+      },
+    },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "memory_reflect_apply",
+    title: "Apply a reflection",
+    description:
+      "Apply a small set of operations proposed after memory_reflect. Each operation needs the exact sourceMessageId and a sourceQuote from that owner message. Maximum 10 operations; no forget and no note. Memory_reflect_apply audits every quote and revision, writes the bookmark only when the batch succeeds, and logs a DREAMS.md line. If a fact already exists it is skipped. Do not use this for ordinary chat-time memory edits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operations: {
+          type: "array",
+          minItems: 0,
+          maxItems: 10,
+          items: {
+            type: "object",
+            properties: {
+              op: { type: "string", enum: ["add", "replace", "supersede"] },
+              fact: { type: "string", description: "For add." },
+              old: { type: "string", description: "The exact existing line for replace or supersede." },
+              new: { type: "string", description: "For replace or supersede." },
+              category: { type: "string" },
+              validFrom: { ...date },
+              sourceMessageId: { type: "string" },
+              sourceQuote: { type: "string" },
+            },
+            required: ["op", "sourceMessageId", "sourceQuote"],
+          },
+        },
+        expectedRevision: { type: "string", description: "The revision from memory_reflect." },
+        throughPosition: { type: "number", description: "The last position returned by memory_reflect." },
+        lastMessageId: { type: "string", description: "The last message id returned by memory_reflect." },
+      },
+      required: ["operations", "expectedRevision", "throughPosition", "lastMessageId"],
     },
     annotations: { destructiveHint: true },
   },
@@ -254,6 +312,79 @@ export function createMemoryTools({
         if (!result.ok) return toolError(JSON.stringify(result));
         log(`memory: ${slug} forgot one fact`);
         return toolJson(result);
+      }
+
+      if (name === "memory_reflect") {
+        if (!source.reflectMessages) return toolError("Reflection isn't set up on this gateway.");
+        const state = await readMemoryState(dir);
+        const after = state.reflection.lastPosition ?? -1;
+        const limit = Math.max(1, Math.min(80, Number(args.limit) || 40));
+        const packet = await source.reflectMessages(slug, after, limit);
+        const current = await readMemoryText({ botDir: dir, sharedFile, scope: "bot" });
+        return toolJson({
+          messages: packet.messages,
+          nextPosition: packet.nextPosition,
+          lastMessageId: packet.lastMessageId,
+          revision: current.revision,
+          bookmark: state.reflection,
+          instructions: "Propose only durable facts, preferences, decisions or commitments supported by an exact sourceQuote from one of these messages. Use memory_reflect_apply with at most 10 add/replace/supersede operations; do not forget or write notes here.",
+        });
+      }
+
+      if (name === "memory_reflect_apply") {
+        if (!source.reflectMessageById) return toolError("Reflection isn't set up on this gateway.");
+        if (!Array.isArray(args.operations)) return toolError("operations must be an array.");
+        if (args.operations.length > 10) return toolError("At most 10 reflection operations per run.");
+        if (typeof args.expectedRevision !== "string" || typeof args.throughPosition !== "number" || typeof args.lastMessageId !== "string") return toolError("expectedRevision, throughPosition and lastMessageId are required.");
+        const current = await readMemoryText({ botDir: dir, sharedFile, scope: "bot" });
+        if (current.revision !== args.expectedRevision) return toolError(JSON.stringify({ ok: false, code: "conflict", message: "Memory changed since memory_reflect. Read it again.", revision: current.revision, content: current.text }));
+        const state = await readMemoryState(dir);
+        const bookmark = state.reflection.lastPosition ?? -1;
+        const priorLines = current.text.split("\n").filter((line) => line.trim()).length;
+        const removals = args.operations.filter((operation: any) => operation?.op === "replace" || operation?.op === "supersede").length;
+        if (removals > Math.floor(priorLines * 0.25)) return toolError("Reflection would rewrite more than 25% of the current facts. Propose a smaller batch.");
+        let revision = args.expectedRevision;
+        const applied: unknown[] = [];
+        const skipped: unknown[] = [];
+        for (const raw of args.operations) {
+          const operation = raw as Record<string, unknown>;
+          const op = String(operation.op ?? "");
+          if (!["add", "replace", "supersede"].includes(op)) return toolError(JSON.stringify({ ok: false, applied, skipped, message: `Unsupported reflection operation ${op}.` }));
+          const messageId = String(operation.sourceMessageId ?? "").trim();
+          const quote = String(operation.sourceQuote ?? "").trim();
+          const message = messageId ? await source.reflectMessageById(slug, messageId) : null;
+          if (!message) return toolError(JSON.stringify({ ok: false, applied, skipped, message: "A reflection source message wasn't found in this Bot's conversation." }));
+          if (message.position <= bookmark) return toolError(JSON.stringify({ ok: false, applied, skipped, message: "That message is before the reflection bookmark. Read a new packet." }));
+          if (message.position > args.throughPosition) return toolError(JSON.stringify({ ok: false, applied, skipped, message: "A reflection source is beyond the packet's throughPosition." }));
+          const checked = checkOwnerEvidence(message.text, quote);
+          if (!checked.ok) return toolError(JSON.stringify({ ok: false, applied, skipped, message: checked.message }));
+          const result = await mutateMemory({
+            botDir: dir,
+            sharedFile,
+            scope: "bot",
+            op: op as "add" | "replace" | "supersede",
+            expectedRevision: revision,
+            author: slug,
+            sourceMessageId: message.id,
+            sourceQuote: quote,
+            sourceText: message.text,
+            fact: typeof operation.fact === "string" ? operation.fact : undefined,
+            old: typeof operation.old === "string" ? operation.old : undefined,
+            new: typeof operation.new === "string" ? operation.new : undefined,
+            category: typeof operation.category === "string" ? operation.category : null,
+            validFrom: typeof operation.validFrom === "string" ? operation.validFrom : null,
+          });
+          if (!result.ok) {
+            if (result.code === "duplicate") { skipped.push({ op, fact: operation.fact ?? operation.new ?? "" }); continue; }
+            return toolError(JSON.stringify({ ok: false, applied, skipped, result }));
+          }
+          revision = result.revision;
+          applied.push(result);
+        }
+        await writeReflectionBookmark(dir, { position: args.throughPosition, messageId: args.lastMessageId });
+        await appendDream(dir, `${new Date().toISOString().slice(0, 10)}: reflect ${applied.length} applied, ${skipped.length} skipped, through position ${args.throughPosition}`);
+        log(`memory: ${slug} reflected ${applied.length} operation(s)`);
+        return toolJson({ ok: true, applied, skipped, revision, bookmark: { lastPosition: args.throughPosition, lastMessageId: args.lastMessageId } });
       }
 
       if (name === "memory_search") {

@@ -539,6 +539,25 @@ export async function writeMemoryStateFile(file: string, state: MemoryState): Pr
   await writeTextAtomic(file, `${JSON.stringify(state, null, 2)}\n`, 0o600);
 }
 
+/** Remember through which transcript position reflection has already looked. */
+export async function writeReflectionBookmark(botDir: string, input: { position: number | null; messageId: string | null; at?: Date }): Promise<void> {
+  const state = await readMemoryState(botDir);
+  state.reflection = {
+    lastPosition: input.position,
+    lastMessageId: input.messageId,
+    at: (input.at ?? new Date()).toISOString(),
+  };
+  await writeMemoryState(botDir, state);
+}
+
+/** A short, human-readable review log. It is not a memory source. */
+export async function appendDream(botDir: string, line: string): Promise<void> {
+  const file = path.join(botDir, "memory", "DREAMS.md");
+  const existing = await readIfExists(file);
+  const next = `${existing}${existing && !existing.endsWith("\n") ? "\n" : ""}- ${line}\n`;
+  await writeTextAtomic(file, next, 0o644);
+}
+
 /** What the Memory tab shows: facts split into bot/shared, with their provenance. */
 export type MemoryFactView = ParsedFact & {
   line: string;

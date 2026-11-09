@@ -12,7 +12,7 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
 import { readMemoryNoteWithRevision, readMemoryView, mutateMemory } from "./memory.mts";
-import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage } from "./memory-mcp.mts";
+import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage, type ReflectedMessage } from "./memory-mcp.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
@@ -652,7 +652,7 @@ const projectTools = {
 };
 
 /** The transcript items a Bot's memory can use as evidence. Only owner-written messages pass. */
-type TranscriptEnvelope = { item?: { id?: string; messageId?: string; type?: string; text?: string; createdBy?: string; creationSource?: string; attachments?: unknown[] } };
+type TranscriptEnvelope = { position?: number; item?: { id?: string; messageId?: string; type?: string; text?: string; createdBy?: string; creationSource?: string; attachments?: unknown[]; startedAt?: string; completedAt?: string } };
 
 async function transcriptItems(threadId: string): Promise<TranscriptEnvelope[]> {
   const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
@@ -676,6 +676,12 @@ function ownerMessage(envelope: TranscriptEnvelope): MemoryMessage | null {
     creationSource: item.creationSource,
     attachments: Array.isArray(item.attachments) ? item.attachments : [],
   };
+}
+
+function reflectedMessage(envelope: TranscriptEnvelope): ReflectedMessage | null {
+  const message = ownerMessage(envelope);
+  if (!message) return null;
+  return { ...message, position: typeof envelope.position === "number" ? envelope.position : -1, at: envelope.item?.startedAt ?? envelope.item?.completedAt ?? null };
 }
 
 const memoryToolCall = createMemoryTools({
@@ -702,6 +708,22 @@ const memoryToolCall = createMemoryTools({
       const message = ownerMessage(latest);
       // Only the latest owner turn can be quoted; an older turn must have been saved then.
       return message && (message.id === messageId || message.id.endsWith(messageId)) ? message : null;
+    },
+    async reflectMessages(slug: string, afterPosition: number, limit: number) {
+      const bot = await getBot(slug);
+      if (!bot?.mainThreadId) return { messages: [], nextPosition: null, lastMessageId: null };
+      const messages = (await transcriptItems(bot.mainThreadId))
+        .map(reflectedMessage)
+        .filter((message): message is ReflectedMessage => message !== null && message.position > afterPosition)
+        .slice(0, limit);
+      const last = messages.at(-1) ?? null;
+      return { messages, nextPosition: last?.position ?? null, lastMessageId: last?.id ?? null };
+    },
+    async reflectMessageById(slug: string, messageId: string) {
+      const bot = await getBot(slug);
+      if (!bot?.mainThreadId) return null;
+      const messages = (await transcriptItems(bot.mainThreadId)).map(reflectedMessage).filter((message): message is ReflectedMessage => Boolean(message));
+      return messages.find((message) => message.id === messageId || message.id.endsWith(messageId)) ?? null;
     },
   },
 });
