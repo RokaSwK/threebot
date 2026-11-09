@@ -10,7 +10,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
-import { memorySignature, readSnapshot, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage } from "./memory-mcp.mts";
+import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
@@ -19,7 +21,7 @@ import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from
 import { createThreadLinkResolver } from "./thread-link.mts";
 import { accessTokenFrom, createAccessVerifier } from "./access.mts";
 import { createVault } from "./vault.mts";
-import { createBotTools, handleMcpHttp } from "./vault-mcp.mts";
+import { createBotTools, handleMcpHttp, type ExtraTools, type McpAuth } from "./vault-mcp.mts";
 import { T3Client } from "./t3rpc.mts";
 import { executorConfiguration, executorMcpDefinition, publicExecutorConfiguration, type ExecutorProfile } from "./executor-config.mts";
 import { createExecutorClient } from "./executor-client.mts";
@@ -407,9 +409,10 @@ async function trustInCodex(dir: string) {
   await fs.writeFile(codexGlobalConfig, `${prefix}${header}\ntrust_level = "trusted"\n`, { mode: 0o600 });
 }
 
-async function writeMcpConfig(dir: string) {
-  // Every Bot gets its own tool server (the Vault); Executor when it's configured.
-  const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botMcpToken}` } } };
+async function writeMcpConfig(dir: string, slug: string) {
+  // Every Bot gets its own tool server (the Vault and memory); Executor when it's configured.
+  const botToken = tokenForBot(botMcpToken, slug);
+  const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
   try { const definition = executorMcpDefinition(executorConfig.profile); if (definition) servers.executor = definition; }
   catch { console.error('Executor credential unavailable; managed Executor MCP is disabled.'); }
   const mcpPath = path.join(dir, ".mcp.json");
@@ -438,7 +441,7 @@ async function writeMcpConfig(dir: string) {
 
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   const dir = botDir(bot.slug);
-  const executorReady = await writeMcpConfig(dir);
+  const executorReady = await writeMcpConfig(dir, bot.slug);
   const file = path.join(dir, "AGENTS.md");
   const existing = await fs.readFile(file, "utf8").catch(() => "");
   // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
@@ -515,6 +518,11 @@ async function createBot(input: NewBot) {
   return (await getBot(slug)) ?? bot;
 }
 async function refreshAllAgentsMd() {
+  const sharedFile = path.join(cfg.botsRoot, ".botapp", "shared-memory.md");
+  for (const bot of await listBots()) {
+    await recoverMemoryJournals(botDir(bot.slug), sharedFile, (line) => console.log(line))
+      .catch((error) => console.error(`recovering ${bot.slug}'s memory failed`, error));
+  }
   await mainBots.refreshInstructions();
 }
 
@@ -622,6 +630,91 @@ const projectTools = {
   call: createProjectTools({ projects, appUrl, log: (line) => console.log(line) }),
   instructions: "Also the user's Projects board (projects_* tools): their projects, to-dos, machines, what runs where, repos and links, shown live on their Projects page.",
 };
+
+/** The transcript items a Bot's memory can use as evidence. Only owner-written messages pass. */
+type TranscriptEnvelope = { item?: { id?: string; messageId?: string; type?: string; text?: string; createdBy?: string; creationSource?: string; attachments?: unknown[] } };
+
+async function transcriptItems(threadId: string): Promise<TranscriptEnvelope[]> {
+  const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
+  const result = await withTimeout(
+    client.http(`/api/orchestration/threads/${encodeURIComponent(threadId)}/transcript`, { headers: { "x-t3-orchestration-protocol": "2" } }),
+    15_000,
+    "T3 timed out",
+  );
+  return Array.isArray(result?.items) ? result.items as TranscriptEnvelope[] : [];
+}
+
+function ownerMessage(envelope: TranscriptEnvelope): MemoryMessage | null {
+  const item = envelope.item;
+  if (!item || item.type !== "user_message" || item.createdBy !== "user") return null;
+  if (["agent", "system", "mcp", "server", "routine", "webhook", "automation"].includes(String(item.creationSource ?? ""))) return null;
+  if (typeof item.text !== "string" || !item.text.trim()) return null;
+  return {
+    id: String(item.messageId ?? item.id ?? ""),
+    text: item.text,
+    createdBy: item.createdBy,
+    creationSource: item.creationSource,
+    attachments: Array.isArray(item.attachments) ? item.attachments : [],
+  };
+}
+
+const memoryToolCall = createMemoryTools({
+  botsRoot: cfg.botsRoot,
+  sharedFile: path.join(appDir, "shared-memory.md"),
+  log: (line) => console.log(line),
+  source: {
+    async latestOwnerMessage(slug: string) {
+      const bot = await getBot(slug);
+      if (!bot?.mainThreadId) return null;
+      const items = await transcriptItems(bot.mainThreadId);
+      // The latest user turn is the only evidence a write may use. A routine or another Bot
+      // writes its prompt as a user message with createdBy "agent"; that is not the owner.
+      const userMessages = items.filter((item) => item.item?.type === "user_message");
+      return ownerMessage(userMessages.at(-1) ?? {});
+    },
+    async messageById(slug: string, messageId: string) {
+      const bot = await getBot(slug);
+      if (!bot?.mainThreadId) return null;
+      const items = await transcriptItems(bot.mainThreadId);
+      const userMessages = items.filter((item) => item.item?.type === "user_message");
+      const latest = userMessages.at(-1);
+      if (!latest) return null;
+      const message = ownerMessage(latest);
+      // Only the latest owner turn can be quoted; an older turn must have been saved then.
+      return message && (message.id === messageId || message.id.endsWith(messageId)) ? message : null;
+    },
+  },
+});
+
+const memoryTools = {
+  tools: MEMORY_TOOLS,
+  instructions: "Also this Bot's memory (memory_* tools): read, search, save and forget facts. Only the user's own typed words are evidence; never save secrets.",
+  call: (name: string, args: Record<string, unknown>, context: { auth: McpAuth }) => memoryToolCall(name, args, context.auth),
+};
+
+function combineExtras(...sources: (ExtraTools | null)[]): ExtraTools | null {
+  const list = sources.filter((source): source is ExtraTools => Boolean(source));
+  if (list.length === 0) return null;
+  return {
+    tools: list.flatMap((source) => source.tools),
+    instructions: list.map((source) => source.instructions).filter(Boolean).join(" "),
+    call(name, args, context) {
+      const source = list.find((candidate) => candidate.tools.some((tool) => tool.name === name));
+      if (!source) throw new Error(`Unknown tool ${name}`);
+      return source.call(name, args, context);
+    },
+  };
+}
+
+/** Accept a Bot's own HMAC bearer, or the legacy shared bearer (Vault/Projects only). */
+async function resolveMcpAuth(raw: string): Promise<McpAuth | null> {
+  if (tokenMatches(raw, botMcpToken)) return { botSlug: null, legacy: true };
+  for (const bot of await listBots()) {
+    if (tokenMatches(raw, tokenForBot(botMcpToken, bot.slug))) return { botSlug: bot.slug, legacy: false };
+  }
+  return null;
+}
+
 const botTools = createBotTools({
   vault,
   async findBotByThread(threadId: string) {
@@ -632,7 +725,7 @@ const botTools = createBotTools({
   secretsDir: cfg.t3SecretsDir,
   tokenDir: path.join(path.dirname(cfg.vaultKeyFile), "bot-secrets"),
   log: (line) => console.log(line),
-  extra: async () => (await projectsOn() ? projectTools : null),
+  extra: async () => combineExtras(memoryTools, (await projectsOn()) ? projectTools : null),
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 
@@ -741,7 +834,7 @@ const server = http.createServer(async (req, res) => {
     // The updater and `threebot up` wait on this; it only says the gateway is up and its version.
     if (p === "/api/health" && req.method === "GET") return send(res, 200, { ok: true, version });
     if (publicPortClosed(req)) {
-      if (p === "/mcp/bot" && !req.headers["cf-ray"]) return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
+      if (p === "/mcp/bot" && !req.headers["cf-ray"]) return await handleMcpHttp(req, res, { tools: botTools, resolveAuth: resolveMcpAuth, readBody });
       if (!["GET", "HEAD"].includes(req.method!) || !landingPath(p)) return send(res, 404, "not found");
       return await serveStatic(req, res, p === "/" ? "/welcome/" : p);
     }
@@ -764,7 +857,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true }, { "set-cookie": `${COOKIE}=${makeSession()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 3600}${secure}` });
     }
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
-    if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, token: botMcpToken, readBody });
+    if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, resolveAuth: resolveMcpAuth, readBody });
 
     if (p === "/api/session") {
       const needsPassword = await passwordRequired();

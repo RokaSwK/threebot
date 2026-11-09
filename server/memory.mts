@@ -71,6 +71,15 @@ export type MemoryProvenance = {
   at: string;
 };
 
+/** The parts of a T3 message the memory evidence check uses. */
+export type MemoryMessage = {
+  id: string;
+  text: string;
+  createdBy?: string;
+  creationSource?: string;
+  attachments?: unknown[];
+};
+
 /** The small metadata file beside the Markdown. It is not a second memory store. */
 export type MemoryState = {
   version: 1;
@@ -311,7 +320,7 @@ export function renderMemoryBlock(snapshot: MemorySnapshot): string {
   if (snapshot.notes.length > 0) {
     lines.push("", "### Notes (read one when its description matches)");
     for (const note of snapshot.notes) {
-      const description = note.description.replace(/[\r\n]+/gu, " ").replaceAll("`", "'").slice(0, 160);
+      const description = note.description.replace(/\r?\n/gu, " ").replaceAll("`", "'").replaceAll("<memory>", "&lt;memory&gt;").replaceAll("</memory>", "&lt;/memory&gt;").slice(0, 160);
       lines.push(`- \`${note.path}\` — ${description}`);
     }
   }
@@ -327,6 +336,9 @@ function normalizeNotePath(notePath: string): string {
   const segments = normalized.split("/");
   if (segments.some((segment) => segment.length === 0)) {
     throw Object.assign(new Error("A note path has an empty segment"), { status: 400 });
+  }
+  if (segments.length > 5) {
+    throw Object.assign(new Error("A note path may have at most two folder levels under memory/notes"), { status: 400 });
   }
   return normalized;
 }
@@ -453,7 +465,11 @@ function emptyState(): MemoryState {
 
 /** Read `.state.json`; a missing or damaged file starts clean rather than blocking the Bot. */
 export async function readMemoryState(botDir: string): Promise<MemoryState> {
-  const file = path.join(botDir, "memory", ".state.json");
+  return readMemoryStateFile(path.join(botDir, "memory", ".state.json"));
+}
+
+/** Read a state file at an explicit path (the shared memory has its own). */
+export async function readMemoryStateFile(file: string): Promise<MemoryState> {
   const raw = await readIfExists(file);
   if (!raw.trim()) return emptyState();
   try {
@@ -491,11 +507,596 @@ export async function writeTextAtomic(file: string, content: string, mode?: numb
 
 /** Save the metadata beside the Markdown. Called after the files it describes are written. */
 export async function writeMemoryState(botDir: string, state: MemoryState): Promise<void> {
-  const file = path.join(botDir, "memory", ".state.json");
+  await writeMemoryStateFile(path.join(botDir, "memory", ".state.json"), state);
+}
+
+/** Save a state file at an explicit path (the shared memory has its own). */
+export async function writeMemoryStateFile(file: string, state: MemoryState): Promise<void> {
   await writeTextAtomic(file, `${JSON.stringify(state, null, 2)}\n`, 0o600);
 }
 
 /** A memory file changed by the user or another process, not through the core. */
 export function revisionOf(content: string): string {
   return hashContent(normalizeText(content));
+}
+
+// ---------- evidence, mutations, history and search ----------
+// The checks below are the write boundary. The model proposes; these rules decide. Nothing in
+// this section calls a model, and nothing here trusts a fact because it sounds plausible.
+
+/** The user's own words, after removing the parts T3 cannot prove were typed by them. */
+const FORWARD_MARKERS = [
+  /^-{2,}\s*forwarded message/iu,
+  /^forwarded message/iu,
+  /^begin forwarded message/iu,
+  /^-{2,}\s*mensaje reenviado/iu,
+  /^mensaje reenviado/iu,
+];
+const ACKNOWLEDGEMENTS = new Set([
+  "ok", "okay", "okey", "yes", "no", "thanks", "thank you", "got it", "sure", "cool",
+  "dale", "listo", "perfecto", "gracias", "sí", "si", "vale", "bien", "claro", "de acuerdo",
+]);
+
+function evidenceText(value: string): string {
+  return value
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+/**
+ * Runs of text that came from the user's own typing. Fenced code, blockquotes and forwarded
+ * blocks are removed; a quote that only exists there is not evidence of what the user believes.
+ * T3 does not expose a per-range `pasted` flag, so this is a line-level approximation.
+ */
+export function typedRuns(text: string): string[] {
+  if (typeof text !== "string") return [];
+  const runs: string[] = [];
+  let current: string[] = [];
+  let fenced = false;
+  let forwarded = false;
+  const flush = () => {
+    if (current.length) runs.push(current.join(" "));
+    current = [];
+  };
+  for (const line of normalizeText(text).split("\n")) {
+    const trimmed = line.trim();
+    if (/^(```|~~~)/u.test(trimmed)) {
+      fenced = !fenced;
+      flush();
+      continue;
+    }
+    if (fenced) continue;
+    if (trimmed.startsWith(">") || trimmed.startsWith("＞")) {
+      flush();
+      continue;
+    }
+    if (FORWARD_MARKERS.some((marker) => marker.test(trimmed))) {
+      forwarded = true;
+      flush();
+      continue;
+    }
+    if (forwarded) {
+      if (!trimmed) forwarded = false;
+      continue;
+    }
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+    current.push(trimmed);
+  }
+  flush();
+  return runs;
+}
+
+export type EvidenceCheck =
+  | { ok: true; quote: string }
+  | { ok: false; code: "missing" | "too_short" | "acknowledgement" | "not_typed"; message: string };
+
+/** Is `quote` a substantive phrase the user actually typed in `text`? */
+export function checkOwnerEvidence(text: string, quote: string): EvidenceCheck {
+  if (typeof text !== "string" || typeof quote !== "string" || !text.trim() || !quote.trim()) {
+    return { ok: false, code: "missing", message: "Pass the user's exact words in sourceQuote." };
+  }
+  const normalizedQuote = evidenceText(quote);
+  if (!normalizedQuote) return { ok: false, code: "missing", message: "sourceQuote is empty." };
+  if (normalizedQuote.split(" ").length < 3) {
+    return { ok: false, code: "too_short", message: "sourceQuote is too short to be evidence. Quote a full phrase." };
+  }
+  if (ACKNOWLEDGEMENTS.has(normalizedQuote)) {
+    return { ok: false, code: "acknowledgement", message: "An acknowledgement is not evidence of a lasting fact." };
+  }
+  const runs = typedRuns(text).map(evidenceText);
+  if (!runs.some((run) => run.includes(normalizedQuote))) {
+    return {
+      ok: false,
+      code: "not_typed",
+      message: "That text was pasted, quoted, in a code block, forwarded or written by a Bot, not typed by the user. Ask the user to state the fact in their own words.",
+    };
+  }
+  return { ok: true, quote: quote.trim() };
+}
+
+export type MemoryScope = "bot" | "shared";
+export type MemoryMutationOp = "add" | "replace" | "supersede" | "note" | "forget";
+
+export type MemoryMutationInput = {
+  botDir: string;
+  sharedFile: string;
+  scope: MemoryScope;
+  op: MemoryMutationOp;
+  expectedRevision: string;
+  author: string;
+  sourceMessageId: string;
+  sourceQuote: string;
+  sourceText: string;
+  fact?: string;
+  old?: string;
+  new?: string;
+  category?: string | null;
+  path?: string;
+  description?: string;
+  content?: string;
+  validFrom?: string | null;
+  restore?: boolean;
+  now?: Date;
+};
+
+export type MemoryMutationResult =
+  | { ok: true; scope: MemoryScope; path: string; revision: string; line?: string; forgotten?: string; note?: string }
+  | { ok: false; code: "conflict" | "not_found" | "duplicate" | "forgotten" | "invalid" | "cap" | "path" | "unsupported"; message: string; revision?: string; content?: string };
+
+type MemoryFileContext = {
+  scope: MemoryScope;
+  file: string;
+  stateFile: string;
+  historyDir: string;
+  journalDir: string;
+  relative: string;
+  label: string;
+};
+
+function memoryFileContext(botDir: string, sharedFile: string, scope: MemoryScope): MemoryFileContext {
+  if (scope === "shared") {
+    const dir = path.dirname(sharedFile);
+    return {
+      scope,
+      file: sharedFile,
+      stateFile: path.join(dir, "shared-memory.state.json"),
+      historyDir: path.join(dir, "shared-memory.history"),
+      journalDir: path.join(dir, "shared-memory.journal"),
+      relative: "shared-memory.md",
+      label: "shared-memory",
+    };
+  }
+  return {
+    scope,
+    file: path.join(botDir, "memory", "MEMORY.md"),
+    stateFile: path.join(botDir, "memory", ".state.json"),
+    historyDir: path.join(botDir, "memory", "history"),
+    journalDir: path.join(botDir, "memory", ".journal"),
+    relative: "MEMORY.md",
+    label: "MEMORY",
+  };
+}
+
+function localDate(now: Date): string {
+  const shifted = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+function isDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function sourceLabel(messageId: string, now: Date): string {
+  return `thread/${messageId}; added: ${localDate(now)}`;
+}
+
+function factKey(line: string): string {
+  return hashFact(parseFact(line).text);
+}
+
+function factLines(content: string): { lines: string[]; trailing: boolean } {
+  const trailing = content.endsWith("\n");
+  const lines = normalizeText(content).split("\n");
+  if (trailing) lines.pop();
+  return { lines, trailing };
+}
+
+function joinLines(lines: string[], trailing: boolean): string {
+  return `${lines.join("\n")}${trailing ? "\n" : ""}`;
+}
+
+function findFactLine(lines: string[], value: unknown): { index: number } | { error: MemoryMutationResult } {
+  const wanted = typeof value === "string" ? value.trim() : "";
+  if (!wanted) return { error: { ok: false, code: "invalid", message: "Pass the exact existing fact in old." } };
+  const matches = lines.map((line, index) => ({ line: line.trim(), index })).filter((item) => item.line === wanted);
+  if (matches.length === 0) return { error: { ok: false, code: "not_found", message: "That fact isn't in this memory file. Read it again before replacing or forgetting it." } };
+  if (matches.length > 1) return { error: { ok: false, code: "invalid", message: "That fact appears more than once. Read the file and remove the duplicate first." } };
+  return { index: matches[0]!.index };
+}
+
+function noteFrontmatter(description: string, title: string): string {
+  const clean = (value: string) => value.replace(/[\r\n]+/gu, " ").replace(/"/gu, "'").trim();
+  return `---\ndescription: ${clean(description)}\ntitle: ${clean(title)}\ntype: note\n---\n`;
+}
+
+function checkNoteContent(content: string): MemoryCheck {
+  if (content.length > MEMORY_LIMITS.noteChars) {
+    return { ok: false, code: "too_long", message: `Keep a note to ${MEMORY_LIMITS.noteChars} characters or fewer.` };
+  }
+  if (/[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/u.test(content)) {
+    return { ok: false, code: "hidden_characters", message: "The note contains hidden or bidirectional characters." };
+  }
+  if (content.includes(MANAGED_START) || content.includes(MANAGED_END) || content.includes("<memory>") || content.includes("</memory>")) {
+    return { ok: false, code: "managed_marker", message: "The note contains a marker reserved for generated instructions." };
+  }
+  if (secretLike(content)) {
+    return { ok: false, code: "secret", message: "Passwords, keys, card numbers and identity numbers belong in the Vault, never in a note." };
+  }
+  return { ok: true };
+}
+
+async function writeHistory(ctx: MemoryFileContext, before: string, now: Date): Promise<void> {
+  try {
+    await fs.mkdir(ctx.historyDir, { recursive: true });
+    const stamp = now.toISOString().replace(/[:.]/gu, "-");
+    const file = path.join(ctx.historyDir, `${stamp}-${ctx.label}.md`);
+    await writeTextAtomic(file, before, 0o600);
+    // Keep the last 50 preimages or 30 days, whichever is longer.
+    const entries = (await fs.readdir(ctx.historyDir)).filter((name) => name.endsWith(".md"));
+    const stats = await Promise.all(entries.map(async (name) => {
+      const absolute = path.join(ctx.historyDir, name);
+      const stat = await fs.stat(absolute).catch(() => null);
+      return stat ? { name, time: stat.mtimeMs } : null;
+    }));
+    const kept = stats.filter((entry): entry is { name: string; time: number } => Boolean(entry)).sort((a, b) => b.time - a.time);
+    const cutoff = now.getTime() - 30 * 24 * 3600 * 1000;
+    for (const [index, entry] of kept.entries()) {
+      if (index < 50 && entry.time >= cutoff) continue;
+      await fs.rm(path.join(ctx.historyDir, entry.name), { force: true }).catch(() => {});
+    }
+  } catch (error) {
+    // History is an audit aid; a failure here must not block the write.
+    console.error("writing memory history failed", error);
+  }
+}
+
+type MemoryJournal = {
+  version: 1;
+  opId: string;
+  file: string;
+  beforeHash: string;
+  after: string;
+  stateFile: string;
+  beforeState: MemoryState;
+  afterState: MemoryState;
+  createdAt: string;
+};
+
+async function writeJournal(ctx: MemoryFileContext, before: string, after: string, beforeState: MemoryState, afterState: MemoryState, now: Date): Promise<string> {
+  await fs.mkdir(ctx.journalDir, { recursive: true });
+  const opId = randomUUID();
+  const journal: MemoryJournal = {
+    version: 1,
+    opId,
+    file: ctx.file,
+    beforeHash: revisionOf(before),
+    after,
+    stateFile: ctx.stateFile,
+    beforeState,
+    afterState,
+    createdAt: now.toISOString(),
+  };
+  await writeTextAtomic(path.join(ctx.journalDir, `${opId}.json`), `${JSON.stringify(journal, null, 2)}\n`, 0o600);
+  return opId;
+}
+
+async function recoverJournalDir(dir: string, root: string, log: (line: string) => void): Promise<void> {
+  let names: string[];
+  try {
+    names = (await fs.readdir(dir)).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const rootPath = path.resolve(root);
+  for (const name of names) {
+    const journalPath = path.join(dir, name);
+    let journal: MemoryJournal;
+    try {
+      journal = JSON.parse(await fs.readFile(journalPath, "utf8")) as MemoryJournal;
+    } catch {
+      await fs.rename(journalPath, path.join(dir, `failed-${name}`)).catch(() => {});
+      log(`memory: unreadable journal ${name}`);
+      continue;
+    }
+    if (typeof journal.file !== "string" || typeof journal.stateFile !== "string" || typeof journal.beforeHash !== "string" || typeof journal.after !== "string" || !journal.afterState || typeof journal.afterState !== "object") {
+      await fs.rename(journalPath, path.join(dir, `failed-${name}`)).catch(() => {});
+      log(`memory: invalid journal ${name}`);
+      continue;
+    }
+    const target = path.resolve(journal.file);
+    const stateTarget = path.resolve(journal.stateFile);
+    if (!target.startsWith(rootPath + path.sep) || !stateTarget.startsWith(rootPath + path.sep)) {
+      await fs.rename(journalPath, path.join(dir, `failed-${name}`)).catch(() => {});
+      log(`memory: refused journal ${journal.opId}: target outside the memory folder`);
+      continue;
+    }
+    const current = await readIfExists(journal.file);
+    const currentHash = revisionOf(current);
+    if (currentHash === journal.beforeHash) {
+      await writeTextAtomic(journal.file, journal.after, 0o644);
+      await writeMemoryStateFile(journal.stateFile, journal.afterState);
+      await fs.rm(journalPath, { force: true });
+      log(`memory: recovered ${journal.file} from journal ${journal.opId}`);
+    } else if (currentHash === revisionOf(journal.after)) {
+      await writeMemoryStateFile(journal.stateFile, journal.afterState);
+      await fs.rm(journalPath, { force: true });
+      log(`memory: completed state for ${journal.file} from journal ${journal.opId}`);
+    } else {
+      await fs.rename(journalPath, path.join(dir, `failed-${name}`)).catch(() => {});
+      log(`memory: refused journal ${journal.opId}: ${journal.file} changed outside the core`);
+    }
+  }
+}
+
+/** Resume interrupted writes before the gateway reads a snapshot. A conflict is kept for review. */
+export async function recoverMemoryJournals(botDir: string, sharedFile: string, log: (line: string) => void = () => {}): Promise<void> {
+  const botCtx = memoryFileContext(botDir, sharedFile, "bot");
+  const sharedCtx = memoryFileContext(botDir, sharedFile, "shared");
+  await recoverJournalDir(botCtx.journalDir, path.join(botDir, "memory"), log);
+  await recoverJournalDir(sharedCtx.journalDir, path.dirname(sharedFile), log);
+}
+
+/** Read one memory file in full, bounded, with the revision CAS uses. */
+export async function readMemoryText({ botDir, sharedFile, scope, limits = {} }: { botDir: string; sharedFile: string; scope: MemoryScope; limits?: Partial<MemoryLimits> }): Promise<{ text: string; revision: string; truncated: boolean }> {
+  const ctx = memoryFileContext(botDir, sharedFile, scope);
+  const raw = await readIfExists(ctx.file);
+  const max = scope === "bot" ? { ...MEMORY_LIMITS, ...limits }.memoryChars : { ...MEMORY_LIMITS, ...limits }.memoryChars;
+  const text = raw.length > max ? `${raw.slice(0, max).trimEnd()}\n\n(truncated; read the file on disk for the rest)` : raw;
+  return { text, revision: revisionOf(raw), truncated: raw.length > max };
+}
+
+/** Read a note and its revision, so a note write can compare-and-swap too. */
+export async function readMemoryNoteWithRevision(botDir: string, notePath: string, limits: Partial<MemoryLimits> = {}): Promise<{ path: string; text: string; revision: string }> {
+  const merged = { ...MEMORY_LIMITS, ...limits };
+  const normalized = normalizeNotePath(notePath);
+  const notesRoot = path.join(botDir, "memory", "notes");
+  const absolute = path.resolve(botDir, normalized);
+  const rootReal = await fs.realpath(notesRoot).catch(() => null);
+  const fileReal = await fs.realpath(absolute).catch(() => null);
+  if (!rootReal || !fileReal || (fileReal !== rootReal && !fileReal.startsWith(rootReal + path.sep))) {
+    throw Object.assign(new Error("That note is outside this Bot's memory"), { status: 403 });
+  }
+  const full = await fs.readFile(fileReal, "utf8");
+  const text = full.length <= merged.noteChars ? full : `${full.slice(0, merged.noteChars).trimEnd()}\n\n(truncated; read the note on disk for the rest)`;
+  return { path: normalized, text, revision: revisionOf(full) };
+}
+
+async function writeNote(input: MemoryMutationInput, ctx: MemoryFileContext, now: Date): Promise<MemoryMutationResult> {
+  let normalized: string;
+  try {
+    normalized = normalizeNotePath(String(input.path ?? ""));
+  } catch (error) {
+    return { ok: false, code: "path", message: String((error as Error).message) };
+  }
+  const description = String(input.description ?? "").replace(/[\r\n]+/gu, " ").trim();
+  if (!description || description.length > 160) return { ok: false, code: "invalid", message: "Pass a description of 1 to 160 characters." };
+  const descriptionCheck = checkFact(description);
+  if (!descriptionCheck.ok) return { ok: false, code: "invalid", message: `description: ${descriptionCheck.message}` };
+  const body = String(input.content ?? "");
+  if (!body.trim()) return { ok: false, code: "invalid", message: "Pass the note content." };
+  const notesRoot = path.join(input.botDir, "memory", "notes");
+  const absolute = path.resolve(input.botDir, normalized);
+  if (!absolute.startsWith(notesRoot + path.sep)) return { ok: false, code: "path", message: "That note is outside this Bot's memory." };
+  await fs.mkdir(notesRoot, { recursive: true });
+  const botReal = await fs.realpath(input.botDir).catch(() => null);
+  const rootReal = await fs.realpath(notesRoot).catch(() => null);
+  const expectedRoot = botReal ? path.join(botReal, "memory", "notes") : null;
+  if (!botReal || !rootReal || !expectedRoot || (rootReal !== expectedRoot && !rootReal.startsWith(expectedRoot + path.sep))) {
+    return { ok: false, code: "path", message: "That note is outside this Bot's memory." };
+  }
+  let existingParent = path.dirname(absolute);
+  while (!(await fs.stat(existingParent).catch(() => null))) existingParent = path.dirname(existingParent);
+  const parentReal = await fs.realpath(existingParent).catch(() => null);
+  if (!parentReal || (parentReal !== rootReal && !parentReal.startsWith(rootReal + path.sep))) {
+    return { ok: false, code: "path", message: "That note is outside this Bot's memory." };
+  }
+  await fs.mkdir(path.dirname(absolute), { recursive: true });
+  const existing = await readIfExists(absolute);
+  const revision = revisionOf(existing);
+  if (!existing) {
+    const notes = await listMemoryNotes(input.botDir);
+    if (notes.length >= MEMORY_LIMITS.noteCount) return { ok: false, code: "cap", message: `This Bot already has ${MEMORY_LIMITS.noteCount} notes. Merge or remove one first.` };
+  }
+  // A new note has no revision to read yet; "" means "create it".
+  if (revision !== input.expectedRevision && !(existing === "" && input.expectedRevision === "")) {
+    return { ok: false, code: "conflict", message: "The note changed since you read it. Read it again and merge.", revision, content: existing };
+  }
+  const withFrontmatter = body.startsWith("---") ? body : `${noteFrontmatter(description, path.basename(normalized, ".md"))}${body}`;
+  const checked = checkNoteContent(withFrontmatter);
+  if (!checked.ok) return { ok: false, code: "invalid", message: checked.message };
+  const noteCtx: MemoryFileContext = { ...ctx, file: absolute, relative: normalized, label: `note-${path.basename(normalized, ".md")}` };
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const nextState: MemoryState = {
+    ...state,
+    revisions: { ...state.revisions, [normalized]: revisionOf(withFrontmatter) },
+    provenance: {
+      ...state.provenance,
+      [`note:${normalized}`]: { author: input.author, sourceMessageId: input.sourceMessageId, quote: input.sourceQuote, at: now.toISOString() },
+    },
+  };
+  await writeHistory(noteCtx, existing, now);
+  const opId = await writeJournal(noteCtx, existing, withFrontmatter, state, nextState, now);
+  try {
+    await writeTextAtomic(absolute, withFrontmatter, 0o644);
+    await writeMemoryStateFile(ctx.stateFile, nextState);
+  } finally {
+    await fs.rm(path.join(ctx.journalDir, `${opId}.json`), { force: true }).catch(() => {});
+  }
+  return { ok: true, scope: input.scope, path: normalized, revision: revisionOf(withFrontmatter), note: withFrontmatter };
+}
+
+/**
+ * One transactional mutation of `MEMORY.md`, the shared file or one note. The caller has already
+ * resolved the authenticated Bot; this function still verifies the quote and the revision.
+ */
+export async function mutateMemory(input: MemoryMutationInput): Promise<MemoryMutationResult> {
+  const now = input.now ?? new Date();
+  const evidence = checkOwnerEvidence(input.sourceText, input.sourceQuote);
+  if (!evidence.ok) return { ok: false, code: "invalid", message: evidence.message };
+  if (typeof input.expectedRevision !== "string") return { ok: false, code: "invalid", message: "expectedRevision is required. Read the memory first." };
+  if (!input.author.trim()) return { ok: false, code: "invalid", message: "A memory write needs an author." };
+  const ctx = memoryFileContext(input.botDir, input.sharedFile, input.scope);
+  const category = input.category == null ? null : String(input.category).trim().toLowerCase();
+  if (category && !/^[a-z][a-z0-9_-]{0,32}$/u.test(category)) {
+    return { ok: false, code: "invalid", message: "category must be a short lowercase label (letters, digits, - or _)." };
+  }
+  if (input.op === "note" && input.scope === "shared") return { ok: false, code: "unsupported", message: "Notes live in a Bot's memory, not in shared memory." };
+  if (input.op === "note") return writeNote(input, ctx, now);
+
+  const current = await readIfExists(ctx.file);
+  const revision = revisionOf(current);
+  if (revision !== input.expectedRevision) {
+    return { ok: false, code: "conflict", message: "Memory changed since you read it. Read it again, merge, and retry with the new revision.", revision, content: current };
+  }
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const { lines, trailing } = factLines(current);
+  let nextLines = [...lines];
+  let writtenLine: string | undefined;
+  let forgotten: string | undefined;
+  const temporal = { ...state.temporal };
+  const provenance = { ...state.provenance };
+  const forgottenHashes = new Set(state.forgotten);
+
+  if (input.op === "add") {
+    const fact = String(input.fact ?? "").trim();
+    const checked = checkFact(fact);
+    if (!checked.ok) return { ok: false, code: "invalid", message: checked.message };
+    if (input.validFrom && !isDate(input.validFrom)) return { ok: false, code: "invalid", message: "validFrom must be a real YYYY-MM-DD date." };
+    const key = hashFact(fact);
+    if (forgottenHashes.has(key) && !input.restore) return { ok: false, code: "forgotten", message: "The user forgot that fact. Only a new, explicit request from the user can bring it back; pass restore: true for that request." };
+    if (forgottenHashes.has(key) && input.restore) forgottenHashes.delete(key);
+    if (nextLines.some((line) => line.trim() && factKey(line) === key)) return { ok: false, code: "duplicate", message: "That fact is already in memory." };
+    const line = formatFact(fact, { category: category ?? null, source: sourceLabel(input.sourceMessageId, now), validFrom: input.validFrom ?? null });
+    if (nextLines.filter((line) => line.trim()).length >= MEMORY_LIMITS.memoryLines || current.length + line.length + 1 > MEMORY_LIMITS.memoryChars) {
+      return { ok: false, code: "cap", message: "This memory is full. Move detail into a note or wait for defrag." };
+    }
+    nextLines.push(line);
+    writtenLine = line;
+    provenance[key] = { author: input.author, sourceMessageId: input.sourceMessageId, quote: input.sourceQuote, at: now.toISOString() };
+    if (input.validFrom) temporal[key] = { from: input.validFrom, to: null };
+  } else if (input.op === "replace" || input.op === "supersede") {
+    const found = findFactLine(nextLines, input.old);
+    if ("error" in found) return found.error;
+    const oldLine = nextLines[found.index]!;
+    const fact = String(input.new ?? "").trim();
+    const checked = checkFact(fact);
+    if (!checked.ok) return { ok: false, code: "invalid", message: checked.message };
+    const oldParsed = parseFact(oldLine);
+    const validFrom = input.validFrom ?? (input.op === "supersede" ? localDate(now) : oldParsed.validFrom);
+    if (input.op === "supersede" && !validFrom) return { ok: false, code: "invalid", message: "A superseding fact needs a validFrom date." };
+    if (validFrom && !isDate(validFrom)) return { ok: false, code: "invalid", message: "validFrom must be a real YYYY-MM-DD date." };
+    const line = formatFact(fact, { category: category ?? oldParsed.category, source: sourceLabel(input.sourceMessageId, now), validFrom });
+    if (input.op === "supersede") {
+      const closed = closeFactRange(oldLine, validFrom!);
+      nextLines.splice(found.index, 1, closed, line);
+      temporal[factKey(oldLine)] = { from: oldParsed.validFrom, to: validFrom! };
+      temporal[hashFact(fact)] = { from: validFrom!, to: null };
+    } else {
+      nextLines[found.index] = line;
+    }
+    writtenLine = line;
+    provenance[hashFact(fact)] = { author: input.author, sourceMessageId: input.sourceMessageId, quote: input.sourceQuote, at: now.toISOString() };
+  } else if (input.op === "forget") {
+    const found = findFactLine(nextLines, input.fact ?? input.old);
+    if ("error" in found) return found.error;
+    const oldLine = nextLines[found.index]!;
+    const key = factKey(oldLine);
+    nextLines.splice(found.index, 1);
+    forgottenHashes.add(key);
+    forgotten = key;
+  } else {
+    return { ok: false, code: "unsupported", message: `Unknown memory operation ${input.op}.` };
+  }
+
+  const next = joinLines(nextLines, trailing || nextLines.length > lines.length);
+  if (nextLines.filter((line) => line.trim()).length > MEMORY_LIMITS.memoryLines) {
+    return { ok: false, code: "cap", message: "This memory is over its line limit. Move detail into a note or wait for defrag." };
+  }
+  if (next.length > MEMORY_LIMITS.memoryChars) {
+    return { ok: false, code: "cap", message: "This memory is over its size limit. Move detail into a note or wait for defrag." };
+  }
+  const nextState: MemoryState = {
+    ...state,
+    revisions: { ...state.revisions, [ctx.relative]: revisionOf(next) },
+    provenance,
+    forgotten: [...forgottenHashes],
+    temporal,
+  };
+  await writeHistory(ctx, current, now);
+  const opId = await writeJournal(ctx, current, next, state, nextState, now);
+  try {
+    await writeTextAtomic(ctx.file, next, 0o644);
+    await writeMemoryStateFile(ctx.stateFile, nextState);
+  } finally {
+    await fs.rm(path.join(ctx.journalDir, `${opId}.json`), { force: true }).catch(() => {});
+  }
+  return { ok: true, scope: input.scope, path: ctx.relative, revision: revisionOf(next), ...(writtenLine ? { line: writtenLine } : {}), ...(forgotten ? { forgotten } : {}) };
+}
+
+/** Close an existing fact's date range without inventing a start date. */
+export function closeFactRange(line: string, to: string): string {
+  const sourceMatch = /\s*\[source:\s*[^\]]+\]\s*$/iu.exec(line);
+  const source = sourceMatch?.[0] ?? "";
+  let body = source ? line.slice(0, sourceMatch!.index) : line;
+  const temporal = new RegExp(`@(effective|occurred|due|valid|mentioned)(?::(${DATE})|\\[(${DATE})?,(${DATE})?\\))`, "iu").exec(body);
+  if (temporal) {
+    const from = temporal[2] ?? temporal[3] ?? "";
+    body = body.replace(temporal[0], `@${temporal[1]}[${from},${to})`);
+  } else {
+    const prefix = /^\s*[-*+]\s+(?:\[[a-z][a-z0-9_-]{0,32}\]\s*)?/iu.exec(body);
+    const at = prefix?.[0].length ?? 0;
+    body = `${body.slice(0, at)}@valid[,${to}) ${body.slice(at)}`;
+  }
+  return `${body}${source}`;
+}
+
+export type MemorySearchHit = { scope: MemoryScope; path: string; line: number; text: string; score: number; source: string | null };
+
+/** Plain text search over `MEMORY.md`, shared memory and notes. Rebuildable; no index required. */
+export async function searchMemory({ botDir, sharedFile, query, limit = 20 }: { botDir: string; sharedFile: string; query: string; limit?: number }): Promise<MemorySearchHit[]> {
+  const terms = evidenceText(query).split(" ").filter(Boolean);
+  if (terms.length === 0) return [];
+  const phrase = terms.join(" ");
+  const files: { scope: MemoryScope; path: string; text: string }[] = [];
+  const botText = await readIfExists(path.join(botDir, "memory", "MEMORY.md"));
+  const sharedText = await readIfExists(sharedFile);
+  if (botText) files.push({ scope: "bot", path: "MEMORY.md", text: botText });
+  if (sharedText) files.push({ scope: "shared", path: "shared-memory.md", text: sharedText });
+  for (const note of await listMemoryNotes(botDir)) {
+    files.push({ scope: "bot", path: note.path, text: await readIfExists(path.join(botDir, note.path)) });
+  }
+  const hits: MemorySearchHit[] = [];
+  for (const file of files) {
+    const lines = normalizeText(file.text).split("\n");
+    for (const [index, raw] of lines.entries()) {
+      if (!raw.trim()) continue;
+      const text = evidenceText(raw);
+      const exact = text.includes(phrase);
+      const all = terms.every((term) => text.includes(term));
+      const any = terms.some((term) => text.includes(term));
+      if (!exact && !all && !any) continue;
+      const parsed = parseFact(raw);
+      hits.push({ scope: file.scope, path: file.path, line: index + 1, text: raw.trim(), score: exact ? 10 : all ? 5 : 2, source: parsed.source });
+    }
+  }
+  return hits.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.line - b.line).slice(0, Math.max(1, limit));
 }

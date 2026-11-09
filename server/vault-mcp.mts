@@ -19,11 +19,13 @@ export interface RpcResponse { jsonrpc: "2.0"; id: unknown; result?: unknown; er
 export interface BrowserTab { tabId: string; url: string; title?: string }
 /** The parts of a Bot the tools use. */
 export interface BotRef { slug: string }
-/** More tools served alongside the Vault's (the Projects board). */
+/** The authenticated caller of the tool server: a Bot's own bearer, or the legacy shared bearer. */
+export interface McpAuth { botSlug: string | null; legacy: boolean }
+/** More tools served alongside the Vault's (the Projects board and memory). */
 export interface ExtraTools {
   tools: ReadonlyArray<{ name: string }>;
   instructions?: string;
-  call(name: string, args: ToolArgs, context: { botFor: (threadId: unknown) => Promise<BotRef> }): unknown;
+  call(name: string, args: ToolArgs, context: { botFor: (threadId: unknown) => Promise<BotRef>; auth: McpAuth }): unknown;
 }
 export interface BotToolsDeps {
   vault: Vault;
@@ -172,15 +174,16 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     return { value, path: real };
   }
 
-  async function botFor(threadId: unknown): Promise<BotRef> {
+  async function botFor(threadId: unknown, auth: McpAuth = { botSlug: null, legacy: true }): Promise<BotRef> {
     if (typeof threadId !== "string" || !threadId) throw new Error("threadId is required: pass your main thread id from AGENTS.md.");
     const bot = await findBotByThread(threadId);
     if (!bot) throw new Error("That threadId isn't a Bot's main conversation. Pass your main thread id from AGENTS.md (or mainThreadId in .bot/bot.json).");
+    if (auth.botSlug && bot.slug !== auth.botSlug) throw new Error("That threadId belongs to another Bot. Use your own main thread id from AGENTS.md.");
     return bot;
   }
 
-  async function fill(args: ToolArgs, field: "password" | "username"): Promise<ToolResult> {
-    const bot = await botFor(args.threadId);
+  async function fill(args: ToolArgs, field: "password" | "username", auth: McpAuth): Promise<ToolResult> {
+    const bot = await botFor(args.threadId, auth);
     const login = typeof args.loginId === "string" ? await vault.get(args.loginId, { reveal: true }) : null;
     if (!login || login.type !== "login") return toolError("No login with that id. Check vault_list.");
     const value = field === "password" ? login.password : login.username;
@@ -215,7 +218,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     return toolJson({ filled: true, field, site: siteDomain(websites.find(site => matchesSite(tab.url, site))), tabId: tab.tabId });
   }
 
-  async function callTool(name: string, args: ToolArgs = {}): Promise<ToolResult> {
+  async function callTool(name: string, args: ToolArgs = {}, auth: McpAuth = { botSlug: null, legacy: true }): Promise<ToolResult> {
     try {
       switch (name) {
         case "vault_list": {
@@ -232,11 +235,11 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           return toolJson({ items, note: items.length ? "Passwords are never shown. Fill them with vault_fill_password; read API tokens with vault_secret_file." : "Nothing saved. Ask the user with request_secret (delivery \"file\"), then vault_save_login." });
         }
         case "vault_fill_password":
-          return await fill(args, "password");
+          return await fill(args, "password", auth);
         case "vault_fill_username":
-          return await fill(args, "username");
+          return await fill(args, "username", auth);
         case "vault_save_login": {
-          const bot = await botFor(args.threadId);
+          const bot = await botFor(args.threadId, auth);
           const website = String(args.website ?? "").trim();
           if (!siteDomain(website)) return toolError("website must be a site address like https://example.com");
           const secret = await readT3Secret(args.secretFile);
@@ -249,7 +252,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           return toolJson({ saved: true, updated, loginId: item.id, site: item.domain, title: item.title, apiToken: item.botCanRead === true });
         }
         case "vault_secret_file": {
-          const bot = await botFor(args.threadId);
+          const bot = await botFor(args.threadId, auth);
           const login = typeof args.loginId === "string" ? await vault.get(args.loginId, { reveal: true }) : null;
           if (!login || login.type !== "login") return toolError("No login with that id. Check vault_list.");
           if (login.botCanRead !== true) return toolError("That's a website password, which Bots never read. Fill it into the sign-in page with vault_fill_password. If it's really an API token, ask the user to turn on \"Bots can read this\" for it in Settings › Vault.");
@@ -263,7 +266,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
           return toolJson({ file, site: siteDomain(login.website), expiresInMinutes: Math.round(secretFileTtlMs / 60000) });
         }
         case "vault_save_contact": {
-          const bot = await botFor(args.threadId);
+          const bot = await botFor(args.threadId, auth);
           const fields = Object.fromEntries(CONTACT_FIELDS.filter((f) => f !== "title" && ((typeof args[f] === "string" && args[f].trim()) || ((f === "emails" || f === "phones") && f in args))).map((f) => [f, args[f]]));
           if (!fields.name && !fields.email && !fields.phone && !fields.emails?.length && !fields.phones?.length && !fields.street) return toolError("Give at least a name, email, phone or street.");
           const item = await vault.create({ ...fields, type: "contact" });
@@ -280,7 +283,7 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
   }
 
   /** One JSON-RPC message → response object, or null for notifications. */
-  async function handleRpc(msg: RpcMessage): Promise<RpcResponse | null> {
+  async function handleRpc(msg: RpcMessage, auth: McpAuth = { botSlug: null, legacy: true }): Promise<RpcResponse | null> {
     if (!msg || typeof msg !== "object" || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
       return { jsonrpc: "2.0", id: msg?.id ?? null, error: { code: -32600, message: "Invalid request" } };
     }
@@ -303,9 +306,11 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
         return reply({ tools: [...TOOLS, ...(extra?.tools ?? [])] });
       case "tools/call": {
         const name = msg.params?.name;
-        if (extra?.tools.some((t) => t.name === name)) return reply(await extra.call(name, msg.params?.arguments ?? {}, { botFor }));
+        if (extra?.tools.some((t) => t.name === name)) {
+          return reply(await extra.call(name, msg.params?.arguments ?? {}, { botFor: (threadId) => botFor(threadId, auth), auth }));
+        }
         if (!TOOLS.some((t) => t.name === name)) return isNotification ? null : { jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: `Unknown tool: ${name}` } };
-        return reply(await callTool(name, msg.params?.arguments ?? {}));
+        return reply(await callTool(name, msg.params?.arguments ?? {}, auth));
       }
       default:
         if (isNotification || msg.method.startsWith("notifications/")) return null;
@@ -341,7 +346,7 @@ export function bearerMatches(header: unknown, expected: string | null | undefin
 export async function handleMcpHttp(
   req: IncomingMessage,
   res: ServerResponse,
-  { tools, token, readBody }: { tools: Pick<BotTools, "handleRpc">; token: string | null | undefined; readBody: (req: IncomingMessage, limit: number) => Promise<unknown> },
+  { tools, resolveAuth, readBody }: { tools: Pick<BotTools, "handleRpc">; resolveAuth: (token: string) => Promise<McpAuth | null>; readBody: (req: IncomingMessage, limit: number) => Promise<unknown> },
 ) {
   const sendJson = (status: number, body: unknown, headers: Record<string, string> = {}) => {
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...headers });
@@ -351,7 +356,9 @@ export async function handleMcpHttp(
   const remote = req.socket.remoteAddress ?? "";
   const local = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
   if (viaTunnel || !local) return sendJson(403, { error: "The Bot tool server only accepts local requests." });
-  if (!bearerMatches(req.headers.authorization, token)) return sendJson(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+  const raw = /^Bearer\s+(.+)$/iu.exec(String(req.headers.authorization ?? ""))?.[1]?.trim();
+  const auth = raw ? await resolveAuth(raw).catch(() => null) : null;
+  if (!auth) return sendJson(401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
   if (req.method !== "POST") return sendJson(405, { error: "Method not allowed" }, { allow: "POST" });
 
   let body: RpcMessage;
@@ -361,7 +368,7 @@ export async function handleMcpHttp(
     return sendJson(400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
   }
   const batch = Array.isArray(body);
-  const responses = (await Promise.all((batch ? body : [body]).map((m: RpcMessage) => tools.handleRpc(m)))).filter(Boolean);
+  const responses = (await Promise.all((batch ? body : [body]).map((m: RpcMessage) => tools.handleRpc(m, auth)))).filter(Boolean);
   if (responses.length === 0) return sendJson(202, undefined);
   if (res.destroyed) return;
   return sendJson(200, batch ? responses : responses[0]);

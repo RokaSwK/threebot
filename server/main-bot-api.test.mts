@@ -60,6 +60,12 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
       // The gateway's JSON replies, read field by field by the assertions below.
       return { status: response.status, body: (await response.json()) as any };
     };
+    const mcp = async (token: string, body: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp/bot`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body),
+      });
+      return (await response.json()) as any;
+    };
     const main = (bots: Bot[]) => bots.filter((bot) => bot.primary).map((bot) => bot.slug);
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['alpha']);
@@ -88,6 +94,17 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.doesNotMatch(instructions, /You are the primary Bot/);
     assert.match(instructions, /<memory>/);
     assert.match(instructions, /Prefers short answers/);
+    const alphaMcp = JSON.parse(await readFile(path.join(botsRoot, 'alpha/.mcp.json'), 'utf8'));
+    const alphaToken = String(alphaMcp.mcpServers.bot.headers.Authorization).replace(/^Bearer\s+/u, '');
+    assert.match(alphaToken, /^[a-f0-9]{64}$/u);
+    assert.notEqual(alphaToken, 'fixture-only');
+    const listed = await mcp(alphaToken, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === 'memory_read'));
+    const readMemory = await mcp(alphaToken, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });
+    assert.match(JSON.parse(readMemory.result.content[0].text).bot, /Prefers short answers/u);
+    const legacyMemory = await mcp('fixture-only', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });
+    assert.equal(legacyMemory.result.isError, true);
+    assert.match(legacyMemory.result.content[0].text, /legacy token/iu);
     assert.match(await readFile(path.join(botsRoot, 'beta/AGENTS.md'), 'utf8'), /You are the primary Bot/);
     await stop();
     await start();
