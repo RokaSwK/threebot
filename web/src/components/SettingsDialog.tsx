@@ -187,7 +187,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
         <Row title="Memory model" desc="Used by each Bot's daily memory maintenance routine: reflection, defrag and safe cleanup. Normal routines keep their own model.">
           <div className="flex items-center gap-2">
             <ModelPicker value={s.memoryReflectionModel ?? null} onChange={(m) => save({ memoryReflectionModel: m })} />
-            {s.memoryReflectionModel && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => save({ memoryReflectionModel: null })}>Bot model</button>}
+            {s.memoryReflectionModel && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => save({ memoryReflectionModel: null })}>Off</button>}
           </div>
         </Row>
         <BackupModelRow />
