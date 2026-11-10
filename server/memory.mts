@@ -375,15 +375,40 @@ function luhn(value: string): boolean {
   return sum > 0 && sum % 10 === 0;
 }
 
-function secretLike(text: string): boolean {
-  const lower = text.toLowerCase();
-  const labels = ["password", "passwd", "passcode", "api key", "api_key", "secret key", "token:", "contraseña", "clave api"];
-  if (labels.some((label) => lower.includes(label))) return true;
-  if (/(^|\s)(sk-|ghp_|gho_|github_pat_|xoxb-|xoxp-|akia|-----begin)/iu.test(text)) return true;
-  if (/\b(?=[A-Za-z0-9+/=_-]{32,}\b)(?=[A-Za-z0-9+/=_-]*\d)[A-Za-z0-9+/=_-]+\b/u.test(text)) return true;
-  if (/\b\d{3}-\d{2}-\d{4}\b/u.test(text)) return true;
+// A label marks a secret only when a value follows it ("password: …", "token is …"). A fact that
+// merely talks about passwords ("password resets go through Ana") is not one.
+const SECRET_LABEL = /(?:^|[^\p{L}\p{N}])(?:password|passwd|passcode|api[ _-]?key|secret[ _-]?key|token|contraseña|clave api)\s*(?:[:=]|\s(?:is|es)\s)\s*\S/iu;
+
+/** A long unbroken run with a digit in it: a key or token, as far as anyone can tell by looking. */
+function opaqueRun(text: string): boolean {
+  for (const run of text.match(/[A-Za-z0-9+/=_-]{32,}/gu) ?? []) {
+    if (!/\d/u.test(run)) continue;
+    // Paths, slugs and ids are made of short pieces (memory/notes/threebot-landing-v2, a thread's
+    // UUID); a key is one long piece. A full commit hash still counts: quote its first 12 characters.
+    if (run.split(/[/_-]+/u).some((piece) => piece.length > 16)) return true;
+  }
+  return false;
+}
+
+function secretReason(text: string): "secret" | "opaque" | null {
+  if (SECRET_LABEL.test(text)) return "secret";
+  if (/(^|\s)(sk-|ghp_|gho_|github_pat_|xoxb-|xoxp-|akia|-----begin)/iu.test(text)) return "secret";
+  if (/\b\d{3}-\d{2}-\d{4}\b/u.test(text)) return "secret";
   const digits = text.match(/\b\d{13,19}\b/gu) ?? [];
-  return digits.some((run) => luhn(run));
+  if (digits.some((run) => luhn(run))) return "secret";
+  return opaqueRun(text) ? "opaque" : null;
+}
+
+function secretRefusal(text: string, where: "memory" | "a note"): MemoryRefusal | null {
+  const reason = secretReason(text);
+  if (!reason) return null;
+  return {
+    ok: false,
+    code: "secret",
+    message: reason === "opaque"
+      ? `That has a long unbroken string that looks like a key or token, which belongs in the Vault, never in ${where}. If it is a commit hash or an id, shorten it (12 characters is enough).`
+      : `Passwords, keys, card numbers and identity numbers belong in the Vault, never in ${where}.`,
+  };
 }
 
 function stripFactSource(value: string): string {
@@ -412,8 +437,7 @@ export function checkFact(value: unknown): MemoryCheck {
   if (INSTRUCTIONS.some((phrase) => lower.includes(phrase))) {
     return { ok: false, code: "instruction", message: "Memory holds facts about the user, not instructions to an assistant." };
   }
-  if (secretLike(fact)) return { ok: false, code: "secret", message: "Passwords, keys, card numbers and identity numbers belong in the Vault, never in memory." };
-  return { ok: true };
+  return secretRefusal(fact, "memory") ?? { ok: true };
 }
 
 /** Split `- [category] @effective:date text [source: …] [[link]]` into its parts. */
@@ -782,10 +806,7 @@ function checkNoteContent(content: string): MemoryCheck {
   if (content.includes(MANAGED_START) || content.includes(MANAGED_END) || content.includes("<memory>") || content.includes("</memory>")) {
     return { ok: false, code: "managed_marker", message: "The note contains a marker reserved for generated instructions." };
   }
-  if (secretLike(content)) {
-    return { ok: false, code: "secret", message: "Passwords, keys, card numbers and identity numbers belong in the Vault, never in a note." };
-  }
-  return { ok: true };
+  return secretRefusal(content, "a note") ?? { ok: true };
 }
 
 async function writeHistory(ctx: MemoryFileContext, before: string, now: Date): Promise<void> {
@@ -989,11 +1010,33 @@ async function writeNote(input: MemoryMutationInput, ctx: MemoryFileContext, now
   return { ok: true, scope: input.scope, path: normalized, revision: revisionOf(withFrontmatter), note: withFrontmatter };
 }
 
+// One writer at a time per memory store (a Bot's own, or the shared one). The revision check and
+// the write it guards are several awaits apart, so without this two callers holding the same
+// revision both pass the check and the second silently replaces the first one's change.
+const memoryWriters = new Map<string, Promise<void>>();
+
+async function oneWriter<T>(store: string, work: () => Promise<T>): Promise<T> {
+  const run = (memoryWriters.get(store) ?? Promise.resolve()).then(work);
+  const settled = run.then(() => {}, () => {});
+  memoryWriters.set(store, settled);
+  try {
+    return await run;
+  } finally {
+    if (memoryWriters.get(store) === settled) memoryWriters.delete(store);
+  }
+}
+
 /**
  * One transactional mutation of `MEMORY.md`, the shared file or one note. The caller has already
  * resolved the authenticated Bot; this function still verifies the quote and the revision.
+ * Mutations of the same store run one after another, so a stale revision always gets a conflict.
  */
-export async function mutateMemory(input: MemoryMutationInput): Promise<MemoryMutationResult> {
+export function mutateMemory(input: MemoryMutationInput): Promise<MemoryMutationResult> {
+  const store = path.resolve(memoryFileContext(input.botDir, input.sharedFile, input.scope).stateFile);
+  return oneWriter(store, () => applyMutation(input));
+}
+
+async function applyMutation(input: MemoryMutationInput): Promise<MemoryMutationResult> {
   const now = input.now ?? new Date();
   if (!input.trustedUser) {
     const evidence = checkOwnerEvidence(input.sourceText, input.sourceQuote);

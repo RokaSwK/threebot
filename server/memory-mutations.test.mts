@@ -98,6 +98,44 @@ test("add, duplicate, conflict, provenance and history", async () => {
   if (!conflict.ok) assert.equal(conflict.code, "conflict");
 });
 
+test("two writers holding the same revision cannot both win", async () => {
+  const { root, botDir, sharedFile } = await fixture();
+  try {
+    const expectedRevision = (await readMemoryText({ botDir, sharedFile, scope: "shared" })).revision;
+    const add = (author: string, fact: string) => mutateMemory({
+      botDir: path.join(root, "bots", author), sharedFile, scope: "shared", op: "add", expectedRevision, author,
+      sourceMessageId: "m1", sourceQuote, sourceText, fact, now,
+    });
+    const results = await Promise.all([add("alpha", "Timezone is Bogota."), add("beta", "The manager is Ana.")]);
+    // Two Bots write shared memory at once. One lands; the other is told to read again.
+    assert.deepEqual(results.map((result) => result.ok ? "ok" : result.code), ["ok", "conflict"]);
+    const text = await readFile(sharedFile, "utf8");
+    assert.match(text, /Timezone is Bogota\./u);
+    assert.doesNotMatch(text, /manager is Ana/u);
+    // The loser retries on the revision it was handed, and nothing is lost.
+    const conflict = results[1]!;
+    const retry = await mutateMemory({
+      botDir: path.join(root, "bots", "beta"), sharedFile, scope: "shared", op: "add", expectedRevision: conflict.ok ? "" : conflict.revision!, author: "beta",
+      sourceMessageId: "m1", sourceQuote, sourceText, fact: "The manager is Ana.", now,
+    });
+    assert.equal(retry.ok, true);
+    const after = await readFile(sharedFile, "utf8");
+    assert.match(after, /Timezone is Bogota\./u);
+    assert.match(after, /The manager is Ana\./u);
+    // A write that fails does not block the ones behind it.
+    const state = path.join(path.dirname(sharedFile), "shared-memory.state.json");
+    const revision = (await readMemoryText({ botDir, sharedFile, scope: "shared" })).revision;
+    await rm(state, { force: true });
+    await mkdir(state);
+    await assert.rejects(mutateMemory({ botDir, sharedFile, scope: "shared", op: "add", expectedRevision: revision, author: "alpha", sourceMessageId: "m1", sourceQuote, sourceText, fact: "This write fails.", now }));
+    await rm(state, { recursive: true, force: true });
+    const next = await mutateMemory({ botDir, sharedFile, scope: "shared", op: "add", expectedRevision: (await readMemoryText({ botDir, sharedFile, scope: "shared" })).revision, author: "alpha", sourceMessageId: "m1", sourceQuote, sourceText, fact: "This write lands.", now });
+    assert.equal(next.ok, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("pasted words are refused as evidence", async () => {
   const { botDir, sharedFile } = await fixture();
   const before = await readMemoryText({ botDir, sharedFile, scope: "bot" });

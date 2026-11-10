@@ -108,6 +108,32 @@ test("facts are checked deterministically", () => {
   assert.equal(refusal("<!-- bot:managed:start -->"), "managed_marker");
 });
 
+test("the secret check stops secrets, not facts that mention them", () => {
+  const secret = (value: string) => {
+    const check = checkFact(value);
+    return check.ok ? null : `${check.code}: ${check.message}`;
+  };
+  // A label with a value after it.
+  for (const value of ["password: hunter2", "The wifi password is tuyo2026.", "API_KEY=abc123", "token = abc", "la contraseña es gatito"]) {
+    assert.match(secret(value) ?? "", /^secret: Passwords, keys/u, value);
+  }
+  // One long unbroken run, with or without separators around it.
+  for (const value of [
+    "Deploy with wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY1 on the box.",
+    "The release commit is 7113c5b64519739717a53ded5c01c3128d20168f.",
+    `Use ${"a1".repeat(16)} for staging.`,
+  ]) assert.match(secret(value) ?? "", /^secret: That has a long unbroken string/u, value);
+  // Everyday facts that the same words and shapes appear in.
+  for (const value of [
+    "Password resets for the team go through Ana.",
+    "Never asks for the API key over chat; it is in the Vault.",
+    "Each reply may use up to 2000 tokens.",
+    "The landing repo lives in tuyoinc/github/threebot-landing-v2/web/src.",
+    "Main thread id is 3dadadc3-642a-40d0-ab26-deddf82c568b.",
+    "The release commit is 7113c5b64519.",
+  ]) assert.equal(secret(value), null, value);
+});
+
 test("a fact line splits into category, date, source and links", () => {
   const parsed = parseFact("- [decision] @effective:2026-11-09 Use T3. [source: thread/e11b#m1; added: 2026-11-09] [[notes/threebot/architecture]]");
   assert.equal(parsed.category, "decision");
