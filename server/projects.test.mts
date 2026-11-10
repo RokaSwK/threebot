@@ -261,6 +261,6 @@ test("same-origin checks accept the app behind a proxy and refuse cross-site wri
 
 test("the Bot tool server still only answers local callers", async () => {
   const res = fakeResponse();
-  await handleMcpHttp({ headers: { "cf-ray": "1" }, socket: { remoteAddress: "127.0.0.1" }, method: "POST" } as unknown as IncomingMessage, res as unknown as ServerResponse, { tools: {} as Parameters<typeof handleMcpHttp>[2]["tools"], token: "t", readBody: async () => ({}) });
+  await handleMcpHttp({ headers: { "cf-ray": "1" }, socket: { remoteAddress: "127.0.0.1" }, method: "POST" } as unknown as IncomingMessage, res as unknown as ServerResponse, { tools: {} as Parameters<typeof handleMcpHttp>[2]["tools"], resolveAuth: async () => ({ botSlug: null, legacy: true }), readBody: async () => ({}) });
   assert.equal(res.status, 403);
 });

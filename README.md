@@ -91,7 +91,7 @@ npm start
 
 If T3 Code isn't on port 3773, set `T3_URL` in `.env`. A checkout updates with `git pull && npm run setup`.
 
-A Bot is a T3 thread, so it runs on whatever T3 Code runs: Claude, Codex, Cursor, Grok Build, OpenCode, Antigravity, Muse Code, Pi, fx, ACP agents such as Hermes, and local models. Threebot is tested on Claude and Codex. On other providers a Bot's memory and messaging tools may not be available yet.
+A Bot is a T3 thread, so it runs on whatever T3 Code runs: Claude, Codex, Cursor, Grok Build, OpenCode, Antigravity, Muse Code, Pi, fx, ACP agents such as Hermes, and local models. Threebot is tested on Claude and Codex. Pi and Antigravity need one extra step to load the Bot's MCP tools; see [docs/harnesses.md](docs/harnesses.md).
 
 ## How it works
 

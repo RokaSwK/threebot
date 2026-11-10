@@ -19,6 +19,8 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'bot.json'), JSON.stringify({ name: slug, mainThreadId: `thread-${slug}`, primary: true, createdAt: '2026-01-01T00:00:00Z' }));
   }
+  await mkdir(path.join(botsRoot, 'alpha', 'memory'), { recursive: true });
+  await writeFile(path.join(botsRoot, 'alpha', 'memory', 'MEMORY.md'), '# Alpha memory\n\n- [preference] Prefers short answers.\n');
   const socket = net.createServer();
   socket.listen(0, '127.0.0.1');
   await once(socket, 'listening');
@@ -58,6 +60,12 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
       // The gateway's JSON replies, read field by field by the assertions below.
       return { status: response.status, body: (await response.json()) as any };
     };
+    const mcp = async (token: string, body: unknown) => {
+      const response = await fetch(`http://127.0.0.1:${port}/mcp/bot`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify(body),
+      });
+      return (await response.json()) as any;
+    };
     const main = (bots: Bot[]) => bots.filter((bot) => bot.primary).map((bot) => bot.slug);
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['alpha']);
@@ -84,6 +92,32 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
     const instructions = await readFile(path.join(botsRoot, 'alpha/AGENTS.md'), 'utf8');
     assert.doesNotMatch(instructions, /You are the primary Bot/);
+    assert.match(instructions, /<memory>/);
+    assert.match(instructions, /Prefers short answers/);
+    const alphaMcp = JSON.parse(await readFile(path.join(botsRoot, 'alpha/.mcp.json'), 'utf8'));
+    const alphaToken = String(alphaMcp.mcpServers.bot.headers.Authorization).replace(/^Bearer\s+/u, '');
+    assert.match(alphaToken, /^[a-f0-9]{64}$/u);
+    assert.notEqual(alphaToken, 'fixture-only');
+    const alphaPi = JSON.parse(await readFile(path.join(botsRoot, 'alpha/.pi/mcp.json'), 'utf8'));
+    assert.equal(alphaPi.mcpServers.bot.url, `http://127.0.0.1:${port}/mcp/bot`);
+    assert.equal(alphaPi.mcpServers.bot.type, 'streamable-http');
+    assert.equal(alphaPi.mcpServers.bot.headers.Authorization, `Bearer ${alphaToken}`);
+    const listed = await mcp(alphaToken, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === 'memory_read'));
+    const readMemory = await mcp(alphaToken, { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });
+    assert.match(JSON.parse(readMemory.result.content[0].text).bot, /Prefers short answers/u);
+    const legacyMemory = await mcp('fixture-only', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memory_read', arguments: {} } });
+    assert.equal(legacyMemory.result.isError, true);
+    assert.match(legacyMemory.result.content[0].text, /legacy token/iu);
+    const memoryView = await request('/api/memory?slug=alpha');
+    assert.equal(memoryView.status, 200);
+    assert.equal(memoryView.body.bot.facts[0].text, 'Prefers short answers.');
+    assert.equal(memoryView.body.bot.facts[0].category, 'preference');
+    const forgotten = await request('/api/memory/forget', 'POST', { slug: 'alpha', scope: 'bot', fact: '- [preference] Prefers short answers.', expectedRevision: memoryView.body.bot.revision });
+    assert.equal(forgotten.status, 200);
+    assert.equal(forgotten.body.ok, true);
+    const afterForget = await request('/api/memory?slug=alpha');
+    assert.equal(afterForget.body.bot.facts.length, 0);
     assert.match(await readFile(path.join(botsRoot, 'beta/AGENTS.md'), 'utf8'), /You are the primary Bot/);
     const pushKey = await request('/api/push/key');
     assert.equal(pushKey.status, 200);

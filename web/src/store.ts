@@ -71,7 +71,7 @@ type State = {
   sidebarCompact: boolean;
   sidebarWidth: number;
   detailsWidth: number;
-  detailsTab: "details" | "library" | "computer";
+  detailsTab: "details" | "library" | "computer" | "memory";
   dialog: Dialog;
   searchSession: SearchSession;
   searchResultRevision: number;

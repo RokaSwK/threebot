@@ -19,3 +19,25 @@ test("routines start fresh each run when T3 offers it, unless they need the conv
   assert.match(render(), /If the tool offers `freshSession`, set it to true/);
   assert.match(render(), /leave it off when a run needs the conversation so far/);
 });
+
+test("a memory snapshot is rendered as data, with its notes index", () => {
+  const text = renderAgentsMd({
+    bot: { name: "Roka", slug: "roka", projectId: "p", mainThreadId: "t" },
+    settings: { userName: "Sam" },
+    botsRoot: "/bots",
+    memory: {
+      bot: "- Prefers short answers.",
+      shared: "- Timezone: Europe/Madrid.",
+      notes: [{ path: "memory/notes/threebot/review.md", description: "How to review Threebot changes", chars: 120, tokens: 30, updatedAt: null }],
+      revision: "a".repeat(64),
+      sharedRevision: "b".repeat(64),
+      truncated: { bot: false, shared: false },
+      updatedAt: "2026-11-09T00:00:00.000Z",
+    },
+  });
+  assert.match(text, /<memory>/);
+  assert.match(text, /Timezone: Europe\/Madrid/);
+  assert.match(text, /Prefers short answers/);
+  assert.match(text, /memory\/notes\/threebot\/review\.md/);
+  assert.match(text, /<\/memory>/);
+});

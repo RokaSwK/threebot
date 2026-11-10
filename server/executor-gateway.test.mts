@@ -9,6 +9,7 @@ import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { test, type TestContext } from 'node:test';
 import { startFakeT3 } from '../scripts/fixture-t3.mts';
+import { tokenForBot } from './bot-token.mts';
 
 const TOKEN = 'fake-gateway-executor-token';
 const PASSWORD = 'fake-gateway-password';
@@ -151,7 +152,7 @@ for (const hasCredential of [true, false]) test(`every Bot gets the selected Clo
   assert.equal(files?.length, 2, 'both Bot managed configurations are generated');
   for (const { json: mcp, toml, instructions, directory } of files!) {
     assert.equal(mcp.mcpServers.retained.command, 'never-executed');
-    assert.equal(mcp.mcpServers.bot.headers.Authorization, 'Bearer fixture-bot-token');
+    assert.equal(mcp.mcpServers.bot.headers.Authorization, `Bearer ${tokenForBot('fixture-bot-token', path.basename(directory))}`);
     if (hasCredential) {
       assert.deepEqual(mcp.mcpServers.executor, { type: 'http', url: 'https://mcp.executor.sh/org/workspace/mcp', headers: { Authorization: `Bearer ${TOKEN}`, 'X-Executor-Organization': 'workspace' } });
       assert.match(toml, /https:\/\/mcp\.executor\.sh\/org\/workspace\/mcp/);

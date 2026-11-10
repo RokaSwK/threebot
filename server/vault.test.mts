@@ -312,7 +312,7 @@ test("MCP over HTTP needs the bearer, refuses tunnel traffic and GET", async () 
     for await (const c of req) chunks.push(c);
     return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
   };
-  const server = http.createServer((req, res) => handleMcpHttp(req, res, { tools, token: "secret-token", readBody }));
+  const server = http.createServer((req, res) => handleMcpHttp(req, res, { tools, resolveAuth: async (raw) => raw === "secret-token" ? { botSlug: null, legacy: true } : null, readBody }));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp/bot`;
   const post = (body: unknown, headers: Record<string, string> = {}) => fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body: JSON.stringify(body) });
