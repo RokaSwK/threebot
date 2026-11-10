@@ -41,6 +41,8 @@ tokens.json
 service-account*.json
 
 # Generated output and local caches.
+macos/.build/
+macos/dist/
 dist/
 build/
 out/
