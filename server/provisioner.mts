@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { T3Client } from "./t3rpc.mts";
 import { syncBotProject } from "./bot-avatar.mts";
 import type { Bot, BotPatch } from "./main-bot.mts";
-import { ensureMemoryRoutine } from "./memory-routine.mts";
 
 /** A project as T3's /api/projects lists it; only the fields used here. */
 type T3Project = { id: string; workspaceRoot?: string; defaultModelSelection?: unknown; [key: string]: unknown };
@@ -98,13 +97,6 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     await saveBot(bot.slug, { mainThreadId: threadId, model: null });
     console.log(`[provisioner] started main thread for ${bot.slug}`);
     if (bot.brief || bot.pendingBrief) await deliverBrief(c, { ...bot, mainThreadId: threadId });
-    if (settings.memoryReflectionModel) {
-      await ensureMemoryRoutine({
-        client: c,
-        bot: { ...bot, projectId: bot.projectId, mainThreadId: threadId },
-        modelSelection: settings.memoryReflectionModel,
-      }).catch((error) => console.error(`[provisioner] memory routine for ${bot.slug}`, error));
-    }
   }
 
   async function deliverBrief(c: T3Client, bot: Bot) {

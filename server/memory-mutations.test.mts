@@ -416,3 +416,37 @@ test("closeFactRange preserves the source and opens an unknown start", () => {
     "- [decision] @valid[,2026-10-14) Use X. [source: thread/m1; added: 2026-09-01]",
   );
 });
+
+test("safe-dedupe preserves indentation and does not drop identical child bullets under different parents", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const file = path.join(botDir, "memory", "MEMORY.md");
+  const before = "# Alpha memory\n\n- Parent A:\n  - Child item.\n- Parent B:\n  - Child item.\n";
+  await writeFile(file, before);
+  const revision = revisionOf(before);
+  const result = await dedupeExactFacts({ botDir, sharedFile, scope: "bot", expectedRevision: revision });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.removed, 0);
+  assert.equal(await readFile(file, "utf8"), before);
+});
+
+test("shared closed facts retire to shared-history, not pruned history directory", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const before = "# Shared memory\n\n- [fact] @valid[2020-01-01,2020-02-01) Expired shared fact. [source: thread/m1]\n- [fact] Active shared fact.\n";
+  await writeFile(sharedFile, before);
+  const result = await retireClosedFacts({
+    botDir,
+    sharedFile,
+    scope: "shared",
+    expectedRevision: revisionOf(before),
+    now: new Date("2026-11-10T10:00:00.000Z"),
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.removed, 1);
+  assert.equal(result.notePath, "shared-history/closed-2026-11.md");
+  const retiredFile = path.join(path.dirname(sharedFile), "shared-history", "closed-2026-11.md");
+  assert.match(await readFile(retiredFile, "utf8"), /Expired shared fact/u);
+  assert.doesNotMatch(await readFile(sharedFile, "utf8"), /Expired shared fact/u);
+  assert.match(await readFile(sharedFile, "utf8"), /Active shared fact/u);
+});

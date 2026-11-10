@@ -17,7 +17,6 @@ import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage, type ReflectedMess
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
-import { ensureMemoryRoutine, findMemoryRoutine, setMemoryRoutineEnabled } from "./memory-routine.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
 import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from "./environment-routes.mts";
@@ -1002,7 +1001,6 @@ const server = http.createServer(async (req, res) => {
       await writeJson(settingsPath, next);
       if (!next.beta.projects) projectRoutes.closeStreams();
       if ("rules" in patch || "userName" in patch || "timezone" in patch || "memoryReflectionModel" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
-      if ("memoryReflectionModel" in patch) await ensureMemoryMaintenance().catch((error) => console.error("updating memory maintenance", error));
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);
@@ -1250,28 +1248,6 @@ const pushNotifier = createPushNotifier({
   },
 });
 pushNotifier.start();
-
-// Each Bot gets its own memory maintenance routine, but only when the user has chosen a memory
-// model in Settings. Never fall back to the Bot's expensive default just to keep a cron alive.
-async function ensureMemoryMaintenance() {
-  const settings = await getSettings();
-  const client = new T3Client({ baseUrl: cfg.t3Url, token, clientLabel: "threebot-memory-maintenance" });
-  await client.connect();
-  try {
-    for (const bot of await listBots()) {
-      if (!bot.projectId || !bot.mainThreadId) continue;
-      if (!settings.memoryReflectionModel) {
-        const existing = await findMemoryRoutine(client, bot);
-        if (existing?.enabled) await setMemoryRoutineEnabled(client, bot, false);
-        continue;
-      }
-      await ensureMemoryRoutine({ client, bot, modelSelection: settings.memoryReflectionModel });
-    }
-  } finally {
-    client.close();
-  }
-}
-ensureMemoryMaintenance().catch((e) => console.error("ensuring memory maintenance failed", e));
 
 if (envTailnet) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");

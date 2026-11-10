@@ -72,7 +72,7 @@ function duplicateKey(fact: MemoryFactView): string {
 }
 
 function exactLineKey(line: string): string {
-  return line.trim();
+  return line.trimEnd();
 }
 
 function negativeKey(fact: MemoryFactView): string {

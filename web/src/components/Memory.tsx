@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Brain, ChevronRight, FileText, RefreshCw, Scissors, Sparkles, Trash2 } from "lucide-react";
+import { Brain, ChevronRight, Clock, FileText, RefreshCw, Scissors, Sparkles, Trash2 } from "lucide-react";
 import { Modal, Pill, Spinner } from "./ui";
 import { toast } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
@@ -100,6 +100,14 @@ export function MemoryTab({ bot }: { bot: Bot }) {
     setDetailsOpen(false);
   };
 
+  const setupRoutine = () => {
+    if (!bot.mainThreadId) { toast("This Bot has no main conversation yet."); return; }
+    const draft = chatDraft(bot, bot.mainThreadId);
+    draft.setText([draft.getSnapshot().text, "Set up a daily routine at 03:30 to maintain your memory: reflect new owner messages, audit memory, remove exact duplicate lines and retire closed facts."].filter(Boolean).join("\n\n"));
+    selectThread(bot, bot.mainThreadId);
+    setDetailsOpen(false);
+  };
+
   const openNote = async (entry: MemoryNote) => {
     try {
       const loaded = await memoryApi.note(bot.slug, entry.path);
@@ -171,6 +179,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
           {defrag && defrag.counts.exactDuplicateFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit({ applySafe: true })}>Remove exact duplicates</Pill>}
           {defrag && defrag.counts.staleFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit({ retireClosed: true })}>Retire closed facts</Pill>}
           <Pill variant="soft" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
+          <Pill variant="soft" onClick={setupRoutine}><Clock size={13} /> Set up routine</Pill>
         </div>
         {defrag && <div className="mt-2 text-[12px] leading-relaxed text-muted">
           {defrag.findings.length === 0 ? "No issues found." : `${defrag.findings.length} finding${defrag.findings.length === 1 ? "" : "s"}: ${defrag.findings.slice(0, 4).map((finding) => finding.detail).join(" · ")}`}

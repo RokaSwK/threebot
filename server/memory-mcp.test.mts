@@ -152,6 +152,41 @@ test("memory_reflect returns a bookmark and memory_reflect_apply audits and adva
   assert.match(stale.content[0]!.text, /before the reflection bookmark/iu);
 });
 
+test("memory_reflect_apply validates throughPosition and lastMessageId strictly", async () => {
+  const { call, messages } = await fixture();
+  const packet = parse(await call("memory_reflect", {}, { botSlug: "alpha", legacy: false }));
+
+  // Non-integer or negative throughPosition
+  const neg = await call("memory_reflect_apply", {
+    operations: [],
+    expectedRevision: packet.revision,
+    throughPosition: -7.5,
+    lastMessageId: packet.lastMessageId,
+  }, { botSlug: "alpha", legacy: false });
+  assert.equal(neg.isError, true);
+  assert.match(neg.content[0]!.text, /non-negative integer/iu);
+
+  // Nonexistent lastMessageId
+  const fakeId = await call("memory_reflect_apply", {
+    operations: [],
+    expectedRevision: packet.revision,
+    throughPosition: 999999,
+    lastMessageId: "fake-id",
+  }, { botSlug: "alpha", legacy: false });
+  assert.equal(fakeId.isError, true);
+  assert.match(fakeId.content[0]!.text, /wasn't found/iu);
+
+  // Position mismatch between lastMessageId and throughPosition
+  const mismatch = await call("memory_reflect_apply", {
+    operations: [],
+    expectedRevision: packet.revision,
+    throughPosition: 999999,
+    lastMessageId: packet.lastMessageId,
+  }, { botSlug: "alpha", legacy: false });
+  assert.equal(mismatch.isError, true);
+  assert.match(mismatch.content[0]!.text, /must match the position/iu);
+});
+
 test("memory_note_split reads revisions and splits at headings", async () => {
   const { call, botDir } = await fixture();
   await mkdir(path.join(botDir, "memory", "notes"), { recursive: true });

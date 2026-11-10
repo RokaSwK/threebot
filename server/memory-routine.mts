@@ -64,6 +64,8 @@ export function defaultMemorySchedule(): MemoryRoutineSchedule {
   return { type: "fixed_time", timeOfDay: "03:30" };
 }
 
+const inFlightEnsure = new Map<string, Promise<{ task: MemoryRoutineTask; created: boolean }>>();
+
 export async function ensureMemoryRoutine({
   client,
   bot,
@@ -80,36 +82,49 @@ export async function ensureMemoryRoutine({
 }): Promise<{ task: MemoryRoutineTask; created: boolean }> {
   if (!bot.projectId || !bot.mainThreadId) throw new Error("This Bot needs a project and main thread before it can have a memory maintenance routine.");
   if (!modelSelection) throw new Error("Pick a model for memory maintenance.");
-  let existing = await findMemoryRoutine(client, bot);
-  const nextEnabled = enabled ?? existing?.enabled ?? true;
-  const modelChanged = existing ? JSON.stringify(existing.modelSelection) !== JSON.stringify(modelSelection) : false;
-  const boundToChat = existing ? existing.threadId === bot.mainThreadId : false;
-  if (existing && (modelChanged || boundToChat)) {
-    await client.call("scheduledTasks.delete", { id: existing.id });
-    existing = null;
+  const key = `${bot.projectId}:${bot.slug}`;
+  const running = inFlightEnsure.get(key);
+  if (running) return running;
+
+  const promise = (async () => {
+    let existing = await findMemoryRoutine(client, bot);
+    const nextEnabled = enabled ?? existing?.enabled ?? true;
+    const modelChanged = existing ? JSON.stringify(existing.modelSelection) !== JSON.stringify(modelSelection) : false;
+    const boundToChat = existing ? existing.threadId === bot.mainThreadId : false;
+    if (existing && (modelChanged || boundToChat)) {
+      await client.call("scheduledTasks.delete", { id: existing.id });
+      existing = null;
+    }
+    const response = await client.call("scheduledTasks.upsert", {
+      ...(existing ? { id: existing.id, requireExisting: true } : {}),
+      commandId: randomUUID(),
+      title: MEMORY_ROUTINE_TITLE,
+      prompt: MEMORY_ROUTINE_PROMPT,
+      enabled: nextEnabled,
+      schedule,
+      projectId: bot.projectId,
+      // A bound thread keeps its own provider/model; T3 ignores task.modelSelection for it.
+      // A dedicated thread launched by the task uses the routine model, then stays bound for later runs.
+      threadId: null,
+      threadMode: "continue",
+      workspaceStrategy: { type: "root" },
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const task = response?.task as RpcTask | undefined;
+    if (!task || typeof task.id !== "string") throw new Error("T3 did not return the saved routine.");
+    return { task: task as MemoryRoutineTask, created: !existing };
+  })();
+
+  inFlightEnsure.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightEnsure.delete(key);
   }
-  const response = await client.call("scheduledTasks.upsert", {
-    ...(existing ? { id: existing.id, requireExisting: true } : {}),
-    commandId: randomUUID(),
-    title: MEMORY_ROUTINE_TITLE,
-    prompt: MEMORY_ROUTINE_PROMPT,
-    enabled: nextEnabled,
-    schedule,
-    projectId: bot.projectId,
-    // A bound thread keeps its own provider/model; T3 ignores task.modelSelection for it.
-    // A dedicated thread launched by the task uses the routine model, then stays bound for later runs.
-    threadId: null,
-    threadMode: "continue",
-    workspaceStrategy: { type: "root" },
-    modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    createdBy: "agent",
-    creationSource: "server",
-  });
-  const task = response?.task as RpcTask | undefined;
-  if (!task || typeof task.id !== "string") throw new Error("T3 did not return the saved routine.");
-  return { task: task as MemoryRoutineTask, created: !existing };
 }
 
 export async function runMemoryRoutine(client: T3Client, bot: Bot): Promise<MemoryRoutineTask> {

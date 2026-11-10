@@ -995,9 +995,23 @@ function stripFirstH1(body: string): string {
 }
 
 function noteTargetDir(notePath: string, targetDir?: string): string {
-  const dir = (targetDir?.trim() || path.posix.join(path.posix.dirname(notePath), path.posix.basename(notePath, ".md"))).replace(/\/+$/u, "");
-  if (!dir.startsWith("memory/notes/")) throw Object.assign(new Error("The target folder must be under memory/notes."), { status: 400 });
-  return dir;
+  const raw = (targetDir?.trim() || path.posix.join(path.posix.dirname(notePath), path.posix.basename(notePath, ".md"))).replaceAll("\\", "/").replace(/\/+$/u, "");
+  const normalized = path.posix.normalize(raw);
+  if (normalized.includes("\0") || !normalized.startsWith("memory/notes/")) {
+    throw Object.assign(new Error("The target folder must be under memory/notes."), { status: 400 });
+  }
+  const rel = path.posix.relative("memory/notes", normalized);
+  if (rel.startsWith("..") || path.posix.isAbsolute(rel) || rel === "") {
+    throw Object.assign(new Error("The target folder must be under memory/notes."), { status: 400 });
+  }
+  const segments = normalized.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+    throw Object.assign(new Error("The target folder must be under memory/notes."), { status: 400 });
+  }
+  if (segments.length > 5) {
+    throw Object.assign(new Error("A note folder may have at most two folder levels under memory/notes."), { status: 400 });
+  }
+  return normalized;
 }
 
 function noteStateContext(botDir: string): MemoryFileContext {
@@ -1019,7 +1033,12 @@ export async function splitMemoryNote({ botDir, path: notePath, expectedRevision
   const chunks = meta.body.split(/\n(?=##\s+)/u);
   const sections = chunks.filter((chunk) => /^##\s+\S/mu.test(chunk));
   if (sections.length < 2) return { ok: false, code: "invalid", message: "That note needs at least two ## headings before it can be split." };
-  const dir = noteTargetDir(source.path, targetDir);
+  let dir: string;
+  try {
+    dir = noteTargetDir(source.path, targetDir);
+  } catch (error) {
+    return { ok: false, code: "path", message: String((error as Error).message) };
+  }
   let notes: MemoryNote[];
   try {
     notes = await listMemoryNotes(botDir);
@@ -1032,7 +1051,6 @@ export async function splitMemoryNote({ botDir, path: notePath, expectedRevision
   for (const section of sections) {
     const heading = /^##\s+(.+)$/mu.exec(section)?.[1]?.trim() ?? "Section";
     const content = section.replace(/^##\s+.+\r?\n?/u, "").trim();
-    if (!content) continue;
     let slug = noteSlug(heading);
     let partPath = path.posix.join(dir, `${slug}.md`);
     let n = 2;
@@ -1041,12 +1059,13 @@ export async function splitMemoryNote({ botDir, path: notePath, expectedRevision
     }
     used.add(partPath);
     const description = `${heading} — ${meta.description}`.slice(0, 160);
-    const contentWithFront = `${noteFrontmatter(description, heading)}# ${heading}\n\n${content}\n`;
+    const sectionBody = content ? `# ${heading}\n\n${content}\n` : `# ${heading}\n`;
+    const contentWithFront = `${noteFrontmatter(description, heading)}${sectionBody}`;
     const checked = checkNoteContent(contentWithFront);
     if (!checked.ok) return { ok: false, code: "too_long", message: `Section “${heading}” is too large to split automatically: ${checked.message}` };
     planned.push({ path: partPath, title: heading, description, content: contentWithFront });
   }
-  if (planned.length < 2) return { ok: false, code: "invalid", message: "That note has no two non-empty ## sections to split." };
+  if (planned.length < 2) return { ok: false, code: "invalid", message: "That note needs at least two ## sections to split." };
   const intro = chunks[0]!.trim();
   const indexBody = `${meta.body.startsWith("#") ? "" : `# ${meta.title}\n\n`}${intro ? `${intro}\n\n` : ""}## Sections\n${planned.map((part) => `- [[${part.path}]] — ${part.description}`).join("\n")}\n`;
   const index = `${noteFrontmatter(`${meta.description} (index)`, meta.title, "index")}${indexBody}`;
@@ -1108,12 +1127,18 @@ export async function mergeMemoryNotes({ botDir, targetPath, expectedRevision, s
   if (!targetExists && notes.length + 1 > MEMORY_LIMITS.noteCount) return { ok: false, code: "cap", message: `Merging would exceed the ${MEMORY_LIMITS.noteCount}-note limit.` };
   const targetTitle = noteMeta(targetText, path.posix.basename(target, ".md")).title;
   const targetDescription = String(description ?? noteMeta(targetText, targetTitle).description).slice(0, 160);
-  const mergedBody = readSources.map((source) => `## ${source.title}\n<!-- source: ${source.path} -->\n${stripFirstH1(noteMeta(source.text, source.title).body)}`).join("\n\n");
+  const targetBody = targetExists ? stripFirstH1(noteMeta(targetText, targetTitle).body).trim() : "";
+  const sourceSections = readSources.map((source) => `## ${source.title}\n<!-- source: ${source.path} -->\n${stripFirstH1(noteMeta(source.text, source.title).body)}`);
+  const mergedBody = [targetBody, ...sourceSections].filter(Boolean).join("\n\n");
   const merged = `${noteFrontmatter(targetDescription, targetTitle)}# ${targetTitle}\n\n${mergedBody}\n`;
   const checked = checkNoteContent(merged);
   if (!checked.ok) return { ok: false, code: "too_long", message: `The merged note is too large: ${checked.message}` };
   const archiveRelative = `memory/notes/archive/merged-${now.toISOString().replace(/[:.]/gu, "-")}-${randomUUID().slice(0, 8)}.md`;
-  const archive = `---\ndescription: Raw note sources merged into ${target}\ntype: archive\n---\n# Merged sources\n\n${readSources.map((source) => `## ${source.path}\n\n${source.text}`).join("\n\n")}\n`;
+  const archiveSources = [
+    ...(targetExists ? [{ path: target, text: targetText }] : []),
+    ...readSources,
+  ];
+  const archive = `---\ndescription: Raw note sources merged into ${target}\ntype: archive\n---\n# Merged sources\n\n${archiveSources.map((source) => `## ${source.path}\n\n${source.text}`).join("\n\n")}\n`;
   const ctx = noteStateContext(botDir);
   if (targetExists) await writeHistory(ctx, targetText, now);
   for (const source of readSources) await writeHistory(ctx, source.text, now);
@@ -1350,14 +1375,22 @@ export async function dedupeExactFacts({ botDir, sharedFile, scope, expectedRevi
   const revision = revisionOf(current);
   if (revision !== expectedRevision) return { ok: false, code: "conflict", message: "Memory changed since the audit. Read it again.", revision, content: current };
   const { lines, trailing } = factLines(current);
-  const seen = new Set<string>();
+  const seenTop = new Set<string>();
+  let seenChildren = new Set<string>();
   const kept: string[] = [];
   let removed = 0;
   for (const line of lines) {
-    if (/^\s*[-*+]\s+/u.test(line)) {
-      const key = line.trim();
-      if (seen.has(key)) { removed += 1; continue; }
-      seen.add(key);
+    if (/^[-*+]\s+/u.test(line)) {
+      seenChildren = new Set<string>();
+      const key = line.trimEnd();
+      if (seenTop.has(key)) { removed += 1; continue; }
+      seenTop.add(key);
+    } else if (/^\s+[-*+]\s+/u.test(line)) {
+      const key = line.trimEnd();
+      if (seenChildren.has(key)) { removed += 1; continue; }
+      seenChildren.add(key);
+    } else if (line.trim().length > 0) {
+      seenChildren = new Set<string>();
     }
     kept.push(line);
   }
@@ -1393,7 +1426,7 @@ export async function retireClosedFacts({ botDir, sharedFile, scope, expectedRev
   const closed = lines.filter((line) => /^\s*[-*+]\s+/u.test(line) && (parseFact(line).validTo ?? "9999-12-31") < today);
   if (closed.length === 0) return { ok: true, removed: 0, revision, path: ctx.relative, notePath: null };
   const month = today.slice(0, 7);
-  const noteRelative = scope === "bot" ? `memory/notes/history/closed-${month}.md` : `shared-memory.history/closed-${month}.md`;
+  const noteRelative = scope === "bot" ? `memory/notes/history/closed-${month}.md` : `shared-history/closed-${month}.md`;
   const noteFile = scope === "bot" ? path.join(botDir, noteRelative) : path.join(path.dirname(sharedFile), noteRelative);
   const previousNote = await readIfExists(noteFile);
   const header = `---\ndescription: Closed facts retired from ${scope === "bot" ? "MEMORY.md" : "shared memory"}\ntype: history\n---\n# Closed facts ${month}\n\n`;

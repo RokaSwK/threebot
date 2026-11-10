@@ -423,11 +423,24 @@ export function createMemoryTools({
         if (!source.reflectMessageById) return toolError("Reflection isn't set up on this gateway.");
         if (!Array.isArray(args.operations)) return toolError("operations must be an array.");
         if (args.operations.length > 10) return toolError("At most 10 reflection operations per run.");
-        if (typeof args.expectedRevision !== "string" || typeof args.throughPosition !== "number" || typeof args.lastMessageId !== "string") return toolError("expectedRevision, throughPosition and lastMessageId are required.");
+        if (
+          typeof args.expectedRevision !== "string" ||
+          typeof args.throughPosition !== "number" ||
+          !Number.isInteger(args.throughPosition) ||
+          args.throughPosition < 0 ||
+          typeof args.lastMessageId !== "string" ||
+          !args.lastMessageId.trim()
+        ) {
+          return toolError("expectedRevision, throughPosition (non-negative integer) and lastMessageId are required.");
+        }
+        const lastMsg = await source.reflectMessageById(slug, args.lastMessageId.trim());
+        if (!lastMsg) return toolError("lastMessageId wasn't found in this Bot's conversation.");
+        if (lastMsg.position !== args.throughPosition) return toolError("throughPosition must match the position of lastMessageId.");
         const current = await readMemoryText({ botDir: dir, sharedFile, scope: "bot" });
         if (current.revision !== args.expectedRevision) return toolError(JSON.stringify({ ok: false, code: "conflict", message: "Memory changed since memory_reflect. Read it again.", revision: current.revision, content: current.text }));
         const state = await readMemoryState(dir);
         const bookmark = state.reflection.lastPosition ?? -1;
+        if (args.throughPosition <= bookmark) return toolError("throughPosition must be greater than the current reflection bookmark.");
         const priorLines = current.text.split("\n").filter((line) => line.trim()).length;
         const removals = args.operations.filter((operation: any) => operation?.op === "replace" || operation?.op === "supersede").length;
         if (removals > Math.floor(priorLines * 0.25)) return toolError("Reflection would rewrite more than 25% of the current facts. Propose a smaller batch.");

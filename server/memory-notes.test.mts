@@ -63,3 +63,68 @@ test("merges notes into one canonical note and archives the raw sources", async 
   assert.ok(result.archivePath);
   assert.match(await readFile(path.join(botDir, result.archivePath!), "utf8"), /Alpha content[\s\S]*Beta content/u);
 });
+
+test("split preserves heading-only sections without dropping them", async () => {
+  const botDir = await fixture();
+  const notePath = "memory/notes/headings.md";
+  const body = "---\ndescription: Headings\ntitle: Headings\ntype: note\n---\n# Headings\n\n## Section One\n\nSome content.\n\n## Section Two\n";
+  await writeFile(path.join(botDir, notePath), body);
+  const revision = (await readMemoryNoteWithRevision(botDir, notePath)).revision;
+  const result = await splitMemoryNote({ botDir, path: notePath, expectedRevision: revision, now: new Date("2026-11-10T10:00:00.000Z") });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.parts?.length, 2);
+  const part2 = await readFile(path.join(botDir, result.parts![1]!), "utf8");
+  assert.match(part2, /# Section Two/u);
+});
+
+test("split rejects targetDir path traversal escaping memory/notes", async () => {
+  const botDir = await fixture();
+  const notePath = "memory/notes/traverse.md";
+  const body = "---\ndescription: Traverse\ntitle: Traverse\ntype: note\n---\n# Traverse\n\n## Part One\n\nOne.\n\n## Part Two\n\nTwo.\n";
+  await writeFile(path.join(botDir, notePath), body);
+  const revision = (await readMemoryNoteWithRevision(botDir, notePath)).revision;
+  const result = await splitMemoryNote({
+    botDir,
+    path: notePath,
+    expectedRevision: revision,
+    targetDir: "memory/notes/../../../beta/memory/notes",
+    now: new Date("2026-11-10T10:00:00.000Z"),
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.code, "path");
+});
+
+test("merging into an existing note preserves target content in note and archive", async () => {
+  const botDir = await fixture();
+  const targetPath = "memory/notes/existing.md";
+  await writeFile(path.join(botDir, targetPath), "---\ndescription: Existing Target\ntitle: Existing Target\ntype: note\n---\n# Existing Target\n\nOriginal target content that must not be lost.\n");
+  await writeFile(path.join(botDir, "memory", "notes", "s1.md"), "---\ndescription: S1\ntitle: S1\ntype: note\n---\n# S1\n\nSource 1 content.\n");
+  await writeFile(path.join(botDir, "memory", "notes", "s2.md"), "---\ndescription: S2\ntitle: S2\ntype: note\n---\n# S2\n\nSource 2 content.\n");
+  const targetNote = await readMemoryNoteWithRevision(botDir, targetPath);
+  const s1 = await readMemoryNoteWithRevision(botDir, "memory/notes/s1.md");
+  const s2 = await readMemoryNoteWithRevision(botDir, "memory/notes/s2.md");
+
+  const result = await mergeMemoryNotes({
+    botDir,
+    targetPath,
+    expectedRevision: targetNote.revision,
+    sources: [{ path: "memory/notes/s1.md", expectedRevision: s1.revision }, { path: "memory/notes/s2.md", expectedRevision: s2.revision }],
+    description: "Merged into existing",
+    now: new Date("2026-11-10T10:00:00.000Z"),
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+
+  const mergedText = await readFile(path.join(botDir, targetPath), "utf8");
+  assert.match(mergedText, /Original target content that must not be lost\./u);
+  assert.match(mergedText, /Source 1 content\./u);
+  assert.match(mergedText, /Source 2 content\./u);
+
+  assert.ok(result.archivePath);
+  const archiveText = await readFile(path.join(botDir, result.archivePath!), "utf8");
+  assert.match(archiveText, /## memory\/notes\/existing\.md/u);
+  assert.match(archiveText, /Original target content that must not be lost\./u);
+  assert.match(archiveText, /Source 1 content\./u);
+  assert.match(archiveText, /Source 2 content\./u);
+});

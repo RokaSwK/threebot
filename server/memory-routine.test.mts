@@ -91,3 +91,15 @@ test("rebinds a legacy main-thread routine to a dedicated routine thread", async
   assert.equal(upsert.threadId, null);
   assert.deepEqual(upsert.modelSelection, modelSelection);
 });
+
+test("concurrent ensureMemoryRoutine calls deduplicate and do not create multiple tasks", async () => {
+  const client = fakeClient([]);
+  const [res1, res2] = await Promise.all([
+    ensureMemoryRoutine({ client, bot, modelSelection }),
+    ensureMemoryRoutine({ client, bot, modelSelection }),
+  ]);
+  assert.equal(res1.created, true);
+  assert.equal(res2.created, true);
+  const upserts = client.calls.filter((call: { tag: string }) => call.tag === "scheduledTasks.upsert");
+  assert.equal(upserts.length, 1);
+});
