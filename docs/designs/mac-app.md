@@ -6,8 +6,7 @@ Date: 2026-11-10
 ## Goal
 
 Open the current Threebot website in a normal, resizable Mac application.
-Keep the same frontend, layout, features, data and gateway. The user wants the
-current site as an app, like the Grok Bot desktop app.
+Keep the same frontend, layout, features, data and gateway.
 The first useful version is a local `.app`, with no frontend rewrite.
 
 Two user-reported layout bugs are included:
@@ -30,16 +29,13 @@ window. This is a scope judgment, not a measured performance comparison.
 Apple references: https://developer.apple.com/documentation/webkit/wkwebview
 and https://support.apple.com/en-us/104996.
 
-The user's Grok reference is https://x.ai/news/designing-grok-bot. Its roster,
-conversation and optional side panel are design references. It is not a request
-to clone Grok or add new screens. Do not reuse its client, backend or assets.
-
 ## Non-goals
 
 - No redesign, new navigation, native rewrite or new agent runtime.
 - No bundling or restarting T3, the gateway or the bot desktop container.
 - No cross-platform packaging, updater, App Store release or notarization.
-- No claim that WKWebView matches all Safari/PWA APIs, including push and voice.
+- No claim that WKWebView matches all Safari/PWA APIs, including Web Push
+  (delivery after the app quits) and voice.
 
 ## Architecture and files
 
@@ -52,8 +48,7 @@ or third-party dependencies.
 `macos/dist/Threebot.app`. Launch the bundle through `open`, not its raw binary.
 Support `--build-only` and `--verify`; normal use builds and opens the app.
 Only stop this app's own process when rebuilding, never any Threebot gateway.
-Give the bundle a unique identifier `tools.threebot.mac` and an ad-hoc
-signature. Use the existing Threebot icon. Ignore `macos/.build/` and
+Give the bundle the identifier `tools.swk.threebot` and an ad-hoc signature. Use the existing Threebot icon. Ignore `macos/.build/` and
 `macos/dist/`.
 
 
@@ -65,7 +60,9 @@ signature. Use the existing Threebot icon. Ignore `macos/.build/` and
   the same single window. Quitting the app does not stop the gateway or agents.
 - The webview fills the window's content area and uses its persistent default
   website data store. No injected layout CSS or JavaScript in production.
-- Load the existing loopback gateway URL, keeping its origin and routes.
+- Load the gateway at `HOST` and `PORT` from `$THREEBOT_HOME/.env` (default
+  `~/.threebot/.env`), else `http://127.0.0.1:3780/`. A wildcard or loopback
+  `HOST` is reached on 127.0.0.1. Keep its origin and routes.
   All gateway cookies, HTTP APIs and WebSockets use the same site.
 - Provide standard Edit menu shortcuts, Reload, Zoom In, Zoom Out, Actual Size,
   and a native Window menu. Zoom is optional display scaling, not a redesign.
@@ -73,7 +70,7 @@ signature. Use the existing Threebot icon. Ignore `macos/.build/` and
   http/https and mailto links in the default browser. Handle target=_blank
   same-origin links and blob downloads without losing the main app window.
   Block unexpected external navigation and unknown executable URL schemes.
-  Do not expose any JavaScript-to-native command bridge.
+  The only JavaScript-to-native bridge is for notifications (below).
 - Preserve the existing Connect Apps flow: it creates an about:blank popup in a
   click, then sets its URL after an API call. Retain a temporary child webview
   long enough to hand its first external HTTP(S) URL to the default browser.
@@ -88,6 +85,27 @@ signature. Use the existing Threebot icon. Ignore `macos/.build/` and
   Threebot service must be running. Avoid repeated modal alerts on cancellation.
 - Request only local networking ATS support. Do not disable web security or
   add broad ATS exceptions.
+
+### Notifications
+
+Measured in WKWebView on macOS 15: `Notification.requestPermission()` resolves
+`denied`, the service worker's `showNotification` throws for lack of
+permission, and `PushManager` is absent. A document-start script in the main
+frame replaces `Notification` and `ServiceWorkerRegistration.showNotification`
+and posts show, close and permission requests to one message handler. The
+handler accepts messages only from the main frame at the gateway origin and
+uses UserNotifications. A notification's tag replaces the earlier one with the
+same tag. A click brings the window forward and runs the page's `onclick`, or
+opens the notification's same-origin URL as the service worker would.
+Permission is re-read when the app becomes active. `enablePushNotifications`
+treats granted permission as enabled when the Push API is missing.
+
+Verified on macOS 15.7 with an ad-hoc signed bundle opened from Finder: macOS
+asked for permission, then showed both the page and service worker
+notifications, and a real Bot's "Waiting for you" and completion text. When the
+first request came from a process the user did not open, macOS recorded the app
+as denied without asking ("Notifications are not allowed for this
+application"); turning it on in System Settings › Notifications fixed it.
 
 ### Existing frontend bug fixes
 

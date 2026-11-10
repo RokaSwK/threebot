@@ -1,9 +1,103 @@
 import AppKit
+import UserNotifications
 import WebKit
 
+/// The gateway address from THREEBOT_HOME/.env (default ~/.threebot), the file `threebot up` writes.
+func gatewayURL() -> URL {
+    let environment = ProcessInfo.processInfo.environment
+    let home = environment["THREEBOT_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".threebot")
+    var settings: [String: String] = [:]
+    let text = (try? String(contentsOf: home.appendingPathComponent(".env"), encoding: .utf8)) ?? ""
+    for line in text.split(whereSeparator: \.isNewline) {
+        let parts = line.split(separator: "=", maxSplits: 1)
+        guard parts.count == 2 else { continue }
+        let key = parts[0].trimmingCharacters(in: .whitespaces)
+        var value = parts[1].trimmingCharacters(in: .whitespaces)
+        if value.count >= 2, let first = value.first, first == "\"" || first == "'", value.last == first {
+            value = String(value.dropFirst().dropLast())
+        }
+        settings[key] = value
+    }
+    let port = settings["PORT"].flatMap { Int($0) }.flatMap { (1...65535).contains($0) ? $0 : nil } ?? 3780
+    // A wildcard or loopback listener is reached on 127.0.0.1; a specific address is used as is.
+    var host = settings["HOST"] ?? ""
+    if ["", "0.0.0.0", "::", "localhost", "127.0.0.1"].contains(host) { host = "127.0.0.1" }
+    var components = URLComponents()
+    components.scheme = "http"
+    components.host = host.contains(":") ? "[\(host)]" : host
+    components.port = port
+    components.path = "/"
+    return components.url ?? URL(string: "http://127.0.0.1:3780/")!
+}
+
+/// WebKit in an app view refuses notification permission and has no Push API, so the page's
+/// notifications go to macOS through this script. Only Notification and the service worker's
+/// showNotification are replaced; nothing else reaches native code.
+private let notificationScript = """
+(() => {
+  const bridge = window.webkit.messageHandlers.threebotNotifications;
+  let permission = "__PERMISSION__";
+  const shown = new Map();
+  const page = Date.now().toString(36);
+  let next = 0;
+  class NativeNotification extends EventTarget {
+    constructor(title, options = {}) {
+      super();
+      this.title = String(title);
+      this.body = String(options.body ?? "");
+      this.tag = String(options.tag ?? "");
+      this.data = options.data ?? null;
+      this.onclick = this.onclose = this.onerror = this.onshow = null;
+      this.id = page + "-" + (++next);
+      if (permission !== "granted") { setTimeout(() => this.dispatchEvent(new Event("error"))); return; }
+      shown.set(this.id, this);
+      const url = typeof this.data?.url === "string" ? this.data.url : "";
+      bridge.postMessage({ action: "show", id: this.id, title: this.title, body: this.body, tag: this.tag, url });
+    }
+    static get permission() { return permission; }
+    static async requestPermission(callback) {
+      permission = await bridge.postMessage({ action: "permission" });
+      callback?.(permission);
+      return permission;
+    }
+    close() {
+      shown.delete(this.id);
+      bridge.postMessage({ action: "close", id: this.id });
+    }
+    dispatchEvent(event) {
+      const handler = this["on" + event.type];
+      if (typeof handler === "function") handler.call(this, event);
+      return super.dispatchEvent(event);
+    }
+  }
+  Object.defineProperty(window, "Notification", { value: NativeNotification, configurable: true, writable: true });
+  if (window.ServiceWorkerRegistration) {
+    ServiceWorkerRegistration.prototype.showNotification = async function (title, options) {
+      new NativeNotification(title, options).fromWorker = true;
+    };
+  }
+  window.__threebotNotifications = {
+    // false: the app opens the notification's URL itself, as the service worker would.
+    clicked(id) {
+      const notification = shown.get(id);
+      if (!notification || notification.fromWorker) return false;
+      shown.delete(id);
+      notification.dispatchEvent(new Event("click"));
+      return true;
+    },
+    setPermission(value) { permission = value; },
+  };
+})();
+"""
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-    private let gateway = URL(string: "http://127.0.0.1:3780/")!
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate,
+    WKScriptMessageHandlerWithReply, UNUserNotificationCenterDelegate {
+    private let gateway = gatewayURL()
+    private var notificationPermission = "default"
+    // Page notification id -> macOS request identifier. A reused tag replaces the earlier entry.
+    private var notificationRequests: [String: String] = [:]
     private var window: NSWindow!
     private var webView: WKWebView!
     private var popupViews: [ObjectIdentifier: WKWebView] = [:]
@@ -42,7 +136,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         window.setFrameAutosaveName("ThreebotMainWindow")
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        webView.load(URLRequest(url: gateway))
+        // UserNotifications needs an app bundle; a bare `swift run` binary loads without it.
+        guard Bundle.main.bundleIdentifier != nil else {
+            webView.load(URLRequest(url: gateway))
+            return
+        }
+        UNUserNotificationCenter.current().delegate = self
+        webView.configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "threebotNotifications")
+        Task {
+            await refreshNotificationPermission()
+            webView.load(URLRequest(url: gateway))
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // The user may have changed Threebot's notifications in System Settings.
+        guard Bundle.main.bundleIdentifier != nil, webView.url != nil else { return }
+        Task { await refreshNotificationPermission() }
+    }
+
+    private func refreshNotificationPermission() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional: applyNotificationPermission("granted")
+        case .denied: applyNotificationPermission("denied")
+        default: applyNotificationPermission("default")
+        }
+    }
+
+    private func applyNotificationPermission(_ permission: String) {
+        let controller = webView.configuration.userContentController
+        if permission != notificationPermission || controller.userScripts.isEmpty {
+            notificationPermission = permission
+            controller.removeAllUserScripts()
+            let source = notificationScript.replacingOccurrences(of: "__PERMISSION__", with: permission)
+            controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+        webView.evaluateJavaScript("window.__threebotNotifications?.setPermission(\"\(permission)\")")
+    }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame, message.webView === webView,
+              origin.protocol == gateway.scheme, origin.host == gateway.host?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")),
+              origin.port == gateway.port ?? 0,
+              let body = message.body as? [String: Any], let action = body["action"] as? String else {
+            replyHandler(nil, "Not allowed")
+            return
+        }
+        let center = UNUserNotificationCenter.current()
+        switch action {
+        case "permission":
+            Task {
+                let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+                applyNotificationPermission(granted ? "granted" : "denied")
+                replyHandler(notificationPermission, nil)
+            }
+        case "show":
+            guard let id = body["id"] as? String, let title = body["title"] as? String else {
+                replyHandler(nil, "Missing notification")
+                return
+            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body["body"] as? String ?? ""
+            content.sound = .default
+            content.userInfo = ["id": id, "url": body["url"] as? String ?? ""]
+            let tag = body["tag"] as? String ?? ""
+            let identifier = tag.isEmpty ? "threebot-\(id)" : "threebot-tag-\(tag)"
+            notificationRequests = notificationRequests.filter { $0.value != identifier }
+            notificationRequests[id] = identifier
+            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
+            replyHandler(nil, nil)
+        case "close":
+            if let id = body["id"] as? String, let identifier = notificationRequests.removeValue(forKey: id) {
+                center.removeDeliveredNotifications(withIdentifiers: [identifier])
+            }
+            replyHandler(nil, nil)
+        default:
+            replyHandler(nil, "Unknown action")
+        }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        // The page already skips notifications for the Bot on screen.
+        [.banner, .list, .sound]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        let id = info["id"] as? String ?? ""
+        let path = info["url"] as? String ?? ""
+        await MainActor.run { openNotification(id: id, path: path) }
+    }
+
+    private func openNotification(id: String, path: String) {
+        notificationRequests.removeValue(forKey: id)
+        NSApp.activate(ignoringOtherApps: true)
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        webView.callAsyncJavaScript("return window.__threebotNotifications?.clicked(id) ?? false", arguments: ["id": id], in: nil, in: .page) { [weak self] result in
+            guard let self else { return }
+            if case .success(let handled) = result, handled as? Bool == true { return }
+            guard !path.isEmpty, let target = URL(string: path, relativeTo: self.gateway)?.absoluteURL,
+                  self.isSameOrigin(target) else { return }
+            self.webView.load(URLRequest(url: target))
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -208,7 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         showingLoadError = true
         let alert = NSAlert()
         alert.messageText = "Threebot could not load"
-        alert.informativeText = "The local Threebot service must be running at http://127.0.0.1:3780/."
+        alert.informativeText = "The local Threebot service must be running at \(gateway.absoluteString)."
         alert.addButton(withTitle: "Retry")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] result in

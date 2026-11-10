@@ -42,7 +42,7 @@ cat > "$APP_CONTENTS/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>ThreebotMac</string>
-  <key>CFBundleIdentifier</key><string>tools.threebot.mac</string>
+  <key>CFBundleIdentifier</key><string>tools.swk.threebot</string>
   <key>CFBundleName</key><string>Threebot</string>
   <key>CFBundleDisplayName</key><string>Threebot</string>
   <key>CFBundlePackageType</key><string>APPL</string>
