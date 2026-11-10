@@ -2,6 +2,11 @@ import AppKit
 import UserNotifications
 import WebKit
 
+/// An IPv6 host without URL brackets, so `[::1]` and `::1` compare equal.
+func unbracketed(_ host: String) -> String {
+    host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+}
+
 /// The gateway address from THREEBOT_HOME/.env (default ~/.threebot), the file `threebot up` writes.
 func gatewayURL() -> URL {
     let environment = ProcessInfo.processInfo.environment
@@ -21,7 +26,7 @@ func gatewayURL() -> URL {
     }
     let port = settings["PORT"].flatMap { Int($0) }.flatMap { (1...65535).contains($0) ? $0 : nil } ?? 3780
     // A wildcard or loopback listener is reached on 127.0.0.1; a specific address is used as is.
-    var host = settings["HOST"] ?? ""
+    var host = unbracketed(settings["HOST"] ?? "")
     if ["", "0.0.0.0", "::", "localhost", "127.0.0.1"].contains(host) { host = "127.0.0.1" }
     var components = URLComponents()
     components.scheme = "http"
@@ -178,8 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
         guard message.frameInfo.isMainFrame, message.webView === webView,
-              origin.protocol == gateway.scheme, origin.host == gateway.host?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")),
-              origin.port == gateway.port ?? 0,
+              origin.protocol == gateway.scheme, unbracketed(origin.host) == unbracketed(gateway.host ?? ""),
+              // WebKit reports the scheme's default port as 0.
+              (origin.port == 0 ? 80 : origin.port) == (gateway.port ?? 80),
               let body = message.body as? [String: Any], let action = body["action"] as? String else {
             replyHandler(nil, "Not allowed")
             return
@@ -462,7 +468,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             }
             // WebKit needs a new file. Keep an existing destination intact until
             // the complete download can replace it after the user's Save choice.
-            let temporary = chosen.deletingLastPathComponent().appendingPathComponent(".threebot-download-\(UUID().uuidString)")
+            // The file is staged in a private (0700) folder on the same volume, so
+            // nobody else can read it while it downloads or if saving fails.
+            let staging = chosen.deletingLastPathComponent().appendingPathComponent(".threebot-download-\(UUID().uuidString)")
+            do {
+                try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            } catch {
+                completionHandler(nil)
+                self.downloads.removeValue(forKey: ObjectIdentifier(download))
+                let alert = NSAlert()
+                alert.messageText = "Could not save download"
+                alert.informativeText = error.localizedDescription
+                alert.beginSheetModal(for: self.window)
+                return
+            }
+            let temporary = staging.appendingPathComponent(chosen.lastPathComponent)
             self.downloadDestinations[ObjectIdentifier(download)] = (temporary, chosen)
             completionHandler(temporary)
         }
@@ -478,6 +498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             } else {
                 try FileManager.default.moveItem(at: destination.temporary, to: destination.chosen)
             }
+            try? FileManager.default.removeItem(at: destination.temporary.deletingLastPathComponent())
         } catch {
             let alert = NSAlert()
             alert.messageText = "Could not save download"
@@ -490,7 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let id = ObjectIdentifier(download)
         downloads.removeValue(forKey: id)
         if let destination = downloadDestinations.removeValue(forKey: id) {
-            try? FileManager.default.removeItem(at: destination.temporary)
+            try? FileManager.default.removeItem(at: destination.temporary.deletingLastPathComponent())
         }
         let failure = error as NSError
         guard !(failure.domain == NSURLErrorDomain && failure.code == NSURLErrorCancelled) else { return }
