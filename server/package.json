@@ -14,10 +14,12 @@
     "linkedom": "^0.18.14",
     "open-bot-avatar": "0.2.0",
     "sharp": "^0.35.5",
+    "web-push": "^4.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
+    "@types/web-push": "^3.6.4",
     "@types/ws": "8.18.2",
     "tsrs": "0.22.0-ts7.1.0-beta"
   }

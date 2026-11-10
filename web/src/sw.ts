@@ -104,6 +104,33 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+self.addEventListener("push", (event) => {
+  // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
+  // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
+  // back a push about the Bot this device has open (lib/push.ts reports that). The tag is the one
+  // the page's own notification uses, so the two replace each other instead of stacking.
+  let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
+  try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
+  event.waitUntil(self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+    body: typeof payload.body === "string" ? payload.body : "Finished",
+    tag: typeof payload.tag === "string" ? payload.tag : "threebot",
+    icon: "/icon-192.png",
+    data: { url: typeof payload.url === "string" ? payload.url : "./" },
+  }));
+});
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    const subscription = event.newSubscription;
+    if (!subscription) return;
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subscription: subscription.toJSON() }),
+    }).catch(() => {});
+  })());
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil((async () => {

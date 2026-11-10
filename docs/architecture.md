@@ -87,3 +87,29 @@ One live board shared by the user and every Bot (the Projects page): projects, t
 - **Bot tools** (`server/projects-mcp.mts`), on the same `bot` MCP server as the Vault: `projects_overview`, `projects_find`, `projects_get`, `projects_save` (up to 100 items; `ref`/`"ref:<name>"` lets one call create a project with its to-dos) and `projects_delete`. Writes take the Bot's main `threadId` and are shown as made by that Bot. AGENTS.md tells every Bot to keep the board true and to link the threads it works in.
 - **Links**: `/?item=<id>` opens an item; `/?page=projects` opens the board. `APP_URL` makes the links Bots share absolute. In chat, an item link renders as a chip with the item's live title.
 - **Live T3 state**: "Running now" comes straight from the T3 shell the app already follows on the gateway's own machine. Linked machines aren't reachable from the app, so Bots record them on the board using T3's `t3_environment_links` and `t3_thread_list`.
+
+## Web Push
+
+The gateway keeps one VAPID key pair and the browser push subscriptions in `.botapp/push.json`
+(mode `0600`). The public key is served by `GET /api/push/key`; the signed-in browser subscribes
+with `POST /api/push/subscribe` and can remove its endpoint with `POST /api/push/unsubscribe`.
+
+A server-side `orchestration.subscribeShell` stream turns T3 thread transitions into pushes, by the
+same rules the open app uses for its own notifications (`notifyIfNeeded` in `web/src/store.ts`): a
+Bot's main conversation finishing or asking for the user, and a side chat asking for the user.
+Routines, subagents, snoozed threads and Bots with notifications off stay quiet. The payload is
+small and encrypted (Bot name, short preview of this run's reply, Bot slug and deep link). The
+stream reconnects to T3 on its own; this does not duplicate the browser's WebSocket proxy and does
+not add a T3 schema change.
+
+Browsers require every push to show a notification, and Safari drops a subscription after three
+that showed nothing. So `web/src/sw.ts` always shows what it receives, and the gateway is the one
+that holds a push back: while a device has a Bot open and in focus it says so with
+`POST /api/push/presence` (`{endpoint, bot}`, repeated every 12 s, forgotten after 30 s or when the
+page looks away), and a push about that Bot is not sent to that device. The push uses the same
+notification tag as the page's own notification, so the two replace each other.
+
+Pushes are signed with `VAPID_SUBJECT` when set, else `APP_URL`, else the address the browser
+subscribed from. Apple refuses a localhost contact, so one is never used when a real address is
+known. The app asks for permission when the user sends a message or presses **Enable push on this
+device** in Details, then registers the subscription.
