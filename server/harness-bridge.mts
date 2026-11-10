@@ -6,6 +6,7 @@ import path from "node:path";
 
 export type HarnessBridgeOptions = {
   home?: string;
+  env?: NodeJS.ProcessEnv;
   bridgePath: string;
   now?: Date;
 };
@@ -22,7 +23,8 @@ export type HarnessBridgeStatus = {
 type McpConfig = { mcpServers?: Record<string, unknown>; [key: string]: unknown };
 
 function geminiHome(home: string | undefined, env: NodeJS.ProcessEnv): string {
-  return env.GEMINI_HOME ?? path.join(home ?? homedir(), ".gemini");
+  if (home !== undefined) return path.join(home, ".gemini");
+  return env.GEMINI_HOME ?? path.join(homedir(), ".gemini");
 }
 
 export function antigravityConfigPath({ home, env = process.env }: { home?: string; env?: NodeJS.ProcessEnv } = {}): string {
@@ -69,7 +71,7 @@ async function writeConfig(file: string, config: McpConfig, now: Date): Promise<
 }
 
 export async function antigravityBridgeStatus(options: HarnessBridgeOptions): Promise<HarnessBridgeStatus> {
-  const configPath = antigravityConfigPath({ home: options.home });
+  const configPath = antigravityConfigPath({ home: options.home, env: options.env });
   const config = await readConfig(configPath);
   const servers = Object.keys(config.mcpServers ?? {});
   return {
@@ -84,7 +86,7 @@ export async function antigravityBridgeStatus(options: HarnessBridgeOptions): Pr
 
 export async function installAntigravityBridge(options: HarnessBridgeOptions): Promise<{ changed: boolean; status: HarnessBridgeStatus; backup: string | null }> {
   const now = options.now ?? new Date();
-  const configPath = antigravityConfigPath({ home: options.home });
+  const configPath = antigravityConfigPath({ home: options.home, env: options.env });
   const config = await readConfig(configPath);
   const servers = { ...(config.mcpServers ?? {}) };
   const nextServer = { command: "node", args: [options.bridgePath] };
@@ -97,7 +99,7 @@ export async function installAntigravityBridge(options: HarnessBridgeOptions): P
 
 export async function uninstallAntigravityBridge(options: HarnessBridgeOptions): Promise<{ changed: boolean; status: HarnessBridgeStatus; backup: string | null }> {
   const now = options.now ?? new Date();
-  const configPath = antigravityConfigPath({ home: options.home });
+  const configPath = antigravityConfigPath({ home: options.home, env: options.env });
   const config = await readConfig(configPath);
   const servers = { ...(config.mcpServers ?? {}) };
   if (!Object.hasOwn(servers, "threebot")) return { changed: false, status: await antigravityBridgeStatus(options), backup: null };

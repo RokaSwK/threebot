@@ -55,3 +55,15 @@ test("a malformed Antigravity config is refused instead of overwritten", async (
   await assert.rejects(() => installAntigravityBridge({ home, bridgePath }), /not valid JSON/u);
   assert.equal(await readFile(configPath, "utf8"), "{ not json");
 });
+
+test("GEMINI_HOME in the environment does not override an explicit home directory", () => {
+  const envWithGemini = { GEMINI_HOME: "/env/gemini" } as NodeJS.ProcessEnv;
+  assert.equal(
+    antigravityConfigPath({ home: "/custom/home", env: envWithGemini }),
+    "/custom/home/.gemini/config/mcp_config.json"
+  );
+  assert.equal(
+    antigravityConfigPath({ env: envWithGemini }),
+    "/env/gemini/config/mcp_config.json"
+  );
+});
