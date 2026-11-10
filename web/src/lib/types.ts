@@ -35,6 +35,8 @@ export type Settings = {
   rules: { alwaysAsk: string[]; allowWithoutAsking: string[] };
   sections: string[];
   defaultModel: ModelSelection | null;
+  /** Settings → Routine model. Null keeps the Bot's own model for routines. */
+  routineModel?: ModelSelection | null;
   /** Settings → Avatar drawing model. Null picks a fast model automatically (see lib/avatarDrawing). */
   avatarDrawingModel?: ModelSelection | null;
   /** Settings → Beta: experimental features, saved on the server because they change what Bots get. */

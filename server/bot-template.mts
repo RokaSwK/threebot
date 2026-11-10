@@ -18,6 +18,7 @@ export type TemplateSettings = {
   userName?: string; timezone?: string;
   rules?: { alwaysAsk?: string[]; allowWithoutAsking?: string[] };
   beta?: { projects?: boolean };
+  routineModel?: { instanceId: string; model: string } | null;
 };
 /** How the Bot reaches connected apps, when Executor is set up. */
 export type TemplateExecutor = { kind?: string; publicUrl?: string; organization?: string; skippedApps?: string[] };
@@ -69,7 +70,7 @@ ${memory ? `\n${renderMemoryBlock(memory)}\n` : ""}
 
 ## Routines
 - When asked to do something on a schedule, create a routine with \`schedule_task\`: projectId ${bot.projectId ?? "(this project)"}, threadId ${bot.mainThreadId ?? "(this thread)"} so each run posts here. If the tool offers \`freshSession\`, set it to true so each run starts without re-reading the whole chat (you still have your memory and files); leave it off when a run needs the conversation so far. Give it a short name. Confirm what it does, when, and where results go.
-- Timezone: ${settings.timezone || "the server's local time"}.
+- Timezone: ${settings.timezone || "the server's local time"}.${settings.routineModel ? `\n- Routine model: ${settings.routineModel.instanceId}/${settings.routineModel.model}. Use it for scheduled routines unless ${userName} asks for another model.` : ""}
 
 ## Running other threads
 - You are a meta thread: a long-lived conversation that can start, watch and steer other T3 Code threads, so ${userName} can talk to you instead of tending each one.

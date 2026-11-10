@@ -51,7 +51,7 @@ export async function listScheduledTasks(client: T3Client, timeoutMs = 5_000): P
 
 export async function findMemoryRoutine(client: T3Client, bot: Bot): Promise<MemoryRoutineTask | null> {
   const tasks = await listScheduledTasks(client);
-  return tasks.find((task) => task.title === MEMORY_ROUTINE_TITLE && task.threadId === bot.mainThreadId) ?? null;
+  return tasks.find((task) => task.title === MEMORY_ROUTINE_TITLE && task.projectId === bot.projectId) ?? null;
 }
 
 export function defaultMemorySchedule(): MemoryRoutineSchedule {
@@ -73,7 +73,13 @@ export async function ensureMemoryRoutine({
 }): Promise<{ task: MemoryRoutineTask; created: boolean }> {
   if (!bot.projectId || !bot.mainThreadId) throw new Error("This Bot needs a project and main thread before it can have a reflection routine.");
   if (!modelSelection) throw new Error("Pick a model for the reflection routine.");
-  const existing = await findMemoryRoutine(client, bot);
+  let existing = await findMemoryRoutine(client, bot);
+  const modelChanged = existing ? JSON.stringify(existing.modelSelection) !== JSON.stringify(modelSelection) : false;
+  const boundToChat = existing ? existing.threadId === bot.mainThreadId : false;
+  if (existing && (modelChanged || boundToChat)) {
+    await client.call("scheduledTasks.delete", { id: existing.id });
+    existing = null;
+  }
   const response = await client.call("scheduledTasks.upsert", {
     ...(existing ? { id: existing.id, requireExisting: true } : {}),
     commandId: randomUUID(),
@@ -82,8 +88,10 @@ export async function ensureMemoryRoutine({
     enabled,
     schedule,
     projectId: bot.projectId,
-    threadId: bot.mainThreadId,
-    threadMode: "fresh_session",
+    // A bound thread keeps its own provider/model; T3 ignores task.modelSelection for it.
+    // A dedicated thread launched by the task uses the routine model, then stays bound for later runs.
+    threadId: null,
+    threadMode: "continue",
     workspaceStrategy: { type: "root" },
     modelSelection,
     runtimeMode: "full-access",

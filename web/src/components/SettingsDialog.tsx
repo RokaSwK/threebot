@@ -184,6 +184,12 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
         <Row title="Default model" desc="Used for new Bots. Each Bot can switch in its details.">
           <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
         </Row>
+        <Row title="Routine model" desc="Used for scheduled routines created by Threebot. Leave it unset to use the Bot's model.">
+          <div className="flex items-center gap-2">
+            <ModelPicker value={s.routineModel ?? null} onChange={(m) => save({ routineModel: m })} />
+            {s.routineModel && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => save({ routineModel: null })}>Bot model</button>}
+          </div>
+        </Row>
         <BackupModelRow />
         <AvatarDrawingModelRow s={s} />
       </Group>}
