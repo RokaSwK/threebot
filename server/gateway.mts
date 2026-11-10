@@ -847,9 +847,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/push/subscribe" && req.method === "POST") {
       requireJson(req);
-      const result = await pushStore.subscribe((await readBody(req))?.subscription);
+      const result = await pushStore.subscribe((await readBody(req))?.subscription, req.headers.origin);
       if (!result.ok) return send(res, 400, { error: result.message });
       return send(res, 200, result, { "cache-control": "no-store" });
+    }
+    if (p === "/api/push/presence" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req);
+      return send(res, 200, await pushStore.presence(body?.endpoint, body?.bot), { "cache-control": "no-store" });
     }
     if (p === "/api/push/unsubscribe" && req.method === "POST") {
       requireJson(req);
@@ -999,7 +1004,7 @@ const pushNotifier = createPushNotifier({
   send: (payload: PushPayload) => pushStore.send(payload),
   preview: async (threadId, stamp) => {
     const previews = await threadPreviews({ [threadId]: stamp ?? new Date().toISOString() }).catch(() => null);
-    return previews?.[threadId]?.text ?? null;
+    return previews?.[threadId] ?? null;
   },
 });
 pushNotifier.start();

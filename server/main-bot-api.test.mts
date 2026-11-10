@@ -91,6 +91,10 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     const pushSub = await request('/api/push/subscribe', 'POST', { subscription: { endpoint: 'https://push.example/sub', keys: { p256dh: 'p256dh-value-1234567890', auth: 'auth-value-1234' } } });
     assert.equal(pushSub.status, 200);
     assert.equal(pushSub.body.ok, true);
+    const watching = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: 'alpha' });
+    assert.deepEqual([watching.status, watching.body], [200, { ok: true, watching: true }]);
+    const away = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: null });
+    assert.deepEqual([away.status, away.body], [200, { ok: true, watching: false }]);
     await stop();
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);

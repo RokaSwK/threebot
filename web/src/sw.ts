@@ -105,19 +105,18 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  // Payload shape comes from server/push.mts; the page already handles notifications while visible.
+  // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
+  // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
+  // back a push about the Bot this device has open (lib/push.ts reports that). The tag is the one
+  // the page's own notification uses, so the two replace each other instead of stacking.
   let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
-  event.waitUntil((async () => {
-    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true }) as WindowClient[];
-    if (windows.some((client) => client.focused || client.visibilityState === "visible")) return;
-    await self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
-      body: typeof payload.body === "string" ? payload.body : "Finished",
-      tag: typeof payload.tag === "string" ? payload.tag : "threebot",
-      icon: "/icon-192.png",
-      data: { url: typeof payload.url === "string" ? payload.url : "./" },
-    });
-  })());
+  event.waitUntil(self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+    body: typeof payload.body === "string" ? payload.body : "Finished",
+    tag: typeof payload.tag === "string" ? payload.tag : "threebot",
+    icon: "/icon-192.png",
+    data: { url: typeof payload.url === "string" ? payload.url : "./" },
+  }));
 });
 
 self.addEventListener("pushsubscriptionchange", (event) => {

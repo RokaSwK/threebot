@@ -6,6 +6,8 @@ function keyBytes(value: string): ArrayBuffer {
 }
 
 let pending: Promise<boolean> | null = null;
+// Set by startPushPresence: says again which Bot this device is looking at.
+let resendPresence = () => {};
 
 /** Subscribe this browser to push when permission is already granted. Safe to call often. */
 export function ensurePushSubscription(): Promise<boolean> {
@@ -30,9 +32,54 @@ export function ensurePushSubscription(): Promise<boolean> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ subscription: subscription.toJSON() }),
     });
+    // The gateway only now knows this device, so anything said before this was not heard.
+    if (response.ok) resendPresence();
     return response.ok;
   })().catch(() => false).finally(() => { pending = null; });
   return pending;
+}
+
+// How often a device repeats which Bot it is looking at. The gateway forgets the claim after 30 s
+// (WATCHING_MS in server/push.mts), so one lost report doesn't let a push through.
+const PRESENCE_MS = 12_000;
+
+/**
+ * Keep the gateway told which Bot this device has open and in focus (null when it looks away), so
+ * it doesn't push what is already on screen. `watching` is the page's own "the user is looking at
+ * this Bot" rule; `onChange` subscribes to whatever can change its answer besides focus.
+ */
+export function startPushPresence(watching: () => string | null, onChange: (listener: () => void) => void): void {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+  // undefined: nothing has reached the gateway yet.
+  let reported: string | null | undefined;
+  let reportedAt = 0;
+  const sync = () => {
+    const bot = watching();
+    if (bot === reported && (bot === null || Date.now() - reportedAt < PRESENCE_MS)) return;
+    if (bot === null && reported === undefined) return;
+    reported = bot;
+    reportedAt = Date.now();
+    void (async () => {
+      const subscription = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription();
+      if (!subscription) return;
+      // keepalive lets the "looked away" report finish while the page is being hidden or closed.
+      await fetch("/api/push/presence", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint, bot }),
+        keepalive: true,
+      });
+    })().catch(() => {});
+  };
+  resendPresence = () => {
+    reported = undefined;
+    sync();
+  };
+  onChange(sync);
+  for (const type of ["focus", "blur", "pagehide", "pageshow"]) window.addEventListener(type, sync);
+  document.addEventListener("visibilitychange", sync);
+  setInterval(sync, PRESENCE_MS);
+  sync();
 }
 
 /** Ask for notification permission and, if granted, register the push subscription. */

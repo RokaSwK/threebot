@@ -336,6 +336,10 @@ function subscribeTasks() {
 
 
 // ---------- notifications ----------
+/** The Bot the user is looking at right now, if any: nothing about it needs a notification. */
+export function watchedBot(): string | null {
+  return document.visibilityState === "visible" && document.hasFocus() ? get().selected : null;
+}
 const ACTIVE = ["preparing", "queued", "starting", "running", "waiting"];
 function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   if (!prev) return;
@@ -343,8 +347,7 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   const ownerThreadId = side ? next.lineage.parentThreadId : next.id;
   const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
   if (!bot || bot.notifications === false || bot.hidden) return;
-  const focused = document.visibilityState === "visible" && document.hasFocus() && get().selected === bot.slug;
-  if (focused || next.archivedAt || isSnoozed(next)) return;
+  if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
   if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you");
   else if (side) return;
   else if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
