@@ -66,6 +66,22 @@ Logins, API tokens and contact info shared by all Bots (Settings › Vault). Bot
 - **API tokens**: a login with `botCanRead` (the "API token or key" switch, or `apiToken: true` when saving) can be read by Bots with `vault_secret_file`, which writes it to an owner-only file in `bot-secrets/` next to the vault key, deleted after an hour (the folder is emptied when the gateway starts). Other logins are only ever typed into pages.
 - **Limits**: Bots run as the same Unix user (`t3`) as the gateway, so a Bot in full-access mode could read the key and vault file. The rule against that is in AGENTS.md, not enforced by the OS.
 
+## Web Push
+
+The gateway keeps one VAPID key pair and the browser push subscriptions in `.botapp/push.json`
+(mode `0600`). The public key is served by `GET /api/push/key`; the signed-in browser subscribes
+with `POST /api/push/subscribe` and can remove its endpoint with `POST /api/push/unsubscribe`.
+
+A server-side `orchestration.subscribeShell` stream maps T3 thread transitions to the owning Bot.
+When a thread that was active reaches `completed`, or a runtime request appears, the gateway sends
+a small encrypted payload (Bot name, short preview, Bot slug and deep link). It reconnects to T3 on
+its own; this does not duplicate the browser's WebSocket proxy and does not add a T3 schema change.
+
+`web/src/sw.ts` handles `push`: it shows a notification only when no visible window is already
+handling it, and reuses the existing `notificationclick` deep link. The app asks for permission
+when the user sends a message or presses **Enable push on this device** in Details, then registers
+the subscription. Web Push is independent of the memory PR.
+
 ## Projects
 
 One live board shared by the user and every Bot (the Projects page): projects, to-dos, machines, services (what runs where), repos, notes and links.

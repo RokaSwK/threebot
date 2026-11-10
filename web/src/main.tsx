@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import "./threebot.css";
+import { ensurePushSubscription } from "./lib/push";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -15,5 +16,9 @@ if ("serviceWorker" in navigator && window.isSecureContext && !import.meta.env.D
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") void navigator.serviceWorker.getRegistration().then((registration) => registration?.update()).catch(() => {});
   });
-  window.addEventListener("load", () => navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL, updateViaCache: "none" }).catch(() => {}));
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL, updateViaCache: "none" })
+      .then(() => ensurePushSubscription())
+      .catch(() => {});
+  });
 }

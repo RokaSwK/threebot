@@ -24,6 +24,7 @@ import { executorConfiguration, executorMcpDefinition, publicExecutorConfigurati
 import { createExecutorClient } from "./executor-client.mts";
 import { createThreadMeta, createThreadPreviews } from "./thread-meta.mts";
 import { createRoutineHistoryRoutes } from "./routine-history.mts";
+import { createPushNotifier, createPushStore, type PushPayload } from "./push.mts";
 import { objectAvatarPatch } from "./object-avatars.mts";
 import { avatarColorPatch } from "./avatar-color.mts";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
@@ -79,6 +80,7 @@ if (!token) {
 const resolveEnvironment = createEnvironmentRouter({ local: { baseUrl: cfg.t3Url, token }, file: process.env.T3_ENVIRONMENTS_FILE });
 const appDir = path.join(cfg.botsRoot, ".botapp");
 await fs.mkdir(appDir, { recursive: true });
+const pushStore = createPushStore({ file: path.join(appDir, "push.json") });
 const secretPath = path.join(appDir, "session-secret");
 if (!existsSync(secretPath)) await fs.writeFile(secretPath, randomBytes(32).toString("hex"), { mode: 0o600 });
 let sessionSecret = readFileSync(secretPath, "utf8").trim();
@@ -840,6 +842,19 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       return send(res, 200, { bots: await mainBots.select(body?.slug) }, { "cache-control": "no-store" });
     }
+    if (p === "/api/push/key" && req.method === "GET") {
+      return send(res, 200, { publicKey: await pushStore.publicKey() }, { "cache-control": "no-store" });
+    }
+    if (p === "/api/push/subscribe" && req.method === "POST") {
+      requireJson(req);
+      const result = await pushStore.subscribe((await readBody(req))?.subscription);
+      if (!result.ok) return send(res, 400, { error: result.message });
+      return send(res, 200, result, { "cache-control": "no-store" });
+    }
+    if (p === "/api/push/unsubscribe" && req.method === "POST") {
+      requireJson(req);
+      return send(res, 200, await pushStore.unsubscribe((await readBody(req))?.endpoint), { "cache-control": "no-store" });
+    }
     if (p === "/api/thread-previews" && req.method === "POST") {
       requireJson(req);
       return send(res, 200, { previews: await threadPreviews((await readBody(req))?.stamps) }, { "cache-control": "no-store" });
@@ -976,6 +991,18 @@ const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBo
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
+
+// Web Push: one shell subscription, one push per Bot transition. It reconnects if T3 restarts.
+const pushNotifier = createPushNotifier({
+  connect: t3rpc,
+  bots: listBots,
+  send: (payload: PushPayload) => pushStore.send(payload),
+  preview: async (threadId, stamp) => {
+    const previews = await threadPreviews({ [threadId]: stamp ?? new Date().toISOString() }).catch(() => null);
+    return previews?.[threadId]?.text ?? null;
+  },
+});
+pushNotifier.start();
 
 if (envTailnet) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");

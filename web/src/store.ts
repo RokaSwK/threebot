@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
+import { enablePushNotifications } from "./lib/push";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -375,7 +376,7 @@ async function notify(bot: Bot, body: string) {
 }
 
 export function requestNotificationPermission() {
-  if (typeof Notification !== "undefined" && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+  void enablePushNotifications();
 }
 
 // ---------- thread subscriptions ----------

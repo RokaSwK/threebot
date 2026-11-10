@@ -104,6 +104,34 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+self.addEventListener("push", (event) => {
+  // Payload shape comes from server/push.mts; the page already handles notifications while visible.
+  let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
+  try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true }) as WindowClient[];
+    if (windows.some((client) => client.focused || client.visibilityState === "visible")) return;
+    await self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+      body: typeof payload.body === "string" ? payload.body : "Finished",
+      tag: typeof payload.tag === "string" ? payload.tag : "threebot",
+      icon: "/icon-192.png",
+      data: { url: typeof payload.url === "string" ? payload.url : "./" },
+    });
+  })());
+});
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    const subscription = event.newSubscription;
+    if (!subscription) return;
+    await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subscription: subscription.toJSON() }),
+    }).catch(() => {});
+  })());
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   event.waitUntil((async () => {

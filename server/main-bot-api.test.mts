@@ -85,6 +85,12 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     const instructions = await readFile(path.join(botsRoot, 'alpha/AGENTS.md'), 'utf8');
     assert.doesNotMatch(instructions, /You are the primary Bot/);
     assert.match(await readFile(path.join(botsRoot, 'beta/AGENTS.md'), 'utf8'), /You are the primary Bot/);
+    const pushKey = await request('/api/push/key');
+    assert.equal(pushKey.status, 200);
+    assert.equal(typeof pushKey.body.publicKey, 'string');
+    const pushSub = await request('/api/push/subscribe', 'POST', { subscription: { endpoint: 'https://push.example/sub', keys: { p256dh: 'p256dh-value-1234567890', auth: 'auth-value-1234' } } });
+    assert.equal(pushSub.status, 200);
+    assert.equal(pushSub.body.ok, true);
     await stop();
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
