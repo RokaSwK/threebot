@@ -167,6 +167,16 @@ test("memory_defrag audits and safely dedupes exact lines", async () => {
   assert.equal((memory.match(/Duplicate\./gu) ?? []).length, 1);
 });
 
+test("memory_defrag retires closed facts without dropping them", async () => {
+  const { call, botDir } = await fixture();
+  await writeFile(path.join(botDir, "memory", "MEMORY.md"), "# Alpha memory\n\n- [fact] @valid[2020-01-01,2020-02-01) Old.\n- [fact] Current.\n");
+  const result = await call("memory_defrag", { op: "retire-closed" }, { botSlug: "alpha", legacy: false });
+  assert.equal(result.isError, undefined);
+  const payload = parse(result);
+  assert.equal(payload.removed, 1);
+  assert.match(await readFile(path.join(botDir, "memory", "notes", "history", "closed-2026-11.md"), "utf8"), /Old\./u);
+});
+
 test("memory_forget removes a fact and memory_search finds notes", async () => {
   const { call, messages } = await fixture();
   const read = parse(await call("memory_read", {}, { botSlug: "alpha", legacy: false }));

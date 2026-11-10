@@ -13,6 +13,7 @@ import {
   readMemoryNoteWithRevision,
   readMemoryText,
   readMemoryView,
+  retireClosedFacts,
   writeTextAtomic,
   type MemoryFactView,
   type MemoryLimits,
@@ -101,7 +102,7 @@ export async function analyzeMemoryStore({ botDir, sharedFile, now = new Date() 
     raw(sharedFile),
     listMemoryNotes(botDir),
   ]);
-  const notes = allNotes.filter((note) => !note.path.startsWith("memory/notes/defrag/"));
+  const notes = allNotes.filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/"));
   const limits = { ...MEMORY_LIMITS };
   const findings: DefragFinding[] = [];
   const allFacts = [...view.bot.facts, ...view.shared.facts];
@@ -263,7 +264,21 @@ export async function writeDefragPlan({ botDir, report, now = new Date() }: { bo
 export async function runDefragAudit({ botDir, sharedFile, now = new Date() }: { botDir: string; sharedFile: string; now?: Date }): Promise<DefragReport> {
   const report = await analyzeMemoryStore({ botDir, sharedFile, now });
   await writeDefragPlan({ botDir, report: report, now });
+  await appendDream(botDir, `${localDate(now)}: defrag audit ${report.findings.length} finding(s); plan ${report.planPath ?? "not written"}`);
   return report;
+}
+
+/** Lossless cleanup: move facts whose explicit validity already ended into a history note. */
+export async function runRetireClosed({ botDir, sharedFile, now = new Date() }: { botDir: string; sharedFile: string; now?: Date }): Promise<{ bot: Awaited<ReturnType<typeof retireClosedFacts>>; shared: Awaited<ReturnType<typeof retireClosedFacts>>; removed: number }> {
+  const [bot, shared] = await Promise.all([
+    readMemoryText({ botDir, sharedFile, scope: "bot" }),
+    readMemoryText({ botDir, sharedFile, scope: "shared" }),
+  ]);
+  const botResult = await retireClosedFacts({ botDir, sharedFile, scope: "bot", expectedRevision: bot.revision, now });
+  const sharedResult = await retireClosedFacts({ botDir, sharedFile, scope: "shared", expectedRevision: shared.revision, now });
+  const removed = (botResult.ok ? botResult.removed : 0) + (sharedResult.ok ? sharedResult.removed : 0);
+  if (removed > 0) await appendDream(botDir, `${localDate(now)}: defrag retired ${removed} closed fact(s)`);
+  return { bot: botResult, shared: sharedResult, removed };
 }
 
 /** Lossless cleanup: only byte-identical duplicate fact lines. */

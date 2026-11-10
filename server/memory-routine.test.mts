@@ -55,6 +55,23 @@ test("updates the existing routine instead of creating a duplicate", async () =>
   assert.equal((await findMemoryRoutine(client, bot))?.id, "task-1");
 });
 
+test("auto-ensure keeps a disabled routine disabled", async () => {
+  const client = fakeClient([{ ...task, enabled: false }]);
+  await ensureMemoryRoutine({ client, bot, modelSelection });
+  const upsert = client.calls.find((call: { tag: string }) => call.tag === "scheduledTasks.upsert").payload;
+  assert.equal(upsert.enabled, false);
+});
+
+test("finds and renames a legacy reflection routine", async () => {
+  const legacy = { ...task, title: "Memory reflection" };
+  const client = fakeClient([legacy]);
+  const result = await ensureMemoryRoutine({ client, bot, modelSelection });
+  assert.equal(result.created, false);
+  const upsert = client.calls.find((call: { tag: string }) => call.tag === "scheduledTasks.upsert").payload;
+  assert.equal(upsert.id, "task-1");
+  assert.equal(upsert.title, "Memory maintenance");
+});
+
 test("runs and toggles the existing routine", async () => {
   const client = fakeClient([task]);
   assert.equal((await runMemoryRoutine(client, bot)).id, "task-1");

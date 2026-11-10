@@ -8,6 +8,7 @@ import {
   closeFactRange,
   dedupeExactFacts,
   hashFact,
+  retireClosedFacts,
   mutateMemory,
   readMemoryNoteWithRevision,
   readMemoryState,
@@ -370,6 +371,24 @@ test("the Memory view returns both layers with provenance", async () => {
   assert.equal(view.bot.facts[0]?.provenance?.sourceMessageId, "m1");
   assert.equal(view.shared.facts.length, 0);
   assert.equal(view.forgotten, 0);
+});
+
+test("closed facts move to a history note without losing the source", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const file = path.join(botDir, "memory", "MEMORY.md");
+  const before = "# Alpha memory\n\n- [fact] @valid[2020-01-01,2020-02-01) Old deadline. [source: thread/m1]\n- [fact] Current.\n";
+  await writeFile(file, before);
+  const result = await retireClosedFacts({ botDir, sharedFile, scope: "bot", expectedRevision: revisionOf(before), now: new Date("2026-11-10T10:00:00.000Z") });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.removed, 1);
+  assert.equal(result.notePath, "memory/notes/history/closed-2026-11.md");
+  assert.match(await readFile(path.join(botDir, result.notePath!), "utf8"), /Old deadline\. \[source: thread\/m1\]/u);
+  assert.doesNotMatch(await readFile(file, "utf8"), /Old deadline/u);
+  assert.match(await readFile(file, "utf8"), /Current\./u);
+  const again = await retireClosedFacts({ botDir, sharedFile, scope: "bot", expectedRevision: result.revision, now: new Date("2026-11-10T10:00:00.000Z") });
+  assert.equal(again.ok, true);
+  if (again.ok) assert.equal(again.removed, 0);
 });
 
 test("exact duplicate fact lines are removed losslessly", async () => {

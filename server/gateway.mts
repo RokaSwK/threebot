@@ -12,11 +12,12 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
 import { readMemoryNoteWithRevision, readMemoryView, mutateMemory } from "./memory.mts";
-import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
+import { runDefragAudit, runRetireClosed, runSafeDedupe } from "./memory-defrag.mts";
 import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage, type ReflectedMessage } from "./memory-mcp.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
+import { ensureMemoryRoutine } from "./memory-routine.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
 import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from "./environment-routes.mts";
@@ -1068,7 +1069,8 @@ const server = http.createServer(async (req, res) => {
       const sharedFile = path.join(appDir, "shared-memory.md");
       const report = await runDefragAudit({ botDir: botDir(bot.slug), sharedFile });
       const dedupe = body?.applySafe === true ? await runSafeDedupe({ botDir: botDir(bot.slug), sharedFile }) : null;
-      return send(res, 200, { report, dedupe }, { "cache-control": "no-store" });
+      const retired = body?.retireClosed === true ? await runRetireClosed({ botDir: botDir(bot.slug), sharedFile }) : null;
+      return send(res, 200, { report, dedupe, retired }, { "cache-control": "no-store" });
     }
     if (p === "/api/memory/forget" && req.method === "POST") {
       requireJson(req);
@@ -1218,6 +1220,24 @@ const pushNotifier = createPushNotifier({
   },
 });
 pushNotifier.start();
+
+// Each Bot gets its own memory maintenance routine, but only when the user has chosen a memory
+// model in Settings. Never fall back to the Bot's expensive default just to keep a cron alive.
+async function ensureMemoryMaintenance() {
+  const settings = await getSettings();
+  if (!settings.memoryReflectionModel) return;
+  const client = new T3Client({ baseUrl: cfg.t3Url, token, clientLabel: "threebot-memory-maintenance" });
+  await client.connect();
+  try {
+    for (const bot of await listBots()) {
+      if (!bot.projectId || !bot.mainThreadId) continue;
+      await ensureMemoryRoutine({ client, bot, modelSelection: settings.memoryReflectionModel });
+    }
+  } finally {
+    client.close();
+  }
+}
+ensureMemoryMaintenance().catch((e) => console.error("ensuring memory maintenance failed", e));
 
 if (envTailnet) {
   if (!exposure.tailnetUsers.size) throw new Error("TAILNET_PORT needs TAILNET_USERS");

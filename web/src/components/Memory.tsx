@@ -75,14 +75,16 @@ export function MemoryTab({ bot }: { bot: Bot }) {
     }
   };
 
-  const audit = async (applySafe = false) => {
+  const audit = async (options: { applySafe?: boolean; retireClosed?: boolean } = {}) => {
     if (auditing) return;
     setAuditing(true);
     try {
-      const result = await memoryApi.defrag(bot.slug, applySafe);
+      const result = await memoryApi.defrag(bot.slug, options);
       setDefrag(result.report);
-      if (applySafe && result.dedupe?.removed) await load();
-      toast(applySafe && result.dedupe ? `Removed ${result.dedupe.removed} exact duplicate line(s)` : "Memory audit written");
+      if ((options.applySafe && result.dedupe?.removed) || (options.retireClosed && result.retired?.removed)) await load();
+      if (options.retireClosed && result.retired) toast(`Retired ${result.retired.removed} closed fact(s)`);
+      else if (options.applySafe && result.dedupe) toast(`Removed ${result.dedupe.removed} exact duplicate line(s)`);
+      else toast("Memory audit written");
     } catch (cause) {
       toast(cause instanceof Error ? cause.message : "Couldn't audit memory");
     } finally {
@@ -152,8 +154,9 @@ export function MemoryTab({ bot }: { bot: Bot }) {
             : "No duplicates or oversized notes found."}
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Pill variant="soft" disabled={auditing} onClick={() => void audit(false)}><RefreshCw size={13} /> {auditing ? "Auditing…" : "Audit memory"}</Pill>
-          {defrag && defrag.counts.exactDuplicateFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit(true)}>Remove exact duplicates</Pill>}
+          <Pill variant="soft" disabled={auditing} onClick={() => void audit()}><RefreshCw size={13} /> {auditing ? "Auditing…" : "Audit memory"}</Pill>
+          {defrag && defrag.counts.exactDuplicateFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit({ applySafe: true })}>Remove exact duplicates</Pill>}
+          {defrag && defrag.counts.staleFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit({ retireClosed: true })}>Retire closed facts</Pill>}
           <Pill variant="soft" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
         </div>
         {defrag && <div className="mt-2 text-[12px] leading-relaxed text-muted">

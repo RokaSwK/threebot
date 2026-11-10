@@ -1,11 +1,17 @@
-// Create, run and disable the T3 routine that performs a memory reflection pass. T3 owns routines;
+// Create, run and disable the T3 routine that performs a memory maintenance pass. T3 owns routines;
 // Threebot only uses its existing RPC. No T3 schema or source change.
 import { randomUUID } from "node:crypto";
 import type { Bot } from "./main-bot.mts";
 import type { T3Client } from "./t3rpc.mts";
 
-export const MEMORY_ROUTINE_TITLE = "Memory reflection";
-export const MEMORY_ROUTINE_PROMPT = `Run a memory reflection now. Call memory_reflect, read the packet, then propose at most 10 add/replace/supersede operations to memory_reflect_apply with the exact sourceMessageId and sourceQuote. If there are no new owner messages, apply an empty batch to advance the bookmark. Do not use memory_edit with old messages for this.`;
+export const MEMORY_ROUTINE_TITLE = "Memory maintenance";
+const LEGACY_MEMORY_ROUTINE_TITLE = "Memory reflection";
+export const MEMORY_ROUTINE_PROMPT = `Run a memory maintenance pass now. Work only through the memory tools; do not answer in chat.
+1. Call memory_reflect, read the packet, then propose at most 10 add/replace/supersede operations to memory_reflect_apply with the exact sourceMessageId and sourceQuote. If there are no new owner messages, apply an empty batch to advance the bookmark.
+2. Call memory_defrag with op audit and read the proposed plan.
+3. Call memory_defrag with op safe-dedupe to remove byte-identical duplicate fact lines.
+4. Call memory_defrag with op retire-closed to move facts whose explicit validity ended into memory/notes/history.
+5. Review the remaining plan findings. You may add or update a note when an exact owner quote supports it; otherwise leave the finding as proposed and report it. Never delete a unique fact or note, merge undated contradictions, or invent a source.`;
 
 export type MemoryRoutineSchedule = { type: "fixed_time"; timeOfDay: string; weekdays?: number[] } | { type: "interval"; everyMs: number };
 export type MemoryRoutineTask = {
@@ -51,7 +57,7 @@ export async function listScheduledTasks(client: T3Client, timeoutMs = 5_000): P
 
 export async function findMemoryRoutine(client: T3Client, bot: Bot): Promise<MemoryRoutineTask | null> {
   const tasks = await listScheduledTasks(client);
-  return tasks.find((task) => task.title === MEMORY_ROUTINE_TITLE && task.projectId === bot.projectId) ?? null;
+  return tasks.find((task) => (task.title === MEMORY_ROUTINE_TITLE || task.title === LEGACY_MEMORY_ROUTINE_TITLE) && task.projectId === bot.projectId) ?? null;
 }
 
 export function defaultMemorySchedule(): MemoryRoutineSchedule {
@@ -63,17 +69,19 @@ export async function ensureMemoryRoutine({
   bot,
   modelSelection,
   schedule = defaultMemorySchedule(),
-  enabled = true,
+  enabled,
 }: {
   client: T3Client;
   bot: Bot;
   modelSelection: unknown;
   schedule?: MemoryRoutineSchedule;
+  /** Omitted preserves an existing routine's enabled state; new routines default to enabled. */
   enabled?: boolean;
 }): Promise<{ task: MemoryRoutineTask; created: boolean }> {
-  if (!bot.projectId || !bot.mainThreadId) throw new Error("This Bot needs a project and main thread before it can have a reflection routine.");
-  if (!modelSelection) throw new Error("Pick a model for the reflection routine.");
+  if (!bot.projectId || !bot.mainThreadId) throw new Error("This Bot needs a project and main thread before it can have a memory maintenance routine.");
+  if (!modelSelection) throw new Error("Pick a model for memory maintenance.");
   let existing = await findMemoryRoutine(client, bot);
+  const nextEnabled = enabled ?? existing?.enabled ?? true;
   const modelChanged = existing ? JSON.stringify(existing.modelSelection) !== JSON.stringify(modelSelection) : false;
   const boundToChat = existing ? existing.threadId === bot.mainThreadId : false;
   if (existing && (modelChanged || boundToChat)) {
@@ -85,7 +93,7 @@ export async function ensureMemoryRoutine({
     commandId: randomUUID(),
     title: MEMORY_ROUTINE_TITLE,
     prompt: MEMORY_ROUTINE_PROMPT,
-    enabled,
+    enabled: nextEnabled,
     schedule,
     projectId: bot.projectId,
     // A bound thread keeps its own provider/model; T3 ignores task.modelSelection for it.

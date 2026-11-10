@@ -35,7 +35,7 @@ export type Settings = {
   rules: { alwaysAsk: string[]; allowWithoutAsking: string[] };
   sections: string[];
   defaultModel: ModelSelection | null;
-  /** Settings → Memory reflection model. Null keeps the Bot's own model. */
+  /** Settings → Memory model (the JSON key predates defrag). Null disables automatic memory maintenance. */
   memoryReflectionModel?: ModelSelection | null;
   /** Settings → Avatar drawing model. Null picks a fast model automatically (see lib/avatarDrawing). */
   avatarDrawingModel?: ModelSelection | null;

@@ -16,7 +16,7 @@ import {
   type MemoryMessage,
   type MemoryScope,
 } from "./memory.mts";
-import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
+import { runDefragAudit, runRetireClosed, runSafeDedupe } from "./memory-defrag.mts";
 
 export type { MemoryMessage } from "./memory.mts";
 
@@ -165,11 +165,11 @@ export const MEMORY_TOOLS: MemoryTool[] = [
     name: "memory_defrag",
     title: "Audit and defrag memory",
     description:
-      "Audit the whole memory store and write a proposed defrag plan. op audit is read-only for facts and writes only the plan note. op safe-dedupe also removes byte-identical duplicate fact lines; it never deletes a unique fact, note or source. Destructive changes stay in the plan for the user.",
+      "Audit the whole memory store and write a proposed defrag plan. op audit is read-only for facts and writes only the plan note. op safe-dedupe removes byte-identical duplicate fact lines. op retire-closed moves facts whose explicit validity ended into memory/notes/history; the exact line and source survive. Destructive changes stay in the plan for the user.",
     inputSchema: {
       type: "object",
       properties: {
-        op: { type: "string", enum: ["audit", "safe-dedupe"], description: "audit (default) or safe-dedupe." },
+        op: { type: "string", enum: ["audit", "safe-dedupe", "retire-closed"], description: "audit (default), safe-dedupe, or retire-closed." },
         threadId: { type: "string", description: threadIdHelp },
       },
     },
@@ -409,7 +409,12 @@ export function createMemoryTools({
           log(`memory: ${slug} defrag safe-dedupe removed ${result.removed}`);
           return toolJson(result);
         }
-        if (op !== "audit") return toolError("op must be audit or safe-dedupe.");
+        if (op === "retire-closed") {
+          const result = await runRetireClosed({ botDir: dir, sharedFile });
+          log(`memory: ${slug} defrag retire-closed removed ${result.removed}`);
+          return toolJson(result);
+        }
+        if (op !== "audit") return toolError("op must be audit, safe-dedupe or retire-closed.");
         const report = await runDefragAudit({ botDir: dir, sharedFile });
         log(`memory: ${slug} defrag audit wrote ${report.planPath}`);
         return toolJson(report);

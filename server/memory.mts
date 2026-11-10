@@ -272,7 +272,10 @@ export async function listMemoryNotes(botDir: string, limits: Partial<MemoryLimi
   const merged = { ...MEMORY_LIMITS, ...limits };
   const notes: MemoryNote[] = [];
   await walkNotes(botDir, path.join(botDir, "memory", "notes"), 0, merged.noteDepth, notes);
+  // Operational artifacts (defrag plans and retired-fact history) stay readable by path but
+  // never consume the session's note index or the note cap.
   return notes
+    .filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/"))
     .sort((a, b) => a.path.localeCompare(b.path))
     .slice(0, merged.noteCount)
     .map((note) => ({ ...note, tokens: Math.min(note.tokens, merged.noteTokens) }));
@@ -1206,6 +1209,46 @@ export async function dedupeExactFacts({ botDir, sharedFile, scope, expectedRevi
     await fs.rm(path.join(ctx.journalDir, `${opId}.json`), { force: true }).catch(() => {});
   }
   return { ok: true, removed, revision: revisionOf(next), path: ctx.relative };
+}
+
+export type MemoryRetireResult =
+  | { ok: true; removed: number; revision: string; path: string; notePath: string | null }
+  | { ok: false; code: "conflict" | "invalid"; message: string; revision?: string; content?: string };
+
+/** Move facts whose dated validity has ended into a history note. Lossless: the exact line survives. */
+export async function retireClosedFacts({ botDir, sharedFile, scope, expectedRevision, now = new Date() }: {
+  botDir: string; sharedFile: string; scope: MemoryScope; expectedRevision: string; now?: Date;
+}): Promise<MemoryRetireResult> {
+  const ctx = memoryFileContext(botDir, sharedFile, scope);
+  const current = await readIfExists(ctx.file);
+  const revision = revisionOf(current);
+  if (revision !== expectedRevision) return { ok: false, code: "conflict", message: "Memory changed since the audit. Read it again.", revision, content: current };
+  const { lines, trailing } = factLines(current);
+  const today = localDate(now);
+  const closed = lines.filter((line) => /^\s*[-*+]\s+/u.test(line) && (parseFact(line).validTo ?? "9999-12-31") < today);
+  if (closed.length === 0) return { ok: true, removed: 0, revision, path: ctx.relative, notePath: null };
+  const month = today.slice(0, 7);
+  const noteRelative = scope === "bot" ? `memory/notes/history/closed-${month}.md` : `shared-memory.history/closed-${month}.md`;
+  const noteFile = scope === "bot" ? path.join(botDir, noteRelative) : path.join(path.dirname(sharedFile), noteRelative);
+  const previousNote = await readIfExists(noteFile);
+  const header = `---\ndescription: Closed facts retired from ${scope === "bot" ? "MEMORY.md" : "shared memory"}\ntype: history\n---\n# Closed facts ${month}\n\n`;
+  let nextNote = previousNote.trim() ? previousNote : header;
+  if (!nextNote.endsWith("\n")) nextNote += "\n";
+  for (const line of closed) if (!nextNote.includes(line.trim())) nextNote += `${line.trim()}\n`;
+  const remove = new Set(closed.map((line) => line.trim()));
+  const next = joinLines(lines.filter((line) => !remove.has(line.trim())), trailing);
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const nextState: MemoryState = { ...state, revisions: { ...state.revisions, [ctx.relative]: revisionOf(next) } };
+  await writeHistory(ctx, current, now);
+  const opId = await writeJournal(ctx, current, next, state, nextState, now);
+  try {
+    await writeTextAtomic(noteFile, nextNote, 0o644);
+    await writeTextAtomic(ctx.file, next, 0o644);
+    await writeMemoryStateFile(ctx.stateFile, nextState);
+  } finally {
+    await fs.rm(path.join(ctx.journalDir, `${opId}.json`), { force: true }).catch(() => {});
+  }
+  return { ok: true, removed: closed.length, revision: revisionOf(next), path: ctx.relative, notePath: noteRelative };
 }
 
 /** Close an existing fact's date range without inventing a start date. */

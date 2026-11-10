@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { analyzeMemoryStore, runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
+import { analyzeMemoryStore, runDefragAudit, runRetireClosed, runSafeDedupe } from "./memory-defrag.mts";
 
 async function fixture() {
   const root = await mkdtemp(path.join(tmpdir(), "threebot-defrag-"));
@@ -39,6 +39,17 @@ test("defrag finds duplicates, stale facts, broken links and oversized notes", a
   assert.ok(report.counts.brokenLinks >= 1);
   assert.ok(report.counts.oversizedNotes >= 1);
   assert.ok(report.findings.some((finding) => finding.kind === "duplicate"));
+});
+
+test("closed facts are retired to history, not dropped", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const result = await runRetireClosed({ botDir, sharedFile, now });
+  assert.equal(result.removed, 1);
+  assert.equal(result.bot.ok, true);
+  if (!result.bot.ok) return;
+  assert.equal(result.bot.notePath, "memory/notes/history/closed-2026-11.md");
+  assert.match(await readFile(path.join(botDir, result.bot.notePath!), "utf8"), /Old deadline\./u);
+  assert.doesNotMatch(await readFile(path.join(botDir, "memory", "MEMORY.md"), "utf8"), /Old deadline/u);
 });
 
 test("the audit writes a proposed plan and safe dedupe only removes exact duplicates", async () => {

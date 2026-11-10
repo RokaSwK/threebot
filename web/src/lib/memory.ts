@@ -75,7 +75,12 @@ export type DefragDedupe = {
   bot: { ok: boolean; removed?: number; revision?: string };
   shared: { ok: boolean; removed?: number; revision?: string };
 };
-export type DefragResult = { report: DefragReport; dedupe: DefragDedupe | null };
+export type DefragRetire = {
+  removed: number;
+  bot: { ok: boolean; removed?: number; notePath?: string | null };
+  shared: { ok: boolean; removed?: number; notePath?: string | null };
+};
+export type DefragResult = { report: DefragReport; dedupe: DefragDedupe | null; retired: DefragRetire | null };
 
 export type MemoryForgetResult =
   | { ok: true; scope: "bot" | "shared"; path: string; revision: string; forgotten: string }
@@ -93,6 +98,6 @@ export const memoryApi = {
   note: (slug: string, path: string) => request<{ path: string; text: string; revision: string }>(`/api/memory/note?slug=${encodeURIComponent(slug)}&path=${encodeURIComponent(path)}`),
   forget: (input: { slug: string; scope: "bot" | "shared"; fact: string; expectedRevision: string }) =>
     request<MemoryForgetResult>("/api/memory/forget", { method: "POST", body: JSON.stringify(input) }),
-  defrag: (slug: string, applySafe = false) =>
-    request<DefragResult>("/api/memory/defrag", { method: "POST", body: JSON.stringify({ slug, applySafe }) }),
+  defrag: (slug: string, options: { applySafe?: boolean; retireClosed?: boolean } = {}) =>
+    request<DefragResult>("/api/memory/defrag", { method: "POST", body: JSON.stringify({ slug, ...options }) }),
 };

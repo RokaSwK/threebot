@@ -13,7 +13,7 @@ import { createAccessStore, createTailscale, findCloudflared, hashPassword, inst
 import { antigravityBridgeStatus, installAntigravityBridge, uninstallAntigravityBridge } from "./harness-bridge.mts";
 import { T3Client } from "./t3rpc.mts";
 import { defaultMemorySchedule, ensureMemoryRoutine, findMemoryRoutine, runMemoryRoutine, setMemoryRoutineEnabled } from "./memory-routine.mts";
-import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
+import { runDefragAudit, runRetireClosed, runSafeDedupe } from "./memory-defrag.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `threebot ${currentVersion()}
@@ -36,10 +36,11 @@ Usage: threebot <command> [options]
   tailscale <on|off|status>   Private link for your tailnet, through Tailscale Serve.
   tunnel <on|off|status>      Public Cloudflare quick-tunnel link. Needs a password.
   bridge <install|uninstall|status>  Configure Antigravity's global MCP bridge.
-  memory <reflect|status|disable|defrag> <bot>  Create, run or disable the memory reflection routine.
+  memory <reflect|status|disable|defrag> <bot>  Create, run or disable the memory maintenance routine.
                        --time <HH:MM>    Daily time for a new routine (default 03:30).
                        --run             Trigger it immediately after creating/updating it.
    --apply-safe      With defrag, remove exact duplicate fact lines.
+   --retire-closed   With defrag, move closed facts to memory/notes/history.
   password           Set the password the app asks for (reads it from the terminal or stdin).
   version            Print the version.
 
@@ -380,6 +381,10 @@ async function memoryCommand(args: string[]) {
       const dedupe = await runSafeDedupe({ botDir, sharedFile });
       say(`${slug}: removed ${dedupe.removed} exact duplicate line(s)`);
     }
+    if (flags["retire-closed"] === true) {
+      const retired = await runRetireClosed({ botDir, sharedFile });
+      say(`${slug}: retired ${retired.removed} closed fact(s)`);
+    }
     return;
   }
   const t3Token = (settings().T3_TOKEN ?? "").trim() || (existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "");
@@ -389,24 +394,23 @@ async function memoryCommand(args: string[]) {
   try {
     if (action === "status") {
       const task = await findMemoryRoutine(client, bot as any);
-      if (!task) return say(`No memory reflection routine for ${slug}.`);
+      if (!task) return say(`No memory maintenance routine for ${slug}.`);
       return say(`${slug}: ${task.enabled ? "enabled" : "disabled"}, ${task.schedule.type === "fixed_time" ? task.schedule.timeOfDay : task.schedule.type}, next ${task.nextRunAt ?? "not scheduled"}, last ${task.lastRunStatus ?? "never"}.`);
     }
     if (action === "disable") {
       const task = await setMemoryRoutineEnabled(client, bot as any, false);
-      return say(`${slug}: memory reflection disabled.`);
+      return say(`${slug}: memory maintenance disabled.`);
     }
     const settingsFile = path.join(appDirOf(), "settings.json");
     const threebotSettings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8")) : {};
-    const config = await client.call("server.getConfig", {});
-    const modelSelection = threebotSettings.memoryReflectionModel ?? bot.model ?? config?.settings?.defaultModelSelection;
-    if (!modelSelection) fail("Pick a model in Settings → Memory reflection model, or set a default model in T3.");
+    const modelSelection = threebotSettings.memoryReflectionModel;
+    if (!modelSelection) fail("Pick a model in Settings → Memory model. Memory maintenance never falls back to the Bot's expensive model.");
     const schedule = typeof flags.time === "string" ? { type: "fixed_time" as const, timeOfDay: String(flags.time) } : defaultMemorySchedule();
     const result = await ensureMemoryRoutine({ client, bot: bot as any, modelSelection, schedule, enabled: true });
-    say(`${slug}: memory reflection ${result.created ? "created" : "updated"} (${result.task.enabled ? "enabled" : "disabled"}), next ${result.task.nextRunAt ?? "pending"}.`);
+    say(`${slug}: memory maintenance ${result.created ? "created" : "updated"} (${result.task.enabled ? "enabled" : "disabled"}), next ${result.task.nextRunAt ?? "pending"}.`);
     if (flags.run) {
       const task = await runMemoryRoutine(client, bot as any);
-      say(`${slug}: reflection triggered (${task.id}). Check the Bot transcript for the tool pass.`);
+      say(`${slug}: memory maintenance triggered (${task.id}). Check the Bot transcript for the tool pass.`);
     }
   } finally {
     client.close();
