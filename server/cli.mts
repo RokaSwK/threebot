@@ -386,8 +386,8 @@ async function memoryCommand(args: string[]) {
     const settingsFile = path.join(appDirOf(), "settings.json");
     const threebotSettings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8")) : {};
     const config = await client.call("server.getConfig", {});
-    const modelSelection = threebotSettings.routineModel ?? bot.model ?? config?.settings?.defaultModelSelection;
-    if (!modelSelection) fail("Pick a model in Settings → Routine model, or set a default model in T3.");
+    const modelSelection = threebotSettings.memoryReflectionModel ?? bot.model ?? config?.settings?.defaultModelSelection;
+    if (!modelSelection) fail("Pick a model in Settings → Memory reflection model, or set a default model in T3.");
     const schedule = typeof flags.time === "string" ? { type: "fixed_time" as const, timeOfDay: String(flags.time) } : defaultMemorySchedule();
     const result = await ensureMemoryRoutine({ client, bot: bot as any, modelSelection, schedule, enabled: true });
     say(`${slug}: memory reflection ${result.created ? "created" : "updated"} (${result.task.enabled ? "enabled" : "disabled"}), next ${result.task.nextRunAt ?? "pending"}.`);

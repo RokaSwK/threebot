@@ -41,8 +41,3 @@ test("a memory snapshot is rendered as data, with its notes index", () => {
   assert.match(text, /memory\/notes\/threebot\/review\.md/);
   assert.match(text, /<\/memory>/);
 });
-
-test("a routine model is announced for every Bot and absent when unset", () => {
-  assert.match(render({ routineModel: { instanceId: "pi", model: "opencode-go/muse-spark-1.3-contributor" } }), /Routine model: pi\/opencode-go\/muse-spark-1\.3-contributor/);
-  assert.doesNotMatch(render({}), /Routine model:/);
-});

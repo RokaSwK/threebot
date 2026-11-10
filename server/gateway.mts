@@ -365,7 +365,7 @@ const DEFAULT_SETTINGS = {
   sections: [],
   defaultModel: null,
   avatarDrawingModel: null,
-  routineModel: null,
+  memoryReflectionModel: null,
   beta: BETA_DEFAULTS,
 };
 const settingsPath = path.join(appDir, "settings.json");
@@ -999,7 +999,7 @@ const server = http.createServer(async (req, res) => {
       if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
       await writeJson(settingsPath, next);
       if (!next.beta.projects) projectRoutes.closeStreams();
-      if ("rules" in patch || "userName" in patch || "timezone" in patch || "routineModel" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
+      if ("rules" in patch || "userName" in patch || "timezone" in patch || "memoryReflectionModel" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);
