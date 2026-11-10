@@ -52,7 +52,7 @@ export type MemoryView = {
 };
 
 export type DefragFinding = {
-  kind: "duplicate" | "near_duplicate" | "broken_link" | "orphan_note" | "oversized_note" | "stale_fact" | "possible_contradiction" | "over_budget";
+  kind: "duplicate" | "near_duplicate" | "near_duplicate_note" | "broken_link" | "orphan_note" | "oversized_note" | "stale_fact" | "possible_contradiction" | "over_budget";
   severity: "safe" | "review" | "info";
   detail: string;
   paths?: string[];
@@ -64,7 +64,7 @@ export type DefragReport = {
   findings: DefragFinding[];
   counts: {
     facts: number; sharedFacts: number; notes: number; exactDuplicateFacts: number;
-    nearDuplicateFacts: number; brokenLinks: number; oversizedNotes: number;
+    nearDuplicateFacts: number; nearDuplicateNotes: number; brokenLinks: number; oversizedNotes: number;
     staleFacts: number; possibleContradictions: number; overBudget: number;
   };
   safeDedupe: { bot: boolean; shared: boolean };
@@ -81,6 +81,10 @@ export type DefragRetire = {
   shared: { ok: boolean; removed?: number; notePath?: string | null };
 };
 export type DefragResult = { report: DefragReport; dedupe: DefragDedupe | null; retired: DefragRetire | null };
+
+export type NoteRefactorResult =
+  | { ok: true; path: string; revision: string; parts?: string[]; archivePath?: string; sources?: string[] }
+  | { ok: false; code: string; message: string; revision?: string };
 
 export type MemoryForgetResult =
   | { ok: true; scope: "bot" | "shared"; path: string; revision: string; forgotten: string }
@@ -100,4 +104,8 @@ export const memoryApi = {
     request<MemoryForgetResult>("/api/memory/forget", { method: "POST", body: JSON.stringify(input) }),
   defrag: (slug: string, options: { applySafe?: boolean; retireClosed?: boolean } = {}) =>
     request<DefragResult>("/api/memory/defrag", { method: "POST", body: JSON.stringify({ slug, ...options }) }),
+  splitNote: (input: { slug: string; path: string; expectedRevision: string; targetDir?: string }) =>
+    request<NoteRefactorResult>("/api/memory/note/split", { method: "POST", body: JSON.stringify(input) }),
+  mergeNotes: (input: { slug: string; path: string; expectedRevision: string; sources: { path: string; expectedRevision: string }[]; description?: string }) =>
+    request<NoteRefactorResult>("/api/memory/note/merge", { method: "POST", body: JSON.stringify(input) }),
 };

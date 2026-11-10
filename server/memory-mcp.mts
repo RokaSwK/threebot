@@ -13,6 +13,9 @@ import {
   writeReflectionBookmark,
   readMemoryText,
   searchMemory,
+  splitMemoryNote,
+  mergeMemoryNotes,
+  type MemoryNoteSource,
   type MemoryMessage,
   type MemoryScope,
 } from "./memory.mts";
@@ -61,6 +64,7 @@ export const MEMORY_TOOLS: MemoryTool[] = [
       properties: {
         scope: { type: "string", enum: ["bot", "shared", "all"], description: "What to read; default all." },
         topic: { type: "string", description: "A note path from the notes index, e.g. memory/notes/projects/threebot.md." },
+        full: { type: "boolean", description: "Read the whole note instead of the session-sized preview." },
       },
     },
     annotations: { readOnlyHint: true },
@@ -90,6 +94,53 @@ export const MEMORY_TOOLS: MemoryTool[] = [
         threadId: { type: "string", description: threadIdHelp },
       },
       required: ["op", "expectedRevision", "sourceQuote"],
+    },
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: "memory_note_split",
+    title: "Split a note",
+    description:
+      "Split one note at its level-2 Markdown headings. The original becomes a small index linking the parts; every section survives in a new note. Read the note first and pass its current revision. This is mechanical, not a rewrite: it refuses fewer than two non-empty sections, conflicts, and notes that would exceed the note limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The note to split, e.g. memory/notes/projects/threebot.md." },
+        expectedRevision: { type: "string", description: "The revision from memory_read topic." },
+        targetDir: { type: "string", description: "Optional folder under memory/notes for the parts; defaults to a folder beside the note." },
+        threadId: { type: "string", description: threadIdHelp },
+      },
+      required: ["path", "expectedRevision"],
+    },
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: "memory_note_merge",
+    title: "Merge notes",
+    description:
+      "Merge two or more notes into one canonical note. The target may be new or existing; every source must be read first and pass its current revision. Raw source notes are copied to memory/notes/archive and each source becomes a redirect, so nothing is lost. Use this when notes clearly cover the same topic; do not merge notes merely because their descriptions are similar.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "The canonical target note path." },
+        expectedRevision: { type: "string", description: "The target's revision; empty string only when creating it." },
+        sources: {
+          type: "array",
+          minItems: 2,
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              expectedRevision: { type: "string" },
+            },
+            required: ["path", "expectedRevision"],
+          },
+          description: "Notes to merge; they must be distinct from the target.",
+        },
+        description: { type: "string", description: "Optional description for the merged note." },
+        threadId: { type: "string", description: threadIdHelp },
+      },
+      required: ["path", "expectedRevision", "sources"],
     },
     annotations: { destructiveHint: true },
   },
@@ -265,8 +316,8 @@ export function createMemoryTools({
       const dir = botDir(botsRoot, slug);
       if (name === "memory_read") {
         if (typeof args.topic === "string" && args.topic.trim()) {
-          const note = await readMemoryNoteWithRevision(dir, args.topic.trim());
-          return toolJson({ scope: "bot", topic: note.path, content: note.text, revision: note.revision });
+          const note = await readMemoryNoteWithRevision(dir, args.topic.trim(), args.full === true ? { noteChars: 100_000 } : {});
+          return toolJson({ scope: "bot", topic: note.path, content: note.text, revision: note.revision, ...(args.full === true ? { full: true } : {}) });
         }
         const scope = args.scope === "bot" || args.scope === "shared" ? args.scope : "all";
         const bot = scope === "shared" ? null : await readMemoryText({ botDir: dir, sharedFile, scope: "bot" });
@@ -306,6 +357,28 @@ export function createMemoryTools({
         });
         if (!result.ok) return toolError(JSON.stringify(result));
         log(`memory: ${slug} ${op} ${result.path}${result.scope === "shared" ? " (shared)" : ""}`);
+        return toolJson(result);
+      }
+
+      if (name === "memory_note_split") {
+        const pathValue = String(args.path ?? "").trim();
+        if (!pathValue) return toolError("path is required.");
+        if (typeof args.expectedRevision !== "string") return toolError("expectedRevision is required; read the note first.");
+        const result = await splitMemoryNote({ botDir: dir, path: pathValue, expectedRevision: args.expectedRevision, targetDir: typeof args.targetDir === "string" ? args.targetDir : undefined });
+        return toolJson(result);
+      }
+      if (name === "memory_note_merge") {
+        const pathValue = String(args.path ?? "").trim();
+        if (!pathValue) return toolError("path is required.");
+        if (typeof args.expectedRevision !== "string") return toolError("expectedRevision is required; read the target note first.");
+        if (!Array.isArray(args.sources) || args.sources.length < 2) return toolError("sources must list at least two notes.");
+        const sources: MemoryNoteSource[] = [];
+        for (const raw of args.sources) {
+          const source = raw as Record<string, unknown>;
+          if (typeof source.path !== "string" || typeof source.expectedRevision !== "string") return toolError("Every source needs path and expectedRevision.");
+          sources.push({ path: source.path, expectedRevision: source.expectedRevision });
+        }
+        const result = await mergeMemoryNotes({ botDir: dir, targetPath: pathValue, expectedRevision: args.expectedRevision, sources, description: typeof args.description === "string" ? args.description : undefined });
         return toolJson(result);
       }
 

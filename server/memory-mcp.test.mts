@@ -152,6 +152,20 @@ test("memory_reflect returns a bookmark and memory_reflect_apply audits and adva
   assert.match(stale.content[0]!.text, /before the reflection bookmark/iu);
 });
 
+test("memory_note_split reads revisions and splits at headings", async () => {
+  const { call, botDir } = await fixture();
+  await mkdir(path.join(botDir, "memory", "notes"), { recursive: true });
+  const notePath = "memory/notes/topic.md";
+  await writeFile(path.join(botDir, notePath), "# Topic\n\nIntro.\n\n## One\n\nFirst.\n\n## Two\n\nSecond.\n");
+  const read = parse(await call("memory_read", { topic: notePath, full: true }, { botSlug: "alpha", legacy: false }));
+  const split = await call("memory_note_split", { path: notePath, expectedRevision: read.revision }, { botSlug: "alpha", legacy: false });
+  assert.equal(split.isError, undefined);
+  const result = parse(split);
+  assert.equal(result.ok, true);
+  assert.equal(result.parts.length, 2);
+  assert.match(await readFile(path.join(botDir, result.parts[0]!), "utf8"), /First\./u);
+});
+
 test("memory_defrag audits and safely dedupes exact lines", async () => {
   const { call, botDir } = await fixture();
   await writeFile(path.join(botDir, "memory", "MEMORY.md"), "# Alpha memory\n\n- [fact] Duplicate.\n- [fact] Duplicate.\n- [fact] Unique.\n");

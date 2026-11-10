@@ -116,6 +116,14 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     const audit = await request('/api/memory/defrag', 'POST', { slug: 'alpha' });
     assert.equal(audit.status, 200);
     assert.match(audit.body.report.planPath, /memory\/notes\/defrag\//u);
+    await mkdir(path.join(botsRoot, 'alpha', 'memory', 'notes'), { recursive: true });
+    const notePath = 'memory/notes/refactor.md';
+    await writeFile(path.join(botsRoot, 'alpha', notePath), '# Refactor\n\nIntro.\n\n## One\n\nFirst.\n\n## Two\n\nSecond.\n');
+    const noteView = await request(`/api/memory/note?slug=alpha&path=${encodeURIComponent(notePath)}`);
+    const split = await request('/api/memory/note/split', 'POST', { slug: 'alpha', path: notePath, expectedRevision: noteView.body.revision });
+    assert.equal(split.status, 200);
+    assert.equal(split.body.ok, true);
+    assert.equal(split.body.parts.length, 2);
     const forgotten = await request('/api/memory/forget', 'POST', { slug: 'alpha', scope: 'bot', fact: '- [preference] Prefers short answers.', expectedRevision: memoryView.body.bot.revision });
     assert.equal(forgotten.status, 200);
     assert.equal(forgotten.body.ok, true);

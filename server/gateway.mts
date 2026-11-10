@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
-import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { mergeMemoryNotes, memorySignature, readSnapshot, recoverMemoryJournals, splitMemoryNote, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
 import { readMemoryNoteWithRevision, readMemoryView, mutateMemory } from "./memory.mts";
 import { runDefragAudit, runRetireClosed, runSafeDedupe } from "./memory-defrag.mts";
 import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage, type ReflectedMessage } from "./memory-mcp.mts";
@@ -1061,6 +1061,35 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
       return send(res, 200, await readMemoryNoteWithRevision(botDir(bot.slug), url.searchParams.get("path") ?? ""), { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/note/split" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (typeof body?.path !== "string" || typeof body?.expectedRevision !== "string") return send(res, 400, { error: "path and expectedRevision are required" });
+      return send(res, 200, await splitMemoryNote({
+        botDir: botDir(bot.slug),
+        path: body.path,
+        expectedRevision: body.expectedRevision,
+        targetDir: typeof body.targetDir === "string" ? body.targetDir : undefined,
+        author: "user",
+      }), { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/note/merge" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (typeof body?.path !== "string" || typeof body?.expectedRevision !== "string" || !Array.isArray(body?.sources)) return send(res, 400, { error: "path, expectedRevision and sources are required" });
+      return send(res, 200, await mergeMemoryNotes({
+        botDir: botDir(bot.slug),
+        targetPath: body.path,
+        expectedRevision: body.expectedRevision,
+        sources: body.sources,
+        description: typeof body.description === "string" ? body.description : undefined,
+        author: "user",
+      }), { "cache-control": "no-store" });
     }
     if (p === "/api/memory/defrag" && req.method === "POST") {
       requireJson(req);

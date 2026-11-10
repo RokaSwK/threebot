@@ -11,7 +11,7 @@ export const MEMORY_ROUTINE_PROMPT = `Run a memory maintenance pass now. Work on
 2. Call memory_defrag with op audit and read the proposed plan.
 3. Call memory_defrag with op safe-dedupe to remove byte-identical duplicate fact lines.
 4. Call memory_defrag with op retire-closed to move facts whose explicit validity ended into memory/notes/history.
-5. Review the remaining plan findings. You may add or update a note when an exact owner quote supports it; otherwise leave the finding as proposed and report it. Never delete a unique fact or note, merge undated contradictions, or invent a source.`;
+5. Review the remaining plan findings. If a note is over budget and has at least two \`##\` headings, read it and split it with \`memory_note_split\`. If two notes clearly cover the same topic, read both and merge them with \`memory_note_merge\`. You may add or update a note when an exact owner quote supports it; otherwise leave the finding as proposed and report it. Never delete a unique fact or note, merge undated contradictions, or invent a source.`;
 
 export type MemoryRoutineSchedule = { type: "fixed_time"; timeOfDay: string; weekdays?: number[] } | { type: "interval"; everyMs: number };
 export type MemoryRoutineTask = {

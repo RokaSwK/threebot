@@ -21,7 +21,7 @@ import {
 } from "./memory.mts";
 
 export type DefragFinding = {
-  kind: "duplicate" | "near_duplicate" | "broken_link" | "orphan_note" | "oversized_note" | "stale_fact" | "possible_contradiction" | "over_budget";
+  kind: "duplicate" | "near_duplicate" | "near_duplicate_note" | "broken_link" | "orphan_note" | "oversized_note" | "stale_fact" | "possible_contradiction" | "over_budget";
   severity: "safe" | "review" | "info";
   detail: string;
   paths?: string[];
@@ -38,6 +38,7 @@ export type DefragReport = {
     notes: number;
     exactDuplicateFacts: number;
     nearDuplicateFacts: number;
+    nearDuplicateNotes: number;
     brokenLinks: number;
     oversizedNotes: number;
     staleFacts: number;
@@ -102,7 +103,7 @@ export async function analyzeMemoryStore({ botDir, sharedFile, now = new Date() 
     raw(sharedFile),
     listMemoryNotes(botDir),
   ]);
-  const notes = allNotes.filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/"));
+  const notes = allNotes.filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/") && !note.path.startsWith("memory/notes/archive/"));
   const limits = { ...MEMORY_LIMITS };
   const findings: DefragFinding[] = [];
   const allFacts = [...view.bot.facts, ...view.shared.facts];
@@ -176,11 +177,13 @@ export async function analyzeMemoryStore({ botDir, sharedFile, now = new Date() 
     }
   }
   const notePaths = new Set(notes.map((note) => note.path));
+  const noteTexts = new Map<string, string>();
   let brokenLinks = 0;
   let orphanNotes = 0;
   const incoming = new Set<string>();
   for (const note of notes) {
     const content = (await readMemoryNoteWithRevision(botDir, note.path)).text;
+    noteTexts.set(note.path, content);
     const links = [...content.matchAll(/\[\[([^\]\n]{1,200})\]\]/gu)].map((match) => match[1]!.trim());
     for (const target of links) {
       const clean = target.split("#", 1)[0]!.trim();
@@ -189,6 +192,18 @@ export async function analyzeMemoryStore({ botDir, sharedFile, now = new Date() 
       else {
         brokenLinks += 1;
         findings.push({ kind: "broken_link", severity: "review", detail: `Broken link [[${target}]].`, paths: [note.path] });
+      }
+    }
+  }
+  let nearDuplicateNotes = 0;
+  for (let i = 0; i < notes.length; i += 1) {
+    for (let j = i + 1; j < notes.length; j += 1) {
+      const a = notes[i]!, b = notes[j]!;
+      const descriptionMatch = jaccard(words(a.description), words(b.description)) >= 0.75;
+      const bodyMatch = jaccard(words(noteTexts.get(a.path) ?? ""), words(noteTexts.get(b.path) ?? "")) >= 0.65;
+      if (descriptionMatch || bodyMatch) {
+        nearDuplicateNotes += 1;
+        findings.push({ kind: "near_duplicate_note", severity: "review", detail: "These notes overlap in topic or body; review whether to merge them.", paths: [a.path, b.path] });
       }
     }
   }
@@ -226,6 +241,7 @@ export async function analyzeMemoryStore({ botDir, sharedFile, now = new Date() 
       notes: notes.length,
       exactDuplicateFacts,
       nearDuplicateFacts,
+      nearDuplicateNotes,
       brokenLinks,
       oversizedNotes,
       staleFacts,

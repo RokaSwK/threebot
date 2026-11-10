@@ -275,7 +275,7 @@ export async function listMemoryNotes(botDir: string, limits: Partial<MemoryLimi
   // Operational artifacts (defrag plans and retired-fact history) stay readable by path but
   // never consume the session's note index or the note cap.
   return notes
-    .filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/"))
+    .filter((note) => !note.path.startsWith("memory/notes/defrag/") && !note.path.startsWith("memory/notes/history/") && !note.path.startsWith("memory/notes/archive/"))
     .sort((a, b) => a.path.localeCompare(b.path))
     .slice(0, merged.noteCount)
     .map((note) => ({ ...note, tokens: Math.min(note.tokens, merged.noteTokens) }));
@@ -813,9 +813,9 @@ function findFactLine(lines: string[], value: unknown): { index: number } | { er
   return { index: matches[0]!.index };
 }
 
-function noteFrontmatter(description: string, title: string): string {
+function noteFrontmatter(description: string, title: string, type = "note"): string {
   const clean = (value: string) => value.replace(/[\r\n]+/gu, " ").replace(/"/gu, "'").trim();
-  return `---\ndescription: ${clean(description)}\ntitle: ${clean(title)}\ntype: note\n---\n`;
+  return `---\ndescription: ${clean(description)}\ntitle: ${clean(title)}\ntype: ${type}\n---\n`;
 }
 
 function checkNoteContent(content: string): MemoryCheck {
@@ -967,6 +967,171 @@ export async function readMemoryNoteWithRevision(botDir: string, notePath: strin
   const full = await fs.readFile(fileReal, "utf8");
   const text = full.length <= merged.noteChars ? full : `${full.slice(0, merged.noteChars).trimEnd()}\n\n(truncated; read the note on disk for the rest)`;
   return { path: normalized, text, revision: revisionOf(full) };
+}
+
+/* ---------- Note refactors: split by H2 headings, merge with an archive ---------- */
+
+export type MemoryNoteRefactorResult =
+  | { ok: true; path: string; revision: string; parts?: string[]; archivePath?: string; sources?: string[] }
+  | { ok: false; code: "conflict" | "not_found" | "invalid" | "cap" | "path" | "too_long"; message: string; revision?: string };
+
+function noteMeta(text: string, fallback: string): { title: string; description: string; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/u.exec(text);
+  const front = match?.[1] ?? "";
+  const body = match ? text.slice(match[0].length) : text;
+  const value = (key: string) => new RegExp(`^${key}:\\s*(.+)$`, "imu").exec(front)?.[1]?.trim() ?? "";
+  const h1 = /^#\s+(.+)$/mu.exec(body)?.[1]?.trim() ?? "";
+  return { title: value("title") || h1 || fallback, description: value("description") || fallback, body };
+}
+
+function noteSlug(value: string): string {
+  const slug = value.normalize("NFKD").replace(/[\u0300-\u036f]/gu, "").toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 48);
+  return slug || "section";
+}
+
+function stripFirstH1(body: string): string {
+  return body.replace(/^\s*#\s+.+\r?\n?/u, "").trim();
+}
+
+function noteTargetDir(notePath: string, targetDir?: string): string {
+  const dir = (targetDir?.trim() || path.posix.join(path.posix.dirname(notePath), path.posix.basename(notePath, ".md"))).replace(/\/+$/u, "");
+  if (!dir.startsWith("memory/notes/")) throw Object.assign(new Error("The target folder must be under memory/notes."), { status: 400 });
+  return dir;
+}
+
+function noteStateContext(botDir: string): MemoryFileContext {
+  return memoryFileContext(botDir, "", "bot");
+}
+
+/** Split a note at its `##` headings. The original becomes a small index; every section survives. */
+export async function splitMemoryNote({ botDir, path: notePath, expectedRevision, targetDir, author = "defrag", now = new Date() }: {
+  botDir: string; path: string; expectedRevision: string; targetDir?: string; author?: string; now?: Date;
+}): Promise<MemoryNoteRefactorResult> {
+  let source: { path: string; text: string; revision: string };
+  try {
+    source = await readMemoryNoteWithRevision(botDir, notePath, { noteChars: 1_000_000 });
+  } catch (error) {
+    return { ok: false, code: "path", message: String((error as Error).message) };
+  }
+  if (source.revision !== expectedRevision) return { ok: false, code: "conflict", message: "The note changed since you read it. Read it again.", revision: source.revision };
+  const meta = noteMeta(source.text, path.posix.basename(source.path, ".md"));
+  const chunks = meta.body.split(/\n(?=##\s+)/u);
+  const sections = chunks.filter((chunk) => /^##\s+\S/mu.test(chunk));
+  if (sections.length < 2) return { ok: false, code: "invalid", message: "That note needs at least two ## headings before it can be split." };
+  const dir = noteTargetDir(source.path, targetDir);
+  let notes: MemoryNote[];
+  try {
+    notes = await listMemoryNotes(botDir);
+  } catch (error) {
+    return { ok: false, code: "invalid", message: String((error as Error).message) };
+  }
+  if (notes.length + sections.length > MEMORY_LIMITS.noteCount) return { ok: false, code: "cap", message: `Splitting would exceed the ${MEMORY_LIMITS.noteCount}-note limit. Merge or archive a note first.` };
+  const used = new Set(notes.map((note) => note.path));
+  const planned: { path: string; title: string; description: string; content: string }[] = [];
+  for (const section of sections) {
+    const heading = /^##\s+(.+)$/mu.exec(section)?.[1]?.trim() ?? "Section";
+    const content = section.replace(/^##\s+.+\r?\n?/u, "").trim();
+    if (!content) continue;
+    let slug = noteSlug(heading);
+    let partPath = path.posix.join(dir, `${slug}.md`);
+    let n = 2;
+    while (used.has(partPath) || await fs.stat(path.join(botDir, partPath)).catch(() => null)) {
+      partPath = path.posix.join(dir, `${slug}-${n++}.md`);
+    }
+    used.add(partPath);
+    const description = `${heading} — ${meta.description}`.slice(0, 160);
+    const contentWithFront = `${noteFrontmatter(description, heading)}# ${heading}\n\n${content}\n`;
+    const checked = checkNoteContent(contentWithFront);
+    if (!checked.ok) return { ok: false, code: "too_long", message: `Section “${heading}” is too large to split automatically: ${checked.message}` };
+    planned.push({ path: partPath, title: heading, description, content: contentWithFront });
+  }
+  if (planned.length < 2) return { ok: false, code: "invalid", message: "That note has no two non-empty ## sections to split." };
+  const intro = chunks[0]!.trim();
+  const indexBody = `${meta.body.startsWith("#") ? "" : `# ${meta.title}\n\n`}${intro ? `${intro}\n\n` : ""}## Sections\n${planned.map((part) => `- [[${part.path}]] — ${part.description}`).join("\n")}\n`;
+  const index = `${noteFrontmatter(`${meta.description} (index)`, meta.title, "index")}${indexBody}`;
+  const indexCheck = checkNoteContent(index);
+  if (!indexCheck.ok) return { ok: false, code: "too_long", message: `The index would be too large: ${indexCheck.message}` };
+  const ctx = noteStateContext(botDir);
+  await writeHistory(ctx, source.text, now);
+  for (const part of planned) await writeTextAtomic(path.join(botDir, part.path), part.content, 0o644);
+  await writeTextAtomic(path.join(botDir, source.path), index, 0o644);
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const revisions = { ...state.revisions, [source.path]: revisionOf(index) };
+  const provenance = { ...state.provenance };
+  for (const part of planned) {
+    revisions[part.path] = revisionOf(part.content);
+    provenance[`note:${part.path}`] = { author, at: now.toISOString() };
+  }
+  await writeMemoryStateFile(ctx.stateFile, { ...state, revisions, provenance });
+  return { ok: true, path: source.path, revision: revisionOf(index), parts: planned.map((part) => part.path) };
+}
+
+export type MemoryNoteSource = { path: string; expectedRevision: string };
+
+/** Merge notes into one canonical note. Sources become redirects; their raw text goes to an archive note. */
+export async function mergeMemoryNotes({ botDir, targetPath, expectedRevision, sources, description, author = "defrag", now = new Date() }: {
+  botDir: string; targetPath: string; expectedRevision: string; sources: MemoryNoteSource[]; description?: string; author?: string; now?: Date;
+}): Promise<MemoryNoteRefactorResult> {
+  let target: string;
+  try {
+    target = normalizeNotePath(targetPath);
+  } catch (error) {
+    return { ok: false, code: "path", message: String((error as Error).message) };
+  }
+  if (sources.length < 2) return { ok: false, code: "invalid", message: "Merging needs at least two source notes." };
+  const sourcePaths = sources.map((source) => {
+    try { return normalizeNotePath(source.path); } catch { return ""; }
+  });
+  if (sourcePaths.some((pathValue) => !pathValue || pathValue === target)) return { ok: false, code: "path", message: "Every source must be a distinct note under memory/notes, not the target." };
+  if (new Set(sourcePaths).size !== sourcePaths.length) return { ok: false, code: "invalid", message: "A source note is listed twice." };
+  let targetExists = false;
+  let targetText = "";
+  try {
+    const existing = await readMemoryNoteWithRevision(botDir, target, { noteChars: 1_000_000 });
+    targetExists = true;
+    targetText = existing.text;
+    if (existing.revision !== expectedRevision) return { ok: false, code: "conflict", message: "The target note changed since you read it.", revision: existing.revision };
+  } catch {
+    if (expectedRevision !== "") return { ok: false, code: "conflict", message: "The target note does not exist; use an empty expectedRevision to create it." };
+  }
+  const readSources: { path: string; text: string; title: string }[] = [];
+  for (const source of sources) {
+    const normalized = normalizeNotePath(source.path);
+    let note: { path: string; text: string; revision: string };
+    try { note = await readMemoryNoteWithRevision(botDir, normalized, { noteChars: 1_000_000 }); }
+    catch { return { ok: false, code: "not_found", message: `Source note not found: ${normalized}` }; }
+    if (note.revision !== source.expectedRevision) return { ok: false, code: "conflict", message: `Source note changed: ${normalized}`, revision: note.revision };
+    readSources.push({ path: normalized, text: note.text, title: noteMeta(note.text, path.posix.basename(normalized, ".md")).title });
+  }
+  const notes = await listMemoryNotes(botDir);
+  if (!targetExists && notes.length + 1 > MEMORY_LIMITS.noteCount) return { ok: false, code: "cap", message: `Merging would exceed the ${MEMORY_LIMITS.noteCount}-note limit.` };
+  const targetTitle = noteMeta(targetText, path.posix.basename(target, ".md")).title;
+  const targetDescription = String(description ?? noteMeta(targetText, targetTitle).description).slice(0, 160);
+  const mergedBody = readSources.map((source) => `## ${source.title}\n<!-- source: ${source.path} -->\n${stripFirstH1(noteMeta(source.text, source.title).body)}`).join("\n\n");
+  const merged = `${noteFrontmatter(targetDescription, targetTitle)}# ${targetTitle}\n\n${mergedBody}\n`;
+  const checked = checkNoteContent(merged);
+  if (!checked.ok) return { ok: false, code: "too_long", message: `The merged note is too large: ${checked.message}` };
+  const archiveRelative = `memory/notes/archive/merged-${now.toISOString().replace(/[:.]/gu, "-")}-${randomUUID().slice(0, 8)}.md`;
+  const archive = `---\ndescription: Raw note sources merged into ${target}\ntype: archive\n---\n# Merged sources\n\n${readSources.map((source) => `## ${source.path}\n\n${source.text}`).join("\n\n")}\n`;
+  const ctx = noteStateContext(botDir);
+  if (targetExists) await writeHistory(ctx, targetText, now);
+  for (const source of readSources) await writeHistory(ctx, source.text, now);
+  await writeTextAtomic(path.join(botDir, archiveRelative), archive, 0o644);
+  await writeTextAtomic(path.join(botDir, target), merged, 0o644);
+  for (const source of readSources) {
+    const redirect = `${noteFrontmatter(`Merged into ${targetTitle}`, source.title, "redirect")}# ${source.title}\n\nMerged into [[${target}]].\n`;
+    await writeTextAtomic(path.join(botDir, source.path), redirect, 0o644);
+  }
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const revisions = { ...state.revisions, [target]: revisionOf(merged) };
+  const provenance = { ...state.provenance, [`note:${target}`]: { author, at: now.toISOString() } };
+  for (const source of readSources) {
+    const redirect = `${noteFrontmatter(`Merged into ${targetTitle}`, source.title, "redirect")}# ${source.title}\n\nMerged into [[${target}]].\n`;
+    revisions[source.path] = revisionOf(redirect);
+  }
+  await writeMemoryStateFile(ctx.stateFile, { ...state, revisions, provenance });
+  return { ok: true, path: target, revision: revisionOf(merged), archivePath: archiveRelative, sources: readSources.map((source) => source.path) };
 }
 
 async function writeNote(input: MemoryMutationInput, ctx: MemoryFileContext, now: Date): Promise<MemoryMutationResult> {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Brain, ChevronRight, FileText, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { Brain, ChevronRight, FileText, RefreshCw, Scissors, Sparkles, Trash2 } from "lucide-react";
 import { Modal, Pill, Spinner } from "./ui";
 import { toast } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
@@ -16,7 +16,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<ShownFact | null>(null);
-  const [note, setNote] = useState<{ path: string; text: string } | null>(null);
+  const [note, setNote] = useState<{ path: string; text: string; revision: string } | null>(null);
   const [forgetting, setForgetting] = useState(false);
   const [defrag, setDefrag] = useState<DefragReport | null>(null);
   const [auditing, setAuditing] = useState(false);
@@ -103,9 +103,22 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const openNote = async (entry: MemoryNote) => {
     try {
       const loaded = await memoryApi.note(bot.slug, entry.path);
-      setNote({ path: loaded.path, text: loaded.text });
+      setNote({ path: loaded.path, text: loaded.text, revision: loaded.revision });
     } catch (cause) {
       toast(cause instanceof Error ? cause.message : "Couldn't read that note");
+    }
+  };
+
+  const splitNote = async () => {
+    if (!note) return;
+    try {
+      const result = await memoryApi.splitNote({ slug: bot.slug, path: note.path, expectedRevision: note.revision });
+      if (!result.ok) { toast(result.message); return; }
+      setNote(null);
+      await load();
+      toast(`Split into ${result.parts?.length ?? 0} notes`);
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Couldn't split that note");
     }
   };
 
@@ -184,6 +197,10 @@ export function MemoryTab({ bot }: { bot: Bot }) {
 
       {note && <Modal title={note.path} onClose={() => setNote(null)} onBack={() => setNote(null)} className="w-[min(720px,94vw)]">
         <div className="dialog-body scroll-thin max-h-[70vh] overflow-y-auto px-4 py-4"><pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed">{note.text}</pre></div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+          {(note.text.match(/^##\s+/gmu) ?? []).length >= 2 && <Pill variant="soft" onClick={() => void splitNote()}><Scissors size={13} /> Split at headings</Pill>}
+          <Pill variant="soft" onClick={() => setNote(null)} className="ml-auto">Close</Pill>
+        </div>
       </Modal>}
     </div>
   );
