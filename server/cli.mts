@@ -13,6 +13,7 @@ import { createAccessStore, createTailscale, findCloudflared, hashPassword, inst
 import { antigravityBridgeStatus, installAntigravityBridge, uninstallAntigravityBridge } from "./harness-bridge.mts";
 import { T3Client } from "./t3rpc.mts";
 import { defaultMemorySchedule, ensureMemoryRoutine, findMemoryRoutine, runMemoryRoutine, setMemoryRoutineEnabled } from "./memory-routine.mts";
+import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `threebot ${currentVersion()}
@@ -35,9 +36,10 @@ Usage: threebot <command> [options]
   tailscale <on|off|status>   Private link for your tailnet, through Tailscale Serve.
   tunnel <on|off|status>      Public Cloudflare quick-tunnel link. Needs a password.
   bridge <install|uninstall|status>  Configure Antigravity's global MCP bridge.
-  memory <reflect|status|disable> <bot>  Create, run or disable the memory reflection routine.
+  memory <reflect|status|disable|defrag> <bot>  Create, run or disable the memory reflection routine.
                        --time <HH:MM>    Daily time for a new routine (default 03:30).
                        --run             Trigger it immediately after creating/updating it.
+   --apply-safe      With defrag, remove exact duplicate fact lines.
   password           Set the password the app asks for (reads it from the terminal or stdin).
   version            Print the version.
 
@@ -363,12 +365,23 @@ async function passwordCommand() {
 async function memoryCommand(args: string[]) {
   const action = args[0] ?? "reflect";
   const slug = args[1];
-  if (!slug) fail("Use `threebot memory <reflect|status|disable> <bot>`.");
-  if (!["reflect", "status", "disable"].includes(action)) fail(`Unknown memory action: ${action}`);
+  if (!slug) fail("Use `threebot memory <reflect|status|disable|defrag> <bot>`.");
+  if (!["reflect", "status", "disable", "defrag"].includes(action)) fail(`Unknown memory action: ${action}`);
   const botsRoot = process.env.BOTS_ROOT || path.join(home, "bots");
   const botFile = path.join(botsRoot, slug, ".bot", "bot.json");
   if (!existsSync(botFile)) fail(`Bot not found: ${slug}`);
   const bot = JSON.parse(readFileSync(botFile, "utf8")) as { name?: string; projectId?: string | null; mainThreadId?: string | null; model?: unknown };
+  if (action === "defrag") {
+    const botDir = path.join(botsRoot, slug);
+    const sharedFile = path.join(botsRoot, ".botapp", "shared-memory.md");
+    const report = await runDefragAudit({ botDir, sharedFile });
+    say(`${slug}: ${report.findings.length} finding(s); plan ${report.planPath ?? "not written"}`);
+    if (flags["apply-safe"] === true) {
+      const dedupe = await runSafeDedupe({ botDir, sharedFile });
+      say(`${slug}: removed ${dedupe.removed} exact duplicate line(s)`);
+    }
+    return;
+  }
   const t3Token = (settings().T3_TOKEN ?? "").trim() || (existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "");
   if (!t3Token) fail("No T3 token: set T3_TOKEN or run `threebot up` first.");
   const client = new T3Client({ baseUrl: settings().T3_URL || "http://127.0.0.1:3773", token: t3Token, clientLabel: "threebot-memory-routine" });

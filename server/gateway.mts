@@ -12,6 +12,7 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readSnapshot, recoverMemoryJournals, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
 import { readMemoryNoteWithRevision, readMemoryView, mutateMemory } from "./memory.mts";
+import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
 import { MEMORY_TOOLS, createMemoryTools, type MemoryMessage, type ReflectedMessage } from "./memory-mcp.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
@@ -1058,6 +1059,16 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
       return send(res, 200, await readMemoryNoteWithRevision(botDir(bot.slug), url.searchParams.get("path") ?? ""), { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/defrag" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      const sharedFile = path.join(appDir, "shared-memory.md");
+      const report = await runDefragAudit({ botDir: botDir(bot.slug), sharedFile });
+      const dedupe = body?.applySafe === true ? await runSafeDedupe({ botDir: botDir(bot.slug), sharedFile }) : null;
+      return send(res, 200, { report, dedupe }, { "cache-control": "no-store" });
     }
     if (p === "/api/memory/forget" && req.method === "POST") {
       requireJson(req);

@@ -16,6 +16,7 @@ import {
   type MemoryMessage,
   type MemoryScope,
 } from "./memory.mts";
+import { runDefragAudit, runSafeDedupe } from "./memory-defrag.mts";
 
 export type { MemoryMessage } from "./memory.mts";
 
@@ -157,6 +158,20 @@ export const MEMORY_TOOLS: MemoryTool[] = [
         lastMessageId: { type: "string", description: "The last message id returned by memory_reflect." },
       },
       required: ["operations", "expectedRevision", "throughPosition", "lastMessageId"],
+    },
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: "memory_defrag",
+    title: "Audit and defrag memory",
+    description:
+      "Audit the whole memory store and write a proposed defrag plan. op audit is read-only for facts and writes only the plan note. op safe-dedupe also removes byte-identical duplicate fact lines; it never deletes a unique fact, note or source. Destructive changes stay in the plan for the user.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        op: { type: "string", enum: ["audit", "safe-dedupe"], description: "audit (default) or safe-dedupe." },
+        threadId: { type: "string", description: threadIdHelp },
+      },
     },
     annotations: { destructiveHint: true },
   },
@@ -385,6 +400,19 @@ export function createMemoryTools({
         await appendDream(dir, `${new Date().toISOString().slice(0, 10)}: reflect ${applied.length} applied, ${skipped.length} skipped, through position ${args.throughPosition}`);
         log(`memory: ${slug} reflected ${applied.length} operation(s)`);
         return toolJson({ ok: true, applied, skipped, revision, bookmark: { lastPosition: args.throughPosition, lastMessageId: args.lastMessageId } });
+      }
+
+      if (name === "memory_defrag") {
+        const op = String(args.op ?? "audit");
+        if (op === "safe-dedupe") {
+          const result = await runSafeDedupe({ botDir: dir, sharedFile });
+          log(`memory: ${slug} defrag safe-dedupe removed ${result.removed}`);
+          return toolJson(result);
+        }
+        if (op !== "audit") return toolError("op must be audit or safe-dedupe.");
+        const report = await runDefragAudit({ botDir: dir, sharedFile });
+        log(`memory: ${slug} defrag audit wrote ${report.planPath}`);
+        return toolJson(report);
       }
 
       if (name === "memory_search") {

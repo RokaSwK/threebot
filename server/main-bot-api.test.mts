@@ -113,6 +113,9 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.equal(memoryView.status, 200);
     assert.equal(memoryView.body.bot.facts[0].text, 'Prefers short answers.');
     assert.equal(memoryView.body.bot.facts[0].category, 'preference');
+    const audit = await request('/api/memory/defrag', 'POST', { slug: 'alpha' });
+    assert.equal(audit.status, 200);
+    assert.match(audit.body.report.planPath, /memory\/notes\/defrag\//u);
     const forgotten = await request('/api/memory/forget', 'POST', { slug: 'alpha', scope: 'bot', fact: '- [preference] Prefers short answers.', expectedRevision: memoryView.body.bot.revision });
     assert.equal(forgotten.status, 200);
     assert.equal(forgotten.body.ok, true);

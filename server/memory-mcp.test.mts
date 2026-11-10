@@ -152,6 +152,21 @@ test("memory_reflect returns a bookmark and memory_reflect_apply audits and adva
   assert.match(stale.content[0]!.text, /before the reflection bookmark/iu);
 });
 
+test("memory_defrag audits and safely dedupes exact lines", async () => {
+  const { call, botDir } = await fixture();
+  await writeFile(path.join(botDir, "memory", "MEMORY.md"), "# Alpha memory\n\n- [fact] Duplicate.\n- [fact] Duplicate.\n- [fact] Unique.\n");
+  const audit = await call("memory_defrag", { op: "audit" }, { botSlug: "alpha", legacy: false });
+  assert.equal(audit.isError, undefined);
+  const report = parse(audit);
+  assert.ok(report.planPath);
+  assert.equal(report.counts.exactDuplicateFacts, 1);
+  const dedupe = await call("memory_defrag", { op: "safe-dedupe" }, { botSlug: "alpha", legacy: false });
+  assert.equal(dedupe.isError, undefined);
+  assert.equal(parse(dedupe).removed, 1);
+  const memory = await readFile(path.join(botDir, "memory", "MEMORY.md"), "utf8");
+  assert.equal((memory.match(/Duplicate\./gu) ?? []).length, 1);
+});
+
 test("memory_forget removes a fact and memory_search finds notes", async () => {
   const { call, messages } = await fixture();
   const read = parse(await call("memory_read", {}, { botSlug: "alpha", legacy: false }));

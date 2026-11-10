@@ -51,6 +51,32 @@ export type MemoryView = {
   };
 };
 
+export type DefragFinding = {
+  kind: "duplicate" | "near_duplicate" | "broken_link" | "orphan_note" | "oversized_note" | "stale_fact" | "possible_contradiction" | "over_budget";
+  severity: "safe" | "review" | "info";
+  detail: string;
+  paths?: string[];
+  lines?: string[];
+};
+export type DefragReport = {
+  generatedAt: string;
+  planPath: string | null;
+  findings: DefragFinding[];
+  counts: {
+    facts: number; sharedFacts: number; notes: number; exactDuplicateFacts: number;
+    nearDuplicateFacts: number; brokenLinks: number; oversizedNotes: number;
+    staleFacts: number; possibleContradictions: number; overBudget: number;
+  };
+  safeDedupe: { bot: boolean; shared: boolean };
+  limits: MemoryView["limits"];
+};
+export type DefragDedupe = {
+  removed: number;
+  bot: { ok: boolean; removed?: number; revision?: string };
+  shared: { ok: boolean; removed?: number; revision?: string };
+};
+export type DefragResult = { report: DefragReport; dedupe: DefragDedupe | null };
+
 export type MemoryForgetResult =
   | { ok: true; scope: "bot" | "shared"; path: string; revision: string; forgotten: string }
   | { ok: false; code: string; message: string; revision?: string; content?: string };
@@ -67,4 +93,6 @@ export const memoryApi = {
   note: (slug: string, path: string) => request<{ path: string; text: string; revision: string }>(`/api/memory/note?slug=${encodeURIComponent(slug)}&path=${encodeURIComponent(path)}`),
   forget: (input: { slug: string; scope: "bot" | "shared"; fact: string; expectedRevision: string }) =>
     request<MemoryForgetResult>("/api/memory/forget", { method: "POST", body: JSON.stringify(input) }),
+  defrag: (slug: string, applySafe = false) =>
+    request<DefragResult>("/api/memory/defrag", { method: "POST", body: JSON.stringify({ slug, applySafe }) }),
 };

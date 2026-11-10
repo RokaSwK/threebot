@@ -5,7 +5,7 @@ import { Modal, Pill, Spinner } from "./ui";
 import { toast } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
 import { selectThread, setDetailsOpen } from "../store";
-import { memoryApi, type MemoryFact, type MemoryNote, type MemoryView } from "../lib/memory";
+import { memoryApi, type DefragReport, type MemoryFact, type MemoryNote, type MemoryView } from "../lib/memory";
 import type { Bot } from "../lib/types";
 
 type ShownFact = MemoryFact & { scope: "bot" | "shared" };
@@ -18,6 +18,8 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const [selected, setSelected] = useState<ShownFact | null>(null);
   const [note, setNote] = useState<{ path: string; text: string } | null>(null);
   const [forgetting, setForgetting] = useState(false);
+  const [defrag, setDefrag] = useState<DefragReport | null>(null);
+  const [auditing, setAuditing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -70,6 +72,21 @@ export function MemoryTab({ bot }: { bot: Bot }) {
       toast(cause instanceof Error ? cause.message : "Couldn't forget that fact");
     } finally {
       setForgetting(false);
+    }
+  };
+
+  const audit = async (applySafe = false) => {
+    if (auditing) return;
+    setAuditing(true);
+    try {
+      const result = await memoryApi.defrag(bot.slug, applySafe);
+      setDefrag(result.report);
+      if (applySafe && result.dedupe?.removed) await load();
+      toast(applySafe && result.dedupe ? `Removed ${result.dedupe.removed} exact duplicate line(s)` : "Memory audit written");
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Couldn't audit memory");
+    } finally {
+      setAuditing(false);
     }
   };
 
@@ -134,7 +151,15 @@ export function MemoryTab({ bot }: { bot: Bot }) {
             ? [duplicates ? `${duplicates} possible duplicate${duplicates === 1 ? "" : "s"}` : "", largeNotes ? `${largeNotes} note${largeNotes === 1 ? "" : "s"} over the size budget` : ""].filter(Boolean).join(" · ")
             : "No duplicates or oversized notes found."}
         </p>
-        <Pill variant="soft" className="mt-2" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Pill variant="soft" disabled={auditing} onClick={() => void audit(false)}><RefreshCw size={13} /> {auditing ? "Auditing…" : "Audit memory"}</Pill>
+          {defrag && defrag.counts.exactDuplicateFacts > 0 && <Pill variant="soft" disabled={auditing} onClick={() => void audit(true)}>Remove exact duplicates</Pill>}
+          <Pill variant="soft" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
+        </div>
+        {defrag && <div className="mt-2 text-[12px] leading-relaxed text-muted">
+          {defrag.findings.length === 0 ? "No issues found." : `${defrag.findings.length} finding${defrag.findings.length === 1 ? "" : "s"}: ${defrag.findings.slice(0, 4).map((finding) => finding.detail).join(" · ")}`}
+          {defrag.planPath && <> · <span className="text-fg">{defrag.planPath}</span></>}
+        </div>}
       </div>
 
       {selected && <div className="mt-4 rounded-2xl border border-line bg-elevated p-3.5">

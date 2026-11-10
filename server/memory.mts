@@ -1169,6 +1169,45 @@ async function applyMutation(input: MemoryMutationInput): Promise<MemoryMutation
   return { ok: true, scope: input.scope, path: ctx.relative, revision: revisionOf(next), ...(writtenLine ? { line: writtenLine } : {}), ...(forgotten ? { forgotten } : {}) };
 }
 
+export type MemoryDedupeResult =
+  | { ok: true; removed: number; revision: string; path: string }
+  | { ok: false; code: "conflict" | "invalid"; message: string; revision?: string; content?: string };
+
+/** Remove only byte-identical duplicate fact lines. Lossless; no tombstone and no fact rewrite. */
+export async function dedupeExactFacts({ botDir, sharedFile, scope, expectedRevision, now = new Date() }: {
+  botDir: string; sharedFile: string; scope: MemoryScope; expectedRevision: string; now?: Date;
+}): Promise<MemoryDedupeResult> {
+  const ctx = memoryFileContext(botDir, sharedFile, scope);
+  const current = await readIfExists(ctx.file);
+  const revision = revisionOf(current);
+  if (revision !== expectedRevision) return { ok: false, code: "conflict", message: "Memory changed since the audit. Read it again.", revision, content: current };
+  const { lines, trailing } = factLines(current);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  let removed = 0;
+  for (const line of lines) {
+    if (/^\s*[-*+]\s+/u.test(line)) {
+      const key = line.trim();
+      if (seen.has(key)) { removed += 1; continue; }
+      seen.add(key);
+    }
+    kept.push(line);
+  }
+  if (removed === 0) return { ok: true, removed: 0, revision, path: ctx.relative };
+  const next = joinLines(kept, trailing);
+  const state = await readMemoryStateFile(ctx.stateFile);
+  const nextState: MemoryState = { ...state, revisions: { ...state.revisions, [ctx.relative]: revisionOf(next) } };
+  await writeHistory(ctx, current, now);
+  const opId = await writeJournal(ctx, current, next, state, nextState, now);
+  try {
+    await writeTextAtomic(ctx.file, next, 0o644);
+    await writeMemoryStateFile(ctx.stateFile, nextState);
+  } finally {
+    await fs.rm(path.join(ctx.journalDir, `${opId}.json`), { force: true }).catch(() => {});
+  }
+  return { ok: true, removed, revision: revisionOf(next), path: ctx.relative };
+}
+
 /** Close an existing fact's date range without inventing a start date. */
 export function closeFactRange(line: string, to: string): string {
   const sourceMatch = /\s*\[source:\s*[^\]]+\]\s*$/iu.exec(line);
