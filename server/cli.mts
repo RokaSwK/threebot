@@ -11,6 +11,8 @@ import { installService, restartService, serviceInstalled, serviceSpec, serviceS
 import { randomBytes } from "node:crypto";
 import { createAccessStore, createTailscale, findCloudflared, hashPassword, installCloudflared, MIN_PASSWORD, pickServePort, serveOwner, tailnetUrl } from "./remote-access.mts";
 import { antigravityBridgeStatus, installAntigravityBridge, uninstallAntigravityBridge } from "./harness-bridge.mts";
+import { T3Client } from "./t3rpc.mts";
+import { defaultMemorySchedule, ensureMemoryRoutine, findMemoryRoutine, runMemoryRoutine, setMemoryRoutineEnabled } from "./memory-routine.mts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HELP = `threebot ${currentVersion()}
@@ -33,6 +35,9 @@ Usage: threebot <command> [options]
   tailscale <on|off|status>   Private link for your tailnet, through Tailscale Serve.
   tunnel <on|off|status>      Public Cloudflare quick-tunnel link. Needs a password.
   bridge <install|uninstall|status>  Configure Antigravity's global MCP bridge.
+  memory <reflect|status|disable> <bot>  Create, run or disable the memory reflection routine.
+                       --time <HH:MM>    Daily time for a new routine (default 03:30).
+                       --run             Trigger it immediately after creating/updating it.
   password           Set the password the app asks for (reads it from the terminal or stdin).
   version            Print the version.
 
@@ -52,7 +57,7 @@ function parseArgs(argv: string[]) {
     else if (a.startsWith("--")) {
       const [k, v] = a.slice(2).split("=", 2);
       if (v !== undefined) flags[k] = v;
-      else if (["port", "t3-url"].includes(k)) flags[k] = argv[++i];
+      else if (["port", "t3-url", "time"].includes(k)) flags[k] = argv[++i];
       else flags[k] = true;
     } else rest.push(a);
   }
@@ -355,6 +360,44 @@ async function passwordCommand() {
   await restartIfManaged();
 }
 
+async function memoryCommand(args: string[]) {
+  const action = args[0] ?? "reflect";
+  const slug = args[1];
+  if (!slug) fail("Use `threebot memory <reflect|status|disable> <bot>`.");
+  if (!["reflect", "status", "disable"].includes(action)) fail(`Unknown memory action: ${action}`);
+  const botsRoot = process.env.BOTS_ROOT || path.join(home, "bots");
+  const botFile = path.join(botsRoot, slug, ".bot", "bot.json");
+  if (!existsSync(botFile)) fail(`Bot not found: ${slug}`);
+  const bot = JSON.parse(readFileSync(botFile, "utf8")) as { name?: string; projectId?: string | null; mainThreadId?: string | null; model?: unknown };
+  const t3Token = (settings().T3_TOKEN ?? "").trim() || (existsSync(tokenFile) ? readFileSync(tokenFile, "utf8").trim() : "");
+  if (!t3Token) fail("No T3 token: set T3_TOKEN or run `threebot up` first.");
+  const client = new T3Client({ baseUrl: settings().T3_URL || "http://127.0.0.1:3773", token: t3Token, clientLabel: "threebot-memory-routine" });
+  await client.connect();
+  try {
+    if (action === "status") {
+      const task = await findMemoryRoutine(client, bot as any);
+      if (!task) return say(`No memory reflection routine for ${slug}.`);
+      return say(`${slug}: ${task.enabled ? "enabled" : "disabled"}, ${task.schedule.type === "fixed_time" ? task.schedule.timeOfDay : task.schedule.type}, next ${task.nextRunAt ?? "not scheduled"}, last ${task.lastRunStatus ?? "never"}.`);
+    }
+    if (action === "disable") {
+      const task = await setMemoryRoutineEnabled(client, bot as any, false);
+      return say(`${slug}: memory reflection disabled.`);
+    }
+    const config = await client.call("server.getConfig", {});
+    const modelSelection = bot.model ?? config?.settings?.defaultModelSelection;
+    if (!modelSelection) fail("Pick a model for this Bot or set a default model in T3.");
+    const schedule = typeof flags.time === "string" ? { type: "fixed_time" as const, timeOfDay: String(flags.time) } : defaultMemorySchedule();
+    const result = await ensureMemoryRoutine({ client, bot: bot as any, modelSelection, schedule, enabled: true });
+    say(`${slug}: memory reflection ${result.created ? "created" : "updated"} (${result.task.enabled ? "enabled" : "disabled"}), next ${result.task.nextRunAt ?? "pending"}.`);
+    if (flags.run) {
+      const task = await runMemoryRoutine(client, bot as any);
+      say(`${slug}: reflection triggered (${task.id}). Check the Bot transcript for the tool pass.`);
+    }
+  } finally {
+    client.close();
+  }
+}
+
 async function bridgeCommand(args: string[]) {
   const action = args[0] ?? "status";
   if (!["install", "uninstall", "status"].includes(action)) fail(`Unknown bridge action: ${action}`);
@@ -390,6 +433,7 @@ try {
   else if (command === "tailscale") await tailscaleCommand(args);
   else if (command === "tunnel") await tunnelCommand(args);
   else if (command === "bridge") await bridgeCommand(args);
+  else if (command === "memory") await memoryCommand(args);
   else if (command === "password") await passwordCommand();
   else fail(`Unknown command: ${command}. Run \`threebot help\`.`);
 } catch (error) {
