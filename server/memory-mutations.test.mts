@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   checkOwnerEvidence,
   closeFactRange,
+  dedupeExactFacts,
   hashFact,
   mutateMemory,
   readMemoryNoteWithRevision,
@@ -369,6 +370,25 @@ test("the Memory view returns both layers with provenance", async () => {
   assert.equal(view.bot.facts[0]?.provenance?.sourceMessageId, "m1");
   assert.equal(view.shared.facts.length, 0);
   assert.equal(view.forgotten, 0);
+});
+
+test("exact duplicate fact lines are removed losslessly", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const file = path.join(botDir, "memory", "MEMORY.md");
+  const before = "# Alpha memory\n\n- [fact] Duplicate.\n- [fact] Duplicate.\n- [fact] Unique.\n";
+  await writeFile(file, before);
+  const revision = revisionOf(before);
+  const result = await dedupeExactFacts({ botDir, sharedFile, scope: "bot", expectedRevision: revision });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.removed, 1);
+  assert.equal(await readFile(file, "utf8"), "# Alpha memory\n\n- [fact] Duplicate.\n- [fact] Unique.\n");
+  const again = await dedupeExactFacts({ botDir, sharedFile, scope: "bot", expectedRevision: result.revision });
+  assert.equal(again.ok, true);
+  if (again.ok) assert.equal(again.removed, 0);
+  const stale = await dedupeExactFacts({ botDir, sharedFile, scope: "bot", expectedRevision: revision });
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.code, "conflict");
 });
 
 test("closeFactRange preserves the source and opens an unknown start", () => {
