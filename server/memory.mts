@@ -867,7 +867,8 @@ async function writeJournal(ctx: MemoryFileContext, before: string, after: strin
 async function recoverJournalDir(dir: string, root: string, log: (line: string) => void): Promise<void> {
   let names: string[];
   try {
-    names = (await fs.readdir(dir)).filter((name) => name.endsWith(".json"));
+    // A journal set aside as failed-… was refused once and is kept for review; it is never retried.
+    names = (await fs.readdir(dir)).filter((name) => name.endsWith(".json") && !name.startsWith("failed-"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
@@ -1036,6 +1037,8 @@ export function mutateMemory(input: MemoryMutationInput): Promise<MemoryMutation
   return oneWriter(store, () => applyMutation(input));
 }
 
+const FORGOTTEN: MemoryMutationResult = { ok: false, code: "forgotten", message: "The user forgot that fact. Only a new, explicit request from the user can bring it back; pass restore: true for that request." };
+
 async function applyMutation(input: MemoryMutationInput): Promise<MemoryMutationResult> {
   const now = input.now ?? new Date();
   if (!input.trustedUser) {
@@ -1074,8 +1077,8 @@ async function applyMutation(input: MemoryMutationInput): Promise<MemoryMutation
     if (!checked.ok) return { ok: false, code: "invalid", message: checked.message };
     if (input.validFrom && !isDate(input.validFrom)) return { ok: false, code: "invalid", message: "validFrom must be a real YYYY-MM-DD date." };
     const key = hashFact(fact);
-    if (forgottenHashes.has(key) && !input.restore) return { ok: false, code: "forgotten", message: "The user forgot that fact. Only a new, explicit request from the user can bring it back; pass restore: true for that request." };
-    if (forgottenHashes.has(key) && input.restore) forgottenHashes.delete(key);
+    if (forgottenHashes.has(key) && !input.restore) return FORGOTTEN;
+    forgottenHashes.delete(key);
     if (nextLines.some((line) => line.trim() && factKey(line) === key)) return { ok: false, code: "duplicate", message: "That fact is already in memory." };
     const line = formatFact(fact, { category: category ?? null, source: sourceLabel(input.sourceMessageId, now), validFrom: input.validFrom ?? null });
     if (nextLines.filter((line) => line.trim()).length >= MEMORY_LIMITS.memoryLines || current.length + line.length + 1 > MEMORY_LIMITS.memoryChars) {
@@ -1092,6 +1095,9 @@ async function applyMutation(input: MemoryMutationInput): Promise<MemoryMutation
     const fact = String(input.new ?? "").trim();
     const checked = checkFact(fact);
     if (!checked.ok) return { ok: false, code: "invalid", message: checked.message };
+    // A forgotten fact must not come back as the new text of another one either.
+    if (forgottenHashes.has(hashFact(fact)) && !input.restore) return FORGOTTEN;
+    forgottenHashes.delete(hashFact(fact));
     const oldParsed = parseFact(oldLine);
     const validFrom = input.validFrom ?? (input.op === "supersede" ? localDate(now) : oldParsed.validFrom);
     if (input.op === "supersede" && !validFrom) return { ok: false, code: "invalid", message: "A superseding fact needs a validFrom date." };

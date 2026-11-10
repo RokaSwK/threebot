@@ -209,6 +209,29 @@ test("forget writes a tombstone and blocks re-adding", async () => {
   assert.equal(restored.ok, true);
 });
 
+test("a forgotten fact cannot come back as the new text of another fact", async () => {
+  const { botDir, sharedFile } = await fixture();
+  const write = (input: Record<string, unknown>) => mutateMemory({
+    botDir, sharedFile, scope: "bot", author: "alpha", sourceMessageId: "m1", sourceQuote, sourceText, now, ...input,
+  } as Parameters<typeof mutateMemory>[0]);
+  const coffee = await write({ op: "add", expectedRevision: await botRevision(botDir), fact: "Likes coffee." });
+  assert.equal(coffee.ok, true);
+  const tea = await write({ op: "add", expectedRevision: await botRevision(botDir), fact: "Likes tea." });
+  assert.equal(tea.ok, true);
+  if (!coffee.ok || !tea.ok) return;
+  assert.equal((await write({ op: "forget", expectedRevision: await botRevision(botDir), fact: coffee.line })).ok, true);
+
+  for (const op of ["replace", "supersede"]) {
+    const sneaked = await write({ op, expectedRevision: await botRevision(botDir), old: tea.line, new: "Likes coffee." });
+    assert.equal(sneaked.ok ? "ok" : sneaked.code, "forgotten", op);
+  }
+  assert.doesNotMatch(await readFile(path.join(botDir, "memory", "MEMORY.md"), "utf8"), /coffee/u);
+  // The user asks for it back: the tombstone goes with it.
+  const restored = await write({ op: "replace", expectedRevision: await botRevision(botDir), old: tea.line, new: "Likes coffee.", restore: true });
+  assert.equal(restored.ok, true);
+  assert.equal((await readMemoryState(botDir)).forgotten.includes(hashFact("Likes coffee.")), false);
+});
+
 test("notes get frontmatter, a revision, and path checks", async () => {
   const { botDir, sharedFile } = await fixture();
   const created = await mutateMemory({
@@ -277,6 +300,17 @@ test("journal recovery applies a complete write and refuses a conflicting one", 
   await recoverMemoryJournals(botDir, sharedFile);
   assert.equal(await readFile(file, "utf8"), after);
   assert.ok((await readdir(journalDir)).some((name) => name.startsWith("failed-conflict")));
+
+  // A refused journal is kept for review, never retried: not even when the file is later back at
+  // the content the journal started from.
+  const stale = { ...recoverable, opId: "stale", beforeHash: revisionOf("# Alpha memory\n\n- [fact] Something else.\n"), after: "# Alpha memory\n\n- [fact] Brought back.\n" };
+  await writeFile(path.join(journalDir, "stale.json"), JSON.stringify(stale));
+  await recoverMemoryJournals(botDir, sharedFile);
+  await writeFile(file, "# Alpha memory\n\n- [fact] Something else.\n");
+  await recoverMemoryJournals(botDir, sharedFile);
+  await recoverMemoryJournals(botDir, sharedFile);
+  assert.equal(await readFile(file, "utf8"), "# Alpha memory\n\n- [fact] Something else.\n");
+  assert.deepEqual((await readdir(journalDir)).sort(), ["failed-conflict.json", "failed-stale.json"]);
 });
 
 test("journal recovery can target a note without touching MEMORY.md", async () => {
