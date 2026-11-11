@@ -819,9 +819,12 @@ function LinkRow({ link, itemsById, onRemove }: { link: BoardLink; itemsById: Re
     detail = link.label ? host : "";
     href = link.url;
   } else {
-    label ||= projects[link.projectId]?.title ?? "T3 project";
-    detail = link.environmentId ? "T3 project on another machine" : "T3 project";
-    icon = <FolderGit2 size={14} className="text-muted" />;
+    // A project that became a Bot opens as that Bot.
+    const bot = link.environmentId ? undefined : Object.values(bots).find((b) => b.projectId === link.projectId);
+    label ||= bot?.name ?? projects[link.projectId]?.title ?? "T3 project";
+    detail = link.environmentId ? "T3 project on another machine" : bot ? "Bot" : "T3 project";
+    icon = bot ? <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={18} /> : <FolderGit2 size={14} className="text-muted" />;
+    if (bot) action = () => select(bot.slug);
   }
   const content = <><span className="grid size-5 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1 truncate text-[13.5px]">{label}</span>{detail && <span className="max-w-[45%] shrink-0 truncate text-[12px] text-muted">{detail}</span>}</>;
   return (

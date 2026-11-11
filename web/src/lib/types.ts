@@ -18,7 +18,14 @@ export type Bot = {
   createdAt: string;
   updatedAt?: string;
   model?: ModelSelection | null;
+  /** Made from an existing T3 project: it works in that project's folder and keeps its own files in `.bot/`. */
+  adopted?: boolean;
+  /** The machine the Bot's folder is on ("local": the gateway's). */
+  environmentId?: string;
 };
+
+/** A T3 project on this machine that could become a Bot. */
+export type AdoptableProject = { id: string; title: string; workspaceRoot: string; environmentId: string; archived: boolean; exists: boolean; git: boolean };
 
 /** The roster line for a conversation, which T3's shell stream leaves empty. */
 export type ThreadPreview = { kind: "text" | "attachment" | "question" | "sent"; role: "user" | "assistant"; text: string; at: string | null };
@@ -80,6 +87,8 @@ export type ThreadShell = {
   latestVisibleMessage: { id: string; role: string; text: string; updatedAt: string } | null;
   latestUserMessageAt: string | null;
   lineage: { parentThreadId: string | null; relationshipToParent: string | null; rootThreadId: string; sideChat?: boolean };
+  /** Set when the thread works in its own git worktree instead of the project's folder. */
+  worktreePath?: string | null;
   archivedAt: string | null;
   /** Settlement is an inbox lifecycle, independent of the latest run outcome. */
   settledOverride?: "settled" | "active" | null;

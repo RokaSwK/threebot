@@ -20,7 +20,7 @@ export type ThreadData = {
 };
 
 export type MainBotIntent = { kind: "replace" } | { kind: "hide"; slug: string } | { kind: "delete"; slug: string };
-export type Dialog = null | "new-bot" | "settings" | "search" | "connect-apps" | { kind: "connect-apps"; url: string } | { kind: "delete-bot"; slug: string } | { kind: "rename-bot"; slug: string } | { kind: "computer"; slug: string } | { kind: "main-bot"; intent: MainBotIntent; initialSlug?: string };
+export type Dialog = null | "new-bot" | "settings" | "search" | "connect-apps" | { kind: "connect-apps"; url: string } | { kind: "delete-bot"; slug: string } | "adopt-project" | { kind: "rename-bot"; slug: string } | { kind: "computer"; slug: string } | { kind: "main-bot"; intent: MainBotIntent; initialSlug?: string };
 
 export type SearchFilter = "All" | "Messages" | "Bots" | "Routines" | "Files" | "Apps";
 export type SearchSession = { query: string; filter: SearchFilter; index: number; scrollTop: number };
@@ -654,9 +654,37 @@ export function updateBot(slug: string, patch: Partial<Bot>) {
     await api.saveBot(slug, patch);
     if (isCustomColor(patch.color)) rememberColor(patch.color);
     publishBots(await api.bots());
-    if (patch.name && bot.projectId) {
+    // A project the Bot was made from keeps the name the user gave it.
+    if (patch.name && bot.projectId && !bot.adopted) {
       await t3.call("projects.mutate", { type: "project.update", commandId: uuid(), projectId: bot.projectId, title: patch.name }).catch(() => {});
     }
+  });
+}
+
+/**
+ * Makes a Bot of an existing T3 project, in place. The gateway reuses the project and, when one is
+ * picked, its thread as the main conversation; otherwise it starts a new one there.
+ */
+export async function adoptProject(input: { projectId: string; threadId: string | null; name: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; primary?: boolean }) {
+  const model = defaultModel();
+  const bot = await mutateBots(async () => {
+    const created = await api.adoptProject({ ...input, section: null, model });
+    if (isCustomColor(input.color)) rememberColor(input.color);
+    publishBots(await api.bots());
+    if (!created.mainThreadId) throw new Error("The Bot was made but T3 didn't start its conversation");
+    return created;
+  });
+  select(bot.slug);
+  return bot;
+}
+
+/** Turns a Bot made from a project back into that plain project. Its T3 project and threads stay. */
+export function releaseBot(slug: string) {
+  return mutateBots(async () => {
+    const { bots, archive } = await api.releaseBot(slug);
+    publishBots(bots);
+    set((s) => ({ selected: s.selected === slug ? null : s.selected, selectedThreadId: s.selected === slug ? null : s.selectedThreadId, exchangeBotSlug: s.exchangeBotSlug === slug ? null : s.exchangeBotSlug }));
+    return archive;
   });
 }
 
@@ -664,6 +692,8 @@ export function deleteBot(slug: string) {
   return mutateBots(async () => {
     const bot = get().bots[slug];
     if (!bot) return;
+    // A Bot made from a project never deletes that project; it is turned back into it instead.
+    if (bot.adopted) throw new Error("This Bot was made from a project. Turn it back into a plain project instead.");
     // The gateway must accept deletion before any T3 conversation/project is stopped.
     const { bots } = await api.deleteBot(slug);
     publishBots(bots);

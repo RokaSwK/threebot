@@ -152,7 +152,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
     const hideItem: MenuItem = bot.hidden || t3Archived
       ? { label: wide ? "Unhide" : "Show in sidebar", icon: <Eye size={14} />, onSelect: () => report((async () => { if (t3Archived) await unarchiveBotProject(bot); if (bot.hidden) await updateBot(bot.slug, { hidden: false }); })()) }
       : { label: wide ? "Hide" : "Hide from sidebar", danger: wide, icon: <EyeOff size={14} />, onSelect: () => bot.primary ? openDialog({ kind: "main-bot", intent: { kind: "hide", slug: bot.slug } }) : report(updateBot(bot.slug, { hidden: true, pinned: false })) };
-    const deleteItem: MenuItem = { label: "Delete", icon: <Trash2 size={14} />, danger: true, onSelect: () => bot.primary && Object.keys(bots).length > 1 ? openDialog({ kind: "main-bot", intent: { kind: "delete", slug: bot.slug } }) : openDialog({ kind: "delete-bot", slug: bot.slug }) };
+    const deleteItem: MenuItem = { label: bot.adopted ? "Turn back into a plain project" : "Delete", icon: bot.adopted ? <FolderInput size={14} /> : <Trash2 size={14} />, danger: true, onSelect: () => bot.primary && Object.keys(bots).length > 1 ? openDialog({ kind: "main-bot", intent: { kind: "delete", slug: bot.slug } }) : openDialog({ kind: "delete-bot", slug: bot.slug }) };
     if (wide) {
       const [pinItem, ...moveItems] = organizationItems;
       const pinned = bot.primary || bot.pinned;

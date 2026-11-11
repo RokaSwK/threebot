@@ -5,7 +5,11 @@ export type LibraryEntry =
   | { kind: "link"; id: string; title: string; href: string; detail: string; at: string }
   | { kind: "media" | "file"; id: string; title: string; resource: LibraryResource; detail: string; at: string };
 
-export type LibraryWorkspace = { workspaceRoot: string; threadId: string | null };
+/** `libraryDir` is the Library folder inside the workspace: `library`, or `.bot/library` for a Bot made from a project. */
+export type LibraryWorkspace = { workspaceRoot: string; threadId: string | null; libraryDir?: string };
+export const libraryDirOf = (workspace: { libraryDir?: string }) => workspace.libraryDir ?? "library";
+/** The workspace's Library folder for a Bot. */
+export const botLibraryDir = (bot: { adopted?: boolean }) => bot.adopted ? ".bot/library" : "library";
 
 /** Missing or invalid backend timestamps never acquire a fabricated age. */
 export function libraryAge(at: string, now = new Date()): string | null {
@@ -31,7 +35,7 @@ export function workspaceLibraryEntry(path: string, workspace: LibraryWorkspace,
   const validated = workspaceFilePath(path);
   if (!validated || !workspace.threadId) return null;
   const kind = workspaceFileKind(validated);
-  return { kind: kind === "image" || kind === "video" ? "media" : "file", id: `workspace:${validated}`, title: validated.replace(/^library\//, ""), resource: { _tag: "workspace-file", threadId: workspace.threadId, path: validated }, detail: kind === "image" ? "Image" : kind === "video" ? "Video" : "Workspace file", at };
+  return { kind: kind === "image" || kind === "video" ? "media" : "file", id: `workspace:${validated}`, title: validated.startsWith(`${libraryDirOf(workspace)}/`) ? validated.slice(libraryDirOf(workspace).length + 1) : validated, resource: { _tag: "workspace-file", threadId: workspace.threadId, path: validated }, detail: kind === "image" ? "Image" : kind === "video" ? "Video" : "Workspace file", at };
 }
 
 export function conversationLibrary(items: TurnItem[], workspace?: LibraryWorkspace): LibraryEntry[] {
@@ -88,7 +92,7 @@ export function workspaceListingEntries(result: unknown, workspace: LibraryWorks
     if (!value || typeof value !== "object" || !("path" in value) || typeof value.path !== "string" || !("kind" in value) || typeof value.kind !== "string") throw new Error("Couldn't load workspace files.");
     if (value.kind !== "file") continue;
     // The listing API returns workspace-relative paths, not host filesystem paths.
-    if (value.path.startsWith("/") || !value.path.startsWith("library/")) throw new Error("Couldn't load workspace files.");
+    if (value.path.startsWith("/") || !value.path.startsWith(`${libraryDirOf(workspace)}/`)) throw new Error("Couldn't load workspace files.");
     const entry = workspaceLibraryEntry(value.path, workspace);
     if (!entry) throw new Error("Couldn't load workspace files.");
     entries.push(entry);

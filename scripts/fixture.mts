@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real built frontend + real gateway, with disposable state and a separate fake T3.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import type { ChildProcess, ChildProcessByStdio } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, realpathSync } from 'node:fs';
@@ -25,24 +25,27 @@ const staticDir = path.join(repo, 'web', 'dist');
 
 // Node's permission model forbids fsync even for an allowed FileHandle. On macOS,
 // enforce paths in the OS instead so the real Vault's atomic writes stay intact.
-function macSandboxProfile(root: string) {
+function macSandboxProfile(root: string, git: string | null = null) {
   const executable = realpathSync(process.execPath);
   const runtimeReads = [path.resolve(path.dirname(executable), '../lib')];
-  const cellar = executable.match(/^(.*\/Cellar)\//)?.[1];
-  if (cellar) runtimeReads.push(cellar, path.join(path.dirname(cellar), 'opt'));
+  for (const binary of git ? [executable, git] : [executable]) {
+    const cellar = binary.match(/^(.*\/Cellar)\//)?.[1];
+    if (cellar) runtimeReads.push(cellar, path.join(path.dirname(cellar), 'opt'));
+  }
+  // The adopt scenario's gateway runs git (and only git) on the fixture's own repo.
+  if (git) runtimeReads.push(path.resolve(path.dirname(git), '..'));
   const subpaths = [root, serverDir, staticDir, '/System', '/usr/lib', ...runtimeReads];
   return `(version 1)
 (allow default)
 (deny file-read-data)
 (deny file-write*)
-(deny process-fork)
-(deny process-exec)
+${git ? '' : '(deny process-fork)\n'}(deny process-exec)
 (deny network*)
 (allow file-read-data (literal "/") (literal ${JSON.stringify(executable)})
   ${subpaths.map((dir) => `(subpath ${JSON.stringify(dir)})`).join(' ')}
   (literal "/dev/null") (literal "/dev/random") (literal "/dev/urandom"))
 (allow file-write* (subpath ${JSON.stringify(root)}) (literal "/dev/null"))
-(allow process-exec (literal ${JSON.stringify(executable)}))
+(allow process-exec (literal ${JSON.stringify(executable)})${git ? ` (literal ${JSON.stringify(git)})` : ''})
 (allow network-bind (local ip "localhost:*"))
 (allow network-inbound (local ip "localhost:*"))
 (allow network-outbound (remote ip "localhost:*"))`;
@@ -50,20 +53,24 @@ function macSandboxProfile(root: string) {
 
 // An allowlist, never {...process.env}: ignore production URLs, tokens, NODE_OPTIONS,
 // proxy settings, CF Access, executors, T3_CLI, and the user's actual HOME.
-export function gatewayInvocation(root: string, port: number, t3Port: number, executorPort?: number) {
+export function gatewayInvocation(root: string, port: number, t3Port: number, executorPort?: number, { git = false }: { git?: boolean } = {}) {
   if (executorPort !== undefined && (!Number.isInteger(executorPort) || executorPort < 1 || executorPort > 65535)) throw new Error('Invalid local Executor fixture port');
   if (!process.allowedNodeEnvironmentFlags.has('--permission')) throw new Error('Use Node >= 22.13 with --permission support.');
   const osSandbox = process.platform === 'darwin';
+  const gitBinary = git ? findGit() : null;
   return {
     command: osSandbox ? '/usr/bin/sandbox-exec' : process.execPath,
     isolation: osSandbox ? 'macos-sandbox' : 'node-permissions',
-    args: [...(osSandbox ? ['-p', macSandboxProfile(root), process.execPath] :
+    args: [...(osSandbox ? ['-p', macSandboxProfile(root, gitBinary), process.execPath] :
       ['--permission', `--allow-fs-read=${serverDir}`, `--allow-fs-read=${staticDir}`,
       `--allow-fs-read=${root}`, `--allow-fs-write=${root}`,
+      ...(gitBinary ? ['--allow-child-process'] : []),
       ...['--allow-net', '--allow-addons'].filter((flag) => process.allowedNodeEnvironmentFlags.has(flag))]),
       path.join(serverDir, 'gateway.mts')],
     env: {
-      PATH: path.dirname(process.execPath), HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
+      PATH: [path.dirname(process.execPath), ...(gitBinary ? [path.dirname(gitBinary)] : [])].join(path.delimiter),
+      ...(gitBinary ? { GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(root, 'home', '.config') } : {}),
+      HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
       TMPDIR: path.join(root, 'tmp'), TMP: path.join(root, 'tmp'), TEMP: path.join(root, 'tmp'),
       OPENSSL_CONF: path.join(root, 'tmp', 'openssl.cnf'),
       HOST: '127.0.0.1', PORT: String(port), BOTS_ROOT: path.join(root, 'bots'), STATIC_DIR: staticDir,
@@ -78,6 +85,29 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
         EXECUTOR_PUBLIC_URL: `http://127.0.0.1:${executorPort}`, EXECUTOR_ORG: 'fixture', EXECUTOR_TOKEN: 'fixture-only' }),
     },
   };
+}
+
+/** The real path of this machine's git, for the adopt scenario; the test process runs it too. */
+function findGit() {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    const candidate = path.join(dir, 'git');
+    if (existsSync(candidate)) return realpathSync(candidate);
+  }
+  throw new Error('The adopt scenario needs git on PATH.');
+}
+export const ADOPT_REPO = path.join('projects', 'sample-app');
+/** A disposable git repo with its own tracked CLAUDE.md, AGENTS.md and .gitignore, committed and clean. */
+async function seedRepo(root: string) {
+  const dir = path.join(root, ADOPT_REPO);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'CLAUDE.md'), '# Sample app\nThe repo\'s own Claude rules.\n');
+  await writeFile(path.join(dir, 'AGENTS.md'), '# Sample app\nRun the sample tests before pushing.\n');
+  await writeFile(path.join(dir, '.gitignore'), 'node_modules/\n');
+  await writeFile(path.join(dir, 'index.js'), 'console.log("sample");\n');
+  const run = (...args: string[]) => execFileSync(findGit(), ['-C', dir, ...args], { env: { PATH: process.env.PATH, HOME: path.join(root, 'home'), GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(root, 'home', '.config') } });
+  run('init', '-q');
+  run('add', '-A');
+  run('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Sample app');
 }
 
 async function seed(root: string, scenario = 'basic') {
@@ -98,6 +128,7 @@ async function seed(root: string, scenario = 'basic') {
     ? { userName: LANDING_USER, theme: 'dark', palette: 'amoled', timezone: 'UTC', defaultModel: MODEL, sections: LANDING_SECTIONS }
     : { userName: 'Sample User', theme: scenario === 'activity' ? 'system' : 'light', timezone: 'UTC', defaultModel: MODEL };
   await writeFile(path.join(root, 'bots/.botapp/settings.json'), JSON.stringify(settings) + '\n');
+  if (scenario === 'adopt') await seedRepo(root);
 }
 
 async function freePort() {
@@ -146,7 +177,7 @@ export async function createFixture({ port = 0, scenario = 'basic' }: { port?: n
     async restart() {
       if (closed) throw new Error('Fixture already closed');
       await stopChild(child);
-      const invocation = gatewayInvocation(root, gatewayPort, fake!.port, executor?.port);
+      const invocation = gatewayInvocation(root, gatewayPort, fake!.port, executor?.port, { git: scenario === 'adopt' });
       child = spawn(invocation.command, invocation.args, { env: invocation.env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
       logs = '';
       await new Promise<void>((resolve, reject) => {
@@ -173,7 +204,7 @@ export async function createFixture({ port = 0, scenario = 'basic' }: { port?: n
       await stopChild(child);
       const t3Port = fake!.port;
       await fake!.close();
-      for (const dir of ['home', 'codex', 'tmp', 'secrets', 'vault', 'samples', 'bots']) await rm(path.join(root, dir), { recursive: true, force: true });
+      for (const dir of ['home', 'codex', 'tmp', 'secrets', 'vault', 'samples', 'bots', 'projects']) await rm(path.join(root, dir), { recursive: true, force: true });
       await seed(root, scenario);
       executor?.reset();
       fake = await startFakeT3(root, t3Port, { scenario, executor: executor?.links });
@@ -274,7 +305,7 @@ export async function smokeFixture(fixture: Fixture) {
 async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help')) {
-    console.log('Usage: node scripts/fixture.mts [--port PORT] [--scenario basic|interactions|executor|library|latest-t3|avatars|activity] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
+    console.log('Usage: node scripts/fixture.mts [--port PORT] [--scenario basic|interactions|executor|library|latest-t3|avatars|activity|adopt] [--check]\nInteractive: restart, reset, quit. Ctrl-C cleans up. --check runs API smoke checks and removes the fixture.');
     return;
   }
   let port = 0;

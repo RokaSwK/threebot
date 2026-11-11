@@ -41,6 +41,15 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     lineage: { parentThreadId: child ? `thread-${slug}` : null, relationshipToParent: child ? 'subagent' : null, rootThreadId: `thread-${slug}` },
     archivedAt: null, settledOverride: null, settledAt: null, unsettledAt: null, snoozedUntil: null, autoSettleDisabledAt: null, lastVisitedAt: STAMP, createdAt: STAMP, updatedAt: STAMP });
   const threads = [...samples.map((bot) => makeThread(bot.slug)), ...(scenario === 'avatars' ? [] : [makeThread(landing?.child.parent ?? 'alpha', true)])];
+  // adopt: a plain T3 project in a disposable git repo, with threads of its own, that can become a Bot.
+  if (scenario === 'adopt') {
+    projects.push({ id: 'project-app', title: 'Sample App', workspaceRoot: path.join(root, 'projects', 'sample-app'), defaultModelSelection: MODEL, createdAt: STAMP, updatedAt: STAMP });
+    for (const [id, title] of [['thread-app-1', 'Fix the sample login form'], ['thread-app-2', 'Sample release notes']]) {
+      threads.push({ ...makeThread('alpha'), id, projectId: 'project-app', title, lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id } });
+    }
+    // A thread in its own git worktree, which can't be the Bot's main thread.
+    threads.push({ ...makeThread('alpha'), id: 'thread-app-wt', projectId: 'project-app', title: 'Sample worktree branch', worktreePath: path.join(root, 'projects', 'sample-app-wt'), lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: 'thread-app-wt' } } as FixtureThread);
+  }
   const item = (threadId: string, ordinal: number, type: string, extra: Partial<FixtureItem>): FixtureItem => ({ id: `${threadId}-${ordinal}`, threadId, ordinal, type,
     runId: null, status: 'completed', title: null, startedAt: STAMP, completedAt: STAMP,
     updatedAt: STAMP, parentItemId: null, ...extra });
@@ -258,6 +267,15 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
         if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt!.localeCompare(a.settledAt!) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
         if (tag === 'orchestration.searchThreads') return exit(ws, id, { matches: threads.flatMap((t) => (items.get(t.id) ?? []).filter((item) => /^(user|assistant)_message$/.test(item.type) && item.text!.toLowerCase().includes(payload.query.toLowerCase())).slice(0,1).map((item) => ({ threadId: t.id, projectId: t.projectId, messageId: item.id, snippet: item.text!.slice(0,240), source: item.type === 'user_message' ? 'user' : 'assistant', messageCreatedAt: item.updatedAt }))).slice(0, payload.limit) });
         if (tag === 'orchestration.searchThread') { const match = (items.get(payload.threadId) ?? []).find((item) => item.text?.toLowerCase().includes(payload.query.toLowerCase())); return exit(ws, id, { snapshotSequence: sequence, totalMatches: match ? 1 : 0, activeIndex: 0, match: match ? { entryId: match.id, runId: match.runId, occurrence: 0 } : null, navigation: [] }); }
+        if (scenario === 'adopt' && tag === 'orchestration.launchThread') {
+          if (!projects.some((p) => p.id === payload.projectId)) return fail(ws, id, 'Unknown fixture project');
+          const thread = { ...makeThread('alpha'), id: payload.threadId, projectId: payload.projectId, title: payload.title, lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: payload.threadId } };
+          threads.push(thread);
+          items.set(thread.id, []);
+          runs.set(thread.id, []);
+          publish();
+          return exit(ws, id, { sequence: ++sequence });
+        }
         if (tag === 'projects.searchEntries') return exit(ws, id, { entries: 'sample-notes.txt'.includes(payload.query.toLowerCase()) ? [{ path: 'sample-notes.txt', kind: 'file' }] : [], truncated: false });
         if (tag === 'projects.listEntries') return exit(ws, id, { entries: payload.directoryPath === 'library' && projects.some(p => p.workspaceRoot === payload.cwd) ? [...library.keys()].map(path => ({ path, kind: 'file' })) : [], truncated: false });
         if (tag === 'projects.readFile') return exit(ws, id, { contents: null });
