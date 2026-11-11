@@ -433,6 +433,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    // Memory's Forget asks with confirm(); WebKit answers false when the app doesn't.
+    func webView(_ view: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        guard view === webView, frame.isMainFrame else { completionHandler(false); return }
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { result in
+            completionHandler(result == .alertFirstButtonReturn)
+        }
+    }
+
     // The existing sidebar uses prompt() when creating a section.
     func webView(_ view: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
         guard view === webView, frame.isMainFrame else { completionHandler(nil); return }
