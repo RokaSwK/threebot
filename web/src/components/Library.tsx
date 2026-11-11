@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { FileText, Globe, Image, Video, PanelsTopLeft, Library as LibraryIcon } from "lucide-react";
 import clsx from "clsx";
 import { useApp, watchThread } from "../store";
-import { conversationLibrary, filterLibraryEntries, libraryAge, libraryGroups, mergeLibraryEntries, workspaceListingEntries, type LibraryEntry } from "../lib/library";
+import { botLibraryDir, conversationLibrary, filterLibraryEntries, libraryAge, libraryGroups, mergeLibraryEntries, workspaceListingEntries, type LibraryEntry } from "../lib/library";
 import { listLibraryFiles, isLibraryPage } from "../lib/librarySearch";
 import { workspaceFileKind } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
@@ -21,14 +21,15 @@ export function Library({ bot }: { bot: Bot }) {
   useEffect(() => {
     setFiles(null); setError(false);
     let live = true;
-    Promise.resolve().then(() => listLibraryFiles({ workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId })).then((result) => {
-      const entries = workspaceListingEntries(result, { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId });
+    const workspace = { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId, libraryDir: botLibraryDir(bot) };
+    Promise.resolve().then(() => listLibraryFiles(workspace)).then((result) => {
+      const entries = workspaceListingEntries(result, workspace);
       if (live) setFiles(entries);
     }).catch(() => { if (live) { setError(true); setFiles([]); } });
     return () => { live = false; };
-  }, [bot.workspaceRoot, bot.mainThreadId, attempt]);
+  }, [bot.workspaceRoot, bot.mainThreadId, bot.adopted, attempt]);
   useEffect(() => { setOpened(null); }, [bot.workspaceRoot, bot.mainThreadId]);
-  const items = useMemo(() => conversationLibrary(Object.values(data?.items ?? {}), { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId }), [data?.items, bot.workspaceRoot, bot.mainThreadId]);
+  const items = useMemo(() => conversationLibrary(Object.values(data?.items ?? {}), { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId, libraryDir: botLibraryDir(bot) }), [data?.items, bot.workspaceRoot, bot.mainThreadId, bot.adopted]);
   const source = mergeLibraryEntries(items, files ?? []);
   const visible = filterLibraryEntries(source, filter);
   return <div className="library-view">

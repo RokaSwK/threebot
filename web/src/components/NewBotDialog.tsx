@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { ChevronRight, Pencil } from "lucide-react";
+import { ChevronRight, FolderGit2, Pencil } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { AvatarEditorDialog, AvatarPicker, type AvatarDraft } from "./AvatarEditor";
 import { Modal, Pill, Spinner } from "./ui";
-import { createBot, defaultModel, deleteBot, openDialog, toast, updateBot, useApp } from "../store";
+import { createBot, defaultModel, deleteBot, openDialog, releaseBot, toast, updateBot, useApp } from "../store";
 import { DEFAULT_AVATAR } from "../lib/character";
 
 export { AvatarPicker } from "./AvatarEditor";
@@ -50,6 +50,9 @@ export function NewBotDialog() {
         <Pill onClick={create} disabled={!name.trim() || busy}>
           {busy && <Spinner />} Create
         </Pill>
+        <button type="button" disabled={busy} onClick={() => openDialog("adopt-project")} className="new-bot-from-project ml-auto flex h-9 items-center gap-2 rounded-full px-3 text-[13px] text-muted hover:bg-hover hover:text-fg">
+          <FolderGit2 size={15} /> From an existing project
+        </button>
       </div>
       {picker && <AvatarEditorDialog initial={avatar} onSave={async draft => { setAvatar(draft); }} onClose={() => setPicker(false)} />}
     </Modal>
@@ -95,6 +98,7 @@ export function DeleteBotDialog({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const close = () => openDialog(null);
   if (!bot) return null;
+  if (bot.adopted) return <ReleaseBotDialog slug={slug} />;
   return (
     <Modal onClose={close} className="w-[400px]">
       <div className="p-5">
@@ -118,6 +122,42 @@ export function DeleteBotDialog({ slug }: { slug: string }) {
           }}
         >
           {busy && <Spinner />} Delete
+        </Pill>
+      </div>
+    </Modal>
+  );
+}
+
+/** A Bot made from a project goes back to being that project: nothing of the project is deleted. */
+export function ReleaseBotDialog({ slug }: { slug: string }) {
+  const bot = useApp((s) => s.bots[slug]);
+  const [busy, setBusy] = useState(false);
+  const close = () => openDialog(null);
+  if (!bot) return null;
+  return (
+    <Modal onClose={close} className="release-bot-sheet w-[420px]">
+      <div className="p-5">
+        <div className="text-[15px] font-semibold">Turn {bot.name} back into a plain project?</div>
+        <p className="mt-2 text-[13.5px] text-muted">The project, its T3 threads and its git history stay exactly as they are. The Bot's instructions and settings files leave the folder, and its memory and library are archived on the server, not deleted.</p>
+        <p className="mt-2 truncate font-mono text-[12px] text-muted" title={bot.workspaceRoot}>{bot.workspaceRoot}</p>
+      </div>
+      <div className="flex justify-end gap-2 border-t border-line p-3">
+        <Pill variant="soft" onClick={close}>Cancel</Pill>
+        <Pill
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await releaseBot(slug);
+              toast(`${bot.name} is a plain project again`);
+              close();
+            } catch (error) {
+              toast(error instanceof Error ? error.message : "Couldn't turn the Bot back into a project");
+              setBusy(false);
+            }
+          }}
+        >
+          {busy && <Spinner />} Turn back
         </Pill>
       </div>
     </Modal>

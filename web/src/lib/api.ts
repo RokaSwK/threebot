@@ -1,4 +1,4 @@
-import type { Bot, Settings, ThreadMeta, ThreadPreview } from "./types";
+import type { AdoptableProject, Bot, Settings, ThreadMeta, ThreadPreview } from "./types";
 
 type Session = { authenticated: boolean; passwordRequired: boolean; accessLogin: boolean };
 
@@ -72,6 +72,9 @@ export const api = {
   saveBot: (slug: string, patch: Partial<Bot>) => req<Bot>(`/api/bots/${slug}`, { method: "PUT", body: JSON.stringify(patch) }),
   setMainBot: (slug: string) => req<{ bots: Bot[] }>("/api/main-bot", { method: "PUT", body: JSON.stringify({ slug }) }),
   deleteBot: (slug: string) => req<{ ok: true; bots: Bot[] }>(`/api/bots/${slug}`, { method: "DELETE" }),
+  adoptableProjects: () => req<{ projects: AdoptableProject[] }>("/api/adoptable-projects").then((r) => r.projects),
+  adoptProject: (input: Partial<Bot> & { projectId: string; threadId: string | null }) => req<Bot>("/api/bots/adopt", { method: "POST", body: JSON.stringify(input) }),
+  releaseBot: (slug: string) => req<{ bots: Bot[]; archive: string | null }>(`/api/bots/${slug}/release`, { method: "POST", body: "{}" }),
   threadPreviews: (stamps: Record<string, string>) => req<{ previews: Record<string, ThreadPreview> }>("/api/thread-previews", { method: "POST", body: JSON.stringify({ stamps }) }).then((r) => r.previews),
   threadMeta: (threadId: string) => req<ThreadMeta>(`/api/thread-meta?thread=${encodeURIComponent(threadId)}`),
   toggleReaction: (threadId: string, itemId: string, emoji: string) => req<ThreadMeta>("/api/thread-meta/reactions", { method: "POST", body: JSON.stringify({ threadId, itemId, emoji }) }),

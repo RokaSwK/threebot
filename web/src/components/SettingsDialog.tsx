@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Avatar } from "./Avatar";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
 import { ModelPicker } from "./ModelPicker";
@@ -21,6 +22,7 @@ import { useVoiceSettings, voiceLanguageOptions } from "./VoiceDock";
 
 const PANES = [
   { id: "general", label: "General", icon: <Gear size={15} /> },
+  { id: "bots", label: "Bots", icon: <BotIcon size={15} /> },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} /> },
   { id: "computer", label: "Computer", icon: <Monitor size={15} /> },
   { id: "permissions", label: "Permissions", icon: <Shield size={15} /> },
@@ -82,6 +84,7 @@ export function SettingsDialog() {
                 {pane === "account" && <General s={settings} accountOnly />}
                 {pane === "timezone" && <TimeZoneSettings s={settings} />}
                 {pane === "computer" && <Computer />}
+                {pane === "bots" && <BotsPane />}
                 {pane === "permissions" && <Permissions s={settings} />}
                 {pane === "vault" && <VaultPane />}
                 {pane === "access" && <RemoteAccessPane />}
@@ -126,6 +129,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <SettingsHomeLink title="Permissions" description={`${s.autoReview !== false ? "Auto-review on" : "Auto-review off"} · ${rules} rules`} onClick={() => pane("permissions")} />
       <Row title="Set Time Zone Automatically" desc="Use this device’s time zone in Bot settings."><Switch checked={!s.timezone} onChange={(auto) => save({ timezone: auto ? "" : timezone })} label="Set Time Zone Automatically" /></Row>
       <SettingsHomeLink title="Time Zone" detail={timezone} disabled={!s.timezone} onClick={() => pane("timezone")} />
+      <SettingsHomeLink title="Bots" description="Make a Bot from one of your projects" onClick={() => pane("bots")} />
       <SettingsHomeLink title="Bot Computer" onClick={() => pane("computer")} />
     </Group>
     <Group title="Voice">
@@ -369,6 +373,36 @@ function Computer() {
         </Row>
         <Row title="Bots folder" desc={botsRoot || "Not reported"} />
         <Row title="Agent runtime" desc={state.kind === "loading" ? "Loading…" : state.kind === "ready" ? `T3 Code ${state.value.serverVersion}` : "Unavailable"} />
+      </Group>
+    </>
+  );
+}
+
+/** Settings → Bots: every Bot and its folder; projects can become Bots here, and Bots made from projects can turn back. */
+function BotsPane() {
+  const bots = useApp((s) => s.bots);
+  const list = Object.values(bots).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return (
+    <>
+      <H>Bots</H>
+      <Group>
+        <button onClick={() => openDialog("adopt-project")} className="settings-adopt flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-hover">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-active"><FolderGit2 size={17} /></span>
+          <span className="min-w-0 flex-1"><span className="block text-[13.5px]">Make a Bot from a project</span><span className="mt-0.5 block text-[12.5px] text-muted">Pick one of this computer's T3 projects. The Bot works in its folder, and git never sees its files.</span></span>
+          <ChevronRight size={18} className="shrink-0 text-muted" />
+        </button>
+      </Group>
+      <Group title="Your Bots">
+        {list.length === 0 ? <Row title="No Bots yet" /> : list.map((bot) => (
+          <div key={bot.slug} className="settings-bot-row flex items-center gap-3 border-b border-line px-4 py-3 last:border-0">
+            <span className="grid size-8 shrink-0 place-items-center overflow-hidden"><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={32} /></span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[13.5px]"><span className="truncate">{bot.name}</span>{bot.adopted && <span className="shrink-0 rounded-full bg-active px-2 py-0.5 text-[11.5px] text-muted">From a project</span>}</div>
+              <div className="mt-0.5 truncate font-mono text-[12px] text-muted" title={bot.workspaceRoot}>{bot.workspaceRoot}</div>
+            </div>
+            {bot.adopted && <Pill variant="soft" onClick={() => openDialog({ kind: "delete-bot", slug: bot.slug })}>Turn back into a plain project</Pill>}
+          </div>
+        ))}
       </Group>
     </>
   );

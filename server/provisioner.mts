@@ -1,7 +1,8 @@
 // Keeps T3 in step with the Bot folders, without a browser open:
 // - a Bot folder with no projectId (for example a helper Bot another Bot just made)
 //   gets a T3 project and a main thread, and its brief is delivered as its first message;
-// - the T3 project title and favicon follow the profile in bot.json.
+// - the T3 project title and favicon follow the profile in bot.json, except for a Bot made from an
+//   existing project, whose project stays as the user named it.
 import { randomUUID } from "node:crypto";
 import { T3Client } from "./t3rpc.mts";
 import { syncBotProject } from "./bot-avatar.mts";
@@ -46,7 +47,8 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
           await provision(c, bot, settings, byId);
         } else {
           const p = byId.get(bot.projectId)!;
-          await syncBotProject(c, bot, p);
+          // A project the Bot was made from keeps its own title and icon.
+          if (!bot.adopted) await syncBotProject(c, bot, p);
           if (!bot.mainThreadId) await launchMain(c, bot, settings, p.defaultModelSelection);
           else if (bot.pendingBrief) await deliverBrief(c, bot);
         }
@@ -78,7 +80,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
       console.log(`[provisioner] created project for ${bot.slug}`);
     }
     await saveBot(bot.slug, { projectId });
-    await syncBotProject(c, bot, { ...existing, id: projectId });
+    if (!bot.adopted) await syncBotProject(c, bot, { ...existing, id: projectId });
     await launchMain(c, { ...bot, projectId }, settings, model);
   }
 

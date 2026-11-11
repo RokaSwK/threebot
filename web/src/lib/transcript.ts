@@ -199,6 +199,8 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
       case "file_change": {
         if (i.status !== "completed") break;
         const p = relPath(String(i.fileName ?? ""), ctx.bot.workspaceRoot);
+        // A Bot made from a project keeps its memory and library in .bot/.
+        const own = ctx.bot.adopted ? ".bot/" : "";
         const other = /\/([a-z0-9][a-z0-9-]*)\/\.bot\/bot\.json$/.exec(String(i.fileName ?? ""));
         if (p !== ".bot/bot.json" && other && /createdBy/.test(String(i.newStr ?? i.diffStr ?? ""))) {
           const created = [...ctx.botsByThread.values()].find((b) => b.slug === other[1]) ?? null;
@@ -209,12 +211,12 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
         if (p === ".bot/bot.json") {
           const m = /"name"\s*:\s*"([^"]{1,80})"/.exec(String(i.newStr ?? i.diffStr ?? ""));
           if (m) out.push({ kind: "event", id: i.id, icon: "rename", text: "Renamed to", strong: m[1] });
-        } else if (p.startsWith("memory/")) {
+        } else if (p.startsWith(`${own}memory/`)) {
           const key = i.runId ?? i.id;
           if (memoryRuns.has(key)) break;
           memoryRuns.add(key);
           out.push({ kind: "event", id: i.id, icon: "memory", text: "Updated memory for", strong: ctx.bot.name, bot: ctx.bot });
-        } else if (p.startsWith("library/")) {
+        } else if (p.startsWith(`${own}library/`)) {
           const key = `${i.runId}:${p}`;
           if (filesSeen.has(key)) break;
           filesSeen.add(key);

@@ -33,7 +33,7 @@ export function navigationUrl(route: Navigation, pathname: string) {
 }
 
 function isDialog(value: unknown): value is Dialog {
-  if (value === null || value === "new-bot" || value === "settings" || value === "search" || value === "connect-apps") return true;
+  if (value === null || value === "new-bot" || value === "adopt-project" || value === "settings" || value === "search" || value === "connect-apps") return true;
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "connect-apps") return "url" in value && typeof value.url === "string";
   if (value.kind === "main-bot") {

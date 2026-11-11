@@ -132,10 +132,11 @@ export function memorySignature(snapshot: MemorySnapshot): string {
 }
 
 /** Both files for the Memory tab, whole. */
-export async function readMemoryFiles({ botDir, sharedFile }: { botDir: string; sharedFile: string }): Promise<{ bot: MemoryFile; shared: MemoryFile }> {
+/** `botPath` is how the Memory tab names the Bot's file: inside its folder, `.bot/` for a Bot made from a project. */
+export async function readMemoryFiles({ botDir, sharedFile, botPath = "memory/MEMORY.md" }: { botDir: string; sharedFile: string; botPath?: string }): Promise<{ bot: MemoryFile; shared: MemoryFile }> {
   const [bot, shared] = await Promise.all([readIfExists(memoryFilePath(botDir, sharedFile, "bot")), readIfExists(sharedFile)]);
   return {
-    bot: { path: "memory/MEMORY.md", text: bot, revision: revisionOf(bot) },
+    bot: { path: botPath, text: bot, revision: revisionOf(bot) },
     shared: { path: ".botapp/shared-memory.md", text: shared, revision: revisionOf(shared) },
   };
 }

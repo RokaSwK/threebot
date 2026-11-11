@@ -5,6 +5,7 @@ import { ComputerOverlay } from "./components/Computer";
 import { ConnectApps } from "./components/ConnectApps";
 import { Details } from "./components/Details";
 import { DeleteBotDialog, NewBotDialog, RenameBotDialog } from "./components/NewBotDialog";
+import { AdoptProjectDialog } from "./components/AdoptProjectDialog";
 import { SearchDialog } from "./components/SearchDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { UsageStatsPrompt } from "./components/UsageStats";
@@ -241,6 +242,7 @@ function Dialogs() {
     <>
       {typeof dialog === "object" && dialog?.kind === "computer" && <ComputerOverlay slug={dialog.slug} />}
       {dialog === "new-bot" && <NewBotDialog />}
+      {dialog === "adopt-project" && <AdoptProjectDialog />}
       {dialog === "settings" && <SettingsDialog />}
       {dialog === "search" && <SearchDialog />}
       {dialog === "connect-apps" && <ConnectApps />}

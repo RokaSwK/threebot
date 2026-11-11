@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,7 +10,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { createFixture, gatewayInvocation, smokeFixture } from './fixture.mts';
+import { ADOPT_REPO, createFixture, gatewayInvocation, smokeFixture } from './fixture.mts';
 import { startFakeT3 } from './fixture-t3.mts';
 import { APPROVAL_OPTIONS, DUMMY_SECRET, INITIAL_ANSWER, INTERACTION_IDS } from './fixture-scenarios.mts';
 import { T3Client } from '../server/t3rpc.mts';
@@ -234,8 +235,8 @@ test('activity scenario shows Bots in different activities and walks Alpha throu
 });
 
 test('basic protocol remains unchanged and interaction handlers are opt-in', { timeout: 15000 }, async () => {
-  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity/);
-  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars or activity/);
+  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity or adopt/);
+  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity or adopt/);
   const fake = await startFakeT3('/unused');
   const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
   try {
@@ -819,5 +820,98 @@ test('usage stats count Bot token usage per model from T3 provider turns (latest
       'fixture-idle': { turns: 1, inputTokens: 500, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 50 },
     });
     assert.doesNotMatch(JSON.stringify(preview), /Alpha|Beta|Gamma|Generic|thread-|project-|\/bots\//);
+  } finally { await fixture.close(); }
+});
+
+test('a T3 project in a git repo becomes a Bot in place, keeps git status clean, and turns back without losing anything', { timeout: 60000 }, async () => {
+  const fixture = await createFixture({ scenario: 'adopt' });
+  try {
+    const repo = path.join(fixture.root, ADOPT_REPO);
+    const gitEnv = { PATH: process.env.PATH, HOME: path.join(fixture.root, 'home'), GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(fixture.root, 'home', '.config') };
+    const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', env: gitEnv });
+    const status = () => git('status', '--porcelain', '--untracked-files=all');
+    const read = (file: string) => readFile(path.join(repo, file), 'utf8');
+    const before = { status: status(), head: git('rev-parse', 'HEAD'), exclude: await read('.git/info/exclude'), claude: await read('CLAUDE.md'), agents: await read('AGENTS.md'), gitignore: await read('.gitignore') };
+    assert.equal(before.status, '');
+
+    const listed = await fixture.request('/api/adoptable-projects');
+    assert.equal(listed.status, 200);
+    assert.deepEqual(listed.body.projects.map((p: Json) => [p.id, p.workspaceRoot, p.git, p.environmentId]), [['project-app', repo, true, 'local']], 'only the plain project, not the Bots');
+
+    const adopted = await fixture.request('/api/bots/adopt', 'POST', { projectId: 'project-app', threadId: 'thread-app-1', name: 'App Keeper', shape: 'sphere', color: 'teal' });
+    assert.equal(adopted.status, 200, JSON.stringify(adopted.body));
+    assert.equal(adopted.body.slug, 'app-keeper');
+    assert.equal(adopted.body.adopted, true);
+    assert.equal(adopted.body.workspaceRoot, repo);
+    assert.equal(adopted.body.projectId, 'project-app');
+    assert.equal(adopted.body.mainThreadId, 'thread-app-1', 'the picked thread, history included, is the main conversation');
+    assert.equal(adopted.body.environmentId, 'local');
+
+    // Instructions in the files each provider reads, the repo's own files untouched, git clean.
+    const claudeLocal = await read('CLAUDE.local.md');
+    assert.match(claudeLocal, /You are \*\*App Keeper\*\*/);
+    assert.match(claudeLocal, /`\.bot\/memory\/MEMORY\.md`/);
+    const override = await read('AGENTS.override.md');
+    assert.match(override, /You are \*\*App Keeper\*\*/);
+    assert.match(override, /Run the sample tests before pushing\./, "Codex's override carries the repo's AGENTS.md");
+    assert.equal(JSON.parse(await read('.bot/bot.json')).name, 'App Keeper');
+    assert.match(await read('.bot/memory/MEMORY.md'), /App Keeper memory/);
+    assert.ok(JSON.parse(await read('.mcp.json')).mcpServers.bot.url.endsWith('/mcp/bot'));
+    assert.equal(JSON.parse(await read('.claude/settings.local.json')).enableAllProjectMcpServers, true);
+    assert.match(await read('.codex/config.toml'), /\[mcp_servers\.bot\]/);
+    assert.match(await read('.git/info/exclude'), /# threebot:app-keeper:start[^\n]*\n\/\.bot\/\n\/CLAUDE\.local\.md\n\/AGENTS\.override\.md\n/);
+    assert.equal(await read('CLAUDE.md'), before.claude);
+    assert.equal(await read('AGENTS.md'), before.agents);
+    assert.equal(await read('.gitignore'), before.gitignore);
+    assert.equal(status(), '', 'git status stays clean');
+    assert.equal(git('rev-parse', 'HEAD'), before.head);
+    const registry = JSON.parse(await readFile(path.join(fixture.root, 'bots', '.botapp', 'adopted.json'), 'utf8'));
+    assert.deepEqual(registry.bots.map((b: Json) => [b.slug, b.path, b.environmentId, b.projectId]), [['app-keeper', repo, 'local', 'project-app']]);
+
+    // Discovery, memory and the T3 project, which keeps its own name.
+    const bot = (await fixture.request('/api/bots')).body.bots.find((b: Json) => b.slug === 'app-keeper');
+    assert.equal(bot.workspaceRoot, repo);
+    const memory = await fixture.request('/api/memory?slug=app-keeper');
+    assert.equal(memory.body.bot.path, '.bot/memory/MEMORY.md');
+    assert.match(memory.body.bot.text, /App Keeper memory/);
+    const saved = await fixture.request('/api/memory', 'PUT', { slug: 'app-keeper', scope: 'bot', text: '# App Keeper memory\n\n- The sample app ships on Fridays.\n', expectedRevision: memory.body.bot.revision });
+    assert.equal(saved.status, 200);
+    for (let i = 0; i < 50 && !(await read('CLAUDE.local.md')).includes('ships on Fridays'); i++) await new Promise((r) => setTimeout(r, 200));
+    assert.match(await read('CLAUDE.local.md'), /ships on Fridays/, 'memory reaches the instructions');
+    assert.match(await read('AGENTS.override.md'), /ships on Fridays/);
+    const t3projects = (await fixture.request('/t3/api/projects')).body.projects;
+    assert.equal(t3projects.find((p: Json) => p.id === 'project-app').title, 'Sample App');
+    assert.equal(status(), '');
+    assert.deepEqual((await fixture.request('/api/adoptable-projects')).body.projects, []);
+    assert.equal((await fixture.request('/api/bots/adopt', 'POST', { projectId: 'project-app', name: 'Again' })).status, 409);
+    assert.equal((await fixture.request('/api/bots/app-keeper', 'DELETE')).status, 409, 'deleting never trashes the project');
+
+    // Turn back into a plain project.
+    const released = await fixture.request('/api/bots/app-keeper/release', 'POST', {});
+    assert.equal(released.status, 200, JSON.stringify(released.body));
+    assert.ok(!released.body.bots.some((b: Json) => b.slug === 'app-keeper'));
+    for (const gone of ['.bot', 'CLAUDE.local.md', 'AGENTS.override.md', '.mcp.json', '.claude', '.codex', '.pi']) assert.equal(existsSync(path.join(repo, gone)), false, gone);
+    assert.equal(await read('.git/info/exclude'), before.exclude);
+    assert.equal(status(), '');
+    assert.equal(git('rev-parse', 'HEAD'), before.head);
+    assert.equal(await read('CLAUDE.md'), before.claude);
+    assert.equal(await read('AGENTS.md'), before.agents);
+    const archive = released.body.archive;
+    assert.ok(archive.startsWith(path.join(fixture.root, 'bots', '.botapp', 'adopted-archive', 'app-keeper-')));
+    assert.match(await readFile(path.join(archive, 'memory', 'MEMORY.md'), 'utf8'), /ships on Fridays/);
+    assert.ok(existsSync(path.join(archive, 'library')));
+    assert.deepEqual(JSON.parse(await readFile(path.join(fixture.root, 'bots', '.botapp', 'adopted.json'), 'utf8')).bots, []);
+    const projectsAfter = (await fixture.request('/t3/api/projects')).body.projects;
+    assert.equal(projectsAfter.find((p: Json) => p.id === 'project-app').title, 'Sample App', 'the T3 project stays');
+    assert.ok(!(await readFile(path.join(fixture.root, 'codex', 'config.toml'), 'utf8').catch(() => '')).includes(repo), 'Codex trust adoption added is taken back');
+
+    // Again, with a new main conversation instead of an existing thread.
+    const fresh = await fixture.request('/api/bots/adopt', 'POST', { projectId: 'project-app', threadId: null, name: 'App Keeper', shape: 'sphere', color: 'teal' });
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    assert.ok(fresh.body.mainThreadId && !['thread-app-1', 'thread-app-2'].includes(fresh.body.mainThreadId), 'a new main thread');
+    assert.equal(status(), '');
+    assert.equal((await fixture.request(`/api/bots/${fresh.body.slug}/release`, 'POST', {})).status, 200);
+    assert.equal(status(), '');
+    assert.equal(await read('.git/info/exclude'), before.exclude);
   } finally { await fixture.close(); }
 });

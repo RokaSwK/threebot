@@ -1,6 +1,6 @@
 import { workspaceClient } from "./workspaceTransport";
 import { isRecord } from "./providerData";
-import { workspaceLibraryEntry, type LibraryEntry, type LibraryWorkspace } from "./library";
+import { libraryDirOf, workspaceLibraryEntry, type LibraryEntry, type LibraryWorkspace } from "./library";
 
 export function parseFileSearch(value: unknown, workspace: LibraryWorkspace, content: boolean): { entries: LibraryEntry[]; truncated: boolean } {
   if (!isRecord(value) || typeof value.truncated !== "boolean") throw new Error("File search returned an unsupported response.");
@@ -25,5 +25,5 @@ export function isLibraryPage(entry: LibraryEntry) {
 }
 
 export function listLibraryFiles(workspace: LibraryWorkspace) {
-  return workspaceClient(workspace.threadId).call<unknown>("projects.listEntries", { cwd: workspace.workspaceRoot, directoryPath: "library" });
+  return workspaceClient(workspace.threadId).call<unknown>("projects.listEntries", { cwd: workspace.workspaceRoot, directoryPath: libraryDirOf(workspace) });
 }

@@ -16,6 +16,12 @@ import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
+import {
+  CLAUDE_FILE, CODEX_FILE, CONFIG_FILES, LOCAL_ENVIRONMENT, archiveAdoptedData, excludePatterns, gitRepo, mergeJsonFile, planAdoption,
+  projectAgentsMd, readAdopted, registerAdopted, samePath, undoAdoptionFiles, unregisterAdopted, updateAdopted, withProjectAgents, within,
+  writeExcludeBlock, type AdoptedBot, type AdoptedFile,
+} from "./adopted-bots.mts";
+import { createHash } from "node:crypto";
 import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from "./environment-routes.mts";
 import { createThreadLinkResolver } from "./thread-link.mts";
 import { accessTokenFrom, createAccessVerifier } from "./access.mts";
@@ -401,21 +407,32 @@ const saveBot = async (slug: string, patch: BotPatch) => {
 };
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
+const codexTrustLines = (dir: string) => `[projects.${JSON.stringify(dir)}]\ntrust_level = "trusted"\n`;
+/** Trusts a Bot folder in Codex's global config. True when this call added it. */
 async function trustInCodex(dir: string) {
   const existing = await fs.readFile(codexGlobalConfig, "utf8").catch(() => "");
   const header = `[projects.${JSON.stringify(dir)}]`;
-  if (existing.includes(header)) return;
+  if (existing.includes(header)) return false;
   const prefix = existing ? (existing.endsWith("\n") ? existing : existing + "\n") + "\n" : "# Bot folders are trusted so Codex loads each Bot's own .codex/config.toml (Executor MCP).\n";
   await fs.mkdir(path.dirname(codexGlobalConfig), { recursive: true });
-  await fs.writeFile(codexGlobalConfig, `${prefix}${header}\ntrust_level = "trusted"\n`, { mode: 0o600 });
+  await fs.writeFile(codexGlobalConfig, `${prefix}${codexTrustLines(dir)}`, { mode: 0o600 });
+  return true;
+}
+/** Takes back the trust entry adoption added, exactly as it was written. */
+async function untrustInCodex(dir: string) {
+  const existing = await fs.readFile(codexGlobalConfig, "utf8").catch(() => null);
+  const lines = codexTrustLines(dir);
+  if (existing === null || !existing.includes(lines)) return;
+  await fs.writeFile(codexGlobalConfig, existing.replace(`\n${lines}`, "").replace(lines, ""), { mode: 0o600 });
 }
 
-async function writeMcpConfig(dir: string, slug: string) {
+async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot) {
   // Every Bot gets its own tool server (the Vault and Projects); Executor when it's configured.
   const botToken = tokenForBot(botMcpToken, slug);
   const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
   try { const definition = executorMcpDefinition(executorConfig.profile); if (definition) servers.executor = definition; }
   catch { console.error('Executor credential unavailable; managed Executor MCP is disabled.'); }
+  if (adoption) return writeAdoptedMcpConfig(adoption, servers);
   const mcpPath = path.join(dir, ".mcp.json");
   const mcp = (await readJson(mcpPath, {})) ?? {};
   mcp.mcpServers = { ...(mcp.mcpServers ?? {}) };
@@ -457,20 +474,79 @@ async function writeMcpConfig(dir: string, slug: string) {
   return Boolean(servers.executor);
 }
 
+/**
+ * The same tool-server configs for a Bot made from a project, written only where adoption's plan
+ * allows: never a file git tracks, and only the Bot's own keys in a file the user already had.
+ * Claude's switch goes in `.claude/settings.local.json`, the untracked twin of settings.json.
+ */
+async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<string, McpServer>) {
+  const dir = adoption.path;
+  const plan = (file: string) => adoption.files.find((entry) => entry.path === file) ?? { path: file, mode: "skipped" as const };
+  const before = JSON.stringify(adoption.files) + adoption.codexTrust;
+  const write = async (file: string, values: Record<string, unknown>) => {
+    const entry = plan(file);
+    if (entry.mode === "skipped") return false;
+    await mergeJsonFile(path.join(dir, file), values, entry as AdoptedFile);
+    return true;
+  };
+  const named = (prefix: string, map: Record<string, unknown>) => Object.fromEntries(Object.entries(map).map(([name, value]) => [`${prefix}.${name}`, value]));
+  await write(CONFIG_FILES.mcp, named("mcpServers", servers));
+  await write(CONFIG_FILES.claude, { enableAllProjectMcpServers: true });
+  await write(CONFIG_FILES.pi, named("mcpServers", Object.fromEntries(Object.entries(servers).filter(([, s]) => s.url).map(([name, s]) => [name, {
+    type: "streamable-http", url: s.url, headers: s.headers, description: name === "bot" ? "Threebot Vault and Projects tools." : "The user's connected apps.",
+  }]))));
+  if (plan(CONFIG_FILES.codex).mode === "created") {
+    const codexConfig = path.join(dir, CONFIG_FILES.codex);
+    await fs.mkdir(path.dirname(codexConfig), { recursive: true });
+    let toml = "# Written by the Bot gateway. bot = the Vault and other Bot tools; executor = connected apps.\n";
+    for (const [name, s] of Object.entries(servers)) {
+      const headers = Object.entries(s.headers).map(([key, value]) => `${JSON.stringify(key)} = ${JSON.stringify(value)}`).join(', ');
+      toml += `[mcp_servers.${name}]\nurl = ${JSON.stringify(s.url)}\nhttp_headers = { ${headers} }\n`;
+    }
+    await fs.writeFile(codexConfig, toml, { mode: 0o600 });
+    if (await trustInCodex(dir)) adoption.codexTrust = true;
+  }
+  if (JSON.stringify(adoption.files) + adoption.codexTrust !== before) await updateAdopted(cfg.botsRoot, adoption);
+  return Boolean(servers.executor);
+}
+
+// Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
+const releasing = new Set<string>();
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
-  const dir = botDir(bot.slug);
-  const executorReady = await writeMcpConfig(dir, bot.slug);
-  const file = path.join(dir, "AGENTS.md");
-  const existing = await fs.readFile(file, "utf8").catch(() => "");
+  if (releasing.has(bot.slug)) return;
+  const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
+  if (bot.adopted && !adoption) return;
+  const dir = bot.workspaceRoot;
+  const executorReady = await writeMcpConfig(dir, bot.slug, adoption);
   // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
   const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
     organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
-  const memory = snapshot ?? await readSnapshot({ botDir: dir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
-  const content = mergeManaged(existing, renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor, memory }));
+  const memory = snapshot ?? await readSnapshot({ botDir: bot.dataDir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
+  const block = renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor, memory });
+  if (adoption) return writeAdoptedInstructions(adoption, block);
+  const file = path.join(dir, "AGENTS.md");
+  const existing = await fs.readFile(file, "utf8").catch(() => "");
+  const content = mergeManaged(existing, block);
   await writeTextAtomic(file, content);
   if (Buffer.byteLength(content, "utf8") > 24_000) console.warn(`[memory] ${bot.slug}'s AGENTS.md is over 24 KB; some harnesses may cut it`);
   const claude = path.join(dir, "CLAUDE.md");
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
+}
+/**
+ * A Bot made from a project reads its instructions from files git doesn't track: Claude from
+ * CLAUDE.local.md (beside the project's CLAUDE.md), Codex from AGENTS.override.md (instead of the
+ * project's AGENTS.md, whose text is copied in when the override is the Bot's own file).
+ */
+async function writeAdoptedInstructions(adoption: AdoptedBot, block: string) {
+  for (const name of [CLAUDE_FILE, CODEX_FILE]) {
+    const entry = adoption.files.find((file) => file.path === name);
+    if (!entry || entry.mode === "skipped") continue;
+    const file = path.join(adoption.path, name);
+    const text = name === CODEX_FILE && entry.mode === "created" ? withProjectAgents(block, await projectAgentsMd(adoption.path)) : block;
+    const content = mergeManaged(await fs.readFile(file, "utf8").catch(() => ""), text);
+    await writeTextAtomic(file, content);
+    if (Buffer.byteLength(content, "utf8") > 32_000) console.warn(`[memory] ${adoption.slug}'s ${name} is over 32 KB; Codex cuts project instructions there`);
+  }
 }
 /** Rewrites a Bot's instructions when its memory changed, so a fresh session sees the new snapshot. */
 function startMemoryWatcher() {
@@ -483,8 +559,9 @@ function startMemoryWatcher() {
       const [bots, settings] = await Promise.all([listBots(), getSettings()]);
       for (const bot of bots) {
         try {
-          const snapshot = await readSnapshot({ botDir: botDir(bot.slug), sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
-          const signature = memorySignature(snapshot);
+          const snapshot = await readSnapshot({ botDir: bot.dataDir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
+          // An adopted Bot's AGENTS.override.md also carries the project's AGENTS.md, so follow that file too.
+          const signature = memorySignature(snapshot) + (bot.adopted ? createHash("sha256").update(await projectAgentsMd(bot.workspaceRoot)).digest("hex") : "");
           if (seen.get(bot.slug) === signature) continue;
           await writeAgentsMd(bot, settings, snapshot);
           seen.set(bot.slug, signature);
@@ -503,9 +580,7 @@ function startMemoryWatcher() {
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
-  const base = slugify(input.name ?? "bot");
-  let slug = base, n = 2;
-  while (existsSync(path.join(cfg.botsRoot, slug))) slug = `${base}-${n++}`;
+  const slug = await freeSlug(input.name ?? "bot");
   const dir = botDir(slug);
   await fs.mkdir(path.join(dir, "memory"), { recursive: true });
   await fs.mkdir(path.join(dir, "library"), { recursive: true });
@@ -535,6 +610,125 @@ async function createBot(input: NewBot) {
   await provisioner.runNow();
   return (await getBot(slug)) ?? bot;
 }
+/** A slug no Bot uses yet: not a folder in BOTS_ROOT, and not a Bot made from a project. */
+async function freeSlug(name: string) {
+  const base = slugify(name);
+  const adopted = new Set((await readAdopted(cfg.botsRoot)).map((entry) => entry.slug));
+  let slug = base, n = 2;
+  while (existsSync(path.join(cfg.botsRoot, slug)) || adopted.has(slug)) slug = `${base}-${n++}`;
+  return slug;
+}
+
+// ---------- Bots made from existing projects ----------
+/** A T3 project as /api/projects lists it; only the fields used here. */
+type T3ProjectRow = { id: string; title?: string; workspaceRoot?: string; deletedAt?: string | null; archivedAt?: string | null };
+async function t3Projects(): Promise<T3ProjectRow[]> {
+  const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
+  const { projects } = await withTimeout(client.http("/api/projects"), 15000, "T3 timed out");
+  return (projects ?? []).filter((project: T3ProjectRow) => project.id && project.workspaceRoot && !project.deletedAt);
+}
+/** This machine's T3 projects that could become Bots: not already a Bot, and not inside the Bots folder. */
+async function adoptableProjects() {
+  const [projects, bots] = await Promise.all([t3Projects(), listBots()]);
+  const taken = (project: T3ProjectRow) => bots.some((bot) => bot.projectId === project.id || samePath(bot.workspaceRoot, project.workspaceRoot!))
+    || within(cfg.botsRoot, project.workspaceRoot!);
+  return Promise.all(projects.filter((project) => !taken(project)).map(async (project) => ({
+    id: project.id, title: project.title ?? path.basename(project.workspaceRoot!), workspaceRoot: project.workspaceRoot!,
+    environmentId: LOCAL_ENVIRONMENT, archived: Boolean(project.archivedAt), exists: existsSync(project.workspaceRoot!),
+    git: await gitRepo(project.workspaceRoot!).then((repo) => Boolean(repo), () => false),
+  })));
+}
+type AdoptRequest = NewBot & { projectId?: unknown; threadId?: unknown };
+/**
+ * Makes a Bot of an existing T3 project, in place: the Bot works in the project's folder and reuses
+ * its T3 project, and either one of its threads (history included) or a new one as its main thread.
+ */
+async function adoptProject(input: AdoptRequest) {
+  const projectId = typeof input.projectId === "string" ? input.projectId : "";
+  const threadId = typeof input.threadId === "string" && input.threadId ? input.threadId : null;
+  const project = (await t3Projects()).find((candidate) => candidate.id === projectId);
+  if (!project) throw Object.assign(new Error("That T3 project isn't on this machine."), { status: 404 });
+  const dir = project.workspaceRoot!;
+  const bots = await listBots();
+  if (bots.some((bot) => bot.projectId === project.id || samePath(bot.workspaceRoot, dir))) throw Object.assign(new Error("That project is already a Bot."), { status: 409 });
+  if (within(cfg.botsRoot, dir)) throw Object.assign(new Error("Projects in the Bots folder are Bots already."), { status: 409 });
+  if (!(await fs.stat(dir).then((stat) => stat.isDirectory(), () => false))) throw Object.assign(new Error("That project's folder isn't on this machine."), { status: 409 });
+  if (threadId) {
+    const thread = (await shellThreads(false)).find((candidate) => candidate.id === threadId);
+    if (!thread || thread.projectId !== project.id) throw Object.assign(new Error("That thread isn't in this project."), { status: 400 });
+  }
+  input = objectAvatarPatch(colorPatch(input));
+  const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
+  const name = typeof input.name === "string" && input.name.trim() ? input.name.trim() : (project.title ?? path.basename(dir));
+  const slug = await freeSlug(name);
+  const git = await gitRepo(dir);
+  const { files, createdDirs } = await planAdoption(dir, git);
+  const entry: AdoptedBot = { slug, path: dir, environmentId: LOCAL_ENVIRONMENT, projectId: project.id, adoptedAt: new Date().toISOString(), git, files, createdDirs, codexTrust: false };
+  // Git ignores the Bot's files before the first one exists, so `git status` never shows them.
+  if (git) await writeExcludeBlock(git.exclude, slug, excludePatterns(entry));
+  try {
+    const data = path.join(dir, ".bot");
+    await fs.mkdir(path.join(data, "memory"), { recursive: true });
+    await fs.mkdir(path.join(data, "library"), { recursive: true });
+    await fs.writeFile(path.join(data, "memory", "MEMORY.md"), `# ${name} memory\n\n`);
+    await fs.writeFile(path.join(data, "memory", "log.md"), `# Work log\n\n`);
+    const shared = path.join(appDir, "shared-memory.md");
+    if (!existsSync(shared)) await fs.writeFile(shared, "# Shared facts (all Bots)\n\n");
+    await registerAdopted(cfg.botsRoot, entry);
+    await mainBots.save(slug, {
+      name,
+      label: input.label ?? "",
+      shape: input.shape ?? "sphere",
+      color: input.color ?? "teal",
+      ...(input.avatarDefinition ? { avatarDefinition: input.avatarDefinition } : {}),
+      ...(picture ? { avatarImage: await storeAvatarImage({ workspaceRoot: dir, slug }, picture) } : {}),
+      section: input.section ?? null,
+      pinned: Boolean(input.pinned),
+      hidden: false,
+      primary: Boolean(input.primary),
+      notifications: true,
+      projectId: project.id,
+      mainThreadId: threadId,
+      model: input.model ?? null,
+      createdAt: new Date().toISOString(),
+    }, { create: true });
+  } catch (error) {
+    // Leave the project as it was found.
+    await undoAdoption(entry).catch((undoError) => console.error(`undoing ${slug}'s adoption failed`, undoError));
+    await fs.rm(path.join(dir, ".bot"), { recursive: true, force: true });
+    throw error;
+  }
+  console.log(`bots: made ${slug} from the project at ${dir}${threadId ? " with its existing thread" : ""}`);
+  await provisioner.runNow();
+  return (await getBot(slug))!;
+}
+/** Everything but the archive: the Bot's files and exclude lines, Codex trust, and its registry entry. */
+async function undoAdoption(entry: AdoptedBot) {
+  await undoAdoptionFiles(entry);
+  if (entry.codexTrust) await untrustInCodex(entry.path);
+  await unregisterAdopted(cfg.botsRoot, entry.slug);
+}
+/**
+ * "Turn back into a plain project": the project, its T3 project and its threads stay as they are; the
+ * Bot's files go, and its profile, memory and library are archived under .botapp/adopted-archive/.
+ */
+async function releaseAdopted(slug: string) {
+  let archive: string | null = null;
+  const bots = await mainBots.release(slug, async (bot) => {
+    const entry = (await readAdopted(cfg.botsRoot)).find((candidate) => candidate.slug === bot.slug);
+    if (!entry) throw Object.assign(new Error("Bot not found"), { status: 404 });
+    releasing.add(slug);
+    try {
+      await undoAdoptionFiles(entry);
+      if (entry.codexTrust) await untrustInCodex(entry.path);
+      archive = await archiveAdoptedData(cfg.botsRoot, entry);
+      await unregisterAdopted(cfg.botsRoot, entry.slug);
+    } finally { releasing.delete(slug); }
+  });
+  console.log(`bots: ${slug} is a plain project again${archive ? `; its memory and library are in ${archive}` : ""}`);
+  return { bots, archive };
+}
+
 async function refreshAllAgentsMd() {
   await mainBots.refreshInstructions();
 }
@@ -961,7 +1155,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/memory" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
-      return send(res, 200, await readMemoryFiles({ botDir: botDir(bot.slug), sharedFile: path.join(appDir, "shared-memory.md") }), { "cache-control": "no-store" });
+      return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
     }
     if (p === "/api/memory" && req.method === "PUT") {
       requireJson(req);
@@ -969,7 +1163,7 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(String(body?.slug ?? ""));
       if (!bot) return send(res, 404, { error: "Bot not found" });
       const result = await saveMemoryFile({
-        botDir: botDir(bot.slug),
+        botDir: bot.dataDir,
         sharedFile: path.join(appDir, "shared-memory.md"),
         scope: body?.scope === "shared" ? "shared" : "bot",
         text: body?.text,
@@ -982,6 +1176,16 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/bots" && req.method === "POST") {
       requireJson(req);
       return send(res, 200, await createBot(await readBody(req, AVATAR_BODY_LIMIT)));
+    }
+    if (p === "/api/adoptable-projects" && req.method === "GET") return send(res, 200, { projects: await adoptableProjects() }, { "cache-control": "no-store" });
+    if (p === "/api/bots/adopt" && req.method === "POST") {
+      requireJson(req);
+      return send(res, 200, await adoptProject(await readBody(req, AVATAR_BODY_LIMIT)));
+    }
+    const release = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/release$/);
+    if (release && req.method === "POST") {
+      requireJson(req);
+      return send(res, 200, await releaseAdopted(release[1]), { "cache-control": "no-store" });
     }
     const avatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\/([a-f0-9]{64})\.png$/);
     if (avatar && req.method === "GET") {
