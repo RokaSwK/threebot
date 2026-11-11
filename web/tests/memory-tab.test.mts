@@ -106,3 +106,33 @@ test("an edit the Bot made meanwhile is never overwritten without asking", async
   await click(button("Save", mine));
   assert.equal(disk.bot, "# Alpha memory\n\n- Bot edit\n- Mine\n");
 });
+
+test("only one file is open in the editor at a time, so a draft is never dropped", async () => {
+  await act(async () => root.render(h(MemoryTab, { bot })));
+  await settle();
+  await click(button("Edit", section("Alpha")!));
+  await type(section("Alpha")!.querySelector("textarea") as HTMLTextAreaElement, "- Draft\n");
+  const shared = section("Shared by all Bots")!;
+  assert.ok([...shared.querySelectorAll("button")].every((control) => control.disabled));
+  await click(button("Cancel", section("Alpha")!));
+  assert.ok([...section("Shared by all Bots")!.querySelectorAll("button")].some((control) => !control.disabled));
+});
+
+test("a late reply for the previous Bot doesn't land under the next one", async () => {
+  const served = globalThis.fetch;
+  let releaseAlpha = () => {};
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (String(url).endsWith("slug=alpha")) await new Promise<void>((resolve) => { releaseAlpha = resolve; });
+    if (String(url).endsWith("slug=beta")) return new Response(JSON.stringify({
+      bot: { path: "memory/MEMORY.md", text: "# Beta memory\n\n- Beta's own fact.\n", revision: "beta" },
+      shared: { path: ".botapp/shared-memory.md", text: "", revision: "s" },
+    }), { status: 200 });
+    return served(url, init);
+  }) as typeof fetch;
+  await act(async () => root.render(h(MemoryTab, { bot })));
+  await act(async () => root.render(h(MemoryTab, { bot: { slug: "beta", name: "Beta", mainThreadId: "t-beta" } })));
+  await settle();
+  releaseAlpha();
+  await settle();
+  assert.match(section("Beta")?.querySelector(".memory-view")?.textContent ?? "", /Beta's own fact/u);
+});

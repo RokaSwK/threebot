@@ -17,14 +17,19 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const [editing, setEditing] = useState<MemoryScope | null>(null);
   const editingRef = useRef(editing);
   editingRef.current = editing;
+  // A reply for a Bot that is no longer shown must not land under the one that is.
+  const shownSlug = useRef(bot.slug);
+  shownSlug.current = bot.slug;
 
   const load = useCallback(async (quiet = false) => {
+    const slug = bot.slug;
     try {
-      const next = await memoryApi.get(bot.slug);
+      const next = await memoryApi.get(slug);
+      if (shownSlug.current !== slug) return;
       setFiles(next);
       setError("");
     } catch (cause) {
-      if (!quiet) setError(cause instanceof Error ? cause.message : "Couldn't load memory");
+      if (!quiet && shownSlug.current === slug) setError(cause instanceof Error ? cause.message : "Couldn't load memory");
     }
   }, [bot.slug]);
 
@@ -63,6 +68,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
         file={files.bot}
         empty={`Nothing yet. ${bot.name} adds things here as it learns them, or write them yourself.`}
         editing={editing === "bot"}
+        locked={editing === "shared"}
         onEdit={(on) => setEditing(on ? "bot" : null)}
         onSave={(text, expectedRevision) => memoryApi.save({ slug: bot.slug, scope: "bot", text, expectedRevision })}
         onSaved={() => void load(true)}
@@ -74,6 +80,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
         file={files.shared}
         empty="Nothing shared yet. Facts every Bot should know go here: your name, time zone, key people."
         editing={editing === "shared"}
+        locked={editing === "bot"}
         onEdit={(on) => setEditing(on ? "shared" : null)}
         onSave={(text, expectedRevision) => memoryApi.save({ slug: bot.slug, scope: "shared", text, expectedRevision })}
         onSaved={() => void load(true)}
@@ -85,11 +92,13 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   );
 }
 
-function MemoryFileCard({ title, file, empty, editing, onEdit, onSave, onSaved, botName }: {
+function MemoryFileCard({ title, file, empty, editing, locked, onEdit, onSave, onSaved, botName }: {
   title: string;
   file: MemoryFile;
   empty: string;
   editing: boolean;
+  /** The other file is open in the editor; one draft at a time, so neither is lost. */
+  locked: boolean;
   onEdit: (on: boolean) => void;
   onSave: (text: string, expectedRevision: string) => ReturnType<typeof memoryApi.save>;
   onSaved: () => void;
@@ -120,7 +129,7 @@ function MemoryFileCard({ title, file, empty, editing, onEdit, onSave, onSaved, 
   return <section className="mb-5" aria-label={title}>
     <div className="mb-1.5 flex items-center gap-2 px-1">
       <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted">{title} · <span className="font-mono text-[11.5px]">{file.path}</span></span>
-      {!editing && <Pill variant="soft" className="h-7 px-2.5 text-[12px]" onClick={start}><Pencil size={12} /> Edit</Pill>}
+      {!editing && <Pill variant="soft" className="h-7 px-2.5 text-[12px]" disabled={locked} title={locked ? "Save or cancel the other file first" : undefined} onClick={start}><Pencil size={12} /> Edit</Pill>}
     </div>
     {editing ? <div className="rounded-xl border border-line bg-card p-2">
       <textarea
@@ -149,6 +158,6 @@ function MemoryFileCard({ title, file, empty, editing, onEdit, onSave, onSaved, 
       </div>
     </div> : file.text.trim()
       ? <div className="memory-view md rounded-xl border border-line bg-card px-3.5 py-3 text-[13.5px] leading-[21px] break-words"><RichMarkdown>{file.text}</RichMarkdown></div>
-      : <button type="button" onClick={start} className="w-full rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[12.5px] text-muted hover:bg-hover">{empty}</button>}
+      : <button type="button" onClick={start} disabled={locked} className="w-full rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[12.5px] text-muted hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">{empty}</button>}
   </section>;
 }
