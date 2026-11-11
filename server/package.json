@@ -2,7 +2,7 @@
   "name": "bot-gateway",
   "private": true,
   "type": "module",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "scripts": {
     "start": "node gateway.mjs",
     "typecheck": "tsrs -p tsconfig.json"
