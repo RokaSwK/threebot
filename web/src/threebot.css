@@ -97,19 +97,18 @@
 .model-trigger .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-trigger .traits { min-width: 0; overflow: hidden; color: var(--fg-muted); text-overflow: ellipsis; white-space: nowrap; }
 .model-trigger .go { margin-left: auto; flex: none; color: var(--fg-muted); }
-.model-sheet .dialog-body { display: grid; gap: 16px; padding: 12px 16px 18px; overflow-y: auto; }
+.model-sheet .dialog-body { display: flex; padding: 0; overflow: hidden; }
 .model-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .model-tab { display: inline-flex; height: 32px; align-items: center; gap: 6px; padding-inline: 12px; border-radius: 999px; background: var(--bg-card); font-size: 13px; }
 .model-tab[aria-selected="true"] { background: var(--pill); color: var(--pill-fg); }
 .model-search { height: 36px; width: 100%; padding-inline: 14px; border-radius: 12px; border: 1px solid var(--border); background: transparent; font-size: 14px; outline: none; }
 .model-search:focus { border-color: var(--border-strong); }
-.model-list { display: grid; gap: 2px; max-height: min(44vh, 340px); overflow-y: auto; }
+.model-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .model-row { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; font-size: 14px; text-align: left; }
 .model-row:hover { background: var(--bg-hover); }
 .model-row[aria-checked="true"] { background: var(--bg-active); }
-.model-row svg { margin-left: auto; flex: none; }
-.model-trait h3 { margin: 0 0 6px; color: var(--fg-muted); font-size: 12px; font-weight: 500; }
-.model-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-subprovider { font-size: 11.5px; color: var(--fg-muted); }
+.model-star { border: 0; background: transparent; cursor: pointer; }
 .model-choice { height: 32px; padding-inline: 12px; border-radius: 999px; background: var(--bg-card); font-size: 13px; }
-.model-choice[aria-pressed="true"] { background: var(--pill); color: var(--pill-fg); }
+.model-choice[aria-pressed="true"], .model-choice.active { background: var(--pill); color: var(--pill-fg); }
 .model-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
