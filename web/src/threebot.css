@@ -109,6 +109,8 @@
 .model-row[aria-checked="true"] { background: var(--bg-active); }
 .model-subprovider { font-size: 11.5px; color: var(--fg-muted); }
 .model-star { border: 0; background: transparent; cursor: pointer; }
+/* Touch screens have no hover, so the star is always shown there. */
+@media (hover: none) { .model-star { opacity: 1; } }
 .model-choice { height: 32px; padding-inline: 12px; border-radius: 999px; background: var(--bg-card); font-size: 13px; }
 .model-choice[aria-pressed="true"], .model-choice.active { background: var(--pill); color: var(--pill-fg); }
 .model-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
