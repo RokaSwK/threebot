@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { ADOPT_REPO, createFixture, gatewayInvocation, smokeFixture } from './fixture.mts';
-import { startFakeT3 } from './fixture-t3.mts';
+import { FIXTURE_PAIRING_CODE, startFakeT3, type FixtureLink } from './fixture-t3.mts';
 import { APPROVAL_OPTIONS, DUMMY_SECRET, INITIAL_ANSWER, INTERACTION_IDS } from './fixture-scenarios.mts';
 import { T3Client } from '../server/t3rpc.mts';
 import { EXECUTOR_FIXTURE_IDS, EXECUTOR_FIXTURE_TOKEN } from './fixture-executor.mts';
@@ -918,4 +918,64 @@ test('a T3 project in a git repo becomes a Bot in place, keeps git status clean,
     assert.equal(status(), '');
     assert.equal(await read('.git/info/exclude'), before.exclude);
   } finally { await fixture.close(); }
+});
+
+test('linked machines: discovered from T3, remote threads read and messaged in the app, one offline alert per outage, pairing for a direct route', { timeout: 60000 }, async () => {
+  const scratch = await mkdtemp(path.join(tmpdir(), 'bot-peer-'));
+  const peer = await startFakeT3(scratch, 0, { environmentId: 'fixture-peer' });
+  const links: FixtureLink[] = [{
+    environmentId: 'fixture-peer', label: 'Fixture laptop', urls: [`http://127.0.0.1:${peer.port}`], status: 'reachable',
+    threads: [{ threadId: 'remote-1', title: 'Remote sample work', status: 'running', messages: [
+      { type: 'user_message', text: 'Fix the generic sample' }, { type: 'assistant_message', text: 'Working on the **generic sample**.' }] }],
+    tasks: [{ parentThreadId: 'thread-alpha', threadId: 'remote-1', title: 'Remote sample work' }],
+  }];
+  const fixture = await createFixture({ links }); let rpc: T3Client | undefined;
+  const until = async (what: string, check: () => Promise<boolean>, ms = 15000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 250)); }
+    assert.fail(`timed out waiting for ${what}\n${fixture.logs}`);
+  };
+  const alphaMessages = async () => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId: 'thread-alpha' }))).turnItems.filter((item: Json) => item.type === 'user_message' && item.text.startsWith('From Threebot:')).map((item: Json) => item.text);
+  try {
+    rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fixture.t3Port}`, token: 'fixture-only' }); await bounded(rpc.connect());
+    // Discovery through the local T3, no routes file: this machine first, the linked one with its versions.
+    const { machines, linksSupported } = (await fixture.request('/api/machines?fresh=1')).body;
+    assert.equal(linksSupported, true);
+    assert.deepEqual(machines.map((m: Json) => [m.environmentId, m.local, m.status, m.route]), [['fixture-only', true, 'online', 'local'], ['fixture-peer', false, 'online', 'linked']]);
+    assert.equal(machines[1].t3Version, 'fixture');
+    assert.equal(machines[1].laptop, true);
+    // Remote threads open inside the app, and read and send through T3's forwarded tools.
+    const link = await fetch(fixture.url + '/api/thread-link?environmentId=fixture-peer&threadId=remote-1', { redirect: 'manual' });
+    assert.equal(link.headers.get('location'), '/?environment=fixture-peer&thread=remote-1');
+    const read = (await fixture.request('/api/machines/fixture-peer/threads/remote-1')).body.read;
+    assert.equal(read.thread.title, 'Remote sample work');
+    assert.deepEqual(read.items.map((item: Json) => item.text), ['Fix the generic sample', 'Working on the **generic sample**.']);
+    assert.equal((await fixture.request('/api/machines/fixture-peer/threads/remote-1/messages', 'POST', { text: 'A generic follow-up' })).status, 200);
+    assert.equal(links[0].threads[0].messages.at(-1)!.text, 'A generic follow-up');
+    assert.equal((await fixture.request('/api/machines/elsewhere/threads/remote-1')).status, 404);
+    // The machine goes quiet with the Bot's task running there: one message to Alpha, then one when it's back.
+    links[0].status = 'unreachable';
+    await until('the offline alert', async () => (await alphaMessages()).length === 1);
+    const [alert] = await alphaMessages();
+    assert.match(alert, /^From Threebot: Fixture laptop went to sleep with this thread running:\n- \[Remote sample work\]\(t3-thread:\/\/v2\/fixture-peer\/remote-1\)/);
+    const away = await fixture.request('/api/machines/fixture-peer/threads/remote-1');
+    assert.equal(away.status, 503); assert.match(away.body.error, /Fixture laptop isn't reachable right now \(it's asleep\)/);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    assert.equal((await alphaMessages()).length, 1, 'no repeat while it stays away');
+    links[0].status = 'reachable';
+    await until('the back-online message', async () => (await alphaMessages()).length === 2);
+    assert.match((await alphaMessages())[1], /^From Threebot: Fixture laptop is back online/);
+    // Pairing swaps a code for a direct route: live T3 traffic and files then go straight to that machine.
+    assert.equal((await fixture.request('/api/machines/fixture-peer/pair', 'POST', { code: 'WRONG' })).status, 502);
+    assert.equal((await fixture.request('/api/machines/fixture-peer/pair', 'POST', { code: FIXTURE_PAIRING_CODE })).status, 200);
+    assert.equal((await fixture.request('/api/machines?fresh=1')).body.machines[1].route, 'direct');
+    assert.equal((await (await fetch(fixture.url + '/t3/environments/fixture-peer/.well-known/t3/environment')).json()).environmentId, 'fixture-peer');
+    const asset = await fetch(fixture.url + '/t3/environments/fixture-peer/fixture/attachments/sample-image');
+    assert.equal(asset.headers.get('content-type'), 'image/svg+xml');
+    // Where coding work runs reaches every Bot's instructions.
+    assert.equal((await fixture.request('/api/settings', 'PUT', { codingWork: { preferred: { environmentId: 'fixture-peer', label: 'Fixture laptop' }, fallback: { environmentId: 'local', label: 'This machine' } } })).status, 200);
+    const agents = await readFile(path.join(fixture.root, 'bots/alpha/AGENTS.md'), 'utf8');
+    assert.match(agents, /## Where coding work runs\n- Coding work .* runs on \*\*Fixture laptop\*\* \(environmentId `fixture-peer`\)/);
+    assert.equal((await fixture.request('/api/settings', 'PUT', { codingWork: { preferred: { environmentId: '../x' } } })).status, 400);
+  } finally { rpc?.close(); await fixture.close(); await peer.close(); await rm(scratch, { recursive: true, force: true }); }
 });

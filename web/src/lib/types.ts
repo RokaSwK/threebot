@@ -22,10 +22,23 @@ export type Bot = {
   adopted?: boolean;
   /** The machine the Bot's folder is on ("local": the gateway's). */
   environmentId?: string;
+  /** This Bot's own "Where coding work runs"; absent or null uses the global setting. */
+  codingWork?: CodingWork | null;
 };
 
 /** A T3 project on this machine that could become a Bot. */
 export type AdoptableProject = { id: string; title: string; workspaceRoot: string; environmentId: string; archived: boolean; exists: boolean; git: boolean };
+
+/** A machine as Settings → Machines lists it (server/machines.mts). */
+export type Machine = {
+  environmentId: string; label: string; local: boolean; status: "online" | "asleep" | "unreachable" | "expired"; lastSeenAt: string | null;
+  t3Version: string | null; threebotVersion: string | null; laptop: boolean;
+  /** local: this machine. direct: a session there (live threads and files). linked: through T3's link. none: link expired. */
+  route: "local" | "direct" | "linked" | "none"; paired: boolean; lastError: string | null;
+};
+export type CodingMachine = { environmentId: string; label: string };
+/** Settings → Machines → Where coding work runs. environmentId "local" is the machine Threebot runs on. */
+export type CodingWork = { preferred: CodingMachine | null; fallback: CodingMachine | null };
 
 /** The roster line for a conversation, which T3's shell stream leaves empty. */
 export type ThreadPreview = { kind: "text" | "attachment" | "question" | "sent"; role: "user" | "assistant"; text: string; at: string | null };
@@ -46,6 +59,7 @@ export type Settings = {
   avatarDrawingModel?: ModelSelection | null;
   /** Settings → Beta: experimental features, saved on the server because they change what Bots get. */
   beta: { projects: boolean };
+  codingWork?: CodingWork | null;
 };
 
 export type ProviderOptionSelection = { id: string; value: string | boolean };

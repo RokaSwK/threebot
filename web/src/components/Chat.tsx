@@ -23,6 +23,8 @@ import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
 import { canStartFresh, openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
+import { threadKey, threadTarget } from "../lib/t3";
+import { MachineBadge } from "./MachineBadge";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
@@ -138,7 +140,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
         )}
         <button onClick={() => setDetailsOpen(!detailsOpen)} className="chat-title pointer-events-auto flex h-8 max-w-[55%] items-center gap-2 rounded-full border border-line bg-chat/80 pr-3.5 pl-1.5 backdrop-blur hover:bg-hover" title="View conversation details">
           <ActivityAvatar threadId={threadId} status={status} shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={onBack ? 26 : 24} />
-          <span className="chat-title-text min-w-0"><span className="chat-title-name block truncate text-[13.5px]">{identity.name}</span>{statusLine(status) && <span className="chat-status block truncate text-[11px] text-muted">{statusLine(status)}</span>}</span>
+          <span className="chat-title-text min-w-0"><span className="chat-title-name flex min-w-0 items-center gap-1.5 text-[13.5px]"><span className="truncate">{identity.name}</span>{threadId && threadTarget(threadId).environmentId && <MachineBadge environmentId={threadTarget(threadId).environmentId!} />}</span>{statusLine(status) && <span className="chat-status block truncate text-[11px] text-muted">{statusLine(status)}</span>}</span>
         </button>
         <div className="pointer-events-auto absolute right-3 flex gap-1">
           <IconButton className="chat-computer" title="Open computer" onClick={() => openDialog({ kind: "computer", slug: bot.slug })}>
@@ -332,6 +334,7 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
   const bots = useApp((s) => s.bots);
   const historical = useApp((s) => s.historicalBots);
   const threads = useApp((s) => s.threads);
+  const selectedBot = useApp((s) => s.selected ? s.bots[s.selected] ?? s.historicalBots[s.selected] : undefined);
   const reference = href ? parseThreadLink(href) : null;
   const mentioned = href?.startsWith("bot:") ? bots[decodeURIComponent(href.slice(4))] : reference ? [...Object.values(bots), ...Object.values(historical)].find((b) => b.mainThreadId === reference.threadId) : undefined;
   if (mentioned) return <BotMention bot={mentioned} />;
@@ -341,6 +344,12 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
     if (thread && owner) {
       const identity = threadIdentity(owner, thread.id, threads);
       return <button className="bot-mention inline-flex items-center gap-1 align-baseline font-medium hover:underline" style={{ color: botTextColor(owner.color) }} onClick={() => selectThread(owner, thread.id)}><Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={14} />{identity.name}</button>;
+    }
+    // A thread on another machine opens in the app, beside the Bot that posted the link.
+    const host = selectedBot && reference.environmentId ? selectedBot : null;
+    if (host && reference.environmentId) {
+      const key = threadKey({ environmentId: reference.environmentId, threadId: reference.threadId });
+      return <a className="md-link inline-flex items-baseline gap-1" href={`?environment=${encodeURIComponent(reference.environmentId)}&thread=${encodeURIComponent(reference.threadId)}`} onClick={(e) => { if (e.button === 0 && !e.metaKey && !e.ctrlKey) { e.preventDefault(); selectThread(host, key); } }}>{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}<MachineBadge environmentId={reference.environmentId} className="self-center" /></a>;
     }
     return <a className="md-link" href={reference.environmentId ? threadLink({ kind: "remote", ...reference, environmentId: reference.environmentId, label: "T3 Code" }) : undefined} target="_blank" rel="noreferrer">{typeof children === "string" && children.startsWith("t3-thread:") ? "Open thread" : children}</a>;
   }

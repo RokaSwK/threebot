@@ -718,3 +718,19 @@ test("Back and Next retain a single selection and unfinished custom detail", asy
   await click(button("Done"));
   assertCommand({ type: "runtime-request.respond", answers: { choice: "first-id", detail: "Keep this unfinished detail" } });
 });
+
+test('a remote child on a machine Threebot reaches opens inside the app with its machine badge', async () => {
+  const bot = { slug: 'parent', name: 'Parent', mainThreadId: 'root', shape: 'blob', color: 'teal' };
+  const value = item('subagent', { subagentId: 'agent', status: 'running', childThreadId: null, remoteChild: { environmentId: 'machine', threadId: 'remote-child', label: 'Other Mac' } });
+  useApp.setState({ bots: { parent: bot }, machines: [{ environmentId: 'machine', label: 'Air M5', local: false, status: 'asleep', lastSeenAt: null, t3Version: null, threebotVersion: null, laptop: true, route: 'linked', paired: false, lastError: null }] });
+  await act(async () => root.render(h(SubagentCard, { entry: { kind: 'subagent', id: value.id, item: value }, bot, threadId: 'root' })));
+  const link = host.querySelector('a');
+  assert.equal(link.getAttribute('href'), '?bot=parent&environment=machine&thread=remote-child');
+  assert.equal(link.target, '');
+  assert.equal(host.querySelector('[data-machine-badge="machine"]').getAttribute('title'), 'Air M5 · Asleep');
+  await click(link);
+  assert.equal(useApp.getState().selectedThreadId, 'environment:machine:remote-child');
+  // Only the gateway reads a linked-only thread: no live T3 connection to that machine is opened.
+  assert.equal(calls.filter((call) => call.tag === 'orchestration.dispatchCommand' || call.tag === 'orchestration.getThreadFamily').length, 0);
+  useApp.setState({ machines: null });
+});

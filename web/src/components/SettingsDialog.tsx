@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Network, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
@@ -12,6 +12,7 @@ import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
 import { Group, H, Row } from "./SettingsParts";
 import { RemoteAccessPane, UpdatesPane, useUpdateNotice } from "./RemoteAccess";
 import { UsageStatsPane } from "./UsageStats";
+import { MachinesPane } from "./MachinesPane";
 import { fastDrawingModel } from "../lib/avatarDrawing";
 import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
@@ -25,6 +26,7 @@ const PANES = [
   { id: "bots", label: "Bots", icon: <BotIcon size={15} /> },
   { id: "appearance", label: "Appearance", icon: <Palette size={15} /> },
   { id: "computer", label: "Computer", icon: <Monitor size={15} /> },
+  { id: "machines", label: "Machines", icon: <Network size={15} /> },
   { id: "permissions", label: "Permissions", icon: <Shield size={15} /> },
   { id: "vault", label: "Vault", icon: <Vault size={15} /> },
   { id: "access", label: "Remote access", icon: <Globe size={15} /> },
@@ -85,6 +87,7 @@ export function SettingsDialog() {
                 {pane === "timezone" && <TimeZoneSettings s={settings} />}
                 {pane === "computer" && <Computer />}
                 {pane === "bots" && <BotsPane />}
+                {pane === "machines" && <MachinesPane save={save} />}
                 {pane === "permissions" && <Permissions s={settings} />}
                 {pane === "vault" && <VaultPane />}
                 {pane === "access" && <RemoteAccessPane />}
@@ -131,6 +134,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <SettingsHomeLink title="Time Zone" detail={timezone} disabled={!s.timezone} onClick={() => pane("timezone")} />
       <SettingsHomeLink title="Bots" description="Make a Bot from one of your projects" onClick={() => pane("bots")} />
       <SettingsHomeLink title="Bot Computer" onClick={() => pane("computer")} />
+      <SettingsHomeLink title="Machines" description="Your linked computers and where coding work runs" onClick={() => pane("machines")} />
     </Group>
     <Group title="Voice">
       <Row title="Voice language" desc="Used for dictation and voice calls.">

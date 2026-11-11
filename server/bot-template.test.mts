@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { renderAgentsMd, mergeManaged, MANAGED_START, MANAGED_END } from "./bot-template.mts";
+import { renderAgentsMd, mergeManaged, codingWorkSection, MANAGED_START, MANAGED_END } from "./bot-template.mts";
 
 const render = (settings = {}) => renderAgentsMd({ bot: { name: "Roka", slug: "roka", projectId: "p", mainThreadId: "t" }, settings, botsRoot: "/bots" });
 
@@ -73,4 +73,24 @@ test("an existing Bot's old managed block is replaced on rewrite, keeping its ow
   assert.doesNotMatch(next, /Safety and approvals|count as permission/);
   assert.match(next, /## Independence and judgment/);
   assert.match(next, /My own notes\./);
+});
+
+test("Where coding work runs: the setting tells Bots where to start coding work, per Bot over global", () => {
+  const m5 = { environmentId: "m5-env", label: "Air M5" }, local = { environmentId: "local", label: "This machine" };
+  const bot = { name: "Coder", slug: "coder" };
+  const none = renderAgentsMd({ bot, settings: {}, botsRoot: "/bots" });
+  assert.doesNotMatch(none, /Where coding work runs/);
+  assert.doesNotMatch(renderAgentsMd({ bot, settings: { codingWork: { preferred: local, fallback: null } }, botsRoot: "/bots" }), /Where coding work runs/);
+  const global = renderAgentsMd({ bot, settings: { userName: "Roka", codingWork: { preferred: m5, fallback: local } }, botsRoot: "/bots" });
+  assert.match(global, /## Where coding work runs/);
+  assert.match(global, /\*\*Air M5\*\* \(environmentId `m5-env`\)/);
+  assert.match(global, /`delegate_task` with `target.environmentId` "m5-env"/);
+  assert.match(global, /When Air M5 isn't reachable, use this machine/);
+  assert.match(global, /replaces any note in your memory/);
+  assert.match(global, /Roka manages in Threebot/);
+  // A Bot's own choice wins over the global one.
+  const own = renderAgentsMd({ bot: { ...bot, codingWork: { preferred: local, fallback: null } }, settings: { codingWork: { preferred: m5, fallback: local } }, botsRoot: "/bots" });
+  assert.doesNotMatch(own, /Where coding work runs/);
+  const nas = { environmentId: "nas", label: "truenas" };
+  assert.match(codingWorkSection({ preferred: m5, fallback: nas }), /use \*\*truenas\*\* \(environmentId `nas`\) instead and start it there/);
 });

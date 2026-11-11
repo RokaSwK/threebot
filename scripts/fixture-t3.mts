@@ -26,8 +26,17 @@ export const SAMPLE_BARS = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" 
 export const SAMPLE_TEXT = Buffer.from('Generic attachment. No user data.\n');
 export const samplesFor = (scenario: string): FixtureSample[] => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
 
-export async function startFakeT3(root: string, port = 0, { scenario = 'basic', executor, environmentId = 'fixture-only' }: {
-  scenario?: string; executor?: { app: string; connection: string }; environmentId?: string;
+/** A machine the fake T3 links (T3's peer links), with threads reached only through its forwarded tools. */
+export type FixtureLink = {
+  environmentId: string; label: string; urls: string[]; status: 'reachable' | 'unreachable' | 'expired';
+  threads: { threadId: string; title: string; status: string; messages: { type: 'user_message' | 'assistant_message'; text: string }[] }[];
+  /** Tasks a local thread runs there (a Bot's delegate_task with target.environmentId). */
+  tasks?: { parentThreadId: string; threadId: string; title: string }[];
+};
+export const FIXTURE_PAIRING_CODE = 'FIXTURE-PAIR-ONLY';
+
+export async function startFakeT3(root: string, port = 0, { scenario = 'basic', executor, environmentId = 'fixture-only', links }: {
+  scenario?: string; executor?: { app: string; connection: string }; environmentId?: string; links?: FixtureLink[];
 } = {}) {
   validateScenario(scenario);
   const samples = samplesFor(scenario);
@@ -143,7 +152,13 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
   let nextAttachment = 0;
   let sequence = 0;
   // T3 projections carry user messages beside turn items; Threebot counts them for PR chips.
-  const projection = (threadId: string) => ({ thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [], ...(latest?.usage.get(threadId) ?? {}) });
+  // Remote tasks show up on the local parent the way T3 records them: a subagent with remoteChild.
+  const remoteTasks = (threadId: string) => (links ?? []).flatMap((link) => (link.tasks ?? []).filter((task) => task.parentThreadId === threadId).map((task) => ({
+    id: `remote-task-${task.threadId}`, threadId, runId: null, status: link.threads.find((t) => t.threadId === task.threadId)?.status === 'completed' ? 'completed' : 'running',
+    title: task.title, prompt: task.title, childThreadId: null, createdAt: STAMP, updatedAt: STAMP, startedAt: STAMP, completedAt: null,
+    remoteChild: { environmentId: link.environmentId, threadId: task.threadId, label: link.label, title: task.title },
+  })));
+  const projection = (threadId: string) => ({ ...(remoteTasks(threadId).length ? { subagents: remoteTasks(threadId) } : {}), thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [], ...(latest?.usage.get(threadId) ?? {}) });
   const chunk = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Chunk', requestId: id, values: [value] }));
   const exit = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }));
   const fail = (ws: FixtureSocket, id: string, message: string) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id,
@@ -156,6 +171,53 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     }
   };
   const stopActivity = activity?.start(publish);
+  const readText = async (req: http.IncomingMessage) => { const chunks: Buffer[] = []; for await (const buffer of req) chunks.push(buffer); return Buffer.concat(chunks).toString('utf8'); };
+  // T3's MCP sign-in, as the gateway runs it with its own bearer: register, approve, swap the code.
+  const mcpTokens = new Set<string>();
+  const mcpOAuth = async (req: http.IncomingMessage, res: http.ServerResponse, route: string) => {
+    const text = await readText(req);
+    if (route === '/oauth/mcp/register') return json(res, 201, { client_id: 'fixture-client', client_name: 'Threebot', redirect_uris: JSON.parse(text).redirect_uris, grant_types: ['authorization_code'], response_types: ['code'], token_endpoint_auth_method: 'none' });
+    const signedIn = req.headers.authorization === 'Bearer fixture-only';
+    if (route === '/oauth/mcp/approval') return json(res, 200, { clientName: 'Threebot', redirectHost: '127.0.0.1', environmentHost: '127.0.0.1', ...(signedIn ? { csrfToken: 'fixture-csrf', oneClickAccess: ['read-only', 'auto'] } : {}) });
+    if (route === '/oauth/mcp/decision') {
+      const body = JSON.parse(text);
+      if (!signedIn || body.decision?.csrfToken !== 'fixture-csrf') return json(res, 400, { _tag: 'AuthMcpApprovalError', message: 'Your session cannot approve this request.' });
+      return json(res, 200, { redirectTo: `${body.authorization.redirect_uri}?code=fixture-code&state=${body.authorization.state}` });
+    }
+    if (route === '/oauth/mcp/token') {
+      const form = new URLSearchParams(text);
+      if (form.get('code') !== 'fixture-code' || !form.get('code_verifier')) return json(res, 400, { error: 'invalid_grant', error_description: 'Bad code' });
+      const issued = `fixture-mcp-${mcpTokens.size + 1}`;
+      mcpTokens.add(issued);
+      return json(res, 200, { access_token: issued, token_type: 'Bearer', expires_in: 2592000, scope: 'orchestration:read orchestration:operate' });
+    }
+    return json(res, 404, { error: 'not found' });
+  };
+  // T3's tool server, forwarding thread reads and sends to the linked machine like the real one.
+  const mcpCall = async (req: http.IncomingMessage, res: http.ServerResponse) => {
+    if (!mcpTokens.has(String(req.headers.authorization ?? '').replace(/^Bearer /, ''))) return json(res, 401, { error: 'Only MCP client sessions are accepted here.' });
+    const body = JSON.parse(await readText(req));
+    if (body.method === 'initialize') { res.setHeader('mcp-session-id', 'fixture-mcp-session'); return json(res, 200, { jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'T3 Code', version: 'fixture' } } }); }
+    if (!body.id) { res.writeHead(202); return res.end(); }
+    const toolResult = (value: unknown, isError = false) => json(res, 200, { jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(value) }], ...(isError ? { isError: true } : {}) } });
+    const args = body.params?.arguments ?? {};
+    const link = links!.find((candidate) => candidate.environmentId === args.environmentId);
+    if (!link) return toolResult({ message: 'That environment is not linked.' }, true);
+    if (link.status !== 'reachable') return toolResult({ message: `${link.label} did not answer.` }, true);
+    const thread = link.threads.find((candidate) => candidate.threadId === args.threadId);
+    if (!thread) return toolResult({ message: 'Thread not found there.' }, true);
+    if (body.params.name === 't3_thread_read') {
+      const after = typeof args.afterPosition === 'number' ? args.afterPosition : -1;
+      const all = thread.messages.map((message, position) => ({ position, itemId: `${thread.threadId}-${position}`, type: message.type, text: message.text, textTruncated: false, status: 'completed', createdBy: message.type === 'user_message' ? 'user' : 'agent', updatedAt: STAMP }));
+      const visible = all.filter((entry) => entry.position > after);
+      return toolResult({ thread: { threadId: thread.threadId, title: thread.title, status: thread.status, itemCount: all.length, activeRunId: null, updatedAt: STAMP }, items: visible, nextPosition: visible.at(-1)?.position ?? null, hasMore: false });
+    }
+    if (body.params.name === 't3_thread_send') {
+      thread.messages.push({ type: 'user_message', text: String(args.message) });
+      return toolResult({ threadId: thread.threadId, messageId: `fixture-remote-${thread.messages.length}`, runId: 'fixture-remote-run', status: 'running', delivery: 'started' });
+    }
+    return toolResult({ message: `Unavailable in local fixture: ${body.params.name}` }, true);
+  };
   const json = (res: http.ServerResponse, status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   const server = http.createServer(async (req, res) => {
     try {
@@ -174,7 +236,14 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
         const result = latest.transcribe(Buffer.concat(chunks));
         return json(res, result.status, result.body);
       }
-      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId });
+      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId, platform: { os: 'fixture', arch: 'fixture', machine: links ? 'server' : 'laptop' }, ...(links ? { capabilities: { peerLinks: true } } : {}) });
+      // T3's token exchange for a one-time pairing code; only the fixture's own code works.
+      if (url.pathname === '/oauth/token' && req.method === 'POST') {
+        const form = new URLSearchParams(await readText(req));
+        return form.get('subject_token') === FIXTURE_PAIRING_CODE ? json(res, 200, { access_token: 'fixture-only', issued_token_type: 'urn:ietf:params:oauth:token-type:access_token', token_type: 'Bearer', expires_in: 3600, scope: 'orchestration:read' }) : json(res, 400, { error: 'invalid_grant' });
+      }
+      if (links && url.pathname.startsWith('/oauth/mcp/')) return mcpOAuth(req, res, url.pathname);
+      if (links && url.pathname === '/mcp' && req.method === 'POST') return mcpCall(req, res);
       if (interactions && url.pathname === '/fixture/interactions' && req.method === 'GET') return json(res, 200, interactions.inspect());
       if (interactions && url.pathname === '/fixture/interactions/fail-once' && req.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -261,6 +330,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
           subs.set(id, { tag, threadId: payload.threadId });
           return chunk(ws, id, { kind: 'snapshot', projection: projection(payload.threadId) });
         }
+        if (tag === 'peerLinks.list' && links) return exit(ws, id, { links: links.map(({ threads: _threads, tasks: _tasks, ...link }) => ({ ...link, access: 'full-access', linkedAt: STAMP, expiresAt: '2099-01-01T00:00:00.000Z', lastReachedAt: STAMP, lastError: null })) });
         if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }, ...(avatars ? AVATAR_PROVIDERS : [])], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ?? avatars ? { environment: { capabilities: (latest ?? avatars)!.capabilities, ...(latest ? { serverVersion: latest.serverVersion } : {}) } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
         if (tag === 'orchestration.getThreadFamily') return exit(ws, id, { threads: threads.filter((thread) => thread.lineage.rootThreadId === threads.find((t) => t.id === payload.threadId)?.lineage.rootThreadId) });
         if (tag === 'orchestration.getArchivedShellSnapshot') return exit(ws, id, { snapshotSequence: sequence, projects, threads: threads.filter((t) => t.archivedAt) });
@@ -302,7 +372,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
               threadRuns.push(run);
             }
             const entries = items.get(thread.id)!;
-            entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: 'user', creationSource: 'web', attachments: payload.attachments ?? [], ...(payload.freshContext === true ? { freshContext: true } : {}), updatedAt: now }));
+            entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: payload.createdBy === 'agent' ? 'agent' : 'user', creationSource: payload.creationSource === 'server' ? 'server' : 'web', attachments: payload.attachments ?? [], ...(payload.freshContext === true ? { freshContext: true } : {}), updatedAt: now }));
             Object.assign(thread, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: now });
             avatars?.afterMessage(thread, payload.text, publish);
           } else {

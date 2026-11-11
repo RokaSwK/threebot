@@ -1,5 +1,7 @@
 // Explicit server-side routes. A peer's local token is never sent to another machine.
 // T3_ENVIRONMENTS_FILE: { "environment-id": { "baseUrl": "https://...", "tokenFile": "/private/..." } }
+// Machines paired in Settings → Machines are written to a second file in the same form; the first
+// file that names an environment wins, so the hand-written one overrides.
 import { readFile, lstat } from 'node:fs/promises';
 
 /** Where a request goes, and the bearer it carries there. */
@@ -18,16 +20,24 @@ async function privateFile(file: string): Promise<string> {
   return readFile(file, 'utf8');
 }
 export function createEnvironmentRouter<Local = EnvironmentTarget>({ local, file, readPrivate = privateFile, fetcher = fetch }: {
-  local?: Local; file?: string; readPrivate?: (file: string) => Promise<string>; fetcher?: EnvironmentFetch;
+  local?: Local; file?: string | (string | undefined)[]; readPrivate?: (file: string) => Promise<string>; fetcher?: EnvironmentFetch;
 })  {
   return async (environmentId: string | null | undefined): Promise<Local | EnvironmentTarget> => {
     // Callers that route local requests pass `local`; the others never ask for it.
     if (!environmentId) return local as Local;
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(environmentId)) throw failure('Invalid environment', 400);
-    if (!file) throw failure('This machine has no scoped gateway access. Configure a credential for this environment.');
-    let routes;
-    try { routes = JSON.parse(await readPrivate(file)); } catch { throw failure('Scoped environment access is unavailable. Check the gateway credential files.'); }
-    const route = Object.hasOwn(routes, environmentId) ? routes[environmentId] : null;
+    const files = (Array.isArray(file) ? file : [file]).filter((name): name is string => Boolean(name));
+    if (!files.length) throw failure('This machine has no scoped gateway access. Configure a credential for this environment.');
+    let route = null;
+    for (const name of files) {
+      let routes;
+      try { routes = JSON.parse(await readPrivate(name)); } catch (error) {
+        // A routes file that was never written (no paired machines yet) has no routes.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw failure('Scoped environment access is unavailable. Check the gateway credential files.');
+      }
+      if (routes && typeof routes === 'object' && Object.hasOwn(routes, environmentId)) { route = routes[environmentId]; break; }
+    }
     if (!route) throw failure('This machine has no scoped gateway access. Link or authorize this environment.');
     let base;
     try { base = new URL(route.baseUrl); } catch { throw failure('Invalid configured environment address.'); }
