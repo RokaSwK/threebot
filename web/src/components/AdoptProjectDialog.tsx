@@ -55,7 +55,7 @@ function AdoptProjectForm({ project, onBack }: { project: AdoptableProject; onBa
   const bots = useApp((s) => s.bots);
   const allThreads = useApp((s) => s.threads);
   const first = Object.keys(bots).length === 0;
-  const threads = useMemo(() => mainThreadChoices(Object.values(allThreads), project.id), [allThreads, project.id]);
+  const threads = useMemo(() => mainThreadChoices(Object.values(allThreads), project.id, project.workspaceRoot), [allThreads, project.id, project.workspaceRoot]);
   const [name, setName] = useState(project.title);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<AvatarDraft>({ ...DEFAULT_AVATAR });

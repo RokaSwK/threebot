@@ -26,6 +26,8 @@ export type AdoptedFile = {
   mode: "created" | "merged" | "skipped";
   /** JSON files: the top-level keys (or `mcpServers.<name>`) adoption added, so undo removes only those. */
   keys?: string[];
+  /** JSON files: the user's own values adoption replaced, by the same key names, so undo puts them back. */
+  originals?: Record<string, unknown>;
 };
 
 export type AdoptedBot = {
@@ -237,25 +239,28 @@ export function stripManaged(text: string) {
 export async function mergeJsonFile(file: string, set: Record<string, unknown>, entry: AdoptedFile) {
   const current = await fs.readFile(file, "utf8").then(JSON.parse).catch((error) => { if (error.code === "ENOENT") return {}; throw error; });
   const keys = new Set(entry.keys ?? []);
+  const originals = { ...entry.originals };
   for (const [key, value] of Object.entries(set)) {
     const [top, sub] = key.split(".");
-    if (sub) {
-      const holder = current[top] && typeof current[top] === "object" ? current[top] : (current[top] = {});
-      if (entry.mode === "merged" && !(sub in holder) && !keys.has(key)) keys.add(key);
-      holder[sub] = value;
-    } else {
-      if (entry.mode === "merged" && !(top in current) && !keys.has(key)) keys.add(key);
-      current[top] = value;
+    const holder = sub ? (current[top] && typeof current[top] === "object" ? current[top] : (current[top] = {})) : current;
+    const name = sub ?? top;
+    // The first time adoption writes a key, remember whether it was the user's, and what it held.
+    if (entry.mode === "merged" && !keys.has(key) && !(key in originals)) {
+      if (name in holder) originals[key] = holder[name]; else keys.add(key);
     }
+    holder[name] = value;
   }
-  if (entry.mode === "merged") entry.keys = [...keys];
+  if (entry.mode === "merged") {
+    entry.keys = [...keys];
+    if (Object.keys(originals).length) entry.originals = originals;
+  }
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(`${file}.tmp`, JSON.stringify(current, null, 2) + "\n", { mode: 0o600 });
   await fs.rename(`${file}.tmp`, file);
 }
 
-/** Removes the keys adoption added to a user's JSON file. */
-async function unmergeJsonFile(file: string, keys: string[]) {
+/** Removes the keys adoption added to a user's JSON file, and puts back the values it replaced. */
+async function unmergeJsonFile(file: string, keys: string[], originals: Record<string, unknown> = {}) {
   const current = await fs.readFile(file, "utf8").then(JSON.parse).catch(() => null);
   if (!current || typeof current !== "object") return;
   for (const key of keys) {
@@ -266,6 +271,11 @@ async function unmergeJsonFile(file: string, keys: string[]) {
         if (Object.keys(current[top]).length === 0) delete current[top];
       }
     } else delete current[top];
+  }
+  for (const [key, value] of Object.entries(originals)) {
+    const [top, sub] = key.split(".");
+    if (sub) (current[top] && typeof current[top] === "object" ? current[top] : (current[top] = {}))[sub] = value;
+    else current[top] = value;
   }
   await fs.writeFile(file, JSON.stringify(current, null, 2) + "\n");
 }
@@ -285,7 +295,7 @@ export async function undoAdoptionFiles(entry: AdoptedBot) {
           const rest = stripManaged(text);
           if (rest !== text) await fs.writeFile(full, rest);
         }
-      } else if (file.keys?.length) await unmergeJsonFile(full, file.keys);
+      } else if (file.keys?.length || file.originals) await unmergeJsonFile(full, file.keys ?? [], file.originals);
     }
   }
   for (const folder of entry.createdDirs) await fs.rmdir(path.join(entry.path, folder)).catch(() => {});

@@ -36,8 +36,10 @@ test('a project offers its own top-level, unarchived threads as the main convers
     thread('side', { lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: 'side', sideChat: true } }),
     thread('gone', { archivedAt: '2026-01-02T00:00:00Z' }),
     thread('elsewhere', { projectId: 'q' }),
-  ], 'p');
-  assert.deepEqual(choices.map((t: { id: string }) => t.id), ['new', 'old']);
+    thread('worktree', { worktreePath: '/work/repo-wt' }),
+    thread('root', { worktreePath: '/work/repo/', latestUserMessageAt: '2025-12-01T00:00:00Z' }),
+  ], 'p', '/work/repo');
+  assert.deepEqual(choices.map((t: { id: string }) => t.id), ['new', 'old', 'root']);
 });
 
 test('the adopt dialog survives a reload from browser history', () => {

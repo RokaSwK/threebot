@@ -654,8 +654,10 @@ async function adoptProject(input: AdoptRequest) {
   if (within(cfg.botsRoot, dir)) throw Object.assign(new Error("Projects in the Bots folder are Bots already."), { status: 409 });
   if (!(await fs.stat(dir).then((stat) => stat.isDirectory(), () => false))) throw Object.assign(new Error("That project's folder isn't on this machine."), { status: 409 });
   if (threadId) {
-    const thread = (await shellThreads(false)).find((candidate) => candidate.id === threadId);
+    const thread = (await shellThreads(false)).find((candidate) => candidate.id === threadId) as (BotThread & { worktreePath?: string | null }) | undefined;
     if (!thread || thread.projectId !== project.id) throw Object.assign(new Error("That thread isn't in this project."), { status: 400 });
+    // The Bot's files are in the project's own folder; a thread in another worktree would never read them.
+    if (thread.worktreePath && !samePath(thread.worktreePath, dir)) throw Object.assign(new Error("That thread works in a separate worktree. Pick a thread in the project's own folder, or start a new conversation."), { status: 400 });
   }
   input = objectAvatarPatch(colorPatch(input));
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);

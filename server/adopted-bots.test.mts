@@ -94,7 +94,8 @@ test('adoption keeps a git repo clean, never touches tracked files, and undo res
   const botsRoot = await tempDir(t, 'adopt-bots-');
   // The user's own untracked Claude settings stay theirs: adoption only adds its keys.
   await mkdir(path.join(dir, '.claude'));
-  await writeFile(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] } }));
+  // ...including a value adoption has to replace, which comes back on release.
+  await writeFile(path.join(dir, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls)'] }, enableAllProjectMcpServers: false }));
   const before = { status: status(dir), exclude: await readFile(path.join(dir, '.git', 'info', 'exclude'), 'utf8'), tracked: git(dir, 'ls-files', '-s'), head: git(dir, 'rev-parse', 'HEAD') };
   assert.match(before.status, /\.claude\/settings\.local\.json/);
 
@@ -121,7 +122,11 @@ test('adoption keeps a git repo clean, never touches tracked files, and undo res
   await mergeJsonFile(path.join(dir, '.mcp.json'), { 'mcpServers.bot': { url: 'http://127.0.0.1/mcp/bot' } }, files.find((f) => f.path === '.mcp.json')!);
   const claude = files.find((f) => f.path === '.claude/settings.local.json')!;
   await mergeJsonFile(path.join(dir, '.claude', 'settings.local.json'), { enableAllProjectMcpServers: true }, claude);
-  assert.deepEqual(claude.keys, ['enableAllProjectMcpServers']);
+  assert.deepEqual(claude.keys, []);
+  assert.deepEqual(claude.originals, { enableAllProjectMcpServers: false });
+  await mergeJsonFile(path.join(dir, '.claude', 'settings.local.json'), { enableAllProjectMcpServers: true }, claude);
+  assert.deepEqual(claude.originals, { enableAllProjectMcpServers: false }, 'a rewrite keeps the original, not its own value');
+  assert.equal(JSON.parse(await readFile(path.join(dir, '.claude', 'settings.local.json'), 'utf8')).enableAllProjectMcpServers, true);
   await mkdir(path.join(dir, '.codex'));
   await writeFile(path.join(dir, '.codex', 'config.toml'), '[mcp_servers.bot]\n');
   await mergeJsonFile(path.join(dir, '.pi', 'mcp.json'), { 'mcpServers.bot': { url: 'x' } }, files.find((f) => f.path === '.pi/mcp.json')!);
@@ -139,7 +144,7 @@ test('adoption keeps a git repo clean, never touches tracked files, and undo res
   assert.equal(await readFile(path.join(archive!, 'library', 'report.html'), 'utf8'), '<p>report</p>\n');
   assert.equal(JSON.parse(await readFile(path.join(archive!, 'adopted-from.json'), 'utf8')).path, dir);
   for (const gone of ['.bot', 'CLAUDE.local.md', 'AGENTS.override.md', '.mcp.json', '.codex', '.pi']) assert.equal(existsSync(path.join(dir, gone)), false, gone);
-  assert.deepEqual(JSON.parse(await readFile(path.join(dir, '.claude', 'settings.local.json'), 'utf8')), { permissions: { allow: ['Bash(ls)'] } });
+  assert.deepEqual(JSON.parse(await readFile(path.join(dir, '.claude', 'settings.local.json'), 'utf8')), { permissions: { allow: ['Bash(ls)'] }, enableAllProjectMcpServers: false });
   assert.equal(await readFile(path.join(dir, '.git', 'info', 'exclude'), 'utf8'), before.exclude);
   assert.equal(status(dir), before.status);
   assert.equal(git(dir, 'rev-parse', 'HEAD'), before.head);

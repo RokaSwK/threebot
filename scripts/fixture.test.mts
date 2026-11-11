@@ -838,6 +838,10 @@ test('a T3 project in a git repo becomes a Bot in place, keeps git status clean,
     assert.equal(listed.status, 200);
     assert.deepEqual(listed.body.projects.map((p: Json) => [p.id, p.workspaceRoot, p.git, p.environmentId]), [['project-app', repo, true, 'local']], 'only the plain project, not the Bots');
 
+    const worktree = await fixture.request('/api/bots/adopt', 'POST', { projectId: 'project-app', threadId: 'thread-app-wt', name: 'App Keeper' });
+    assert.equal(worktree.status, 400, 'a thread in another worktree would never read the Bot\'s files');
+    assert.match(worktree.body.error, /separate worktree/);
+    assert.equal(status(), '', 'a refused adoption leaves nothing behind');
     const adopted = await fixture.request('/api/bots/adopt', 'POST', { projectId: 'project-app', threadId: 'thread-app-1', name: 'App Keeper', shape: 'sphere', color: 'teal' });
     assert.equal(adopted.status, 200, JSON.stringify(adopted.body));
     assert.equal(adopted.body.slug, 'app-keeper');

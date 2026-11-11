@@ -87,6 +87,8 @@ export type ThreadShell = {
   latestVisibleMessage: { id: string; role: string; text: string; updatedAt: string } | null;
   latestUserMessageAt: string | null;
   lineage: { parentThreadId: string | null; relationshipToParent: string | null; rootThreadId: string; sideChat?: boolean };
+  /** Set when the thread works in its own git worktree instead of the project's folder. */
+  worktreePath?: string | null;
   archivedAt: string | null;
   /** Settlement is an inbox lifecycle, independent of the latest run outcome. */
   settledOverride?: "settled" | "active" | null;

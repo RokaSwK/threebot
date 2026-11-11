@@ -47,6 +47,8 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     for (const [id, title] of [['thread-app-1', 'Fix the sample login form'], ['thread-app-2', 'Sample release notes']]) {
       threads.push({ ...makeThread('alpha'), id, projectId: 'project-app', title, lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id } });
     }
+    // A thread in its own git worktree, which can't be the Bot's main thread.
+    threads.push({ ...makeThread('alpha'), id: 'thread-app-wt', projectId: 'project-app', title: 'Sample worktree branch', worktreePath: path.join(root, 'projects', 'sample-app-wt'), lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: 'thread-app-wt' } } as FixtureThread);
   }
   const item = (threadId: string, ordinal: number, type: string, extra: Partial<FixtureItem>): FixtureItem => ({ id: `${threadId}-${ordinal}`, threadId, ordinal, type,
     runId: null, status: 'completed', title: null, startedAt: STAMP, completedAt: STAMP,
