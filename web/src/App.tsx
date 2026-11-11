@@ -1,6 +1,7 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import { Avatar } from "./components/Avatar";
 import { Chat } from "./components/Chat";
+import { RemoteThread } from "./components/RemoteThread";
 import { ComputerOverlay } from "./components/Computer";
 import { ConnectApps } from "./components/ConnectApps";
 import { Details } from "./components/Details";
@@ -14,7 +15,7 @@ import { useAutoUpdateNotice } from "./components/RemoteAccess";
 import { ProjectsPage } from "./components/Projects";
 import { ColumnDivider } from "./components/ColumnDivider";
 import { Modal, Pill, Spinner } from "./components/ui";
-import { boot, botStatus, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, useProjectsOn, type MainBotIntent } from "./store";
+import { boot, botStatus, machineOf, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, useProjectsOn, type MainBotIntent } from "./store";
 import { api } from "./lib/api";
 import { MOBILE_LAYOUT_QUERY } from "./lib/layout";
 import { navigationFor, navigationUrl, readNavigation, restoreNavigation } from "./lib/navigation";
@@ -121,6 +122,8 @@ function Shell() {
   const sidebarCompact = useApp((s) => s.sidebarCompact);
   const selectedThreadId = useApp((s) => s.selectedThreadId);
   const settings = useApp((s) => s.settings);
+  // A thread on a machine Threebot reaches only through T3's link reads over the gateway.
+  const remoteLinked = useApp((s) => { const route = machineOf(s.selectedThreadId, s.machines)?.route; return route === "linked" || route === "none"; });
   const projectsOn = useProjectsOn();
   // Settings → Beta → Projects board off: the page (and links to it) lead home instead.
   const page = useApp((s) => s.page === "projects" && !projectsOn ? null : s.page);
@@ -148,10 +151,12 @@ function Shell() {
           <ErrorBoundary key="projects"><ProjectsPage narrow={narrow} onBack={narrow ? () => history.back() : undefined} /></ErrorBoundary>
         ) : bot ? (
           <ErrorBoundary key={bot.slug}>
-            <Chat bot={bot} threadId={selectedThreadId ?? bot.mainThreadId} onBack={narrow ? () => history.back() : undefined} />
+            {remoteLinked
+              ? <RemoteThread bot={bot} threadId={selectedThreadId!} onBack={narrow ? () => history.back() : undefined} />
+              : <Chat bot={bot} threadId={selectedThreadId ?? bot.mainThreadId} onBack={narrow ? () => history.back() : undefined} />}
             {detailsOpen && <div className={narrow ? "fixed inset-0 z-40 flex justify-end bg-[var(--overlay)]" : "contents"} onClick={(event) => { if (narrow && event.target === event.currentTarget) setDetailsOpen(false); }}>
               {!narrow && <ColumnDivider key="divider" column="details" />}
-              <Details key="details" bot={bot} threadId={selectedThreadId ?? bot.mainThreadId} />
+              <Details key="details" bot={bot} threadId={remoteLinked ? bot.mainThreadId : selectedThreadId ?? bot.mainThreadId} />
             </div>}
           </ErrorBoundary>
         ) : settings ? (

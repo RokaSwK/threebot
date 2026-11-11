@@ -3,7 +3,7 @@
 import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { promises as fs, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -24,6 +24,10 @@ import {
 import { createHash } from "node:crypto";
 import { createEnvironmentRouter, environmentPath, type EnvironmentTarget } from "./environment-routes.mts";
 import { createThreadLinkResolver } from "./thread-link.mts";
+import { createMachines, pairedRoutesFile, readRoutes, type Machine, type PeerLink } from "./machines.mts";
+import { createOutageAlerts, remoteThreads, type BotWork } from "./machine-alerts.mts";
+import { createT3Mcp, T3ToolError } from "./t3-mcp.mts";
+import type { CodingWork } from "./bot-template.mts";
 import { accessTokenFrom, createAccessVerifier } from "./access.mts";
 import { createVault } from "./vault.mts";
 import { createBotTools, handleMcpHttp, type ExtraTools, type McpAuth } from "./vault-mcp.mts";
@@ -85,9 +89,11 @@ if (!token) {
   console.error("No T3 token: set T3_TOKEN or T3_TOKEN_FILE");
   process.exit(1);
 }
-const resolveEnvironment = createEnvironmentRouter({ local: { baseUrl: cfg.t3Url, token }, file: process.env.T3_ENVIRONMENTS_FILE });
 const appDir = path.join(cfg.botsRoot, ".botapp");
 await fs.mkdir(appDir, { recursive: true });
+// Direct routes to other machines: T3_ENVIRONMENTS_FILE wins over the ones paired in Settings → Machines.
+const routeFiles = [process.env.T3_ENVIRONMENTS_FILE, pairedRoutesFile(appDir)];
+const resolveEnvironment = createEnvironmentRouter({ local: { baseUrl: cfg.t3Url, token }, file: routeFiles });
 const pushStore = createPushStore({ file: path.join(appDir, "push.json") });
 const secretPath = path.join(appDir, "session-secret");
 if (!existsSync(secretPath)) await fs.writeFile(secretPath, randomBytes(32).toString("hex"), { mode: 0o600 });
@@ -370,6 +376,7 @@ const DEFAULT_SETTINGS = {
   defaultModel: null,
   avatarDrawingModel: null,
   beta: BETA_DEFAULTS,
+  codingWork: null,
 };
 const settingsPath = path.join(appDir, "settings.json");
 // Settings → Beta: decide the Projects board's default once, before anything reads the settings.
@@ -1023,14 +1030,51 @@ const server = http.createServer(async (req, res) => {
       return await proxyT3(req, res, route.path + url.search, await resolveEnvironment(route.environmentId));
     }
 
+    if (p === "/api/machines" && req.method === "GET") {
+      const { machines: list, linksSupported } = await machines.list({ maxAge: url.searchParams.get("fresh") === "1" ? 0 : 15_000 });
+      return send(res, 200, { machines: list, linksSupported }, { "cache-control": "no-store" });
+    }
+    const pairRoute = p.match(/^\/api\/machines\/([a-zA-Z0-9_-]{1,128})\/pair$/);
+    if (pairRoute && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req, 8192);
+      const paired = await machines.pair(pairRoute[1], body?.code, typeof body?.url === "string" && body.url ? body.url : undefined);
+      console.log(`machines: paired ${pairRoute[1]} directly at ${new URL(paired.baseUrl).host}`);
+      return send(res, 200, paired);
+    }
+    if (pairRoute && req.method === "DELETE") return send(res, 200, await machines.unpair(pairRoute[1]));
+    const remoteThread = p.match(/^\/api\/machines\/([a-zA-Z0-9_-]{1,128})\/threads\/([\w:.-]{1,256})(\/messages)?$/);
+    if (remoteThread) {
+      const [, environmentId, threadId, messages] = remoteThread;
+      const machine = await machineFor(environmentId);
+      if (machine.route === "none") return send(res, 409, { error: `The link to ${machine.label} has expired. Link it again in T3 Code.` });
+      try {
+        if (!messages && req.method === "GET") {
+          const after = url.searchParams.get("after");
+          return send(res, 200, { machine, read: await readLinkedThread(environmentId, threadId, after !== null && /^\d{1,9}$/.test(after) ? Number(after) : null) }, { "cache-control": "no-store" });
+        }
+        if (messages && req.method === "POST") {
+          requireJson(req);
+          const text = String((await readBody(req, 256 * 1024))?.text ?? "").trim();
+          if (!text) return send(res, 400, { error: "Write a message first" });
+          return send(res, 200, await t3Mcp.call("t3_thread_send", { environmentId, threadId, message: text, mode: "auto", clientRequestId: randomUUID() }));
+        }
+      } catch (error) {
+        if (error instanceof T3ToolError) return send(res, machine.status === "online" ? error.status : 503, { error: machine.status === "online" ? error.message : `${machine.label} isn't reachable right now${machine.status === "asleep" ? " (it's asleep)" : ""}.` });
+        throw error;
+      }
+      return send(res, 405, { error: "method not allowed" });
+    }
     if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN) && !onTailnet(req, exposure), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null });
     if (p === "/api/thread-link" && req.method === "GET") {
       const environmentId = url.searchParams.get("environmentId") ?? "";
       const threadId = url.searchParams.get("threadId") ?? "";
       if (!/^[a-zA-Z0-9_-]{1,128}$/.test(environmentId) || !/^[\w:%.-]{1,1024}$/.test(threadId)) return send(res, 400, { error: "Invalid thread reference" });
-      // Configured machines stay inside the app; unconfigured links keep the existing T3 handoff.
-      if (process.env.T3_ENVIRONMENTS_FILE) {
-        await resolveEnvironment(environmentId);
+      // Machines the gateway can reach (paired, configured, or linked in T3) stay inside the app;
+      // anything else keeps the existing T3 handoff.
+      const reachable = await resolveEnvironment(environmentId).then(() => true, () => false)
+        || (await machines.list().catch(() => null))?.machines.some((machine) => machine.environmentId === environmentId && !machine.local && machine.route !== "none");
+      if (reachable) {
         res.writeHead(302, { location: `/?environment=${encodeURIComponent(environmentId)}&thread=${encodeURIComponent(threadId)}`, "cache-control": "no-store" });
         return res.end();
       }
@@ -1102,9 +1146,10 @@ const server = http.createServer(async (req, res) => {
       const current = await getSettings();
       const next = { ...current, ...patch };
       if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
+      if ("codingWork" in patch) next.codingWork = codingWorkPatch(patch.codingWork);
       await writeJson(settingsPath, next);
       if (!next.beta.projects) projectRoutes.closeStreams();
-      if ("rules" in patch || "userName" in patch || "timezone" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
+      if ("rules" in patch || "userName" in patch || "timezone" in patch || "codingWork" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);
@@ -1205,7 +1250,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (m && req.method === "PUT") {
       requireJson(req);
-      return send(res, 200, await saveBot(m[1], await readBody(req, AVATAR_BODY_LIMIT)));
+      const patch = await readBody(req, AVATAR_BODY_LIMIT);
+      if (patch && typeof patch === "object" && "codingWork" in patch) patch.codingWork = codingWorkPatch(patch.codingWork);
+      return send(res, 200, await saveBot(m[1], patch));
     }
     if (m && req.method === "DELETE") { const bots = await mainBots.remove(m[1]); return send(res, 200, { ok: true, bots }); }
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
@@ -1293,11 +1340,95 @@ server.on("upgrade", async (req, socket, head) => {
   });
 });
 
+// ---------- machines ----------
+// Settings → Machines, remote threads in the app, and offline alerts. See machines.mts.
+const localDescriptor = async () => {
+  const response = await fetch(cfg.t3Url + "/.well-known/t3/environment", { signal: AbortSignal.timeout(5000) });
+  return response.ok ? response.json() : null;
+};
+const machines = createMachines({
+  appDir, t3Url: cfg.t3Url, version, localDescriptor,
+  // Feature-detected: T3 older than 0.1.9 has no links, and Threebot keeps only its direct routes.
+  async listLinks() {
+    if ((await localDescriptor().catch(() => null))?.capabilities?.peerLinks !== true) return null;
+    const result = await withTimeout((await withTimeout(t3rpc(), 10000, "T3 timed out")).call("peerLinks.list", {}), 45000, "T3 timed out");
+    return Array.isArray(result?.links) ? result.links as PeerLink[] : null;
+  },
+  async routeFiles() {
+    const merged: Record<string, { baseUrl: string }> = {};
+    for (const file of routeFiles.filter((name): name is string => Boolean(name)).reverse()) Object.assign(merged, await readRoutes(file).catch(() => ({})));
+    return merged;
+  },
+});
+const t3Mcp = createT3Mcp({ baseUrl: cfg.t3Url, token, file: path.join(appDir, "machines", "t3-mcp.json") });
+async function machineFor(environmentId: string): Promise<Machine> {
+  const machine = (await machines.list()).machines.find((candidate) => candidate.environmentId === environmentId && !candidate.local);
+  if (!machine) throw Object.assign(new Error("That machine isn't linked to this T3 Code."), { status: 404 });
+  return machine;
+}
+/** A remote thread read through T3's link: its latest messages, or the ones after `after`. */
+async function readLinkedThread(environmentId: string, threadId: string, after: number | null) {
+  const read = (afterPosition?: number) => t3Mcp.call("t3_thread_read", { environmentId, threadId, view: "messages", limit: 100, maxCharsPerItem: 20000, runLimit: 1, ...(afterPosition === undefined ? {} : { afterPosition }) });
+  if (after !== null) return read(after);
+  // No position yet: find the end, then read the tail of the conversation.
+  const head = await read();
+  const count = Number(head?.thread?.itemCount) || 0;
+  return count > 200 && head?.hasMore ? read(count - 200) : head;
+}
+const outageAlerts = createOutageAlerts({
+  file: path.join(appDir, "machines", "outages.json"), log: (line) => console.log(line),
+  post: async (mainThreadId, text) => (await withTimeout(t3rpc(), 10000, "T3 timed out")).dispatch({
+    type: "message.dispatch", threadId: mainThreadId, messageId: randomUUID(), text, attachments: [],
+    createdBy: "agent", creationSource: "server", dispatchMode: { type: "queue_after_active" },
+  }),
+});
+/** The Bots whose main threads have tasks still running on a machine. Throws after the rest if any couldn't be read, so they're tried again. */
+async function botWorkOn(environmentId: string): Promise<BotWork[]> {
+  const out: BotWork[] = [];
+  const unread: string[] = [];
+  for (const bot of await listBots()) {
+    if (!bot.mainThreadId) continue;
+    const projection = await withTimeout((await withTimeout(t3rpc(), 10000, "T3 timed out")).call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15000, "T3 timed out").catch(() => { unread.push(bot.slug); return null; });
+    const threads = remoteThreads(projection, environmentId);
+    if (threads.length) out.push({ slug: bot.slug, mainThreadId: bot.mainThreadId, threads });
+  }
+  if (unread.length) throw Object.assign(new Error(`couldn't read ${unread.join(", ")}`), { partial: out });
+  return out;
+}
+function startMachineMonitor() {
+  let busy = false;
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try { await outageAlerts.observe((await machines.list({ maxAge: 0 })).machines, botWorkOn); }
+    catch (error) { console.error("machines: monitor", (error as Error).message); }
+    finally { busy = false; }
+  };
+  // THREEBOT_MACHINE_POLL_MS is for the disposable fixture; a minute is plenty for real outages.
+  const every = Math.max(500, Number(process.env.THREEBOT_MACHINE_POLL_MS) || 60_000);
+  setInterval(tick, every).unref();
+  setTimeout(tick, Math.min(every, 5_000)).unref();
+}
+/** Settings → Machines → Where coding work runs, as stored: two machines by id, either may be empty. */
+function codingWorkPatch(value: unknown): CodingWork | null {
+  if (value === null) return null;
+  const machine = (raw: unknown) => {
+    if (raw === null || raw === undefined) return null;
+    const candidate = raw as { environmentId?: unknown; label?: unknown };
+    if (typeof candidate.environmentId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(candidate.environmentId)) throw Object.assign(new Error("Pick a linked machine"), { status: 400 });
+    return { environmentId: candidate.environmentId, label: String(candidate.label ?? "").replace(/[\r\n`*]/g, " ").trim().slice(0, 80) || "Linked machine" };
+  };
+  if (!value || typeof value !== "object") throw Object.assign(new Error("codingWork must be an object or null"), { status: 400 });
+  const work = value as { preferred?: unknown; fallback?: unknown };
+  return { preferred: machine(work.preferred), fallback: machine(work.fallback) };
+}
+
 const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings });
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
 startMemoryWatcher();
+startMachineMonitor();
 
 // Web Push: one shell subscription, one push per Bot transition. It reconnects if T3 restarts.
 const pushNotifier = createPushNotifier({

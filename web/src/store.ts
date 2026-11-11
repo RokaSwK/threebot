@@ -9,7 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
-import type { Bot, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
+import type { Bot, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
   items: Record<string, TurnItem>;
@@ -84,6 +84,8 @@ type State = {
   projectItemId: string | null;
   /** The Vault without passwords (null until loaded). */
   vault: VaultItem[] | null;
+  /** Settings → Machines: this machine first, then the ones T3 links or Threebot reaches directly. Null until loaded. */
+  machines: Machine[] | null;
 };
 
 export const useApp = create<State>(() => ({
@@ -126,6 +128,7 @@ export const useApp = create<State>(() => ({
   page: null,
   projectItemId: null,
   vault: null,
+  machines: null,
 }));
 
 const set = useApp.setState;
@@ -193,10 +196,12 @@ async function initialize() {
         resubscribeThreads();
       });
       window.setInterval(refreshBots, 5_000);
+      window.setInterval(() => { if (document.visibilityState === "visible") void loadMachines(); }, 60_000);
       runtimeStarted = true;
     }
     t3.connect();
     void loadVault();
+    void loadMachines();
     booted = true;
     set({ auth: "ready" });
   } catch {
@@ -538,8 +543,25 @@ export function select(slug: string | null) {
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
 }
 
+export async function loadMachines(fresh = false) {
+  const result = await api.machines(fresh).catch(() => null);
+  if (result) set({ machines: result.machines });
+  return result;
+}
+/** The machine a thread key belongs to, once the list has loaded; undefined for this machine's threads. */
+export function machineOf(threadId: string | null | undefined, machines = get().machines): Machine | undefined {
+  const environmentId = threadId ? threadTarget(threadId).environmentId : undefined;
+  return environmentId ? machines?.find((machine) => machine.environmentId === environmentId) : undefined;
+}
+/** Threads Threebot reaches only through T3's link are read over the gateway, not a live T3 connection. */
+export function linkedOnly(threadId: string | null | undefined) {
+  const machine = machineOf(threadId);
+  return machine?.route === "linked" || machine?.route === "none";
+}
+
 export function selectThread(bot: Bot, threadId: string, fromSearch = false) {
   set({ selected: botReferenceKey(bot), selectedThreadId: threadId === bot.mainThreadId ? null : threadId, exchangeBotSlug: null, page: null, projectItemId: null, ...(fromSearch ? { dialog: null, searchResultRevision: get().searchResultRevision + 1 } : {}) });
+  if (linkedOnly(threadId)) return;
   threadClient(threadId).dispatch({ type: "thread.visit", threadId: threadTarget(threadId).threadId, visitedAt: new Date().toISOString() }).catch(() => {});
   loadThreadFamily(threadId);
 }

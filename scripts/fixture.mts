@@ -14,7 +14,7 @@ import { createInterface } from 'node:readline';
 import type { Interface } from 'node:readline';
 import type { Readable } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { MODEL, SAMPLE_IMAGE, SAMPLE_TEXT, samplesFor, STAMP, startFakeT3 } from './fixture-t3.mts';
+import { MODEL, SAMPLE_IMAGE, SAMPLE_TEXT, samplesFor, STAMP, startFakeT3, type FixtureLink } from './fixture-t3.mts';
 import { T3Client } from '../server/t3rpc.mts';
 import { LANDING_SECTIONS, LANDING_USER, validateScenario } from './fixture-scenarios.mts';
 import { startFakeExecutor } from './fixture-executor.mts';
@@ -81,6 +81,8 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
       BOT_MCP_URL: `http://127.0.0.1:${port}/mcp/bot`,
       // Never send a fixture's usage-stats ping to the real collector (port 9 is discard; the send just fails).
       THREEBOT_TELEMETRY_URL: 'http://127.0.0.1:9/v1/ping',
+      // Look at linked machines every second, so an outage shows within a test's time.
+      THREEBOT_MACHINE_POLL_MS: '1000',
       ...(executorPort === undefined ? {} : { EXECUTOR_BACKEND: 'self-hosted', EXECUTOR_URL: `http://127.0.0.1:${executorPort}`,
         EXECUTOR_PUBLIC_URL: `http://127.0.0.1:${executorPort}`, EXECUTOR_ORG: 'fixture', EXECUTOR_TOKEN: 'fixture-only' }),
     },
@@ -148,7 +150,7 @@ async function stopChild(child: ChildProcess | undefined) {
   try { await exited; } finally { clearTimeout(timer); }
 }
 
-export async function createFixture({ port = 0, scenario = 'basic' }: { port?: number; scenario?: string } = {}) {
+export async function createFixture({ port = 0, scenario = 'basic', links }: { port?: number; scenario?: string; links?: FixtureLink[] } = {}) {
   validateScenario(scenario);
   await access(path.join(staticDir, 'index.html')).catch(() => {
     throw new Error('Missing web/dist/index.html. Run npm ci --prefix web && npm run build --prefix web first.');
@@ -207,7 +209,7 @@ export async function createFixture({ port = 0, scenario = 'basic' }: { port?: n
       for (const dir of ['home', 'codex', 'tmp', 'secrets', 'vault', 'samples', 'bots', 'projects']) await rm(path.join(root, dir), { recursive: true, force: true });
       await seed(root, scenario);
       executor?.reset();
-      fake = await startFakeT3(root, t3Port, { scenario, executor: executor?.links });
+      fake = await startFakeT3(root, t3Port, { scenario, executor: executor?.links, links });
       await fixture.restart();
     },
     async close() {
@@ -222,7 +224,7 @@ export async function createFixture({ port = 0, scenario = 'basic' }: { port?: n
   try {
     await seed(root, scenario);
     if (scenario === 'executor') executor = await startFakeExecutor();
-    fake = await startFakeT3(root, 0, { scenario, executor: executor?.links });
+    fake = await startFakeT3(root, 0, { scenario, executor: executor?.links, links });
     await fixture.restart();
     return fixture;
   } catch (error) { await fixture.close(); throw error; }

@@ -1,4 +1,4 @@
-import type { AdoptableProject, Bot, Settings, ThreadMeta, ThreadPreview } from "./types";
+import type { AdoptableProject, Bot, Machine, Settings, ThreadMeta, ThreadPreview } from "./types";
 
 type Session = { authenticated: boolean; passwordRequired: boolean; accessLogin: boolean };
 
@@ -46,7 +46,19 @@ export type AccessState = {
 export type TelemetryStatus = { enabled: boolean; choice: boolean | null; asked: boolean; blockedBy: "DO_NOT_TRACK" | "THREEBOT_TELEMETRY" | null;
   installId: string; lastSentAt: string | null; lastAttemptAt: string | null; lastError: string | null; endpoint: boolean };
 
+/** One message of a thread on another machine, as T3's t3_thread_read returns it. */
+export type RemoteItem = { position: number; itemId: string; type: string; createdBy?: string; text?: string | null; textTruncated?: boolean; updatedAt?: string; status?: string };
+export type RemoteRead = {
+  thread: { threadId: string; title: string; status: string; itemCount: number; activeRunId: string | null; pendingRequestCount?: number; updatedAt: string } | null;
+  items: RemoteItem[]; nextPosition: number | null; hasMore: boolean;
+};
+
 export const api = {
+  machines: (fresh = false) => req<{ machines: Machine[]; linksSupported: boolean }>(`/api/machines${fresh ? "?fresh=1" : ""}`),
+  pairMachine: (environmentId: string, code: string, url?: string) => req<{ environmentId: string; baseUrl: string }>(`/api/machines/${encodeURIComponent(environmentId)}/pair`, { method: "POST", body: JSON.stringify({ code, ...(url ? { url } : {}) }) }),
+  unpairMachine: (environmentId: string) => req<unknown>(`/api/machines/${encodeURIComponent(environmentId)}/pair`, { method: "DELETE" }),
+  remoteThread: (environmentId: string, threadId: string, after: number | null) => req<{ machine: Machine; read: RemoteRead }>(`/api/machines/${encodeURIComponent(environmentId)}/threads/${encodeURIComponent(threadId)}${after === null ? "" : `?after=${after}`}`),
+  sendRemote: (environmentId: string, threadId: string, text: string) => req<{ delivery?: string }>(`/api/machines/${encodeURIComponent(environmentId)}/threads/${encodeURIComponent(threadId)}/messages`, { method: "POST", body: JSON.stringify({ text }) }),
   telemetry: () => req<TelemetryStatus>("/api/telemetry"),
   setTelemetry: (enabled: boolean) => req<TelemetryStatus>("/api/telemetry", { method: "PUT", body: JSON.stringify({ enabled }) }),
   telemetryPreview: () => req<Record<string, unknown>>("/api/telemetry/preview"),

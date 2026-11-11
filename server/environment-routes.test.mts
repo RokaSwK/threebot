@@ -42,3 +42,18 @@ test('private route and token files are required without exposing their contents
     await assert.rejects(router('remote'), (error: Error & { status?: number }) => error.status === 403 && !error.message.includes('private"'));
   } finally { await rm(root, { recursive: true }); }
 });
+
+test('the hand-written routes file wins over paired machines, and a routes file not written yet is empty', async () => {
+  const files: Record<string, string> = {
+    manual: JSON.stringify({ shared: { baseUrl: 'https://manual.test', tokenFile: 'manual-token' } }),
+    paired: JSON.stringify({ shared: { baseUrl: 'https://paired.test', tokenFile: 'paired-token' }, mine: { baseUrl: 'https://mine.test', tokenFile: 'mine-token' } }),
+    'manual-token': 'manual-only', 'paired-token': 'paired-only', 'mine-token': 'mine-only',
+  };
+  const readPrivate = async (file: string) => { if (!(file in files)) throw Object.assign(new Error('missing'), { code: 'ENOENT' }); return files[file]; };
+  const fetcher = async (url: string) => Response.json({ environmentId: new URL(url).hostname.startsWith('mine') ? 'mine' : 'shared' });
+  const router = createEnvironmentRouter({ file: ['manual', 'paired'], readPrivate, fetcher });
+  assert.deepEqual(await router('shared'), { baseUrl: 'https://manual.test', token: 'manual-only' });
+  assert.deepEqual(await router('mine'), { baseUrl: 'https://mine.test', token: 'mine-only' });
+  const unwritten = createEnvironmentRouter({ file: [undefined, 'not-written-yet'], readPrivate, fetcher });
+  await assert.rejects(unwritten('mine'), { status: 403 });
+});

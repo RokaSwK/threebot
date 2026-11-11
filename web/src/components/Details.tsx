@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowLeft, ChevronsRight, ChevronLeft, ChevronRight, Clock, Folder, Library as LibraryIcon, Monitor, Play, Plus, Trash2 } from "lucide-react";
 import { ModelPicker } from "./ModelPicker";
+import { CodingWorkRows } from "./MachinesPane";
 import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
 import { Library } from "./Library";
@@ -101,6 +102,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
+            {!showRoutines && !archived && threadId === bot.mainThreadId && <CodingWorkSection bot={bot} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
             {threadId && threadId !== bot.mainThreadId && bot.mainThreadId && <Pill variant="soft" className="mb-4" onClick={() => bot.mainThreadId && selectThread(bot, bot.mainThreadId)}>Back to {bot.name}</Pill>}
@@ -125,6 +127,18 @@ function ModelSection({ bot, threadId }: { bot: Bot; threadId: string | null }) 
     ? t3.dispatch({ type: "thread.model-selection.set", threadId, modelSelection: selection })
     : setBotModel(bot.slug, selection)).catch((error: unknown) => toast(error instanceof Error ? error.message : "Couldn't change the model"));
   return <div className="details-model"><Section title="Model"><div className="flex min-h-11 items-center rounded-2xl bg-card px-2.5 py-1.5"><ModelPicker value={model} onChange={change} /></div></Section></div>;
+}
+
+/** This Bot's own "Where coding work runs", over the default in Settings → Machines. Shown once other machines exist. */
+function CodingWorkSection({ bot }: { bot: Bot }) {
+  const machines = useApp((s) => s.machines);
+  const global = useApp((s) => s.settings?.codingWork ?? null);
+  if (!machines || machines.length < 2) return null;
+  const inherit = `Default (${global?.preferred?.label ?? "This machine"})`;
+  return <div className="details-coding-work"><Section title="Where coding work runs"><div className="overflow-hidden rounded-2xl bg-card">
+    <CodingWorkRows value={bot.codingWork ?? null} machines={machines} inherit={inherit}
+      onChange={(codingWork) => void updateBot(bot.slug, { codingWork })} />
+  </div></Section></div>;
 }
 
 function AvatarDialog({ bot, onClose }: { bot: Bot; onClose: () => void }) {

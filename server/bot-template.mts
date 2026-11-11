@@ -16,12 +16,19 @@ export type TemplateBot = {
   workspaceRoot?: string;
   /** Made from an existing project: the folder is the user's, and the Bot's own files are in `.bot/`. */
   adopted?: boolean;
+  /** This Bot's own "Where coding work runs"; absent or null uses the global setting. */
+  codingWork?: CodingWork | null;
 };
+/** A machine T3 links, by its environment id; "local" is the machine Threebot runs on. */
+export type CodingMachine = { environmentId: string; label: string };
+/** Settings → Machines → Where coding work runs: the machine to use, and the one to use when it's away. */
+export type CodingWork = { preferred: CodingMachine | null; fallback: CodingMachine | null };
 /** The parts of the global settings its instructions mention. */
 export type TemplateSettings = {
   userName?: string; timezone?: string;
   rules?: { alwaysAsk?: string[]; allowWithoutAsking?: string[] };
   beta?: { projects?: boolean };
+  codingWork?: CodingWork | null;
 };
 /** How the Bot reaches connected apps, when Executor is set up. */
 export type TemplateExecutor = { kind?: string; publicUrl?: string; organization?: string; skippedApps?: string[] };
@@ -85,7 +92,7 @@ ${memory ? `\n${renderMemoryBlock(memory)}\n` : ""}
 - When ${userName} sets up a recurring workflow, such as triaging feedback every morning, make it a routine in this thread: read what came in, start a thread for each bug, group duplicates, draft replies, and bring back a short summary.
 - Report results, not activity. Tell ${userName} what finished, what is waiting and what needs a decision, and link the threads.
 
-${settings.beta?.projects ? projectsBoardSection(userName) : ""}## Other Bots
+${codingWorkSection(bot.codingWork ?? settings.codingWork ?? null, userName)}${settings.beta?.projects ? projectsBoardSection(userName) : ""}## Other Bots
 - The other Bots live ${bot.adopted ? "in their own folders" : "next to you"}: each folder in \`${botsRoot}\` with a \`.bot/bot.json\` (name, mainThreadId). Bots made from existing projects live in those projects' folders, listed in \`${botsRoot}/.botapp/adopted.json\`, each with its own \`.bot/bot.json\`.
 - To hand work to another Bot, send a message to its main thread with \`t3_thread_send\`, starting with "From ${bot.name}:". Don't loop: never reply to a Bot just to acknowledge.
 - For short-lived parallel work, use subagents or \`delegate_task\` instead of creating Bots.
@@ -142,6 +149,23 @@ ${ask}
 - You may proceed without asking when an action matches:
 ${allow}
 ${MANAGED_END}
+`;
+}
+
+const isLocal = (machine: CodingMachine | null | undefined) => !machine || machine.environmentId === "local";
+const machineName = (machine: CodingMachine) => isLocal(machine) ? "this machine (the one Threebot runs on)" : `**${machine.label}** (environmentId \`${machine.environmentId}\`)`;
+
+/** Settings → Machines → Where coding work runs. Nothing set keeps coding work on this machine. */
+export function codingWorkSection(work: CodingWork | null, userName = "the user"): string {
+  if (!work?.preferred || isLocal(work.preferred) && isLocal(work.fallback)) return "";
+  const preferred = work.preferred, fallback = work.fallback && work.fallback.environmentId !== preferred.environmentId ? work.fallback : null;
+  const start = (machine: CodingMachine) => isLocal(machine) ? "start it here as usual (no environmentId)" : `start it there: \`delegate_task\` with \`target.environmentId\` "${machine.environmentId}", or \`t3_thread_launch\` with that \`environmentId\``;
+  return `## Where coding work runs
+- Coding work (repositories, builds, tests, pull requests) runs on ${machineName(preferred)}. ${isLocal(preferred) ? "Keep it here." : `Check \`t3_environment_links\` first: when it shows ${preferred.label} reachable, ${start(preferred)}.`}
+${!isLocal(preferred) ? `- When ${preferred.label} isn't reachable, ${fallback ? `use ${machineName(fallback)} instead and ${start(fallback)}` : "don't wait for it: do the work on this machine"}. Say which machine you used when you report back.
+` : ""}- This is a setting ${userName} manages in Threebot (Settings → Machines). It replaces any note in your memory about where to do coding work; if your memory has one, remove it.
+- Prefer \`delegate_task\` for work on another machine: Threebot then knows the thread is yours, and if that machine goes offline while it runs, it tells you here in a message starting "From Threebot:". Work that is already pushed can be picked up on another machine.
+
 `;
 }
 
