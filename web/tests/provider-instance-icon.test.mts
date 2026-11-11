@@ -100,6 +100,14 @@ test("pi renders the SVG paths", () => {
   assert.ok(html.includes("<path"), "Pi icon should contain path elements");
 });
 
+test("two Muse icons on one page use their own gradient ids", () => {
+  const html = renderToStaticMarkup(h("div", null, h(ProviderInstanceIcon, { driver: "muse", displayName: "Muse" }), h(ProviderInstanceIcon, { driver: "muse", displayName: "Muse" })));
+  const ids = [...html.matchAll(/<linearGradient id="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(ids.length, 4);
+  assert.equal(new Set(ids).size, 4);
+  for (const id of ids) assert.ok(html.includes(`url(#${id})`));
+});
+
 test("unknown drivers fall back to rendering initials without an SVG", () => {
   const html = renderToStaticMarkup(h(ProviderInstanceIcon, { driver: "unknown_custom_driver", displayName: "Custom Model" }));
   assert.ok(!html.includes("<svg"), "Unknown driver should not render an SVG element");
