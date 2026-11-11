@@ -158,6 +158,83 @@ test("the model selector lists T3's models and writes T3 selections", async () =
   assert.deepEqual(seen.at(-1), { instanceId: "codex", model: "gpt", options: [] });
 });
 
+test("the model selector displays subProvider, supports favorites and filters by subProvider", async () => {
+  localStorage.clear();
+  const providers = [
+    {
+      instanceId: "pi",
+      driver: "pi",
+      displayName: "Pi",
+      enabled: true,
+      status: "ready",
+      models: [
+        { slug: "fable", name: "Claude Fable 5", subProvider: "anthropic" },
+        { slug: "deepseek", name: "DeepSeek v4", subProvider: "opendesign" },
+        { slug: "default", name: "Pi Default" },
+      ],
+    },
+    {
+      instanceId: "codex",
+      driver: "codex",
+      displayName: "Codex",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "gpt", name: "GPT-6.1 Sol" }],
+    },
+  ];
+  useApp.setState({ providers, providerModelPreferences: {} });
+  const seen = [];
+  const View = () => {
+    const [value, setValue] = useState({ instanceId: "pi", model: "fable" });
+    return h(ModelPicker, { value, onChange: (next) => { seen.push(next); setValue(next); } });
+  };
+  await act(async () => root.render(h(View)));
+  await click(host.querySelector(".model-trigger"));
+
+  const rows = [...document.querySelectorAll(".model-row")];
+  assert.equal(rows.length, 3);
+  assert.ok(rows[0].querySelector(".model-subprovider"));
+  assert.equal(rows[0].querySelector(".model-subprovider").textContent, "anthropic");
+  assert.equal(rows[1].querySelector(".model-subprovider").textContent, "opendesign");
+  assert.equal(rows[2].querySelector(".model-subprovider"), null);
+
+  const starBtns = [...document.querySelectorAll(".model-star")];
+  assert.equal(starBtns.length, 3);
+  await click(starBtns[0]);
+
+  const favTab = [...document.querySelectorAll(".model-tab")].find((tab) => tab.textContent.includes("Favorites"));
+  assert.ok(favTab);
+  await click(favTab);
+
+  const favRows = [...document.querySelectorAll(".model-row")];
+  assert.equal(favRows.length, 1);
+  assert.match(favRows[0].textContent, /Claude Fable 5/);
+
+  const input = document.querySelector<HTMLInputElement>(".model-search");
+  assert.ok(input);
+  await act(async () => {
+    input.value = "anthropic";
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    input.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+  const filteredRows = [...document.querySelectorAll(".model-row")];
+  assert.equal(filteredRows.length, 1);
+  assert.match(filteredRows[0].textContent, /anthropic/);
+});
+
+test("Favorites is reachable with one provider and leaves out models hidden in T3", async () => {
+  localStorage.setItem("threebot:favorite-models", JSON.stringify(["claude:opus", "claude:hidden"]));
+  const providers = [{ instanceId: "claude", driver: "claudeAgent", displayName: "Claude", enabled: true, status: "ready", models: [{ slug: "opus", name: "Claude Opus" }, { slug: "hidden", name: "Claude Hidden" }] }];
+  useApp.setState({ providers, providerModelPreferences: { claude: { hiddenModels: ["hidden"], modelOrder: [] } } });
+  await act(async () => root.render(h(ModelPicker, { value: { instanceId: "claude", model: "opus" }, onChange: () => {} })));
+  await click(host.querySelector(".model-trigger"));
+  const favorites = [...document.querySelectorAll(".model-tab")].find((tab) => tab.textContent.includes("Favorites"));
+  assert.ok(favorites);
+  await click(favorites);
+  assert.deepEqual([...document.querySelectorAll(".model-row")].map((row) => row.textContent), ["Claude Opus"]);
+  localStorage.clear();
+});
+
 test("short choices are pills in a row with what they mean underneath", async () => {
   const value = fixtures.question(); value.item.questions = [{ ...question, options: [{ label: "Send", description: "Send it now" }, { label: "Not yet", description: "Hold it" }] }]; await render("question", value);
   assert.equal(document.querySelector<HTMLElement>(".question-options").dataset.layout, "row");
