@@ -85,9 +85,12 @@ export function startPushPresence(watching: () => string | null, onChange: (list
 /** Ask for notification permission and, if granted, register the push subscription. */
 export function enablePushNotifications(): Promise<boolean> {
   if (typeof Notification === "undefined") return Promise.resolve(false);
-  if (Notification.permission === "granted") return ensurePushSubscription();
+  // Without the Push API (the Mac app's web view), granted permission still turns on the page's own
+  // notifications, so it counts as enabled.
+  const subscribe = () => "PushManager" in window ? ensurePushSubscription() : Promise.resolve(true);
+  if (Notification.permission === "granted") return subscribe();
   if (Notification.permission === "denied") return Promise.resolve(false);
   return Notification.requestPermission()
-    .then((permission) => permission === "granted" ? ensurePushSubscription() : false)
+    .then((permission) => permission === "granted" ? subscribe() : false)
     .catch(() => false);
 }
