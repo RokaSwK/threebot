@@ -32,7 +32,7 @@ export function Library({ bot }: { bot: Bot }) {
   const source = mergeLibraryEntries(items, files ?? []);
   const visible = filterLibraryEntries(source, filter);
   return <div className="library-view">
-    <div className="mb-5 flex gap-2 overflow-x-auto" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
+    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
     {libraryGroups(visible).map(group => <section key={group.label} className="library-time-group">
       {group.label && <h3 className="mb-2 px-4 text-[14px] font-normal text-faint">{group.label}</h3>}
       <div className="library-list overflow-hidden rounded-[20px] bg-card px-4">
