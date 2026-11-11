@@ -22,7 +22,7 @@ test("the stdio bridge exposes a Bot's HTTP MCP tools and forwards calls", async
     };
     if (message.method === "initialize") return reply({ protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fake", version: "1" } });
     if (message.method === "notifications/initialized") { res.writeHead(202); res.end(); return; }
-    if (message.method === "tools/list") return reply({ tools: [{ name: "memory_read", description: "Read memory", inputSchema: { type: "object" } }] });
+    if (message.method === "tools/list") return reply({ tools: [{ name: "vault_list", description: "List Vault items", inputSchema: { type: "object" } }] });
     if (message.method === "tools/call") return reply({ content: [{ type: "text", text: JSON.stringify({ called: message.params.name }) }] });
     return reply({});
   });
@@ -38,13 +38,13 @@ test("the stdio bridge exposes a Bot's HTTP MCP tools and forwards calls", async
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } } }) + "\n");
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }) + "\n");
     child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) + "\n");
-    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "bot__memory_read", arguments: { scope: "bot" } } }) + "\n");
+    child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "bot__vault_list", arguments: { scope: "bot" } } }) + "\n");
     const deadline = Date.now() + 10_000;
     while (lines.length < 3 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.ok(lines.length >= 3, `bridge answered (${lines.length})`);
     const messages = lines.map((line) => JSON.parse(line));
-    assert.equal(messages.find((message) => message.id === 2)?.result.tools[0].name, "bot__memory_read");
-    assert.deepEqual(JSON.parse(messages.find((message) => message.id === 3)?.result.content[0].text), { called: "memory_read" });
+    assert.equal(messages.find((message) => message.id === 2)?.result.tools[0].name, "bot__vault_list");
+    assert.deepEqual(JSON.parse(messages.find((message) => message.id === 3)?.result.content[0].text), { called: "vault_list" });
   } finally {
     child.kill();
     await once(child, "exit").catch(() => {});

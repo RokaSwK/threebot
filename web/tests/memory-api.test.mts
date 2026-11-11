@@ -5,27 +5,29 @@ import { memoryApi } from "../src/lib/memory.ts";
 const original = globalThis.fetch;
 afterEach(() => { globalThis.fetch = original; });
 
-test("memoryApi reads both layers and reads a note", async () => {
-  const view = {
-    bot: { text: "# Tester\n", revision: "rev", truncated: false, facts: [] },
-    shared: { text: "# Shared\n", revision: "shared-rev", truncated: false, facts: [] },
-    notes: [{ path: "memory/notes/a.md", description: "A", chars: 10, tokens: 3, updatedAt: null }],
-    forgotten: 0,
-    limits: { memoryLines: 120, memoryChars: 6000, factChars: 200, noteTokens: 2000, noteChars: 8000, noteCount: 20 },
+test("memoryApi reads both files and saves one with its revision", async () => {
+  const files = {
+    bot: { path: "memory/MEMORY.md", text: "# Tester\n", revision: "rev" },
+    shared: { path: ".botapp/shared-memory.md", text: "", revision: "shared-rev" },
   };
-  const calls: string[] = [];
-  globalThis.fetch = (async (url: string) => {
-    calls.push(String(url));
-    if (String(url).startsWith("/api/memory/note")) return new Response(JSON.stringify({ path: "memory/notes/a.md", text: "Body", revision: "n" }), { status: 200 });
-    return new Response(JSON.stringify(view), { status: 200 });
+  const calls: { url: string; method: string; body: unknown }[] = [];
+  globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    calls.push({ url: String(url), method: init.method ?? "GET", body: init.body ? JSON.parse(String(init.body)) : null });
+    return new Response(JSON.stringify(init.method === "PUT" ? { ok: true, revision: "next" } : files), { status: 200 });
   }) as typeof fetch;
-  assert.equal((await memoryApi.get("tester")).bot.revision, "rev");
-  assert.equal((await memoryApi.note("tester", "memory/notes/a.md")).text, "Body");
-  assert.match(calls[0]!, /slug=tester/u);
-  assert.match(calls[1]!, /path=memory%2Fnotes%2Fa\.md/u);
+  assert.equal((await memoryApi.get("tester")).bot.text, "# Tester\n");
+  assert.deepEqual(await memoryApi.save({ slug: "tester", scope: "bot", text: "# Tester\n- New\n", expectedRevision: "rev" }), { ok: true, revision: "next" });
+  assert.match(calls[0]!.url, /slug=tester/u);
+  assert.deepEqual(calls[1], { url: "/api/memory", method: "PUT", body: { slug: "tester", scope: "bot", text: "# Tester\n- New\n", expectedRevision: "rev" } });
 });
 
-test("memoryApi surfaces a conflict message", async () => {
-  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: false, code: "conflict", message: "Memory changed" }), { status: 409 })) as typeof fetch;
-  await assert.rejects(() => memoryApi.forget({ slug: "tester", scope: "bot", fact: "- x", expectedRevision: "old" }), /Memory changed/u);
+test("a conflict comes back as an answer with the current text", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ ok: false, code: "conflict", message: "Memory changed", revision: "theirs", text: "- Bot edit\n" }), { status: 409 })) as typeof fetch;
+  const result = await memoryApi.save({ slug: "tester", scope: "bot", text: "- Mine\n", expectedRevision: "old" });
+  assert.deepEqual(result, { ok: false, code: "conflict", message: "Memory changed", revision: "theirs", text: "- Bot edit\n" });
+});
+
+test("other failures are errors", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "Bot not found" }), { status: 404 })) as typeof fetch;
+  await assert.rejects(() => memoryApi.save({ slug: "nobody", scope: "bot", text: "", expectedRevision: "" }), /Bot not found/u);
 });

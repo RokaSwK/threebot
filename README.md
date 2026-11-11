@@ -47,7 +47,7 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 **Added by Threebot**
 
 - **A messaging app.** An installable PWA built for phones, with notifications, search and themes.
-- **Memory.** Each Bot keeps its own notes, plus facts shared by all your Bots.
+- **Memory.** Each Bot keeps a Markdown memory file it updates as it learns, plus one shared by all your Bots. You can read and edit both in the Memory tab.
 - **Projects (beta, off by default).** One live board for everything you are working on: projects, to-dos, your machines and what runs on each, repos, notes and links, split into areas like work and personal. Bots read and edit it with their own tools, every change appears on your screen as it happens, and every item has a link you can hand to a Bot. Switch it on in Settings → Beta.
 - **Vault.** Encrypted logins Bots can type into a site without reading the password, powered by secure requests from T3 Code.
 - **Connected apps.** Gmail, GitHub, Slack and the rest, powered by [Executor](https://executor.sh), if you run it.
