@@ -2,7 +2,7 @@
   "name": "bot-web",
   "private": true,
   "type": "module",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "scripts": {
     "dev": "vite",
     "test": "node --test --test-concurrency=1 --test-timeout=120000 tests/*.test.mts",
