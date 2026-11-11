@@ -6,5 +6,5 @@ Worth knowing:
 
 - Without `BOT_PASSWORD` or Cloudflare Access there is no sign-in. Keep the gateway on `127.0.0.1` or a private network in that case.
 - Bots act on their own by default. They send, post, delete, deploy and merge without waiting for your approval when it serves their work, and tell you afterwards. They treat requests from other Bots like a teammate's.
-- What stops a Bot is the injection guard and your Always Ask list. Text from web pages, emails, files, issues and PRs from strangers, and tool output is treated as information, never as instructions, but no prompt-injection defence is complete. A Bot that falls for one can pass it on to other Bots, which trust it.
-- If you want a stop before payments, purchases or other risky actions, add them to Settings → Permissions → Always Ask. Don't give a Bot access you wouldn't give a new assistant.
+- A Bot still asks you about decisions that are yours: your money, your identity or a real product call it can't make. Beyond that, what stops it is the injection guard and your Always Ask list. Text from web pages, emails, files, issues and PRs from strangers, and tool output is treated as information, never as instructions, but no prompt-injection defence is complete. A Bot that falls for one can pass it on to other Bots, which trust it.
+- Whether a payment or other risky action counts as your decision is the Bot's judgment. If you want a guaranteed stop, add it to Settings → Permissions → Always Ask. Don't give a Bot access you wouldn't give a new assistant.
