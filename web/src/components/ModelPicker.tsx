@@ -85,7 +85,7 @@ function ModelSheet({ providers, value, onChange, onClose }: { providers: Provid
   let items: ListedItem[] = [];
   if (activeTab === "favorites") {
     for (const p of providers) {
-      for (const m of p.models) {
+      for (const m of applyModelPreferences(p.models, preferences[p.instanceId])) {
         if (isFavorite(p.instanceId, m.slug)) {
           items.push({ model: m, instanceId: p.instanceId, driver: p.driver, displayName: p.displayName });
         }
@@ -147,7 +147,7 @@ function ModelSheet({ providers, value, onChange, onClose }: { providers: Provid
     <Modal onClose={onClose} title="Model" className={clsx("model-sheet w-full max-w-[calc(100vw-2rem)]", hasTraits ? "sm:w-[620px]" : "sm:w-[460px]")}>
       <div className="dialog-body flex flex-col sm:flex-row h-[480px] max-h-[75vh] p-0 overflow-hidden">
         {/* Left vertical sidebar (desktop) */}
-        {providers.length > 1 && (
+        {providers.length > 0 && (
           <div className="hidden sm:flex flex-col w-12 shrink-0 border-r border-line bg-[var(--bg-card)]/40 p-1.5 gap-1.5 items-center" role="tablist" aria-label="Providers">
             <button
               type="button"
@@ -190,7 +190,7 @@ function ModelSheet({ providers, value, onChange, onClose }: { providers: Provid
         )}
 
         {/* Mobile top tabs */}
-        {providers.length > 1 && (
+        {providers.length > 0 && (
           <div className="flex sm:hidden overflow-x-auto p-2 border-b border-line gap-1.5 shrink-0" role="tablist" aria-label="Providers">
             <button
               type="button"

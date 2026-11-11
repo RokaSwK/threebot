@@ -222,6 +222,19 @@ test("the model selector displays subProvider, supports favorites and filters by
   assert.match(filteredRows[0].textContent, /anthropic/);
 });
 
+test("Favorites is reachable with one provider and leaves out models hidden in T3", async () => {
+  localStorage.setItem("threebot:favorite-models", JSON.stringify(["claude:opus", "claude:hidden"]));
+  const providers = [{ instanceId: "claude", driver: "claudeAgent", displayName: "Claude", enabled: true, status: "ready", models: [{ slug: "opus", name: "Claude Opus" }, { slug: "hidden", name: "Claude Hidden" }] }];
+  useApp.setState({ providers, providerModelPreferences: { claude: { hiddenModels: ["hidden"], modelOrder: [] } } });
+  await act(async () => root.render(h(ModelPicker, { value: { instanceId: "claude", model: "opus" }, onChange: () => {} })));
+  await click(host.querySelector(".model-trigger"));
+  const favorites = [...document.querySelectorAll(".model-tab")].find((tab) => tab.textContent.includes("Favorites"));
+  assert.ok(favorites);
+  await click(favorites);
+  assert.deepEqual([...document.querySelectorAll(".model-row")].map((row) => row.textContent), ["Claude Opus"]);
+  localStorage.clear();
+});
+
 test("short choices are pills in a row with what they mean underneath", async () => {
   const value = fixtures.question(); value.item.questions = [{ ...question, options: [{ label: "Send", description: "Send it now" }, { label: "Not yet", description: "Hold it" }] }]; await render("question", value);
   assert.equal(document.querySelector<HTMLElement>(".question-options").dataset.layout, "row");
