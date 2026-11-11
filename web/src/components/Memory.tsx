@@ -1,184 +1,163 @@
-import { useEffect, useMemo, useState } from "react";
-import clsx from "clsx";
-import { Brain, ChevronRight, FileText, RefreshCw, Sparkles, Trash2 } from "lucide-react";
-import { Modal, Pill, Spinner } from "./ui";
-import { toast } from "../store";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Pencil, RefreshCw, Sparkles } from "lucide-react";
+import { Pill, Spinner } from "./ui";
+import { RichMarkdown } from "./RichMarkdown";
+import { selectThread, setDetailsOpen, toast } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
-import { selectThread, setDetailsOpen } from "../store";
-import { memoryApi, type MemoryFact, type MemoryNote, type MemoryView } from "../lib/memory";
+import { memoryApi, type MemoryFile, type MemoryFiles, type MemoryScope } from "../lib/memory";
 import type { Bot } from "../lib/types";
 
-type ShownFact = MemoryFact & { scope: "bot" | "shared" };
+// While no one is editing, the tab picks up the Bot's own edits on this beat.
+const REFRESH_MS = 5_000;
 
-/** Details › Memory: what this Bot remembers, where it came from, and what to remove. */
+/** Details › Memory: the Bot's memory file and the shared one, as Markdown that both of you edit. */
 export function MemoryTab({ bot }: { bot: Bot }) {
-  const [view, setView] = useState<MemoryView | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [files, setFiles] = useState<MemoryFiles | null>(null);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<ShownFact | null>(null);
-  const [note, setNote] = useState<{ path: string; text: string } | null>(null);
-  const [forgetting, setForgetting] = useState(false);
+  const [editing, setEditing] = useState<MemoryScope | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  // A reply for a Bot that is no longer shown must not land under the one that is.
+  const shownSlug = useRef(bot.slug);
+  shownSlug.current = bot.slug;
 
-  const load = async () => {
-    setLoading(true);
-    setError("");
+  const load = useCallback(async (quiet = false) => {
+    const slug = bot.slug;
     try {
-      setView(await memoryApi.get(bot.slug));
+      const next = await memoryApi.get(slug);
+      if (shownSlug.current !== slug) return;
+      setFiles(next);
+      setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Couldn't load memory");
-    } finally {
-      setLoading(false);
+      if (!quiet && shownSlug.current === slug) setError(cause instanceof Error ? cause.message : "Couldn't load memory");
     }
-  };
-
-  useEffect(() => {
-    let active = true;
-    setView(null);
-    setSelected(null);
-    setNote(null);
-    setLoading(true);
-    setError("");
-    memoryApi.get(bot.slug)
-      .then((next) => { if (active) setView(next); })
-      .catch((cause: unknown) => { if (active) setError(cause instanceof Error ? cause.message : "Couldn't load memory"); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
   }, [bot.slug]);
 
-  const facts = useMemo<ShownFact[]>(() => view
-    ? [...view.bot.facts.map((fact) => ({ ...fact, scope: "bot" as const })), ...view.shared.facts.map((fact) => ({ ...fact, scope: "shared" as const }))]
-    : [], [view]);
-  const duplicates = useMemo(() => facts.length - new Set(facts.map((fact) => fact.text.toLowerCase())).size, [facts]);
-  const largeNotes = useMemo(() => view ? view.notes.filter((entry) => entry.tokens >= view.limits.noteTokens || entry.chars >= view.limits.noteChars).length : 0, [view]);
-
-  const forget = async () => {
-    if (!selected || !view || forgetting) return;
-    if (!window.confirm(`Forget “${selected.text}”? This writes a tombstone so reflection cannot bring it back.`)) return;
-    setForgetting(true);
-    try {
-      const result = await memoryApi.forget({
-        slug: bot.slug,
-        scope: selected.scope,
-        fact: selected.line,
-        expectedRevision: selected.scope === "shared" ? view.shared.revision : view.bot.revision,
-      });
-      if (!result.ok) { toast(result.message); return; }
-      setSelected(null);
-      await load();
-      toast("Forgotten");
-    } catch (cause) {
-      toast(cause instanceof Error ? cause.message : "Couldn't forget that fact");
-    } finally {
-      setForgetting(false);
-    }
-  };
+  useEffect(() => {
+    setFiles(null);
+    setEditing(null);
+    setError("");
+    void load();
+    const timer = setInterval(() => { if (!editingRef.current && document.visibilityState === "visible") void load(true); }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [load]);
 
   const tidy = () => {
     if (!bot.mainThreadId) { toast("This Bot has no main conversation yet."); return; }
     const draft = chatDraft(bot, bot.mainThreadId);
-    draft.setText([draft.getSnapshot().text, "Tidy your memory: look for duplicate facts, stale or contradictory entries, and notes that are too large. Propose the changes with memory_edit; don't delete anything without asking me."].filter(Boolean).join("\n\n"));
+    draft.setText([draft.getSnapshot().text, "Tidy your memory file: merge duplicates, group related lines under headings, and remove anything stale or contradictory. Tell me what you changed."].filter(Boolean).join("\n\n"));
     selectThread(bot, bot.mainThreadId);
     setDetailsOpen(false);
   };
 
-  const openNote = async (entry: MemoryNote) => {
-    try {
-      const loaded = await memoryApi.note(bot.slug, entry.path);
-      setNote({ path: loaded.path, text: loaded.text });
-    } catch (cause) {
-      toast(cause instanceof Error ? cause.message : "Couldn't read that note");
-    }
-  };
-
-  if (loading && !view) return <div className="grid h-32 place-items-center text-muted"><Spinner /></div>;
-  if (error && !view) return <div role="alert" className="rounded-xl border border-line p-3 text-[13px] text-danger">Couldn't load memory: {error} <button className="ml-2 underline" onClick={() => void load()}>Retry</button></div>;
+  if (!files && !error) return <div className="grid h-32 place-items-center text-muted"><Spinner /></div>;
+  if (!files) return <div role="alert" className="rounded-xl border border-line p-3 text-[13px] text-danger">Couldn't load memory: {error} <button className="ml-2 underline" onClick={() => void load()}>Retry</button></div>;
 
   return (
     <div className="memory-pane">
       <div className="mb-1 flex items-center gap-2">
         <h2 className="text-[18px] font-medium">Memory</h2>
-        <Pill variant="soft" onClick={() => void load()} className="ml-auto h-8" aria-label="Refresh memory"><RefreshCw size={13} /></Pill>
+        <Pill variant="soft" onClick={() => void load()} className="ml-auto h-8" aria-label="Refresh memory" title="Refresh"><RefreshCw size={13} /></Pill>
       </div>
-      <p className="mb-4 text-[12.5px] leading-relaxed text-muted">What {bot.name} remembers between sessions. Facts marked “shared” are visible to every Bot.</p>
+      <p className="mb-4 text-[12.5px] leading-relaxed text-muted">What {bot.name} remembers between sessions. It edits these files as it learns, and so can you. New sessions start with them.</p>
+      {error && <div role="alert" className="mb-3 rounded-xl border border-line p-3 text-[13px] text-danger">Couldn't refresh memory: {error}</div>}
 
-      {error && <div role="alert" className="mb-3 rounded-xl border border-line p-3 text-[13px] text-danger">Couldn't load memory: {error}</div>}
+      <MemoryFileCard
+        key={`${bot.slug}:bot`}
+        title={bot.name}
+        file={files.bot}
+        empty={`Nothing yet. ${bot.name} adds things here as it learns them, or write them yourself.`}
+        editing={editing === "bot"}
+        locked={editing === "shared"}
+        onEdit={(on) => setEditing(on ? "bot" : null)}
+        onSave={(text, expectedRevision) => memoryApi.save({ slug: bot.slug, scope: "bot", text, expectedRevision })}
+        onSaved={() => void load(true)}
+        botName={bot.name}
+      />
+      <MemoryFileCard
+        key={`${bot.slug}:shared`}
+        title="Shared by all Bots"
+        file={files.shared}
+        empty="Nothing shared yet. Facts every Bot should know go here: your name, time zone, key people."
+        editing={editing === "shared"}
+        locked={editing === "bot"}
+        onEdit={(on) => setEditing(on ? "shared" : null)}
+        onSave={(text, expectedRevision) => memoryApi.save({ slug: bot.slug, scope: "shared", text, expectedRevision })}
+        onSaved={() => void load(true)}
+        botName={bot.name}
+      />
 
-      <div className="mb-4 grid grid-cols-3 gap-2">
-        <Stat value={facts.length} label="facts" />
-        <Stat value={view?.notes.length ?? 0} label="notes" />
-        <Stat value={view?.forgotten ?? 0} label="forgotten" />
-      </div>
-
-      <Section title="Shared by all Bots" empty={!view?.shared.facts.length ? "No shared facts yet." : null}>
-        {view?.shared.facts.map((fact, index) => <FactRow key={`${fact.hash}:${index}`} fact={{ ...fact, scope: "shared" }} onOpen={() => setSelected({ ...fact, scope: "shared" })} />)}
-      </Section>
-
-      <Section title={`${bot.name} only`} empty={!view?.bot.facts.length ? "Nothing saved yet. Ask the Bot to remember something." : null}>
-        {view?.bot.facts.map((fact, index) => <FactRow key={`${fact.hash}:${index}`} fact={{ ...fact, scope: "bot" }} onOpen={() => setSelected({ ...fact, scope: "bot" })} />)}
-      </Section>
-
-      <Section title="Notes" empty={!view?.notes.length ? "No notes yet." : null}>
-        {view?.notes.map((entry) => (
-          <button key={entry.path} onClick={() => void openNote(entry)} className="flex w-full items-center gap-2 border-b border-line px-1 py-2.5 text-left last:border-0 hover:bg-hover">
-            <FileText size={14} className="shrink-0 text-muted" />
-            <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px]">{entry.description}</span><span className="block truncate text-[11.5px] text-muted">{entry.path} · {entry.tokens} tokens</span></span>
-            <ChevronRight size={14} className="shrink-0 text-muted" />
-          </button>
-        ))}
-      </Section>
-
-      <div className="mt-5 rounded-2xl border border-line bg-card px-3.5 py-3">
-        <div className="flex items-center gap-2 text-[13px]"><Sparkles size={14} className="text-muted" /><span className="font-medium">Tidy</span></div>
-        <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-          {duplicates || largeNotes
-            ? [duplicates ? `${duplicates} possible duplicate${duplicates === 1 ? "" : "s"}` : "", largeNotes ? `${largeNotes} note${largeNotes === 1 ? "" : "s"} over the size budget` : ""].filter(Boolean).join(" · ")
-            : "No duplicates or oversized notes found."}
-        </p>
-        <Pill variant="soft" className="mt-2" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
-      </div>
-
-      {selected && <div className="mt-4 rounded-2xl border border-line bg-elevated p-3.5">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <p className="text-[13.5px] [overflow-wrap:anywhere]">{selected.text}</p>
-            <p className="mt-1 text-[11.5px] text-muted">{selected.scope === "shared" ? "Shared" : bot.name}{selected.category ? ` · ${selected.category}` : ""}{selected.added ? ` · added ${selected.added}` : ""}</p>
-          </div>
-          <Pill variant="soft" onClick={() => setSelected(null)}>Close</Pill>
-        </div>
-        <div className="mt-3 border-t border-line pt-2 text-[12px] leading-relaxed text-muted">
-          {selected.provenance?.quote
-            ? <><span className="text-fg">“{selected.provenance.quote}”</span><br />{selected.provenance.author === "user" ? "You" : selected.provenance.author} · {selected.provenance.sourceMessageId ?? "no message id"} · {selected.provenance.at.slice(0, 10)}</>
-            : selected.source ? `Source: ${selected.source}` : "No provenance recorded for this line."}
-        </div>
-        {selected.links.length > 0 && <p className="mt-1 text-[11.5px] text-muted">Links: {selected.links.join(", ")}</p>}
-        <Pill variant="soft" disabled={forgetting} onClick={() => void forget()} className="mt-3 text-danger"><Trash2 size={13} /> {forgetting ? "Forgetting…" : "Forget"}</Pill>
-      </div>}
-
-      {note && <Modal title={note.path} onClose={() => setNote(null)} onBack={() => setNote(null)} className="w-[min(720px,94vw)]">
-        <div className="dialog-body scroll-thin max-h-[70vh] overflow-y-auto px-4 py-4"><pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed">{note.text}</pre></div>
-      </Modal>}
+      <Pill variant="soft" className="mt-1" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
     </div>
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
-  return <div className="rounded-xl border border-line bg-card px-3 py-2"><span className="block text-[18px]">{value}</span><span className="text-[11.5px] text-muted">{label}</span></div>;
-}
+function MemoryFileCard({ title, file, empty, editing, locked, onEdit, onSave, onSaved, botName }: {
+  title: string;
+  file: MemoryFile;
+  empty: string;
+  editing: boolean;
+  /** The other file is open in the editor; one draft at a time, so neither is lost. */
+  locked: boolean;
+  onEdit: (on: boolean) => void;
+  onSave: (text: string, expectedRevision: string) => ReturnType<typeof memoryApi.save>;
+  onSaved: () => void;
+  botName: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const [base, setBase] = useState(file.revision);
+  const [conflict, setConflict] = useState<{ revision: string; text: string } | null>(null);
+  const [saving, setSaving] = useState(false);
 
-function Section({ title, empty, children }: { title: string; empty: string | null; children: React.ReactNode }) {
-  return <div className="mb-5">
-    <div className="mb-1.5 px-1 text-[12.5px] text-muted">{title}</div>
-    {empty ? <p className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[12.5px] text-muted">{empty}</p> : <div className="overflow-hidden rounded-xl border border-line bg-card/50">{children}</div>}
-  </div>;
-}
+  const start = () => { setDraft(file.text); setBase(file.revision); setConflict(null); onEdit(true); };
+  const cancel = () => { setConflict(null); onEdit(false); };
+  const save = async (revision = base) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const result = await onSave(draft, revision);
+      if (result.ok) { setConflict(null); onEdit(false); onSaved(); toast("Memory saved"); return; }
+      setConflict({ revision: result.revision, text: result.text });
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Couldn't save memory");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const useTheirs = () => { if (!conflict) return; setDraft(conflict.text); setBase(conflict.revision); setConflict(null); };
 
-function FactRow({ fact, onOpen }: { fact: ShownFact; onOpen: () => void }) {
-  return <button onClick={onOpen} className={clsx("flex w-full items-start gap-2 border-b border-line px-3 py-2.5 text-left last:border-0 hover:bg-hover", fact.scope === "shared" && "bg-card-inner/40")}>
-    <Brain size={14} className="mt-0.5 shrink-0 text-muted" />
-    <span className="min-w-0 flex-1">
-      <span className="block text-[13.5px] leading-snug [overflow-wrap:anywhere]">{fact.text}</span>
-      <span className="mt-0.5 block truncate text-[11.5px] text-muted">{fact.category ? `${fact.category} · ` : ""}{fact.added ? `added ${fact.added}` : fact.source ?? "no source"}{fact.scope === "shared" ? " · shared" : ""}</span>
-    </span>
-    <ChevronRight size={14} className="mt-0.5 shrink-0 text-muted" />
-  </button>;
+  return <section className="mb-5" aria-label={title}>
+    <div className="mb-1.5 flex items-center gap-2 px-1">
+      <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted">{title} · <span className="font-mono text-[11.5px]">{file.path}</span></span>
+      {!editing && <Pill variant="soft" className="h-7 px-2.5 text-[12px]" disabled={locked} title={locked ? "Save or cancel the other file first" : undefined} onClick={start}><Pencil size={12} /> Edit</Pill>}
+    </div>
+    {editing ? <div className="rounded-xl border border-line bg-card p-2">
+      <textarea
+        aria-label={`Edit ${title} memory`}
+        className="memory-editor block w-full resize-y rounded-lg bg-transparent p-2 font-mono text-[12.5px] leading-[20px] outline-none"
+        value={draft}
+        rows={Math.min(24, Math.max(8, draft.split("\n").length + 1))}
+        autoFocus
+        spellCheck
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && (event.key === "s" || event.key === "Enter")) { event.preventDefault(); void save(); }
+        }}
+      />
+      {conflict && <div role="alert" className="mx-1 mt-2 rounded-lg border border-line bg-elevated p-2.5 text-[12.5px]">
+        {botName} changed this file while you were editing.
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Pill variant="soft" className="h-7 text-[12px]" disabled={saving} onClick={() => void save(conflict.revision)}>Save mine over it</Pill>
+          <Pill variant="soft" className="h-7 text-[12px]" onClick={useTheirs}>Load theirs</Pill>
+        </div>
+      </div>}
+      <div className="mt-2 flex items-center gap-2 px-1">
+        <span className="mr-auto text-[11.5px] text-muted">Markdown · ⌘S to save</span>
+        <Pill variant="soft" className="h-7 text-[12px]" onClick={cancel}>Cancel</Pill>
+        <Pill className="h-7 text-[12px]" disabled={saving || draft === file.text && !conflict} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</Pill>
+      </div>
+    </div> : file.text.trim()
+      ? <div className="memory-view md rounded-xl border border-line bg-card px-3.5 py-3 text-[13.5px] leading-[21px] break-words"><RichMarkdown>{file.text}</RichMarkdown></div>
+      : <button type="button" onClick={start} disabled={locked} className="w-full rounded-xl border border-dashed border-line px-3 py-2.5 text-left text-[12.5px] text-muted hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">{empty}</button>}
+  </section>;
 }

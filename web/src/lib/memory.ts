@@ -1,70 +1,27 @@
-// The Memory tab as the app sees it. The gateway reads the same Markdown files the Bots use and
-// returns facts with their provenance; the tab never edits the files directly.
+// The Memory tab as the app sees it: a Bot's `memory/MEMORY.md` and the shared memory file,
+// whole, as plain text. Saves carry the revision they started from, so they never silently
+// replace an edit the Bot made in the meantime.
 
-export type MemoryProvenance = {
-  author: string;
-  sourceMessageId?: string;
-  quote?: string;
-  at: string;
-};
+export type MemoryScope = "bot" | "shared";
 
-export type MemoryFact = {
-  line: string;
-  hash: string;
-  category: string | null;
-  text: string;
-  source: string | null;
-  added: string | null;
-  validFrom: string | null;
-  validTo: string | null;
-  links: string[];
-  provenance: MemoryProvenance | null;
-};
+export type MemoryFile = { path: string; text: string; revision: string };
 
-export type MemoryLayer = {
-  text: string;
-  revision: string;
-  truncated: boolean;
-  facts: MemoryFact[];
-};
+export type MemoryFiles = { bot: MemoryFile; shared: MemoryFile };
 
-export type MemoryNote = {
-  path: string;
-  description: string;
-  chars: number;
-  tokens: number;
-  updatedAt: string | null;
-};
+export type MemorySaveResult =
+  | { ok: true; revision: string }
+  | { ok: false; code: "conflict"; message: string; revision: string; text: string };
 
-export type MemoryView = {
-  bot: MemoryLayer;
-  shared: MemoryLayer;
-  notes: MemoryNote[];
-  forgotten: number;
-  limits: {
-    memoryLines: number;
-    memoryChars: number;
-    factChars: number;
-    noteTokens: number;
-    noteChars: number;
-    noteCount: number;
-  };
-};
-
-export type MemoryForgetResult =
-  | { ok: true; scope: "bot" | "shared"; path: string; revision: string; forgotten: string }
-  | { ok: false; code: string; message: string; revision?: string; content?: string };
-
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<{ status: number; body: T }> {
   const res = await fetch(path, { ...init, headers: init.body ? { "content-type": "application/json" } : undefined, cache: "no-store" });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(body?.message ?? body?.error ?? `HTTP ${res.status}`), { body });
-  return body as T;
+  // A conflict is an answer the tab handles, not a failure.
+  if (!res.ok && res.status !== 409) throw Object.assign(new Error(body?.message ?? body?.error ?? `HTTP ${res.status}`), { body });
+  return { status: res.status, body: body as T };
 }
 
 export const memoryApi = {
-  get: (slug: string) => request<MemoryView>(`/api/memory?slug=${encodeURIComponent(slug)}`),
-  note: (slug: string, path: string) => request<{ path: string; text: string; revision: string }>(`/api/memory/note?slug=${encodeURIComponent(slug)}&path=${encodeURIComponent(path)}`),
-  forget: (input: { slug: string; scope: "bot" | "shared"; fact: string; expectedRevision: string }) =>
-    request<MemoryForgetResult>("/api/memory/forget", { method: "POST", body: JSON.stringify(input) }),
+  get: async (slug: string) => (await request<MemoryFiles>(`/api/memory?slug=${encodeURIComponent(slug)}`)).body,
+  save: async (input: { slug: string; scope: MemoryScope; text: string; expectedRevision: string }) =>
+    (await request<MemorySaveResult>("/api/memory", { method: "PUT", body: JSON.stringify(input) })).body,
 };

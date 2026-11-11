@@ -16,8 +16,8 @@ already loads Antigravity's global MCP config, and the bridge is a Threebot scri
 | Pi | `.pi/mcp.json` (project), after project trust | Automatic, written by the gateway |
 | Antigravity | `~/.gemini/config/mcp_config.json` (host), through the stdio bridge | One-time host config |
 
-All four get `bot` (Vault, Projects, Memory) and `executor` when configured. The snapshot in
-`AGENTS.md` is independent and works even when the tools are absent.
+All four get `bot` (Vault and Projects) and `executor` when configured. Memory needs no tools: the
+Bot edits its Markdown files, and the snapshot in `AGENTS.md` works in every harness.
 
 ## Pi
 
@@ -30,7 +30,7 @@ For every Bot the gateway writes `.pi/mcp.json` next to `.mcp.json` and `.codex/
       "type": "streamable-http",
       "url": "http://127.0.0.1:3780/mcp/bot",
       "headers": { "Authorization": "Bearer <per-Bot token>" },
-      "description": "Threebot memory, Vault and Projects tools."
+      "description": "Threebot Vault and Projects tools."
     }
   }
 }
@@ -42,7 +42,7 @@ disabled or the project as untrusted, trust the Bot folder in Pi or its parent, 
 thread.
 
 Tools appear as `mcp__bot__*` (Pi may abbreviate them to `mcp_bot_*` in the transcript). The
-gateway still checks the per-Bot bearer, the user quote, the revision and tombstones.
+gateway still checks the per-Bot bearer.
 
 ## Antigravity
 
@@ -75,7 +75,7 @@ Restart Antigravity (or start a new T3 thread) after installing. The bridge:
 - reads the Bot's `.mcp.json` from the session's working directory;
 - only accepts a directory that also has `.bot/bot.json`, so a normal T3 project does not expose
   its own MCP servers through this bridge;
-- exposes each server as `server__tool`, for example `bot__memory_read` or
+- exposes each server as `server__tool`, for example `bot__vault_list` or
   `executor__search`;
 - forwards the request with that Bot's own bearer and never prints the token.
 
@@ -86,8 +86,7 @@ newer, the same requirement as the rest of Threebot.
 
 - The bridge reads the token from the Bot's `.mcp.json`; it never accepts a token from the model.
 - A project without `.bot/bot.json` gets an empty tool list, even if it has an `.mcp.json`.
-- The memory checks stay in the gateway: `sourceQuote`, latest owner message, `expectedRevision`,
-  tombstones, journal and history. The bridge is transport, not a second implementation.
+- The Vault checks stay in the gateway. The bridge is transport, not a second implementation.
 - The Antigravity file is global to that app. It is a one-time host setting, not a per-Bot secret.
   Treat it like any other local MCP configuration.
 
@@ -103,7 +102,7 @@ printf '%s\n' \
   | node /absolute/path/to/threebot/server/threebot-mcp-bridge.mts
 ```
 
-It should print one JSON line with `bot__memory_read` and `bot__memory_edit`. If it prints an empty
+It should print one JSON line listing tools such as `bot__vault_list`. If it prints an empty
 `tools` list, check that the working directory has both `.mcp.json` and `.bot/bot.json`.
 
 For Pi, `pi mcp list` shows the project server and its tool count. For Antigravity, the host log

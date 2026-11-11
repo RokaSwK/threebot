@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // A small stdio MCP server for harnesses that do not load a project's MCP config.
 // It reads the Bot's own `.mcp.json` from the working directory and exposes every HTTP
-// server there as `server__tool` (for example `bot__memory_read`). The gateway still sees the
-// Bot's bearer, so identity, evidence, revisions and tombstones are enforced exactly as usual.
+// server there as `server__tool` (for example `bot__vault_list`). The gateway still sees the
+// Bot's bearer, so identity is enforced exactly as usual.
 //
 // Antigravity can load this once from ~/.gemini/config/mcp_config.json; Pi can point at it from
 // a user or project mcp.json. It never prints the bearer.

@@ -68,13 +68,11 @@ Logins, API tokens and contact info shared by all Bots (Settings › Vault). Bot
 
 ## Memory
 
-Each Bot keeps readable Markdown in `memory/MEMORY.md` (short facts), `memory/notes/` (detail on demand) and `memory/log.md` (work log). Facts shared by every Bot live in `.botapp/shared-memory.md`. `.state.json` beside the files holds revisions, provenance, tombstones and the reflection bookmark; `history/` holds preimages.
+A Bot's memory is plain Markdown: `memory/MEMORY.md` in its folder, plus `.botapp/shared-memory.md` for what every Bot should know. The Bot edits the files with its normal file tools, and the user edits them in the Memory tab. `memory/log.md` is the Bot's work journal and is not copied into sessions.
 
-- **Snapshot** (`server/memory.mts`): a bounded `<memory>` block in the managed `AGENTS.md`, refreshed by a watcher when the files change. Antigravity and Pi read it; harnesses that load the project MCP server also get the tools.
-- **Tools** (`server/memory-mcp.mts`, on the `bot` server): `memory_read`, `memory_edit`, `memory_forget`, `memory_search`. Identity comes from the per-Bot bearer, never from a model-supplied thread id. Every write verifies the user's exact typed phrase against the latest owner message in the T3 transcript, checks the file revision, writes a history preimage and a recovery journal, and replaces the file atomically. Writes to one store (a Bot's own memory, or the shared one) run one at a time, so a stale revision always gets a conflict.
-- **App API** (behind the normal login): `GET /api/memory?slug=...` returns both layers, parsed facts and provenance; `GET /api/memory/note?slug=...&path=...` reads one note; `POST /api/memory/forget` (`{slug, scope, fact, expectedRevision}`) is the signed-in user's Forget action and writes a tombstone.
-- **UI**: Details › Memory shows shared and Bot facts, provenance, the notes index and a Tidy summary. Tidy drafts a request in chat; it never rewrites Markdown by itself.
-- **Harness support**: Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and Pi (`.pi/mcp.json`) load the tools. Antigravity only preloads T3's `t3-code` server in the ACP session, so the gateway also ships a stdio bridge; point `~/.gemini/config/mcp_config.json` at `server/threebot-mcp-bridge.mts` once. See [harnesses.md](harnesses.md).
+- **Snapshot** (`server/memory.mts`): a bounded `<memory>` block (200 lines or 8,000 characters of the Bot's file, 60 lines or 2,500 of the shared one) in the managed `AGENTS.md`, refreshed by a watcher within a few seconds of a change. A file that doesn't fit is cut with a note telling the Bot to read the rest and tidy it.
+- **App API** (behind the normal login): `GET /api/memory?slug=...` returns both files whole with their revisions; `PUT /api/memory` (`{slug, scope, text, expectedRevision}`) saves one. A save whose revision is stale gets a 409 with the current text, so an edit the Bot made meanwhile is never replaced silently. Saves to one file run one at a time.
+- **UI**: Details › Memory shows both files as formatted Markdown, with Edit, Save and Cancel; while nobody is editing it picks up the Bot's own edits every few seconds. "Ask the Bot to tidy" drafts a request in chat.
 
 ## Projects
 
