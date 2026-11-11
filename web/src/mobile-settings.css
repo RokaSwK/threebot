@@ -35,6 +35,9 @@
 .settings-row > :first-child { flex-basis: 160px; }
 .settings-row > input, .settings-row > select { min-width: 0; max-width: 100%; }
 .settings-row > select { text-overflow: ellipsis; }
+.backup-model-actions { flex: 0 1 280px; min-width: 0; max-width: 100%; }
+.backup-model-actions > .model-trigger { flex: 1 1 0; width: auto; }
+.backup-model-actions > button:not(.model-trigger) { flex: none; white-space: nowrap; }
 .settings-rule-text { overflow-wrap: anywhere; }
 .settings-rule-actions { opacity: 1; }
 @media (hover: hover) and (pointer: fine) {
