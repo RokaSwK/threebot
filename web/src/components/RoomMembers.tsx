@@ -49,9 +49,9 @@ export function RoomMembers({ room, onClose }: { room: RoomView; onClose: () => 
       <Avatar shape={member.shape} color={member.color} picture={member.avatarImage} size={28} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-2">
-          <span className="truncate text-[13px] font-medium" style={{ color: botTextColor(member.color) }}>{member.name}</span>
+          <span className="max-w-[60%] shrink-0 truncate text-[13px] font-medium" style={{ color: botTextColor(member.color) }}>{member.name}</span>
           {member.removed ? <span className="shrink-0 text-[11px] text-faint">left</span> : null}
-          {member.label ? <span className="truncate text-[11.5px] text-muted">{member.label}</span> : null}
+          {member.label ? <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted">{member.label}</span> : null}
         </div>
         <p className="text-[11.5px] leading-[16px] text-muted break-words">
           {statusLabel(member)} · {modelLabel(member.model)} · {RUNTIME_LABEL[member.runtimeMode] ?? member.runtimeMode}
