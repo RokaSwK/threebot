@@ -651,6 +651,9 @@ export async function loadRoom(id: string, quiet = false) {
       // Keep the sidebar row in step without another list request.
       rooms: s.rooms[room.id] ? { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id]) } : s.rooms,
     }));
+    // A reply that arrives while the room is open has been seen; leaving the room must not mark
+    // the row unread for something the user just read.
+    if (get().selectedRoom === id) markRoomSeen(id);
   } catch (error) {
     if (get().selectedRoom !== id) return;
     // A poll failure is transient; only the first load replaces the view with an error.
