@@ -1,7 +1,7 @@
 # Rooms: group conversations over T3 threads
 
-Status: Design; the foundation (registry, settings, member threads and the read-only view) is
-implemented in this change. Panel and roundtable arrive in the next two.
+Status: Design; the foundation and the panel engine are implemented in this change. Roundtable
+arrives in the next one.
 Date: 2026-11-11
 
 ## Goal

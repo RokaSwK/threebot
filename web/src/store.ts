@@ -6,7 +6,7 @@ import { enablePushNotifications } from "./lib/push";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
-import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, recreateRoom as recreateRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type UpdateRoomInput } from "./lib/rooms";
+import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, recreateRoom as recreateRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
@@ -675,6 +675,20 @@ export async function recreateRoomThreads(id: string, slug?: string) {
   set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
   await loadRooms().catch(() => {});
   return room;
+}
+
+/** Sends from the room composer; the turn index is re-read so the user's bubble lands at once. */
+export async function sendRoomMessage(id: string, text: string, mentions: string[], replyTo: string | null = null): Promise<RoomTurn> {
+  const turn = await sendRoomMessageApi(id, { text, mentions, replyTo });
+  await loadRoom(id, true);
+  void loadRooms().catch(() => {});
+  return turn;
+}
+
+export async function stopRoom(id: string) {
+  await stopRoomApi(id);
+  await loadRoom(id, true);
+  void loadRooms().catch(() => {});
 }
 
 // Back/forward can leave the room page without going through `select` or `selectThread`.

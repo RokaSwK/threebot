@@ -187,7 +187,7 @@ function RoomRow({ room, selected, large, onMenu }: { room: RoomSummary; selecte
         <span className="min-w-0 flex-1 pr-7">
           <span className="bot-row-name block truncate text-[13.5px] leading-5 text-fg">{room.name}</span>
           <span className="bot-row-preview flex min-w-0 items-center gap-1.5 text-[12.5px] leading-[18px] text-muted">
-            <span className="min-w-0 truncate">{room.members.length} bots · Read-only</span>
+            <span className="min-w-0 truncate">{room.running ? "A turn is running…" : `${room.members.length} bots · Panel`}</span>
           </span>
         </span>
       </HoldButton>
@@ -367,6 +367,8 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
     }
   };
 
+  // The name the "when you mention nobody" summary uses; it follows the members you tick.
+  const leadName = candidates.find((candidate) => candidate.slug === settings.lead)?.name ?? "the lead";
   // Sections come from the app settings (a Bot can create one from the sidebar) plus this room's.
   const sectionOptions = useMemo(() => {
     const names = [...(appSettings?.sections ?? [])];
@@ -385,7 +387,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
         <div className="rounded-xl bg-card px-3 py-2.5 text-[12.5px] leading-[18px] text-muted">
           <p className="mb-1 font-medium text-fg">How a room works</p>
-          <p>Each member gets its own thread in its own project. The room page reads those threads.</p>
+          <p>You write once and the Bots you address answer here, each in its own thread. A message can start one model turn per addressed member.</p>
         </div>
 
         <Field label="Name" hint="Shown in the sidebar.">
@@ -409,6 +411,25 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
           <span className={clsx("text-right text-[11px]", members.length >= 2 && members.length <= 8 ? "text-faint" : "text-danger")}>{members.length}/8 · 2 to 8 Bots</span>
         </Field>
 
+        <div>
+          <span className="text-[13px] font-medium">When you mention nobody</span>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {([["lead", "Only the lead"], ["everyone", "Everyone"], ["mentions", "Nobody"]] as [RoomSettings["defaultResponder"], string][]).map(([value, title]) => (
+              <Choice key={value} selected={settings.defaultResponder === value} disabled={busy} onSelect={() => update({ defaultResponder: value })}>{title}</Choice>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[12px] text-muted">
+            {settings.defaultResponder === "lead" ? `${leadName} answers.` : settings.defaultResponder === "everyone" ? "Every member answers." : "Nobody answers until you @mention a member."}{" "}
+            <span className="text-faint">@Name wakes that Bot only; @all wakes every member.</span>
+          </p>
+        </div>
+
+        {settings.defaultResponder === "lead" && (
+          <Field label="Lead" hint="The member that answers when nobody is mentioned.">
+            <Select label="Lead" value={settings.lead} disabled={busy || members.length === 0} onChange={(value) => update({ lead: value })} options={members.map((slug) => [slug, candidates.find((candidate) => candidate.slug === slug)?.name ?? slug] as [string, string])} placeholder="Choose a lead" />
+          </Field>
+        )}
+
         <Field label="House rules" hint="Optional. Added to every member's prompt, e.g. “Two sentences, no code.”">
           <textarea value={guidance} disabled={busy} maxLength={2000} rows={3} onChange={(e) => setGuidance(e.target.value)} aria-label="Room guidance" className="scroll-thin w-full resize-y rounded-xl border border-line bg-elevated px-3 py-2 text-[14px] outline-none focus:border-line-strong" />
           <span className="text-right text-[11px] text-faint">{guidance.length}/2000</span>
@@ -425,9 +446,14 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <input value={description} disabled={busy} onChange={(e) => setDescription(e.target.value)} aria-label="Room description" className="h-9 w-full rounded-xl border border-line bg-elevated px-2 text-[13px] outline-none focus:border-line-strong" />
             </Field>
 
-            <Field label="Runtime mode" hint="Inherit uses each Bot's own approval setting.">
-              <Select label="Runtime mode" value={settings.runtimeMode} disabled={busy} onChange={(value) => update({ runtimeMode: value as RoomSettings["runtimeMode"] })} options={[["inherit", "Inherit each Bot"], ["approval-required", "Approval required"], ["auto-accept-edits", "Auto-accept edits"], ["auto", "Auto"], ["full-access", "Full access"]]} />
-            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Runtime mode" hint="Inherit uses each Bot's own approval setting.">
+                <Select label="Runtime mode" value={settings.runtimeMode} disabled={busy} onChange={(value) => update({ runtimeMode: value as RoomSettings["runtimeMode"] })} options={[["inherit", "Inherit each Bot"], ["approval-required", "Approval required"], ["auto-accept-edits", "Auto-accept edits"], ["auto", "Auto"], ["full-access", "Full access"]]} />
+              </Field>
+              <Field label="Mention policy" hint="Leading only counts members named at the start.">
+                <Select label="Mention policy" value={settings.mentionPolicy} disabled={busy} onChange={(value) => update({ mentionPolicy: value as RoomSettings["mentionPolicy"] })} options={[["anywhere", "Anywhere"], ["leading", "Leading only"]]} />
+              </Field>
+            </div>
             {settings.runtimeMode === "full-access" && <p className="text-[12px] text-danger">Full access acts without approval in a shared conversation.</p>}
 
             <Field label="Model" hint="Inherit uses each Bot's own model. Pin one to use it for the whole room.">
@@ -441,6 +467,23 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
                 </div>
               )}
             </Field>
+
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Reply limit" hint="Total spoken replies one message can produce. A pass doesn't count (1–20).">
+                <NumberInput label="Reply limit" value={settings.maxReplies} min={1} max={20} disabled={busy} onChange={(value) => update({ maxReplies: value })} />
+              </Field>
+              <Field label="Wait per member" hint="Minutes to wait for one member before moving on (1–60).">
+                <NumberInput label="Wait per member" value={settings.memberTimeoutMin} min={1} max={60} disabled={busy} onChange={(value) => update({ memberTimeoutMin: value })} />
+              </Field>
+              <Field label="Stop after" hint="Minutes after which no new round starts (1–120).">
+                <NumberInput label="Stop after" value={settings.turnDeadlineMin} min={1} max={120} disabled={busy} onChange={(value) => update({ turnDeadlineMin: value })} />
+              </Field>
+            </div>
+            <p className="text-[12px] text-muted">
+              One message can produce up to <span className="text-fg">{settings.maxReplies}</span> replies, and a member is dropped after <span className="text-fg">{settings.memberTimeoutMin}</span> min.
+            </p>
+
+            <Toggle label="Notifications" hint="One push when the turn finishes." checked={settings.notifications} disabled={busy} onChange={(value) => update({ notifications: value })} />
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="Section" hint="Groups the room in the sidebar, like a Bot's section.">
@@ -521,6 +564,67 @@ function Select({ value, options, onChange, disabled, placeholder, label }: { va
       {placeholder && !value && <option value="" className="bg-elevated text-fg">{placeholder}</option>}
       {options.map(([id, label]) => <option key={id} value={id} className="bg-elevated text-fg">{label}</option>)}
     </select>
+  );
+}
+
+/** A small one-of-N pill, used for "when you mention nobody". */
+function Choice({ selected, disabled, onSelect, children }: { selected: boolean; disabled?: boolean; onSelect: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={clsx(
+        "rounded-full border px-3 py-1.5 text-[12.5px] transition-colors",
+        selected ? "border-accent bg-active text-fg" : "border-line text-muted hover:bg-hover",
+        disabled && "opacity-50",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * A small integer field that survives being emptied. `type="number"` on a phone refuses to clear the
+ * last digit, so the field keeps a draft string while focused, selects the value on focus (one tap to
+ * replace it) and clamps on blur; typing only commits a value already inside the range.
+ */
+function NumberInput({ value, min, max, onChange, disabled, label }: { value: number; min: number; max: number; onChange: (value: number) => void; disabled?: boolean; label?: string }) {
+  const [draft, setDraft] = useState(String(value));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { if (!editing) setDraft(String(value)); }, [value, editing]);
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      autoComplete="off"
+      aria-label={label}
+      disabled={disabled}
+      value={editing ? draft : String(value)}
+      onFocus={(event) => {
+        setEditing(true);
+        setDraft(String(value));
+        const element = event.currentTarget;
+        // One tap should replace the number, not put the caret after it.
+        requestAnimationFrame(() => element.select());
+      }}
+      onChange={(event) => {
+        const digits = event.currentTarget.value.replace(/[^0-9]/g, "").slice(0, 3);
+        setDraft(digits);
+        const next = Number(digits);
+        if (digits !== "" && next >= min && next <= max) onChange(next);
+      }}
+      onBlur={() => {
+        setEditing(false);
+        const next = draft.trim() === "" ? min : clamp(Number(draft), min, max);
+        setDraft(String(next));
+        onChange(next);
+      }}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      className="h-9 w-full rounded-xl border border-line bg-elevated px-2 text-[13px] text-fg outline-none focus:border-line-strong disabled:opacity-50"
+    />
   );
 }
 

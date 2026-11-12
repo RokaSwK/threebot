@@ -108,6 +108,12 @@ export type UpdateRoomInput = {
   settings?: Partial<RoomSettings>;
 };
 
+export type SendRoomMessageInput = {
+  text: string;
+  mentions?: string[];
+  replyTo?: string | null;
+};
+
 const roomPath = (id: string) => `/api/rooms/${encodeURIComponent(id)}`;
 
 export function fetchRooms(): Promise<RoomSummary[]> {
@@ -132,4 +138,12 @@ export function deleteRoom(id: string): Promise<{ ok: true }> {
 
 export function recreateRoom(id: string, slug?: string): Promise<RoomView> {
   return apiRequest<{ room: RoomView }>(`${roomPath(id)}/recreate`, { method: "POST", body: JSON.stringify(slug ? { slug } : {}) }).then((body) => body.room);
+}
+
+export function sendRoomMessage(id: string, input: SendRoomMessageInput): Promise<RoomTurn> {
+  return apiRequest<{ turn: RoomTurn }>(`${roomPath(id)}/messages`, { method: "POST", body: JSON.stringify(input) }).then((body) => body.turn);
+}
+
+export function stopRoom(id: string): Promise<{ ok: true }> {
+  return apiRequest<{ ok: true }>(`${roomPath(id)}/stop`, { method: "POST", body: "{}" });
 }

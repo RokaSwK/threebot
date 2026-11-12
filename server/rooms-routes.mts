@@ -4,12 +4,15 @@
 //   GET    /api/rooms/:id           the room, its members and the turn index
 //   PATCH  /api/rooms/:id           change settings or membership
 //   DELETE /api/rooms/:id           forget the room; every member thread stays in T3
+//   POST   /api/rooms/:id/messages  start or queue a turn
+//   POST   /api/rooms/:id/stop      interrupt the members that are answering
 //   POST   /api/rooms/:id/recreate  launch fresh member threads with the current settings
 import type { IncomingHttpHeaders } from "node:http";
 import {
   RoomsError, validateMembers, type BotIdentity, type Room, type RoomMember, type RoomsStore,
 } from "./rooms.mts";
 import { launchRoomThread, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
+import type { RoomEngine, RoomMessage } from "./room-turn.mts";
 
 /** A Bot as the room routes need it: identity, the avatar profile, and where its threads live. */
 export type RoomBotView = BotIdentity & {
@@ -33,8 +36,9 @@ export type MemberView = RoomBotView & {
 };
 export type RoomView = Omit<Room, "members"> & { members: MemberView[] };
 
-export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, rpc, bots, launch, send, readBody, requireJson, checkOrigin, log = () => {} }: {
+export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine, rpc, bots, launch, send, readBody, requireJson, checkOrigin, log = () => {} }: {
   rooms: RoomsStore;
+  engine: RoomEngine;
   /** The same T3 client the engine uses. */
   rpc: RoomRpc;
   /** Every Bot the user has, so a member slug has a name and a face. */
@@ -83,7 +87,7 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, rpc, bo
       mode: room.settings.mode,
       members: full.members.map(({ slug, name, label, color, shape, avatarImage }) => ({ slug, name, label, color, shape, avatarImage })),
       lastTurnAt: room.turns.at(-1)?.at ?? null,
-      running: room.turns.some((turn) => turn.status === "running"),
+      running: room.turns.some((turn) => turn.status === "running") || engine.isBusy(room.id),
     };
   }
 
@@ -162,9 +166,24 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, rpc, bo
           return send(res, 405, { error: "method not allowed" }), true;
         }
 
+        if (action === "messages" && method === "POST") {
+          const body = ((await readBody(req)) ?? {}) as RoomMessage;
+          const text = typeof body.text === "string" ? body.text : "";
+          if (!text.trim() && !body.mentions?.length) return send(res, 400, { error: "a message needs text" }), true;
+          const result = await engine.send(id, { text, mentions: Array.isArray(body.mentions) ? body.mentions : undefined, replyTo: body.replyTo ?? null });
+          return send(res, 202, result, { "cache-control": "no-store" }), true;
+        }
+
+        if (action === "stop" && method === "POST") {
+          const stopped = await engine.stop(id);
+          return send(res, 200, { ok: stopped }), true;
+        }
+
         if (action === "recreate" && method === "POST") {
           const body = (await readBody(req)) ?? {};
           const targets = typeof body.slug === "string" ? [body.slug] : room.members.map((member) => member.slug);
+          // A recreate that is already running has nothing left to answer: it would keep reading old threads.
+          await engine.stop(id).catch(() => {});
           let latest = room;
           for (const slug of targets) latest = await rooms.setMember(id, slug, { threadId: null, status: "pending" });
           const launched = await launchMembers(latest, targets);

@@ -6,6 +6,7 @@ import { test } from "node:test";
 import type { IncomingHttpHeaders } from "node:http";
 import { createRooms } from "./rooms.mts";
 import { createRoomRoutes } from "./rooms-routes.mts";
+import type { RoomEngine } from "./room-turn.mts";
 
 type FakeResponse = { status: number; body: unknown; headers: Record<string, string> };
 type FakeRequest = { method: string; headers: IncomingHttpHeaders; body: unknown };
@@ -30,12 +31,19 @@ const rpc = {
   },
 };
 
+const engine = {
+  isBusy: () => false,
+  send: async () => ({ turn: { id: "t1", at: "2026-01-01T00:00:00.000Z", text: "x", mentions: [], replyTo: null, status: "running" as const, runs: [] }, queued: false }),
+  stop: async () => true,
+  recover: async () => [],
+} as unknown as RoomEngine;
+
 async function setup() {
   launched.length = 0;
   const dir = await mkdtemp(path.join(tmpdir(), "room-routes-"));
   const rooms = createRooms({ file: path.join(dir, "rooms.json") });
   const routes = createRoomRoutes({
-    rooms, rpc,
+    rooms, engine, rpc,
     bots: async () => bots,
     launch: async () => ({ runtimeMode: "auto" }),
     send,
@@ -80,6 +88,7 @@ test("a member whose thread cannot be launched stays pending", async () => {
   const { routes, done } = await setup();
   const failing = createRoomRoutes({
     rooms: createRooms({ file: path.join(tmpdir(), `room-routes-${Date.now()}-${Math.random()}.json`) }),
+    engine,
     rpc: { async call() { throw new Error("provider refused"); } },
     bots: async () => bots,
     launch: async () => ({}),
@@ -145,13 +154,19 @@ test("recreate threads also forgets the room's messages", async () => {
   await done();
 });
 
-test("messages and stop are not routes before the engine exists", async () => {
+test("messages and stop go through the engine", async () => {
   const { routes, done } = await setup();
   const created = await call(routes, request({ method: "POST", body: { name: "Live", members: ["alpha", "beta"] } }), "/api/rooms");
   const id = (created.res.body as any).room.id;
   const sent = await call(routes, request({ method: "POST", body: { text: "hola" } }), `/api/rooms/${id}/messages`);
-  assert.equal(sent.res.status, 404);
+  assert.equal(sent.res.status, 202);
+  assert.equal((sent.res.body as any).turn.id, "t1");
+  const empty = await call(routes, request({ method: "POST", body: { text: "  " } }), `/api/rooms/${id}/messages`);
+  assert.equal(empty.res.status, 400);
   const stop = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/stop`);
-  assert.equal(stop.res.status, 404);
+  assert.deepEqual(stop.res.body, { ok: true });
+  const recreate = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/recreate`);
+  assert.equal(recreate.res.status, 200);
+  assert.equal(launched.length, 4, "recreate launched one fresh thread per member");
   await done();
 });

@@ -47,6 +47,7 @@ import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, v
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
 import { createRooms } from "./rooms.mts";
+import { createRoomEngine } from "./room-turn.mts";
 import { createRoomRoutes } from "./rooms-routes.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
@@ -123,10 +124,23 @@ const launchDefaults = async () => {
   const settings = await getSettings();
   return { runtimeMode: settings.autoReview === false ? "full-access" : "auto", model: settings.defaultModel ?? undefined };
 };
-/** The routes use the same thin adapter over the reconnecting T3 client the rest of the gateway uses. */
+/** The engine and the routes share one thin adapter over the reconnecting T3 client. */
 const roomRpc = {
   call: async (tag: string, payload: object) => (await t3rpc()).call(tag, payload),
+  dispatch: async (command: object) => (await t3rpc()).dispatch(command),
 };
+const roomEngine = createRoomEngine({
+  rooms,
+  rpc: roomRpc,
+  bots: async () => new Map((await listBots()).map((bot) => [bot.slug, bot])),
+  defaults: launchDefaults,
+  // One push per turn. The pseudo slug keeps the "device is already watching this Bot" skip from
+  // silencing a room push: no device watches a room that way.
+  notify: async (payload) => {
+    await pushStore.send({ ...payload, tag: payload.url, bot: payload.url });
+  },
+  log: (line) => console.log(line),
+});
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
@@ -897,6 +911,7 @@ const botTools = createBotTools({
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
 const roomRoutes = createRoomRoutes({
   rooms,
+  engine: roomEngine,
   rpc: roomRpc,
   bots: async () => (await listBots()).map((bot) => ({
     slug: bot.slug,
@@ -1493,3 +1508,5 @@ telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });
+// A room turn that was running when the gateway stopped does not resume.
+void roomEngine.recover().catch((err) => console.error("[rooms]", (err as Error).message));
