@@ -46,6 +46,8 @@ import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runt
 import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
+import { createRooms } from "./rooms.mts";
+import { createRoomRoutes } from "./rooms-routes.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
@@ -115,6 +117,16 @@ const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
 const projects = createProjects({ file: projectsFile });
+// Rooms: a named conversation with several Bots. Each member answers in its own T3 room thread.
+const rooms = createRooms({ file: path.join(appDir, "rooms.json") });
+const launchDefaults = async () => {
+  const settings = await getSettings();
+  return { runtimeMode: settings.autoReview === false ? "full-access" : "auto", model: settings.defaultModel ?? undefined };
+};
+/** The routes use the same thin adapter over the reconnecting T3 client the rest of the gateway uses. */
+const roomRpc = {
+  call: async (tag: string, payload: object) => (await t3rpc()).call(tag, payload),
+};
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
@@ -883,6 +895,27 @@ const botTools = createBotTools({
   extra: async () => combineExtras((await projectsOn()) ? projectTools : null),
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
+const roomRoutes = createRoomRoutes({
+  rooms,
+  rpc: roomRpc,
+  bots: async () => (await listBots()).map((bot) => ({
+    slug: bot.slug,
+    name: bot.name,
+    label: bot.label,
+    color: bot.color,
+    shape: bot.shape,
+    avatarImage: (bot.avatarImage as string | null | undefined) ?? null,
+    projectId: bot.projectId,
+    mainThreadId: bot.mainThreadId,
+    model: bot.model,
+  })),
+  launch: launchDefaults,
+  send,
+  readBody,
+  requireJson,
+  checkOrigin: (req) => sameOriginRequest(req, originPolicy),
+  log: (line) => console.log(line),
+});
 
 async function vaultRoutes(req: IncomingMessage, res: ServerResponse, p: string, url: URL) {
   if (p === "/api/vault" && req.method === "GET") {
@@ -1188,6 +1221,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
     if (await projectRoutes.handle(req, res, url)) return;
+    if (await roomRoutes.handle(req, res, url)) return;
     if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, // A missing thread id is refused by threadMeta.get's own check.
       await threadMeta.get(url.searchParams.get("thread") as string), { "cache-control": "no-store" });
     if (p === "/api/thread-meta/reactions" && req.method === "POST") {

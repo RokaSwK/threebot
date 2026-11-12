@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { FileText, Grid2x2Plus, Clock, MessageSquareText, Search, X } from "lucide-react";
-import { Avatar } from "./Avatar";
+import { Avatar, GroupAvatar } from "./Avatar";
 import { Modal } from "./ui";
-import { botReferenceKey, navigateSearchHit, openDialog, selectThread, toast, useApp, type SearchFilter } from "../store";
+import { botReferenceKey, navigateSearchHit, openDialog, selectRoom, selectThread, toast, useApp, type SearchFilter } from "../store";
 import { t3 } from "../lib/t3";
 import { executorApi, type ExecutorApp } from "../lib/executor";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
 import type { Bot } from "../lib/types";
+import type { RoomSummary } from "../lib/rooms";
 
 type Filter = SearchFilter;
-const FILTERS: Filter[] = ["All", "Messages", "Bots", "Routines", "Files", "Apps"];
+const FILTERS: Filter[] = ["All", "Messages", "Bots", "Rooms", "Routines", "Files", "Apps"];
 const MIN_MESSAGE_QUERY = 2;
 
 type MessageMatch = { threadId: string; projectId: string; snippet: string; messageId?: string };
 type Result =
   | { kind: "bot"; key: string; bot: Bot; detail: string }
+  | { kind: "room"; key: string; room: RoomSummary; detail: string }
   | { kind: "message"; key: string; bot: Bot; detail: string; threadId: string; messageId?: string }
   | { kind: "file"; key: string; bot: Bot; title: string; detail: string; path: string }
   | { kind: "app"; key: string; title: string; detail: string }
@@ -23,6 +25,7 @@ type Result =
 
 export function SearchDialog() {
   const bots = useApp((s) => s.bots);
+  const rooms = useApp((s) => s.rooms);
   const historicalBots = useApp((s) => s.historicalBots);
   const previews = useApp((s) => s.previews);
   const tasks = useApp((s) => s.tasks);
@@ -85,6 +88,12 @@ export function SearchDialog() {
         if (matching(bot.name) || matching(detail) || matching(bot.label)) found.push({ kind: "bot", key: `bot:${botReferenceKey(bot)}`, bot, detail });
       }
     }
+    if (filter === "All" || filter === "Rooms") {
+      for (const room of Object.values(rooms)) {
+        const detail = `${room.members.length} bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`;
+        if (matching(room.name) || matching(room.description)) found.push({ kind: "room", key: `room:${room.id}`, room, detail });
+      }
+    }
     if (filter === "All" || filter === "Messages") {
       for (const match of matches) {
         const bot = byThread.get(match.threadId) ?? byProject.get(match.projectId);
@@ -100,7 +109,7 @@ export function SearchDialog() {
     if (filter === "All" || filter === "Files") found.push(...files);
     if (filter === "All" || filter === "Apps") for (const app of apps) if (matching(app.name)) found.push({ kind: "app", key: `app:${app.id}`, title: app.name, detail: app.status === "connected" || app.status === "ready" ? "Installed app" : "Connection needed" });
     return found;
-  }, [bots, historicalBots, previews, tasks, matches, files, apps, filter, needle]);
+  }, [bots, rooms, historicalBots, previews, tasks, matches, files, apps, filter, needle]);
 
   useEffect(() => { if (q !== session.query || filter !== session.filter) setI(0); }, [q, filter, session]);
   const restoreScroll = useRef(true);
@@ -116,6 +125,7 @@ export function SearchDialog() {
   const go = (result: Result) => {
     if (result.kind === "file") { setResource(result); return; }
     if (result.kind === "app") { openDialog("connect-apps"); return; }
+    if (result.kind === "room") { selectRoom(result.room.id); openDialog(null); return; }
     if (result.kind === "message") void navigateSearchHit(result.bot, { threadId: result.threadId, messageId: result.messageId, query: needle }).catch((error: Error) => toast(error.message));
     else if (result.bot.mainThreadId) { selectThread(result.bot, result.bot.mainThreadId, true); if (result.kind === "routine") useApp.setState({ detailsOpen: true, detailsTab: "details" }); }
   };
@@ -154,12 +164,12 @@ export function SearchDialog() {
         {!loading && results.length === 0 && <div className="grid h-full min-h-[120px] place-content-center justify-items-center gap-3 py-8 text-center text-[15px] text-muted"><Search size={28} aria-hidden="true" />No matches</div>}
         {results.map((r, idx) => (
           <button key={r.key} role="option" aria-selected={idx === i} onMouseEnter={() => setI(idx)} onClick={() => go(r)} className={clsx("flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left", idx === i && "bg-active")}>
-            {r.kind === "app" || r.kind === "file" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted">{r.kind === "file" ? <FileText size={16}/> : <Grid2x2Plus size={16}/>}</span> : r.kind === "routine" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted"><Clock size={16} /></span> : <Avatar shape={r.bot.shape} color={r.bot.color} picture={r.bot.avatarImage} size={30} />}
+            {r.kind === "room" ? <GroupAvatar members={r.room.members} size={30} /> : r.kind === "app" || r.kind === "file" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted">{r.kind === "file" ? <FileText size={16}/> : <Grid2x2Plus size={16}/>}</span> : r.kind === "routine" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted"><Clock size={16} /></span> : <Avatar shape={r.bot.shape} color={r.bot.color} picture={r.bot.avatarImage} size={30} />}
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[14px]">{"title" in r ? r.title : r.bot.name}</span>
+              <span className="block truncate text-[14px]">{r.kind === "room" ? r.room.name : "title" in r ? r.title : r.bot.name}</span>
               <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-muted">{r.kind === "message" && <MessageSquareText size={13} className="shrink-0" />}<span className="min-w-0 truncate">{r.detail}</span></span>
             </span>
-            <span className="text-[11.5px] text-faint">{r.kind === "bot" ? "Bot" : r.kind === "message" ? "Message" : r.kind === "file" ? "File" : r.kind === "app" ? "App" : "Routine"}</span>
+            <span className="text-[11.5px] text-faint">{r.kind === "bot" ? "Bot" : r.kind === "room" ? "Room" : r.kind === "message" ? "Message" : r.kind === "file" ? "File" : r.kind === "app" ? "App" : "Routine"}</span>
           </button>
         ))}
       </div>

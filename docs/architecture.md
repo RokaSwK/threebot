@@ -47,6 +47,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 - Tool calls are hidden. While a run is active, a working line shows the animated avatar and a short phrase from the latest tool (for example "Working on your computer", "Searching the web").
 - Approvals, questions, secret requests, subagents and errors become cards.
 - Only the events listed in the mapping above become centered system lines.
+- Typing `@` in a composer offers the visible Bots (the open Bot is left out). The name is inserted as plain text and both the assistant and the user bubbles render it as a link to that Bot. The same rules decide what counts as a mention, so the composer and the renderer cannot disagree.
 
 ## Security
 
@@ -85,6 +86,16 @@ One live board shared by the user and every Bot (the Projects page): projects, t
 - **Bot tools** (`server/projects-mcp.mts`), on the same `bot` MCP server as the Vault: `projects_overview`, `projects_find`, `projects_get`, `projects_save` (up to 100 items; `ref`/`"ref:<name>"` lets one call create a project with its to-dos) and `projects_delete`. Writes take the Bot's main `threadId` and are shown as made by that Bot. AGENTS.md tells every Bot to keep the board true and to link the threads it works in.
 - **Links**: `/?item=<id>` opens an item; `/?page=projects` opens the board. `APP_URL` makes the links Bots share absolute. In chat, an item link renders as a chip with the item's live title.
 - **Live T3 state**: "Running now" comes straight from the T3 shell the app already follows on the gateway's own machine. Other machines are in Settings → Machines (below); Bots also record them on the board using T3's `t3_environment_links` and `t3_thread_list`.
+
+## Rooms
+
+A Room is a named conversation between the user and several Bots (2–8). The user writes once and the addressed members answer, each in its own thread. It is a group chat, not a task board.
+
+- **Storage** (`server/rooms.mts`): one JSON file, `rooms.json` in the Bots folder's `.botapp`, mode `0600`, serialized and atomic writes. A room holds its settings (validated at their boundaries), its members and a bounded index of the user's messages (the last 200 turns; oldest pruned). Bot replies are never copied here — they live in the member threads.
+- **Member threads** (`server/rooms-threads.mts`): every member gets one ordinary T3 thread in its own project, titled `#<room>`, launched idle. `runtimeMode: inherit` and `model: inherit` read the Bot's main thread once, when the thread is created; a Bot with no main thread falls back to the app's defaults. Changing a Bot's mode later does not change an existing room thread; **Start over** (Recreate threads) launches fresh ones, forgives every message the room was showing — the user's included — and leaves the old threads as history in T3. A room never deletes a thread.
+- **Read-only view** (`web/src/components/RoomView.tsx`): one timeline built from the member threads; each reply keeps its member's avatar, name and colour. This first change does not send: the turn engine, the composer, inline cards, Stop and push arrive with the next one.
+- **API** (behind the normal login): `GET /api/rooms`, `POST /api/rooms`, `GET|PATCH|DELETE /api/rooms/:id`, `POST /api/rooms/:id/recreate`. Writes require `content-type: application/json` and an `Origin` matching the app's host.
+- **Not in v1**: attachments inside a room. The design and its evidence are in `docs/designs/rooms.md`.
 
 ## Machines
 
