@@ -913,3 +913,52 @@ button {
 .dark[data-palette="ember"] { --p-canvas: oklch(0.246 0.019 42); --p-sidebar: oklch(0.293 0.030 47); --p-surface: oklch(0.246 0.019 42); --p-raised: oklch(0.351 0.016 38); --p-text: oklch(0.990 0.008 326); --p-muted: oklch(0.654 0.010 13); --p-border: oklch(0.441 0.040 49); --p-input: oklch(0.503 0.046 49); --p-accent: oklch(0.762 0.124 52); --p-message: oklch(0.448 0.062 51); }
 [data-palette="iris"] { --p-canvas: oklch(0.977 0.004 303); --p-sidebar: oklch(0.941 0.015 300); --p-surface: oklch(0.977 0.004 303); --p-raised: oklch(0.953 0.005 308); --p-text: oklch(0.222 0.035 329); --p-muted: oklch(0.543 0.019 326); --p-border: oklch(0.870 0.018 304); --p-input: oklch(0.835 0.023 304); --p-accent: oklch(0.525 0.154 294); --p-message: oklch(0.897 0.029 300); }
 .dark[data-palette="iris"] { --p-canvas: oklch(0.226 0.031 294); --p-sidebar: oklch(0.267 0.045 294); --p-surface: oklch(0.226 0.031 294); --p-raised: oklch(0.335 0.026 296); --p-text: oklch(0.990 0.008 326); --p-muted: oklch(0.640 0.016 304); --p-border: oklch(0.409 0.059 296); --p-input: oklch(0.468 0.066 296); --p-accent: oklch(0.672 0.169 294); --p-message: oklch(0.400 0.087 294); }
+
+/* Native dropdowns paint their list with the UA colors. On desktop with the dark palette the menu
+   could inherit the app's light foreground over a light sheet, so the options get their own surface
+   and the closed control stops being transparent. */
+select option,
+select optgroup {
+  background-color: var(--bg-elevated);
+  color: var(--fg);
+}
+
+/* ---------- rooms ---------- */
+.room-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.room-event {
+  margin: 10px auto 0;
+  max-width: 640px;
+  padding: 2px 12px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--fg-faint);
+}
+
+.room-event-danger { color: var(--danger); }
+
+.room-needs-you {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: calc(100% - 40px);
+  max-width: 820px;
+  margin: 0 auto 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  color: var(--fg);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.room-needs-you:hover { background: var(--bg-hover); }

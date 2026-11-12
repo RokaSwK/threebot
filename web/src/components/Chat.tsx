@@ -1,4 +1,4 @@
-import { memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import { defaultUrlTransform } from "react-markdown";
 import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
@@ -41,6 +41,9 @@ import { PlanMessage, PlanItemMessage } from "./PlanMessage";
 import { GoalCard } from "./GoalCard";
 import { TaskChanges } from "./TaskChanges";
 import { ChildApprovals, ForceStop } from "./RunControls";
+import { MentionMenu } from "./MentionMenu";
+import { UserMessageText } from "./UserMessageText";
+import { activeMentionQuery, mentionSuggestions, withMention, type MentionBot } from "../lib/mentionMenu";
 import { useChatScroll } from "../lib/chatScroll";
 import "../mobile-chat.css";
 
@@ -254,7 +257,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
               style={(accent === "bot" && bubbleColors(bot.color)) || { background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}
             >
-              {entry.text}
+              <UserMessageText text={entry.text} muted={accent === "bot" && bubbleColors(bot.color) !== null} />
             </div>
           )}
         </ChatMessageActions>
@@ -464,7 +467,7 @@ function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles, onSideChat
   );
 }
 
-function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void }) {
+function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
   const draft = chatDraft(bot, threadId);
   const { text, attachments: atts, sending, failed, replyTo, fresh } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const { setText, addFiles, setReply, setFresh } = draft;
@@ -506,6 +509,76 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
   const shellRef = useRef<HTMLDivElement>(null);
   const mobile = useMobileChat();
   const focus = useMemo(() => composerFocusBehavior(mobile), [mobile]);
+  // Mentions: `@` opens the list of visible Bots and picking one inserts plain text.
+  const allBots = useApp((s) => s.bots);
+  const mentionCandidates: MentionBot[] = useMemo(() => {
+    if (availableBots) return availableBots;
+    return Object.values(allBots).filter((candidate) => candidate.slug !== bot.slug);
+  }, [availableBots, allBots, bot.slug]);
+  const archived = useApp((s) => s.bots[bot.slug]?.mainThreadId !== bot.mainThreadId || (threadId ? !!s.threads[threadId]?.archivedAt : false));
+  const isComposing = useRef(false);
+  const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
+  /** The exact text the menu was dismissed for with Escape; cleared on the next edit. */
+  const mentionDismissed = useRef<string | null>(null);
+  const pendingCursor = useRef<number | null>(null);
+  const suggestions = useMemo(() => (mention ? mentionSuggestions(mention.query, mentionCandidates) : []), [mention, mentionCandidates]);
+
+  const recomputeMention = useCallback((value: string, cursor: number | null) => {
+    if (archived || isComposing.current || cursor === null || value === mentionDismissed.current) {
+      setMention(null);
+      return;
+    }
+    const active = activeMentionQuery(value, cursor, mentionCandidates);
+    if (!active) {
+      setMention(null);
+      return;
+    }
+    setMention((previous) => {
+      const list = mentionSuggestions(active.query, mentionCandidates);
+      const index = previous ? Math.min(previous.index, Math.max(0, list.length - 1)) : 0;
+      return { start: active.start, query: active.query, index };
+    });
+  }, [archived, mentionCandidates]);
+
+  /** Leaves the caret after the inserted text: React repaints the textarea and iOS resets the selection. */
+  const applyCursor = useCallback((position: number) => {
+    pendingCursor.current = position;
+    ta.current?.setSelectionRange(position, position);
+    const place = () => {
+      const el = ta.current;
+      if (!el || pendingCursor.current !== position) return;
+      el.setSelectionRange(position, position);
+      if (position >= el.value.length - 2) el.scrollTop = el.scrollHeight;
+    };
+    setTimeout(place, 0);
+    setTimeout(place, 25);
+    requestAnimationFrame(place);
+    setTimeout(() => {
+      if (pendingCursor.current === position) pendingCursor.current = null;
+    }, 150);
+  }, []);
+
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const el = ta.current;
+      if (!el || document.activeElement !== el || pendingCursor.current === null) return;
+      if (el.selectionStart !== pendingCursor.current || el.selectionEnd !== pendingCursor.current) {
+        el.setSelectionRange(pendingCursor.current, pendingCursor.current);
+      }
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
+
+  const pickMention = useCallback((picked: MentionBot) => {
+    const el = ta.current;
+    const cursor = el ? el.selectionStart : text.length;
+    const next = withMention(text, cursor, picked);
+    setText(next.value);
+    applyCursor(next.cursor);
+    setMention(null);
+    el?.focus({ preventScroll: true });
+  }, [text, setText, applyCursor]);
   useEffect(() => {
     focus.onEntry(ta.current);
     setPopover(null);
@@ -522,8 +595,9 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
     if (el) {
       el.style.height = "0px";
       el.style.height = Math.min(el.scrollHeight, 120) + "px";
+      recomputeMention(text, el.selectionStart);
     }
-  }, [text, draft]);
+  }, [text, draft, recomputeMention]);
 
   const t3Voice = useApp((s) => s.runtimeFeatures.voiceTranscription);
   const [transcribing, setTranscribing] = useState(false);
@@ -646,6 +720,15 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
         }}
       >
         <div ref={shellRef} className="composer-shell relative rounded-[22px] border border-line bg-elevated focus-within:border-line-strong">
+          {mention && !archived && (
+            <MentionMenu
+              bots={suggestions}
+              query={mention.query}
+              activeIndex={mention.index}
+              onPick={pickMention}
+              onHover={(index) => setMention((current) => current ? { ...current, index } : null)}
+            />
+          )}
           <div className="px-3"><WorkFeedback action={specialSend} /></div>
           {sending && <p role="status" className="px-3 text-[12px] text-muted">Sending…</p>}
           {failed.map((message) => (
@@ -698,7 +781,27 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
               onBlur={(e) => focus.onBlur(e.currentTarget)}
               value={text}
               rows={1}
-              onChange={(e) => setText(e.target.value)}
+              onCompositionStart={() => {
+                isComposing.current = true;
+                setMention(null);
+              }}
+              onCompositionEnd={(e) => {
+                isComposing.current = false;
+                recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart);
+              }}
+              onSelect={(e) => recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart)}
+              onKeyUp={(e) => {
+                if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Enter" && e.key !== "Escape" && e.key !== "Tab") {
+                  recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart);
+                }
+              }}
+              onChange={(e) => {
+                const target = e.currentTarget;
+                // Typing ends the Escape dismissal.
+                mentionDismissed.current = null;
+                setText(target.value);
+                recomputeMention(target.value, target.selectionStart);
+              }}
               onPaste={(e) => {
                 const files = Array.from(e.clipboardData.files);
                 if (files.length) {
@@ -711,6 +814,32 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat }
                   e.preventDefault();
                   submit();
                   return;
+                }
+                if (mention) {
+                  if (suggestions.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMention((current) => current ? { ...current, index: (current.index + 1) % suggestions.length } : null);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMention((current) => current ? { ...current, index: (current.index - 1 + suggestions.length) % suggestions.length } : null);
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      const picked = suggestions[mention.index];
+                      if (picked) pickMention(picked);
+                      return;
+                    }
+                  }
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    mentionDismissed.current = e.currentTarget.value;
+                    setMention(null);
+                    return;
+                  }
                 }
                 if (!mobile && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();

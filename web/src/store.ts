@@ -6,6 +6,8 @@ import { enablePushNotifications } from "./lib/push";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
+import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, recreateRoom as recreateRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
+import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
@@ -20,9 +22,9 @@ export type ThreadData = {
 };
 
 export type MainBotIntent = { kind: "replace" } | { kind: "hide"; slug: string } | { kind: "delete"; slug: string };
-export type Dialog = null | "new-bot" | "settings" | "search" | "connect-apps" | { kind: "connect-apps"; url: string } | { kind: "delete-bot"; slug: string } | "adopt-project" | { kind: "rename-bot"; slug: string } | { kind: "computer"; slug: string } | { kind: "main-bot"; intent: MainBotIntent; initialSlug?: string };
+export type Dialog = null | "new-bot" | "settings" | "search" | "connect-apps" | { kind: "connect-apps"; url: string } | { kind: "delete-bot"; slug: string } | "adopt-project" | { kind: "rename-bot"; slug: string } | { kind: "computer"; slug: string } | { kind: "main-bot"; intent: MainBotIntent; initialSlug?: string } | { kind: "room"; id?: string };
 
-export type SearchFilter = "All" | "Messages" | "Bots" | "Routines" | "Files" | "Apps";
+export type SearchFilter = "All" | "Messages" | "Bots" | "Rooms" | "Routines" | "Files" | "Apps";
 export type SearchSession = { query: string; filter: SearchFilter; index: number; scrollTop: number };
 
 
@@ -80,13 +82,27 @@ type State = {
   /** A link shown after the toast's text, such as release notes. */
   toastLink: { href: string; label: string } | null;
   /** The Projects page replaces the chat while it's open; projectItemId is the item shown in it. */
-  page: "projects" | null;
+  page: "projects" | "room" | null;
   projectItemId: string | null;
+  /** Rooms: summaries for the sidebar, the open room and its 2 s view poll. */
+  rooms: Record<string, RoomSummary>;
+  roomView: RoomView | null;
+  selectedRoom: string | null;
+  roomError: string | null;
+  /** When this browser last opened each room; drives the sidebar's unread dot. */
+  roomSeen: Record<string, string>;
   /** The Vault without passwords (null until loaded). */
   vault: VaultItem[] | null;
   /** Settings → Machines: this machine first, then the ones T3 links or Threebot reaches directly. Null until loaded. */
   machines: Machine[] | null;
 };
+
+function readRoomSeen(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem("threebot.rooms.seen") ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, string> : {};
+  } catch { return {}; }
+}
 
 export const useApp = create<State>(() => ({
   runtimeFeatures: { shellOlderSettled: false, threadFind: false, threadResumeCompletionMarker: false, sideChats: false, threadForceStop: false, voiceTranscription: false, freshContext: false, scheduledTaskThreadModes: false },
@@ -127,6 +143,11 @@ export const useApp = create<State>(() => ({
   toastLink: null,
   page: null,
   projectItemId: null,
+  rooms: {},
+  roomView: null,
+  selectedRoom: null,
+  roomError: null,
+  roomSeen: readRoomSeen(),
   vault: null,
   machines: null,
 }));
@@ -181,11 +202,14 @@ async function initialize() {
     if (!s.authenticated) return set({ auth: s.accessLogin ? "access" : s.passwordRequired ? "password" : "error" });
     const [config, settings, bots, historical] = await initialData();
     const route = new URLSearchParams(location.search);
+    const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
     const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
     if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
     if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
     if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
     set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+    void loadRooms().catch(() => {});
+    if (routeRoom) selectRoom(routeRoom);
     if (!runtimeStarted) {
       t3.onState((connection) => set({ connection }));
       t3.onReconnect(() => {
@@ -537,11 +561,232 @@ export function runtimeMode(s = get()) {
 
 // ---------- actions ----------
 export function select(slug: string | null) {
-  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null });
+  stopRoomPoll();
+  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null, selectedRoom: null, roomView: null, roomError: null });
   if (slug) localStorage.setItem("bot.selected", slug);
   const bot = slug ? get().bots[slug] : null;
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
 }
+
+// ---------- rooms ----------
+let roomPoll: ReturnType<typeof setInterval> | null = null;
+let roomPollId: string | null = null;
+let roomPollBusy = false;
+let roomPollTick = 0;
+
+export function stopRoomPoll() {
+  if (roomPoll !== null) clearInterval(roomPoll);
+  roomPoll = null;
+  roomPollId = null;
+  roomPollTick = 0;
+}
+
+/** The sidebar's room list. Errors are the caller's to show; the last list stays on screen. */
+export async function loadRooms() {
+  const list = await fetchRooms();
+  set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
+  return list;
+}
+
+/** Everything the room view renders; a poll that changes none of it must not replace the object. */
+function roomFingerprint(room: RoomView): string {
+  return [
+    room.name,
+    room.description,
+    room.section ?? "",
+    String(room.pinned),
+    JSON.stringify(room.settings),
+    room.members.map((member) => `${member.slug}:${member.threadId}:${member.status}:${member.lastTurnAt}`).join(","),
+    (room.formerMembers ?? []).map((member) => `${member.slug}:${member.threadId}`).join(","),
+    room.turns.map((turn) => `${turn.id}:${turn.status}:${turn.runs.map((run) => `${run.slug}:${run.runId}:${run.status ?? ""}:${run.late ?? ""}`).join("+")}`).join(","),
+  ].join("|");
+}
+
+function roomActivity(room: RoomView): string | null {
+  return [
+    room.turns.at(-1)?.at ?? null,
+    ...room.members.map((member) => member.lastTurnAt),
+  ].filter((at): at is string => !!at).sort().at(-1) ?? null;
+}
+
+function summaryPatch(room: RoomView, existing: RoomSummary): RoomSummary {
+  const lastTurn = room.turns.at(-1);
+  return {
+    ...existing,
+    id: room.id,
+    name: room.name,
+    description: room.description,
+    section: room.section,
+    pinned: room.pinned,
+    mode: room.settings.mode,
+    members: room.members,
+    lastTurnAt: lastTurn?.at ?? existing.lastTurnAt,
+    lastActivityAt: roomActivity(room) ?? existing.lastActivityAt,
+    lastText: lastTurn?.text.slice(0, 80) ?? room.description,
+    queued: room.turns.filter((turn) => turn.status === "queued").length,
+    running: room.turns.some((turn) => turn.status === "running"),
+  };
+}
+
+export function markRoomSeen(id: string) {
+  const roomSeen = { ...get().roomSeen, [id]: new Date().toISOString() };
+  try { localStorage.setItem("threebot.rooms.seen", JSON.stringify(roomSeen)); } catch { /* private mode */ }
+  set({ roomSeen });
+}
+
+export async function loadRoom(id: string, quiet = false) {
+  try {
+    const room = await fetchRoom(id);
+    if (get().selectedRoom !== id) return;
+    const previous = get().roomView?.id === id ? get().roomView : null;
+    if (previous && roomFingerprint(previous) === roomFingerprint(room)) {
+      // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
+      if (!quiet && get().roomError) set({ roomError: null });
+      return;
+    }
+    set((s) => ({
+      roomView: room,
+      roomError: null,
+      // Keep the sidebar row in step without another list request.
+      rooms: s.rooms[room.id] ? { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id]) } : s.rooms,
+    }));
+    // A reply that arrives while the room is open has been seen; leaving the room must not mark
+    // the row unread for something the user just read.
+    if (get().selectedRoom === id) markRoomSeen(id);
+  } catch (error) {
+    if (get().selectedRoom !== id) return;
+    // A poll failure is transient; only the first load replaces the view with an error.
+    if (!quiet) set({ roomError: error instanceof Error ? error.message : "Couldn't load the room" });
+  }
+}
+
+/** Opens a room. The view polls every 2 s until another Bot or page is selected. */
+export function selectRoom(id: string | null) {
+  stopRoomPoll();
+  if (!id) {
+    set({ selectedRoom: null, roomView: null, roomError: null, page: get().page === "room" ? null : get().page });
+    return;
+  }
+  set({ selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  markRoomSeen(id);
+  void loadRoom(id);
+  startRoomPoll(id);
+}
+
+/** RoomView calls this after history restore put the room page back without `selectRoom`. */
+export function ensureRoom(id: string) {
+  if (get().selectedRoom !== id) {
+    if (get().roomView?.id === id) {
+      // A fixture or a restored view already holds the room; only wire the page and the poll.
+      set({ selectedRoom: id, page: "room", projectItemId: null, exchangeBotSlug: null });
+      markRoomSeen(id);
+      if (roomPollId !== id) startRoomPoll(id);
+      return;
+    }
+    selectRoom(id);
+    return;
+  }
+  if (roomPollId === id) return;
+  markRoomSeen(id);
+  void loadRoom(id);
+  startRoomPoll(id);
+}
+
+function startRoomPoll(id: string) {
+  stopRoomPoll();
+  roomPollId = id;
+  roomPoll = window.setInterval(() => {
+    if (roomPollId !== id || get().selectedRoom !== id || document.visibilityState !== "visible" || roomPollBusy) return;
+    roomPollTick += 1;
+    // While a turn is in flight the view needs 2 s; an idle room only needs to notice a message
+    // another device sent, and 10 s is enough for that.
+    const active = (get().roomView?.turns ?? []).some((turn) => turn.status === "running" || turn.status === "queued");
+    if (!active && roomPollTick % 5 !== 0) return;
+    roomPollBusy = true;
+    void loadRoom(id, true).finally(() => { roomPollBusy = false; });
+  }, 2_000);
+}
+
+/** Creates the room. It does not open it: the caller decides with `showRoom` how the page moves. */
+export async function createRoom(input: CreateRoomInput) {
+  const room = await createRoomApi(input);
+  await loadRooms().catch(() => {});
+  return room;
+}
+
+/**
+ * Closes the open dialog and opens the room in one update. Creating a room used to call `selectRoom`
+ * while the dialog was still open: on mobile that pushed an overlay history entry, and closing the
+ * dialog popped back into it, so the create form came back blank until the X was pressed.
+ */
+export function showRoom(id: string) {
+  stopRoomPoll();
+  set({ dialog: null, selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  markRoomSeen(id);
+  void loadRoom(id);
+  startRoomPoll(id);
+}
+
+export async function saveRoom(id: string, input: UpdateRoomInput) {
+  const room = await updateRoomApi(id, input);
+  const fallback: RoomSummary = {
+    id: room.id, name: room.name, description: room.description, section: room.section, pinned: room.pinned,
+    mode: room.settings.mode, members: [], lastTurnAt: null, lastActivityAt: null, lastText: "", queued: 0, running: false,
+  };
+  set((s) => ({
+    rooms: { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id] ?? fallback) },
+    roomView: s.selectedRoom === room.id ? room : s.roomView,
+  }));
+  return room;
+}
+
+export async function removeRoom(id: string) {
+  const result = await deleteRoomApi(id);
+  clearRoomDraft(id);
+  try {
+    const roomSeen = { ...get().roomSeen };
+    delete roomSeen[id];
+    localStorage.setItem("threebot.rooms.seen", JSON.stringify(roomSeen));
+    set({ roomSeen });
+  } catch { /* private mode */ }
+  const leaving = get().selectedRoom === id;
+  stopRoomPoll();
+  set((s) => {
+    const rooms = { ...s.rooms };
+    delete rooms[id];
+    return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
+  });
+  return result;
+}
+
+export async function recreateRoomThreads(id: string, slug?: string) {
+  const room = await recreateRoomApi(id, slug);
+  set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
+  await loadRooms().catch(() => {});
+  return room;
+}
+
+/** Sends from the room composer; the turn index is re-read so the user's bubble lands at once. */
+export async function sendRoomMessage(id: string, text: string, mentions: string[], replyTo: string | null = null): Promise<RoomTurn> {
+  const turn = await sendRoomMessageApi(id, { text, mentions, replyTo });
+  await loadRoom(id, true);
+  void loadRooms().catch(() => {});
+  return turn;
+}
+
+export async function stopRoom(id: string) {
+  await stopRoomApi(id);
+  await loadRoom(id, true);
+  void loadRooms().catch(() => {});
+}
+
+// Back/forward can leave the room page without going through `select` or `selectThread`.
+useApp.subscribe((state, prev) => {
+  if (prev.page === "room" && state.page !== "room" && state.selectedRoom) {
+    stopRoomPoll();
+    set({ selectedRoom: null, roomView: null, roomError: null });
+  }
+});
 
 export async function loadMachines(fresh = false) {
   const result = await api.machines(fresh).catch(() => null);

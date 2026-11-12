@@ -46,6 +46,9 @@ import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runt
 import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
+import { createRooms } from "./rooms.mts";
+import { createRoomEngine } from "./room-turn.mts";
+import { createRoomRoutes } from "./rooms-routes.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
@@ -115,6 +118,29 @@ const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
 const projects = createProjects({ file: projectsFile });
+// Rooms: a named conversation with several Bots. Each member answers in its own T3 room thread.
+const rooms = createRooms({ file: path.join(appDir, "rooms.json") });
+const launchDefaults = async () => {
+  const settings = await getSettings();
+  return { runtimeMode: settings.autoReview === false ? "full-access" : "auto", model: settings.defaultModel ?? undefined };
+};
+/** The engine and the routes share one thin adapter over the reconnecting T3 client. */
+const roomRpc = {
+  call: async (tag: string, payload: object) => (await t3rpc()).call(tag, payload),
+  dispatch: async (command: object) => (await t3rpc()).dispatch(command),
+};
+const roomEngine = createRoomEngine({
+  rooms,
+  rpc: roomRpc,
+  bots: async () => new Map((await listBots()).map((bot) => [bot.slug, bot])),
+  defaults: launchDefaults,
+  // One push per turn. The pseudo slug keeps the "device is already watching this Bot" skip from
+  // silencing a room push: no device watches a room that way.
+  notify: async (payload) => {
+    await pushStore.send({ ...payload, tag: payload.url, bot: payload.url });
+  },
+  log: (line) => console.log(line),
+});
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
@@ -883,6 +909,28 @@ const botTools = createBotTools({
   extra: async () => combineExtras((await projectsOn()) ? projectTools : null),
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
+const roomRoutes = createRoomRoutes({
+  rooms,
+  engine: roomEngine,
+  rpc: roomRpc,
+  bots: async () => (await listBots()).map((bot) => ({
+    slug: bot.slug,
+    name: bot.name,
+    label: bot.label,
+    color: bot.color,
+    shape: bot.shape,
+    avatarImage: (bot.avatarImage as string | null | undefined) ?? null,
+    projectId: bot.projectId,
+    mainThreadId: bot.mainThreadId,
+    model: bot.model,
+  })),
+  launch: launchDefaults,
+  send,
+  readBody,
+  requireJson,
+  checkOrigin: (req) => sameOriginRequest(req, originPolicy),
+  log: (line) => console.log(line),
+});
 
 async function vaultRoutes(req: IncomingMessage, res: ServerResponse, p: string, url: URL) {
   if (p === "/api/vault" && req.method === "GET") {
@@ -1188,6 +1236,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
     if (await projectRoutes.handle(req, res, url)) return;
+    if (await roomRoutes.handle(req, res, url)) return;
     if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, // A missing thread id is refused by threadMeta.get's own check.
       await threadMeta.get(url.searchParams.get("thread") as string), { "cache-control": "no-store" });
     if (p === "/api/thread-meta/reactions" && req.method === "POST") {
@@ -1459,3 +1508,5 @@ telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
 });
+// A room turn that was running when the gateway stopped does not resume.
+void roomEngine.recover().catch((err) => console.error("[rooms]", (err as Error).message));

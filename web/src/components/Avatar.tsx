@@ -69,20 +69,36 @@ export function Avatar({
   );
 }
 
-export function GroupAvatar({ members, size = 32 }: { members: { shape: string; color: string; avatarImage?: string | null }[]; size?: number }) {
-  const s = size * 0.56;
-  const spots = [
-    { left: size * 0.22, top: 0 },
-    { left: 0, top: size * 0.44 },
-    { left: size * 0.44, top: size * 0.44 },
-  ];
+export function GroupAvatar({ members, size = 32 }: { members: { slug?: string; shape: string; color: string; avatarImage?: string | null }[]; size?: number }) {
+  const visible = members.slice(0, 3);
+  const count = members.length - visible.length;
+  // Two members read best side by side; three form a triangle; a bigger room keeps the triangle
+  // and shows how many members are not drawn instead of pretending there are only three.
+  const two = members.length === 2;
+  const one = members.length === 1;
+  const spot = two ? size * 0.62 : size * 0.56;
+  const spots = two
+    ? [{ left: size * 0.02, top: size * 0.19 }, { left: size * 0.36, top: size * 0.19 }]
+    : [{ left: size * 0.22, top: 0 }, { left: 0, top: size * 0.44 }, { left: size * 0.44, top: size * 0.44 }];
   return (
-    <span className="relative inline-block shrink-0" style={{ width: size, height: size }}>
-      {members.slice(0, 3).map((m, i) => (
-        <span key={i} className="absolute" style={spots[i]}>
-          <Avatar shape={m.shape} color={m.color} picture={m.avatarImage} size={s} />
+    <span className="relative inline-block shrink-0" style={{ width: size, height: size }} aria-hidden="true">
+      {one ? (
+        <span className="absolute" style={{ left: size * 0.1, top: size * 0.1 }}>
+          <Avatar shape={visible[0].shape} color={visible[0].color} picture={visible[0].avatarImage} size={size * 0.8} />
+        </span>
+      ) : visible.map((member, index) => (
+        <span key={member.slug ?? index} className="absolute" style={spots[index]}>
+          <Avatar shape={member.shape} color={member.color} picture={member.avatarImage} size={spot} />
         </span>
       ))}
+      {count > 0 && (
+        <span
+          className="absolute grid place-items-center rounded-full border border-line bg-elevated font-medium text-fg"
+          style={{ right: 0, bottom: 0, width: size * 0.42, height: size * 0.42, fontSize: Math.max(8, size * 0.2) }}
+        >
+          +{count}
+        </span>
+      )}
     </span>
   );
 }
