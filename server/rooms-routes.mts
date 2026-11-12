@@ -201,6 +201,8 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
             // The member threads belong to this room; leaving them behind is the room equivalent of
             // keeping an orphaned transcript alive in T3. Stop first so no run is holding a thread.
             await engine.stop(id).catch(() => {});
+            // T3 settles a stop asynchronously; deleting a thread in the same tick can be refused.
+            await new Promise((resolve) => setTimeout(resolve, 300));
             const threads = await deleteThreads(room);
             await rooms.remove(id);
             return send(res, 200, { ok: true, threads }), true;
