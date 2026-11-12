@@ -146,10 +146,12 @@ For each member, the gateway calls `orchestration.launchThread` with:
   launch. A failed launch stays `pending` and the room offers a retry. `commandId` and `threadId`
   are generated once and reused on retry, so a lost reply does not create a second thread.
 - **Add member:** same call; append to `members`.
-- **Remove member:** drop it from `members`; leave its thread. It stays a normal T3 thread the
-  user can open in T3 Code.
-- **Delete room:** stop a running turn first, then remove the record; leave the threads. Never
-  delete a Bot or a thread without explicit confirmation.
+- **Remove member:** move it from `members` to `formerMembers`, keeping its thread and last-turn
+  clock. Its past messages stay in the room (read-only, never addressed), and re-adding it reuses
+  that thread instead of launching a second one.
+- **Delete room:** stop a running turn first, delete the threads of current and former members in
+  T3, then remove the record. The confirmation says the threads are deleted; this is the one
+  destructive path. Never delete a Bot or an unrelated thread.
 - **Bot deleted or project archived:** mark the member unavailable; the room continues with the
   rest and shows the warning.
 
@@ -160,8 +162,7 @@ A turn starts on `POST /api/rooms/:id/messages`.
 1. **Address.** `@Name` in the user's text according to `mentionPolicy` (ignoring fenced and
    inline code); `@all` / `@everyone` → every member; replying to a member's message → that member;
    none → `defaultResponder` (`lead`, `everyone`, or nobody for `mentions`).
-2. **Queue.** A room runs one turn at a time. A message sent while a turn runs is queued, like the
-   one-to-one composer's `queue_after_active`. Stop cancels the running turn and clears the queue.
+2. **Queue.** A room runs one turn at a time. A message sent while a turn runs is persisted as a `queued` turn and shown immediately; it is promoted to `running` when the active turn ends. Stop marks the queued turns `stopped` and clears the in-memory queue.
 3. **Wave 0.** Dispatch to the addressed members.
    - `panel`: in parallel. Each member answers independently; they do not see each other's replies
      in this turn; mentions in their replies start nothing.
@@ -187,14 +188,11 @@ A turn starts on `POST /api/rooms/:id/messages`.
    not a dispatch.
 8. **Budgets.** `maxWaves` (including wave 0), `maxReplies`, `memberTimeoutMin`,
    `turnDeadlineMin`. A wave where nobody speaks ends the turn.
-9. **Stop.** For every active member, `run.interrupt` with its `activeRunId` (or `thread.stop`
-   when no run id is known); mark the turn `stopped`; clear the queue. A late reply still lands in
-   its thread and in the room view, but starts no wave.
+9. **Stop.** For every active member, dispatch `thread.stop`; mark the running turn `stopped` (only if it is still running), mark queued turns `stopped`, and clear the queue. A late reply still lands in its thread and in the room view, but starts no wave.
 10. **Late.** A member past `memberTimeoutMin` is marked `late` on the turn; its reply appears
     tagged `late` when it finishes and starts no wave (Codync's late turns are deliberately not
     copied).
-11. **Restart.** On startup, a turn marked `running` becomes `interrupted`; interrupt its active
-    runs; do not resume.
+11. **Restart.** On startup, a turn marked `running` or `queued` becomes `interrupted`; interrupt its active runs; do not resume.
 
 Polling is deliberate: T3 is local, the gateway already polls projections for previews and usage,
 and the engine stays a plain async function. A future optimization can use
@@ -237,15 +235,16 @@ It's your turn, Alpha.
   and a one-line explanation. The dialog states the cost shape ("a message can start up to one
   model turn per addressed member").
 - **Room view:** one timeline. User messages come from the turn index; Bot replies from the member
-  threads. Each bubble carries its member's avatar, name and colour.
-  Status: "Alpha is answering…", "Beta is waiting for you" (card), "Stopped".
+  threads. Each bubble carries its member's avatar, name and colour. A queued message shows its state
+  until it starts. Status: "Alpha is answering…", "Beta is waiting for you" (card), "Stopped"; a
+  sticky "needs you" bar above the composer scrolls to the first pending card.
 - **Cards:** approvals, questions and secret requests from a member's thread render inline with
   that member's identity; answers go to its thread.
 - **Composer:** the same textarea plus an `@` menu (PR 1) limited to the room's members, and
   `@all`. The send posts to `/api/rooms/:id/messages` with `mentions: [slug]`. Attachments go
   through `message.dispatch` when T3 accepts the same attachment ids in several threads; otherwise
   the room keeps the files in its folder and lists their paths.
-- **Header:** name, members, mode, Stop.
+- **Header:** name, members, mode; Stop lives in the composer, as in the one-to-one Chat. The header title opens a member sheet with each member's model, runtime mode, status and thread link.
 - **Details:** settings, each member's resolved model and runtime mode (a `full-access` member is
   marked), a link to each member's room thread in T3 Code, Recreate threads, delete room.
 - **Mobile:** the same view and composer; the sidebar row.
@@ -260,8 +259,8 @@ Search (`⌘K`) finds rooms by name and description, and lists them under a **Ro
 | `GET` | `/api/rooms/:id` | — | Room plus turn index |
 | `POST` | `/api/rooms` | `{name, description?, members, settings?}` | Creates threads |
 | `PATCH` | `/api/rooms/:id` | subset, including `settings` | Adding a member launches its thread |
-| `DELETE` | `/api/rooms/:id` | — | Config only; threads stay |
-| `POST` | `/api/rooms/:id/messages` | `{text, mentions?, replyTo?, attachments?}` | Starts or queues a turn |
+| `DELETE` | `/api/rooms/:id` | — | Deletes the record and the member threads; returns `{ok, threads: {deleted, failed}}` |
+| `POST` | `/api/rooms/:id/messages` | `{text, mentions?, replyTo?, attachments?}` | Starts or queues a turn; text is capped at 20,000 characters |
 | `POST` | `/api/rooms/:id/stop` | — | Interrupts active members |
 | `POST` | `/api/rooms/:id/recreate` | `{slug?}` | Starts over: fresh room threads with the current settings, and the room's message index is cleared |
 
@@ -273,8 +272,9 @@ Writes require `content-type: application/json` and an `Origin` matching the app
 - `$THREEBOT_HOME/.botapp/rooms.json`, mode `0600` (it holds the user's text),
   `{version: 1, rooms: [...]}`.
 - `turns` keeps the last 200 per room: `{id, at, text, mentions, replyTo, status, runs}` where
-  `status` is `running | done | stopped | interrupted | failed` and `runs` is
-  `[{slug, runId}]`.
+  `status` is `queued | running | done | stopped | interrupted | failed` and `runs` is
+  `[{slug, runId, late?, status?, error?, at?}]`. `status` on a run is `replied | passed | no-reply | failed | timeout | stopped`.
+- `formerMembers` keeps the full member record plus `removedAt`, so a removed Bot's thread and history survive and can be reused.
 - Bot replies are never duplicated into this file.
 
 ### Notifications
@@ -283,7 +283,7 @@ Writes require `content-type: application/json` and an `Origin` matching the app
   Bot's `mainThreadId` or a side chat's parent, so a room thread has no owner and sends nothing.
 - The room engine sends **one push per turn** through the existing push sender when the last active
   member finishes, with the room name, a short preview of the last reply and the deep link
-  `/?room=<id>`. A member waiting for the user sends one push too; a normal reply does not.
+  `/?room=<id>`. A member that stops for an approval, question or secret sends **one** push (`X is waiting for you`) the first time that run reports `waiting`; a normal reply does not.
 - `notifications: false` silences both.
 
 ### Security and privacy
@@ -334,7 +334,7 @@ This is a bounded feature: no new runtime, no database and no T3 change.
 ## Tests
 
 - **Unit:** settings validation, mention parser (boundaries, code blocks, `@all`, duplicates),
-  budgets and waves, stop and timeout, prompt lines, reply selection, `(pass)`.
+  budgets and waves, stop and timeout, prompt lines, reply selection, `(pass)`, queued turns, two sends in one tick, crash recovery, per-member timeout, a waiting push, and removed-member history.
 - **Engine:** `runTurn` against a fake runtime (`dispatch`/`projection`/`interrupt`) with scripted
   runs. No models.
 - **Spike:** `scripts/rooms-spike.mts` against the real T3 with the `tester` Bot: launch in its
