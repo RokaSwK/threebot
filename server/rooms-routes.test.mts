@@ -21,13 +21,19 @@ const request = ({ method = "GET", body, origin = "https://bot.example", json = 
 const bots = [
   { slug: "alpha", name: "Alpha", label: "First", color: "teal", shape: "sphere", avatarImage: null, projectId: "project-alpha", mainThreadId: "main-alpha" },
   { slug: "beta", name: "Beta", label: "Second", color: "violet", shape: "blob", avatarImage: null, projectId: "project-beta", mainThreadId: "main-beta" },
+  { slug: "gamma", name: "Gamma", label: "Third", color: "amber", shape: "sphere", avatarImage: null, projectId: "project-gamma", mainThreadId: "main-gamma" },
 ];
 
 const launched: any[] = [];
+const deleted: string[] = [];
 const rpc = {
   async call(tag: string, payload: any) {
     if (tag === "orchestration.launchThread") { launched.push(payload); return { ok: true }; }
     return { thread: { runtimeMode: "auto", modelSelection: "model-1" } };
+  },
+  async dispatch(command: any) {
+    if (command.type === "thread.delete") deleted.push(command.threadId);
+    return { ok: true };
   },
 };
 
@@ -40,6 +46,7 @@ const engine = {
 
 async function setup() {
   launched.length = 0;
+  deleted.length = 0;
   const dir = await mkdtemp(path.join(tmpdir(), "room-routes-"));
   const rooms = createRooms({ file: path.join(dir, "rooms.json") });
   const routes = createRoomRoutes({
@@ -89,7 +96,7 @@ test("a member whose thread cannot be launched stays pending", async () => {
   const failing = createRoomRoutes({
     rooms: createRooms({ file: path.join(tmpdir(), `room-routes-${Date.now()}-${Math.random()}.json`) }),
     engine,
-    rpc: { async call() { throw new Error("provider refused"); } },
+    rpc: { async call() { throw new Error("provider refused"); }, async dispatch() { return { ok: true }; } },
     bots: async () => bots,
     launch: async () => ({}),
     send, readBody: async (req: FakeRequest) => req.body,
@@ -126,16 +133,18 @@ test("unknown rooms are 404 and paths outside /api/rooms are not ours", async ()
   await done();
 });
 
-test("settings can be changed and the room deleted; the threads are left alone", async () => {
+test("settings can be changed and deleting the room deletes its member threads", async () => {
   const { routes, rooms, done } = await setup();
   const created = await call(routes, request({ method: "POST", body: { name: "Studio", members: ["alpha", "beta"] } }), "/api/rooms");
   const id = (created.res.body as any).room.id;
+  const threads = (created.res.body as any).room.members.map((member: any) => member.threadId).sort();
   const patched = await call(routes, request({ method: "PATCH", body: { settings: { mode: "roundtable", defaultResponder: "everyone" }, guidance: "Short" } }), `/api/rooms/${id}`);
   assert.equal(patched.res.status, 200);
   assert.equal((patched.res.body as any).room.settings.mode, "roundtable");
   assert.equal((patched.res.body as any).room.guidance, "Short");
-  const deleted = await call(routes, request({ method: "DELETE" }), `/api/rooms/${id}`);
-  assert.deepEqual(deleted.res.body, { ok: true });
+  const deletedResponse = await call(routes, request({ method: "DELETE" }), `/api/rooms/${id}`);
+  assert.deepEqual(deletedResponse.res.body, { ok: true, threads: { deleted: 2, failed: [] } });
+  assert.deepEqual(deleted.sort(), threads, "every member thread is deleted in T3");
   assert.equal(await rooms.get(id), null);
   await done();
 });
@@ -168,5 +177,28 @@ test("messages and stop go through the engine", async () => {
   const recreate = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/recreate`);
   assert.equal(recreate.res.status, 200);
   assert.equal(launched.length, 4, "recreate launched one fresh thread per member");
+  await done();
+});
+
+test("removing the lead promotes another member and keeps the former member's thread", async () => {
+  const { routes, done } = await setup();
+  const created = await call(routes, request({ method: "POST", body: { name: "Rotate", members: ["alpha", "beta"] } }), "/api/rooms");
+  const id = (created.res.body as any).room.id;
+  const alphaThread = (created.res.body as any).room.members.find((member: any) => member.slug === "alpha").threadId;
+  assert.equal((created.res.body as any).room.settings.lead, "alpha");
+
+  const removed = await call(routes, request({ method: "PATCH", body: { members: ["beta", "gamma"] } }), `/api/rooms/${id}`);
+  assert.equal(removed.res.status, 200);
+  assert.equal((removed.res.body as any).room.settings.lead, "beta", "the lead is promoted instead of failing the patch");
+  assert.deepEqual((removed.res.body as any).room.formerMembers.map((member: any) => [member.slug, member.removed]), [["alpha", true]]);
+  assert.equal((removed.res.body as any).room.formerMembers[0].threadId, alphaThread);
+
+  const restored = await call(routes, request({ method: "PATCH", body: { members: ["alpha", "beta", "gamma"] } }), `/api/rooms/${id}`);
+  assert.equal(restored.res.status, 200);
+  assert.deepEqual((restored.res.body as any).room.formerMembers, []);
+  const alpha = (restored.res.body as any).room.members.find((member: any) => member.slug === "alpha");
+  assert.equal(alpha.threadId, alphaThread, "re-adding a member reuses its thread");
+  assert.equal(alpha.status, "ready");
+  assert.equal(launched.length, 3, "only beta and gamma were launched; alpha kept its thread");
   await done();
 });

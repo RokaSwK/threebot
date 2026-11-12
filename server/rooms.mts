@@ -12,6 +12,8 @@ export const MAX_TURNS = 200;
 export const MAX_NAME = 60;
 export const MAX_DESCRIPTION = 200;
 export const MAX_GUIDANCE = 2_000;
+/** A room message is relayed to every addressed member; cap what one paste can cost. */
+export const MAX_MESSAGE = 20_000;
 
 export const RUNTIME_MODES = ["inherit", "approval-required", "auto-accept-edits", "auto", "full-access"] as const;
 export const ROOM_MODES = ["panel", "roundtable"] as const;
@@ -58,6 +60,8 @@ export const DEFAULT_SETTINGS: Omit<RoomSettings, "lead"> = {
 export type RoomMemberStatus = "pending" | "ready" | "unavailable";
 export type RoomMember = {
   slug: string;
+  /** The Bot's display name when the member was added; the roster wins while it exists. */
+  name?: string;
   /** Null until its room thread is launched. */
   threadId: string | null;
   status: RoomMemberStatus;
@@ -69,12 +73,21 @@ export type RoomMember = {
   addedAt: string;
 };
 
-export type RoomTurnStatus = "running" | "done" | "stopped" | "interrupted" | "failed";
+/** A member that left the room. Its thread is kept so the room's history stays readable. */
+export type FormerMember = RoomMember & { removedAt: string };
+
+export type RoomTurnStatus = "queued" | "running" | "done" | "stopped" | "interrupted" | "failed";
 export type RoomRun = {
   slug: string;
   runId: string | null;
   /** The member passed `memberTimeoutMin`; its reply may still arrive, but it opens no wave. */
   late?: boolean;
+  /** How this member's part of the turn ended; absent while the turn runs. */
+  status?: "replied" | "passed" | "no-reply" | "failed" | "timeout" | "stopped";
+  /** A short reason for `failed`, shown as a room line. */
+  error?: string;
+  /** When the outcome was recorded. */
+  at?: string;
 };
 export type RoomTurn = {
   id: string;
@@ -96,6 +109,8 @@ export type Room = {
   createdAt: string;
   settings: RoomSettings;
   members: RoomMember[];
+  /** Members that were removed; their threads are read-only history, never addressed. */
+  formerMembers: FormerMember[];
   turns: RoomTurn[];
 };
 
@@ -163,10 +178,10 @@ export function normalizeSettings(patch: unknown, members: string[], current?: R
     turnDeadlineMin: input.turnDeadlineMin === undefined ? base.turnDeadlineMin : int(input.turnDeadlineMin, 1, 120),
     notifications: input.notifications === undefined ? base.notifications : input.notifications === true,
   };
-  if (members.length > 0 && !members.includes(settings.lead)) {
-    throw new RoomsError("settings.lead must be one of the room's members");
-  }
-  if (!settings.lead && members.length > 0) settings.lead = members[0];
+  // Removing the lead is a normal edit: the first remaining member takes over instead of
+  // failing the whole patch with a rule the caller cannot see.
+  if (members.length > 0 && !members.includes(settings.lead)) settings.lead = members[0];
+  if (members.length === 0) settings.lead = "";
   return settings;
 }
 
@@ -197,8 +212,8 @@ export function validateMembers(slugs: unknown, bots: BotIdentity[]): BotIdentit
 }
 
 /** A member starts `pending`; the launcher fills in its thread and model. */
-export function pendingMember(slug: string, at: string): RoomMember {
-  return { slug, threadId: null, status: "pending", model: null, runtimeMode: "inherit", lastTurnAt: null, addedAt: at };
+export function pendingMember(slug: string, name: string, at: string): RoomMember {
+  return { slug, name, threadId: null, status: "pending", model: null, runtimeMode: "inherit", lastTurnAt: null, addedAt: at };
 }
 
 export type CreateRoomInput = {
@@ -228,7 +243,15 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
     try {
       const raw = JSON.parse(await fs.readFile(file, "utf8")) as Partial<RoomsFile>;
       const rooms = Array.isArray(raw.rooms) ? raw.rooms.filter((room): room is Room => !!room && typeof room.id === "string") : [];
-      cache = { version: 1, rooms: rooms.map((room) => ({ ...room, turns: Array.isArray(room.turns) ? room.turns : [] })) };
+      cache = {
+        version: 1,
+        rooms: rooms.map((room) => ({
+          ...room,
+          members: Array.isArray(room.members) ? room.members : [],
+          formerMembers: Array.isArray(room.formerMembers) ? room.formerMembers : [],
+          turns: Array.isArray(room.turns) ? room.turns : [],
+        })),
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       cache = { version: 1, rooms: [] };
@@ -274,7 +297,7 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
     },
     async create(input: CreateRoomInput): Promise<Room> {
       return serialize((state) => {
-        const members = input.members.map((bot) => pendingMember(bot.slug, now()));
+        const members = input.members.map((bot) => pendingMember(bot.slug, bot.name, now()));
         const settings = normalizeSettings(input.settings, members.map((member) => member.slug));
         const room: Room = {
           id: newId(),
@@ -286,6 +309,7 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
           createdAt: now(),
           settings,
           members,
+          formerMembers: [],
           turns: [],
         };
         if (state.rooms.some((candidate) => candidate.name.toLowerCase() === room.name.toLowerCase())) {
@@ -312,8 +336,40 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         if (patch.section !== undefined) room.section = typeof patch.section === "string" && patch.section.trim() ? patch.section.trim().slice(0, 60) : null;
         if (patch.pinned !== undefined) room.pinned = patch.pinned === true;
         if (Array.isArray(patch.members)) {
-          const slugs = [...new Set(patch.members.map((slug) => text(slug)).filter(Boolean))];
-          room.members = slugs.map((slug) => room.members.find((member) => member.slug === slug) ?? pendingMember(slug, now()));
+          // The route passes validated `{slug, name}` pairs; a direct store caller may pass slugs.
+          const identities: BotIdentity[] = [];
+          const seen = new Set<string>();
+          for (const item of patch.members) {
+            const candidate = item && typeof item === "object" ? item as { slug?: unknown; name?: unknown } : null;
+            const slug = text(candidate ? candidate.slug : item);
+            if (!slug || seen.has(slug)) continue;
+            seen.add(slug);
+            identities.push({ slug, name: text(candidate?.name) || slug });
+          }
+          const currentBySlug = new Map(room.members.map((member) => [member.slug, member]));
+          const formerBySlug = new Map(room.formerMembers.map((member) => [member.slug, member]));
+          const next: RoomMember[] = [];
+          for (const bot of identities) {
+            const current = currentBySlug.get(bot.slug);
+            if (current) {
+              next.push({ ...current, name: bot.name });
+              continue;
+            }
+            const former = formerBySlug.get(bot.slug);
+            if (former) {
+              // Re-adding a removed member keeps its thread and history instead of launching a second one.
+              const { removedAt: _removedAt, ...member } = former;
+              next.push({ ...member, name: bot.name, status: member.threadId ? "ready" : "pending" });
+              continue;
+            }
+            next.push(pendingMember(bot.slug, bot.name, now()));
+          }
+          const kept = new Set(identities.map((bot) => bot.slug));
+          const removed = room.members
+            .filter((member) => !kept.has(member.slug))
+            .map((member) => ({ ...member, name: member.name ?? member.slug, removedAt: now() }));
+          room.formerMembers = [...room.formerMembers.filter((member) => !kept.has(member.slug)), ...removed];
+          room.members = next;
         }
         room.settings = normalizeSettings(patch.settings, room.members.map((member) => member.slug), room.settings);
         await save(state);
@@ -404,13 +460,28 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         return clone(room);
       });
     },
-    /** A turn that was running when the gateway stopped is finished for good: it does not resume. */
+    /** Queued messages that never started when the room was stopped. */
+    async stopQueued(id: string): Promise<Room | null> {
+      return serialize(async (state) => {
+        const room = state.rooms.find((candidate) => candidate.id === id);
+        if (!room) return null;
+        let changed = false;
+        for (const turn of room.turns) {
+          if (turn.status !== "queued") continue;
+          turn.status = "stopped";
+          changed = true;
+        }
+        if (changed) await save(state);
+        return changed ? clone(room) : null;
+      });
+    },
+    /** A turn that was running or queued when the gateway stopped is finished for good: it does not resume. */
     async interruptRunning(): Promise<string[]> {
       return serialize(async (state) => {
         const interrupted: string[] = [];
         for (const room of state.rooms) {
           for (const turn of room.turns) {
-            if (turn.status === "running") {
+            if (turn.status === "running" || turn.status === "queued") {
               turn.status = "interrupted";
               interrupted.push(`${room.id}/${turn.id}`);
             }

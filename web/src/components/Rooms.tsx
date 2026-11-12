@@ -64,8 +64,9 @@ function useRoomMenu() {
     if (!deleting || busy) return;
     setBusy(true);
     try {
-      await removeRoom(deleting.id);
-      toast("Room deleted");
+      const result = await removeRoom(deleting.id);
+      const failed = result.threads.failed.length;
+      toast(failed > 0 ? `Room deleted; ${failed} thread${failed === 1 ? "" : "s"} couldn't be removed` : result.threads.deleted > 0 ? `Room and ${result.threads.deleted} threads deleted` : "Room deleted");
       setDeleting(null);
     } catch (error) {
       toast(error instanceof Error ? error.message : "Couldn't delete the room");
@@ -78,7 +79,7 @@ function useRoomMenu() {
       {deleting && (
         <Modal onClose={() => { if (!busy) setDeleting(null); }} className="w-[340px]">
           <div className="p-5 text-[16px]">Delete “{deleting.name}”?</div>
-          <p className="px-5 pb-2 text-[13px] text-muted">The room goes away. The threads of its Bots stay in T3.</p>
+          <p className="px-5 pb-2 text-[13px] text-muted">The room and the threads of its Bots are deleted from T3. This cannot be undone.</p>
           <div className="flex justify-end gap-3 p-4">
             <Pill variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Pill>
             <Pill variant="danger" disabled={busy} onClick={() => void destroy()}>{busy && <Spinner />} Delete</Pill>
@@ -97,6 +98,7 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
   const settings = useApp((s) => s.settings);
   const selectedRoom = useApp((s) => s.selectedRoom);
   const page = useApp((s) => s.page);
+  const roomSeen = useApp((s) => s.roomSeen);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsed);
   const { openRoomMenu, nodes: roomMenu } = useRoomMenu();
 
@@ -109,7 +111,7 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
   }, [collapsed]);
 
   const { pinned, groups, empty, total } = useMemo(() => {
-    const all = Object.values(rooms).sort((a, b) => (b.lastTurnAt ?? "").localeCompare(a.lastTurnAt ?? "") || a.name.localeCompare(b.name));
+    const all = Object.values(rooms).sort((a, b) => (b.lastActivityAt ?? b.lastTurnAt ?? "").localeCompare(a.lastActivityAt ?? a.lastTurnAt ?? "") || a.name.localeCompare(b.name));
     const pinnedRooms = all.filter((room) => room.pinned);
     const rest = all.filter((room) => !room.pinned);
     const order = [...(settings?.sections ?? [])];
@@ -123,6 +125,7 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
   }, [rooms, settings?.sections]);
 
   const selected = (room: RoomSummary) => page === "room" && selectedRoom === room.id;
+  const unread = (room: RoomSummary) => !selected(room) && !!room.lastActivityAt && (!roomSeen[room.id] || room.lastActivityAt > roomSeen[room.id]);
   const fold = (key: string) => setCollapsed((current) => ({ ...current, [key]: !current[key] }));
 
   return (
@@ -143,7 +146,7 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
       </div>
       {!collapsed.rooms && (
         <>
-          {pinned.map((room) => <RoomRow key={room.id} room={room} selected={selected(room)} large={large} onMenu={openRoomMenu} />)}
+          {pinned.map((room) => <RoomRow key={room.id} room={room} selected={selected(room)} unread={unread(room)} large={large} onMenu={openRoomMenu} />)}
           {groups.map((group) => {
             const key = `section:${group.name}`;
             return (
@@ -161,7 +164,7 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
                     <ChevronDown size={12} className={clsx("section-chevron opacity-0 transition group-hover:opacity-100", collapsed[key] && "-rotate-90")} />
                   </button>
                 )}
-                {!collapsed[key] && group.rooms.map((room) => <RoomRow key={room.id} room={room} selected={selected(room)} large={large} onMenu={openRoomMenu} />)}
+                {!collapsed[key] && group.rooms.map((room) => <RoomRow key={room.id} room={room} selected={selected(room)} unread={unread(room)} large={large} onMenu={openRoomMenu} />)}
               </div>
             );
           })}
@@ -173,25 +176,33 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
   );
 }
 
-function RoomRow({ room, selected, large, onMenu }: { room: RoomSummary; selected: boolean; large: boolean; onMenu: (point: MenuPoint, room: RoomSummary) => void }) {
+function RoomRow({ room, selected, unread, large, onMenu }: { room: RoomSummary; selected: boolean; unread: boolean; large: boolean; onMenu: (point: MenuPoint, room: RoomSummary) => void }) {
+  const preview = room.running
+    ? "A turn is running…"
+    : room.queued > 0
+      ? `${room.queued} queued`
+      : room.lastText?.trim() || `${room.members.length} bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`;
   return (
     <div className="relative">
       <HoldButton
         onMenu={(point) => onMenu(point, room)}
         onClick={() => selectRoom(room.id)}
         aria-current={selected ? "page" : undefined}
-        aria-label={`Open room ${room.name}`}
+        aria-label={`Open room ${room.name}${unread ? ", unread" : ""}`}
         className={clsx("bot-row flex w-full items-center gap-3 rounded-[10px] px-2 py-[9px] text-left transition-colors", selected ? "bg-active" : "hover:bg-hover")}
       >
-        <GroupAvatar members={room.members} size={large ? 44 : 36} />
+        <span className="relative shrink-0">
+          <GroupAvatar members={room.members} size={large ? 44 : 36} />
+          {unread && <span className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-[var(--attention)] ring-2 ring-[var(--bg-sidebar)]" aria-hidden="true" />}
+        </span>
         <span className="min-w-0 flex-1 pr-7">
           <span className="bot-row-name block truncate text-[13.5px] leading-5 text-fg">{room.name}</span>
           <span className="bot-row-preview flex min-w-0 items-center gap-1.5 text-[12.5px] leading-[18px] text-muted">
-            <span className="min-w-0 truncate">{room.running ? "A turn is running…" : `${room.members.length} bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`}</span>
+            <span className="min-w-0 truncate">{preview}</span>
           </span>
         </span>
       </HoldButton>
-      <button aria-label={`Options for ${room.name}`} title={`Options for ${room.name}`} onClick={(event) => onMenu(event, room)} className="absolute top-1/2 right-1 grid size-7 -translate-y-1/2 place-items-center rounded-full text-muted hover:bg-hover"><Ellipsis size={16} /></button>
+      <button aria-label={`Options for ${room.name}`} title={`Options for ${room.name}`} onClick={(event) => onMenu(event, room)} className="absolute top-1/2 right-1 grid size-8 -translate-y-1/2 place-items-center rounded-full text-muted after:absolute after:-inset-1.5 hover:bg-hover"><Ellipsis size={16} /></button>
     </div>
   );
 }
@@ -201,14 +212,17 @@ export function RoomsCompact() {
   const rooms = useApp((s) => s.rooms);
   const selectedRoom = useApp((s) => s.selectedRoom);
   const page = useApp((s) => s.page);
+  const roomSeen = useApp((s) => s.roomSeen);
   const { openRoomMenu, nodes: roomMenu } = useRoomMenu();
 
   useEffect(() => {
     void loadRooms().catch(() => {});
   }, []);
 
-  const list = Object.values(rooms);
+  const list = Object.values(rooms).sort((a, b) => (b.lastActivityAt ?? b.lastTurnAt ?? "").localeCompare(a.lastActivityAt ?? a.lastTurnAt ?? "") || a.name.localeCompare(b.name));
   if (!list.length) return null;
+  const selected = (room: RoomSummary) => page === "room" && selectedRoom === room.id;
+  const unread = (room: RoomSummary) => !selected(room) && !!room.lastActivityAt && (!roomSeen[room.id] || room.lastActivityAt > roomSeen[room.id]);
   return (
     <div className="flex w-full flex-col items-center gap-2 border-t border-line pt-3 pb-1">
       {list.map((room) => (
@@ -218,11 +232,12 @@ export function RoomsCompact() {
           onMenu={(point) => openRoomMenu(point, room)}
           onClick={() => selectRoom(room.id)}
           title={room.name}
-          aria-label={`Open room ${room.name}`}
-          aria-current={page === "room" && selectedRoom === room.id ? "page" : undefined}
-          className={clsx("grid size-[54px] place-items-center rounded-[14px]", page === "room" && selectedRoom === room.id ? "bg-active" : "hover:bg-hover")}
+          aria-label={`Open room ${room.name}${unread(room) ? ", unread" : ""}`}
+          aria-current={selected(room) ? "page" : undefined}
+          className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected(room) ? "bg-active" : "hover:bg-hover")}
         >
           <GroupAvatar members={room.members} size={36} />
+          {unread(room) && <span className="absolute right-2 bottom-2 size-2.5 rounded-full bg-[var(--attention)] ring-2 ring-[var(--bg-sidebar)]" aria-hidden="true" />}
         </HoldButton>
       ))}
       {roomMenu}
@@ -262,6 +277,8 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   const bots = useApp((s) => s.bots);
   const providers = useApp((s) => s.providers);
   const editing = !!initial;
+  // Opening a soft keyboard over a full-screen sheet hides the form the user just opened.
+  const touch = useMemo(() => window.matchMedia("(pointer: coarse)").matches, []);
 
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -343,8 +360,9 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
     setBusy(true);
     setError("");
     try {
-      await removeRoom(initial.id);
-      toast("Room deleted");
+      const result = await removeRoom(initial.id);
+      const failed = result.threads.failed.length;
+      toast(failed > 0 ? `Room deleted; ${failed} thread${failed === 1 ? "" : "s"} couldn't be removed` : result.threads.deleted > 0 ? `Room and ${result.threads.deleted} threads deleted` : "Room deleted");
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't delete the room");
@@ -383,19 +401,19 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   };
 
   return (
-    <Modal onClose={() => { if (!busy) onClose(); }} title={editing ? `Room · ${initial.name}` : "New Room"} className="w-[520px] max-w-full">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+    <Modal onClose={() => { if (!busy) onClose(); }} title={editing ? `Room · ${initial.name}` : "New Room"} className="w-[620px] max-w-full">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 pb-6 scroll-thin">
         <div className="rounded-xl bg-card px-3 py-2.5 text-[12.5px] leading-[18px] text-muted">
           <p className="mb-1 font-medium text-fg">How a room works</p>
-          <p>You write once and the Bots you address answer here, each in its own thread. A message can start one model turn per addressed member.</p>
+          <p>You write once and the Bots you address answer here, each in its own T3 thread. One message can start one model turn per addressed Bot.</p>
         </div>
 
         <Field label="Name" hint="Shown in the sidebar.">
-          <input autoFocus={!editing} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} aria-label="Room name" className="h-10 w-full rounded-xl border border-line bg-elevated px-3 text-[14px] outline-none focus:border-line-strong" />
+          <input autoFocus={!editing && !touch} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} aria-label="Room name" className="h-10 w-full rounded-xl border border-line bg-elevated px-3 text-[14px] outline-none focus:border-line-strong" />
         </Field>
 
-        <Field label="Members" hint="Two to eight Bots. Each one gets a thread titled with the room's name.">
-          <div role="group" aria-label="Room members" className="grid max-h-[200px] gap-1 overflow-y-auto rounded-xl border border-line p-1 scroll-thin">
+        <Field label="Bots" hint="Two to eight Bots, each with its own thread in T3. Removing one keeps its past messages in the room.">
+          <div role="group" aria-label="Room Bots" className="grid max-h-[200px] gap-1 overflow-y-auto rounded-xl border border-line p-1 scroll-thin">
             {candidates.map((bot) => {
               const checked = members.includes(bot.slug);
               return (
@@ -413,7 +431,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
 
         <div>
           <span className="text-[13px] font-medium">Mode</span>
-          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+          <div role="radiogroup" aria-label="Room mode" className="mt-1.5 grid gap-2 sm:grid-cols-2">
             <ModeCard
               selected={settings.mode === "panel"}
               disabled={busy}
@@ -455,7 +473,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
         </div>
 
         {settings.defaultResponder === "lead" && (
-          <Field label="Lead" hint="The member that answers when nobody is mentioned.">
+          <Field label="Lead" hint="The Bot that answers when nobody is mentioned.">
             <Select label="Lead" value={settings.lead} disabled={busy || members.length === 0} onChange={(value) => update({ lead: value })} options={members.map((slug) => [slug, candidates.find((candidate) => candidate.slug === slug)?.name ?? slug] as [string, string])} placeholder="Choose a lead" />
           </Field>
         )}
@@ -511,16 +529,16 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <Field label="Reply limit" hint="Total spoken replies one message can produce. A pass doesn't count (1–20).">
                 <NumberInput label="Reply limit" value={settings.maxReplies} min={1} max={20} disabled={busy} onChange={(value) => update({ maxReplies: value })} />
               </Field>
-              <Field label="Wait per member" hint="Minutes to wait for one member before moving on (1–60).">
-                <NumberInput label="Wait per member" value={settings.memberTimeoutMin} min={1} max={60} disabled={busy} onChange={(value) => update({ memberTimeoutMin: value })} />
+              <Field label="Time per Bot" hint="Minutes each Bot has to answer before its reply is marked late (1–60).">
+                <NumberInput label="Time per Bot" value={settings.memberTimeoutMin} min={1} max={60} disabled={busy} onChange={(value) => update({ memberTimeoutMin: value })} />
               </Field>
-              <Field label="Stop after" hint="Minutes after which no new round starts (1–120).">
-                <NumberInput label="Stop after" value={settings.turnDeadlineMin} min={1} max={120} disabled={busy} onChange={(value) => update({ turnDeadlineMin: value })} />
+              <Field label="Turn limit" hint="Minutes one message may take in total before the room stops opening rounds (1–120).">
+                <NumberInput label="Turn limit" value={settings.turnDeadlineMin} min={1} max={120} disabled={busy} onChange={(value) => update({ turnDeadlineMin: value })} />
               </Field>
             </div>
             <p className="text-[12px] text-muted">
               One message can produce up to <span className="text-fg">{settings.maxReplies}</span> replies
-              {settings.mode === "roundtable" ? <> across <span className="text-fg">{settings.maxWaves}</span> rounds</> : null}, and a member is dropped after <span className="text-fg">{settings.memberTimeoutMin}</span> min.
+              {settings.mode === "roundtable" ? <> across <span className="text-fg">{settings.maxWaves}</span> rounds</> : null}, and each Bot gets <span className="text-fg">{settings.memberTimeoutMin}</span> min to answer.
             </p>
 
             <Toggle label="Notifications" hint="One push when the turn finishes." checked={settings.notifications} disabled={busy} onChange={(value) => update({ notifications: value })} />
@@ -560,8 +578,8 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <Pill variant="soft" disabled={busy} onClick={() => { setConfirmReset(true); setConfirmDelete(false); }}><RefreshCw size={13} /> Start over</Pill>
               <Pill variant="ghost" className="text-danger" disabled={busy} onClick={() => { setConfirmDelete(true); setConfirmReset(false); }}><Trash2 size={13} /> Delete room</Pill>
             </div>
-            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span> deletes this room's messages and opens a fresh thread for every member. The old threads stay in T3 as history.</p>
-            <p className="text-[12px] text-muted"><span className="text-fg">Delete room</span> removes the room from Threebot. Its threads stay in T3.</p>
+            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span> deletes this room's messages and opens a fresh thread for every Bot. The old threads stay in T3 as history.</p>
+            <p className="text-[12px] text-muted"><span className="text-fg">Delete room</span> removes the room and deletes its Bot threads in T3. This cannot be undone.</p>
             {confirmReset && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl bg-card p-2">
                 <span className="mr-auto text-[12.5px]">Delete the messages and start over?</span>
@@ -571,7 +589,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
             )}
             {confirmDelete && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl bg-card p-2">
-                <span className="mr-auto text-[12.5px]">Delete this room? Its threads stay.</span>
+                <span className="mr-auto text-[12.5px]">Delete this room and its threads?</span>
                 <Pill variant="ghost" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancel</Pill>
                 <Pill variant="danger" disabled={busy} onClick={() => void remove()}>{busy && <Spinner />} Delete</Pill>
               </div>
@@ -627,8 +645,8 @@ function ModeCard({ selected, disabled, title, tagline, body, onSelect }: { sele
           {selected && <span className="size-2 rounded-full bg-accent" />}
         </span>
         <span className="text-[13px] font-medium">{title}</span>
-        <span className="truncate text-[11px] text-muted">{tagline}</span>
       </span>
+      <span className="mt-0.5 block text-[11px] text-muted">{tagline}</span>
       <span className="mt-1 block text-[12px] leading-[17px] text-muted">{body}</span>
     </button>
   );

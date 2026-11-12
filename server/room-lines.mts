@@ -43,8 +43,8 @@ export function isPass(text: string): boolean {
 /** One line of the transcript as the room and the prompt show it. */
 export function formatRoomLine(line: RoomLine): string {
   const who = line.author.kind === "user" ? "User" : line.author.name;
-  const quote = line.replyToName ? `[replying to ${line.replyToName}: "${clip(line.text, 80)}"] ` : "";
-  return `${who}: ${quote}${line.text.trim()}`;
+  const quote = line.replyToName ? `[replying to ${line.replyToName}] ` : "";
+  return `${who}: ${quote}${clip(line.text, 1_200)}`;
 }
 
 export function clip(text: string, max: number): string {

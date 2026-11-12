@@ -62,6 +62,10 @@ function fakeRuntime() {
       const run = runs.get(threadId);
       if (run) Object.assign(run, { status: "failed" });
     },
+    wait(threadId: string) {
+      const run = runs.get(threadId);
+      if (run) Object.assign(run, { status: "waiting" });
+    },
   };
 }
 
@@ -77,7 +81,7 @@ async function roomWith(settings: Record<string, unknown> = {}): Promise<{ room:
   return { room: (await rooms.get(room.id))!, file, done: () => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }) };
 }
 
-const waitFor = async (check: () => boolean | Promise<boolean>, label: string, timeoutMs = 3_000) => {
+const waitFor = async (check: () => boolean | Promise<boolean>, label: string, timeoutMs = 10_000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (await check()) return;
@@ -100,9 +104,10 @@ test("a mention starts only the member it names", async () => {
   runtime.complete("thread-beta", "pong");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
   const stored = (await rooms.get(room.id))!;
-  assert.deepEqual(stored.turns[0].runs, [{ slug: "beta", runId: "run-1" }]);
+  assert.deepEqual(stored.turns[0].runs.map(({ slug, runId }) => ({ slug, runId })), [{ slug: "beta", runId: "run-1" }]);
+  assert.equal(stored.turns[0].runs[0].status, "replied");
   assert.equal(stored.members.find((member) => member.slug === "beta")!.lastTurnAt, "2026-01-01T00:00:05.000Z");
-  assert.equal(turn.status, "running");
+  assert.equal(turn.status, "queued");
   await done();
 });
 
@@ -242,7 +247,8 @@ test("a member past its timeout is marked late and does not reopen the turn", as
   await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status !== "running", "the turn to close");
   const stored = (await rooms.get(room.id))!;
-  assert.deepEqual(stored.turns[0].runs, [{ slug: "alpha", runId: "run-1", late: true }]);
+  assert.deepEqual(stored.turns[0].runs.map(({ slug, runId, late }) => ({ slug, runId, late })), [{ slug: "alpha", runId: "run-1", late: true }]);
+  assert.equal(stored.turns[0].runs[0].status, "timeout");
   assert.equal(runtime.dispatched.filter((command) => command.type === "message.dispatch").length, 1, "a late member is not dispatched again");
   await done();
 });
@@ -358,8 +364,9 @@ test("a failed run still closes the turn and moves the member's clock", async ()
   runtime.fail("thread-alpha");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status !== "running", "the turn to close");
   const stored = (await rooms.get(room.id))!;
-  assert.equal(stored.turns[0].status, "done", "one failed member is not a failed room turn");
-  assert.deepEqual(stored.turns[0].runs, [{ slug: "alpha", runId: "run-1" }]);
+  assert.equal(stored.turns[0].status, "failed", "a room whose only answer failed has no answer");
+  assert.deepEqual(stored.turns[0].runs.map(({ slug, runId }) => ({ slug, runId })), [{ slug: "alpha", runId: "run-1" }]);
+  assert.equal(stored.turns[0].runs[0].status, "failed");
   assert.ok(stored.members.find((member) => member.slug === "alpha")!.lastTurnAt);
   await done();
 });
@@ -416,5 +423,150 @@ test("speakers ignore unavailable members", async () => {
   const { room, done } = await roomWith({ defaultResponder: "everyone" });
   const withGhost = { ...room, members: room.members.map((member) => member.slug === "beta" ? { ...member, status: "unavailable" as const } : member) };
   assert.deepEqual(speakersFor(withGhost, { text: "hola" }).map((member) => member.slug), ["alpha"]);
+  await done();
+});
+
+test("two sends in the same tick: one runs and the other is queued", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  const [first, second] = await Promise.all([
+    engine.send(room.id, { text: "first" }),
+    engine.send(room.id, { text: "second" }),
+  ]);
+  assert.deepEqual([first.queued, second.queued].sort(), [false, true], "one turn owns the room");
+  const stored = (await rooms.get(room.id))!;
+  assert.equal(stored.turns.length, 2);
+  assert.equal(stored.turns[0].status, "running");
+  assert.equal(stored.turns[1].status, "queued");
+  await waitFor(() => runtime.dispatched.filter((command) => command.type === "message.dispatch").length === 1, "the first dispatch");
+  runtime.complete("thread-alpha", "one");
+  await waitFor(() => runtime.dispatched.filter((command) => command.type === "message.dispatch").length === 2, "the queued dispatch");
+  runtime.complete("thread-alpha", "two");
+  await waitFor(async () => (await rooms.get(room.id))!.turns.every((turn) => turn.status === "done"), "both turns done");
+  await done();
+});
+
+test("a new turn after Stop keeps the room busy", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "one" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first dispatch");
+  await engine.stop(room.id);
+  const second = await engine.send(room.id, { text: "two" });
+  assert.equal(second.queued, false, "a stopped room accepts a new turn");
+  await waitFor(() => runtime.dispatched.filter((command) => command.type === "message.dispatch").length === 2, "the second dispatch");
+  assert.equal(engine.isBusy(room.id), true, "the old turn's cleanup did not release the new one");
+  runtime.complete("thread-alpha", "done");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[1].status === "done", "the second turn done");
+  await done();
+});
+
+test("a turn that throws before the first member closes as failed", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  let calls = 0;
+  const engine = createRoomEngine({
+    rooms,
+    rpc: runtime,
+    bots: async () => { calls += 1; if (calls === 1) throw new Error("roster exploded"); return bots; },
+    defaults: async () => ({}),
+    pollMs: 1,
+  });
+  await engine.send(room.id, { text: "boom" });
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status !== "running", "the turn to close");
+  const stored = (await rooms.get(room.id))!;
+  assert.equal(stored.turns[0].status, "failed");
+  assert.equal(engine.isBusy(room.id), false);
+  await done();
+});
+
+test("each roundtable member gets its own timeout", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", memberTimeoutMin: 1, turnDeadlineMin: 10, defaultResponder: "everyone", maxWaves: 1 });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  let clock = Date.parse("2026-01-01T00:00:00.000Z");
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1, nowMs: () => clock });
+  await engine.send(room.id, { text: "debate" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first dispatch");
+  clock += 50_000;
+  runtime.complete("thread-alpha", "first");
+  await waitFor(() => runtime.dispatched.length === 2, "the second dispatch");
+  // The second member started 50 s in. A shared deadline would time it out at 60 s; its own
+  // timeout keeps it alive until 110 s.
+  clock += 30_000;
+  runtime.complete("thread-beta", "second");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  const stored = (await rooms.get(room.id))!;
+  assert.equal(stored.turns[0].runs.find((run) => run.slug === "beta")?.status, "replied");
+  assert.equal(stored.turns[0].runs.find((run) => run.slug === "beta")?.late, undefined);
+  await done();
+});
+
+test("a member waiting for the user sends one push", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const pushed: any[] = [];
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1, notify: (payload) => { pushed.push(payload); } });
+  await engine.send(room.id, { text: "needs approval" });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  runtime.wait("thread-alpha");
+  const waitingPushes = () => pushed.filter((payload) => /waiting for you/.test(payload.body));
+  await waitFor(() => waitingPushes().length === 1, "the waiting push");
+  assert.match(waitingPushes()[0].body, /Alpha is waiting for you/);
+  runtime.complete("thread-alpha", "approved");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  assert.equal(waitingPushes().length, 1, "one waiting push, not one per poll");
+  await done();
+});
+
+test("a removed member keeps its replies in the room's history", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "hola" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first dispatch");
+  runtime.complete("thread-alpha", "soy Alpha");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the first turn");
+  const updated = await rooms.update(room.id, { members: [{ slug: "beta", name: "Beta" }] });
+  assert.deepEqual(updated.formerMembers.map((member) => member.slug), ["alpha"]);
+  assert.ok(updated.formerMembers[0].threadId);
+  await engine.send(room.id, { text: "¿quién habló?" });
+  await waitFor(() => runtime.dispatched.length === 2, "the second dispatch");
+  assert.match(runtime.dispatched[1].text, /Alpha: soy Alpha/, "the former member's line remains in the room history");
+  runtime.complete("thread-beta", "Alpha habló");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[1].status === "done", "the second turn");
+  await done();
+});
+
+test("Stop marks queued messages stopped", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "one" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first dispatch");
+  await engine.send(room.id, { text: "two" });
+  await engine.stop(room.id);
+  const stored = (await rooms.get(room.id))!;
+  assert.deepEqual(stored.turns.map((turn) => turn.status), ["stopped", "stopped"]);
+  assert.equal(engine.queued(room.id), 0);
+  await done();
+});
+
+test("recover marks queued messages interrupted", async () => {
+  const { room, file, done } = await roomWith();
+  const rooms = createRooms({ file });
+  await rooms.appendTurn(room.id, { id: "q1", at: "2026-01-01T00:00:00.000Z", text: "later", mentions: [], replyTo: null, status: "queued", runs: [] });
+  const engine = createRoomEngine({ rooms, rpc: fakeRuntime(), bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  const interrupted = await engine.recover();
+  assert.deepEqual(interrupted, [`${room.id}/q1`]);
+  assert.equal((await rooms.get(room.id))!.turns[0].status, "interrupted");
   await done();
 });

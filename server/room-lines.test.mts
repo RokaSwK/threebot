@@ -58,6 +58,6 @@ test("formatRoomLine names the author and marks a quote", () => {
   assert.equal(formatRoomLine({ at: "x", author: { kind: "bot", slug: "a", name: "Alpha" }, text: " hey " }), "Alpha: hey");
   assert.equal(
     formatRoomLine({ at: "x", author: { kind: "bot", slug: "b", name: "Beta" }, text: "ok", replyToName: "Alpha" }),
-    'Beta: [replying to Alpha: "ok"] ok',
+    "Beta: [replying to Alpha] ok",
   );
 });

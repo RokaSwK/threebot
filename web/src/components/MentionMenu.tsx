@@ -10,6 +10,8 @@ export interface MentionMenuProps {
   onPick: (bot: MentionBot) => void;
   onHover?: (index: number) => void;
   hint?: string;
+  /** The listbox id; each option gets `${id}-opt-${index}` for aria-activedescendant. */
+  id?: string;
 }
 
 export const MentionMenu = memo(function MentionMenu({
@@ -18,9 +20,11 @@ export const MentionMenu = memo(function MentionMenu({
   onPick,
   onHover,
   hint,
+  id,
 }: MentionMenuProps) {
   return (
     <div
+      id={id}
       role="listbox"
       aria-label="Bot suggestions"
       className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-[240px] overflow-y-auto rounded-2xl border border-line bg-card p-1.5 shadow-pop scroll-thin"
@@ -35,6 +39,7 @@ export const MentionMenu = memo(function MentionMenu({
           return (
             <div
               key={bot.slug}
+              id={id ? `${id}-opt-${index}` : undefined}
               role="option"
               aria-selected={active}
               aria-label={bot.name}
