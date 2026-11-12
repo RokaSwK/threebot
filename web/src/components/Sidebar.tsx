@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import clsx from "clsx";
-import { Archive, ArrowLeftRight, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, CloudDownload, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2 } from "lucide-react";
+import { Archive, ArrowLeftRight, Bot as BotIcon, FolderKanban, CircleCheck, ArrowUp, ArrowDown, RotateCcw, Check, ChevronDown, ChevronRight, ChevronUp, CloudDownload, Copy, Ellipsis, EyeOff, Eye, Folder, FolderInput, FolderPlus, Gauge, Grid2x2Plus, LayoutGrid, ListChecks, LogOut, MailOpen, Paperclip, Pencil, Pin, PinOff, Plus, Search, Send, Settings as SettingsIcon, Star, Trash2, Users } from "lucide-react";
 import { ActivityAvatar } from "./ActivityAvatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
@@ -9,6 +9,7 @@ import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadD
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
+import { RoomsCompact, RoomsSection } from "./Rooms";
 import type { Bot, ThreadShell } from "../lib/types";
 
 function preview(bot: Bot, status: BotStatus) {
@@ -108,6 +109,15 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
     finally { setSectionBusy(false); }
   };
 
+  /** One button for both: the choice between a Bot and a Room happens here, not in two pluses. */
+  const openCreate = (event: { currentTarget: HTMLButtonElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setMenu({ x: rect.left, y: rect.bottom + 6, items: [
+      { label: "New Bot", icon: <BotIcon size={14} />, detail: "Answers on its own", onSelect: () => openDialog("new-bot") },
+      { label: "New Room", icon: <Users size={14} />, detail: "Bots in one conversation", onSelect: () => openDialog({ kind: "room" }) },
+    ] });
+  };
+
   const openMenu = (e: MenuPoint, bot: Bot) => {
     e.preventDefault();
     const sections = settings?.sections ?? [];
@@ -189,8 +199,9 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         const status = botStatus(bot);
         return <RosterButton key={bot.slug} title={`${bot.name}${bot.primary ? " · Main Bot" : ""}${status === "waiting" ? " · Waiting for you" : ""}`} aria-label={bot.name} aria-current={selected === bot.slug ? "page" : undefined} onClick={() => select(bot.slug)} onMenu={(event) => openMenu(event, bot)} className={clsx("relative grid size-[54px] place-items-center rounded-[14px]", selected === bot.slug ? "bg-active" : "hover:bg-hover")}><ActivityAvatar threadId={bot.mainThreadId} status={status} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={36} star={bot.primary} />{(status === "waiting" || status === "unread") && <Dot status={status} className="absolute right-1 bottom-1" />}</RosterButton>;
       })}</div>)}
+      <RoomsCompact />
     </div>
-    <div className="flex shrink-0 flex-col items-center gap-2 pt-2">{projectsOn && <RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton>}<RoundButton onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
+    <div className="flex shrink-0 flex-col items-center gap-2 pt-2">{projectsOn && <RoundButton onClick={() => openProjects()} title="Projects" aria-label="Projects" aria-current={page === "projects" ? "page" : undefined} className={page === "projects" ? "bg-active" : undefined}><FolderKanban size={17} /></RoundButton>}<RoundButton onClick={openCreate} title="Create" aria-label="Create"><Plus size={18} /></RoundButton><RoundButton onClick={() => openDialog("connect-apps")} title="Connect apps" aria-label="Connect apps"><LayoutGrid size={17} /></RoundButton><UpdateButton /></div>
     <AccountRow compact />
     {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
   </aside>;
@@ -203,7 +214,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
         </RoundButton>
         {wide
           ? <button className="mobile-account grid size-11 place-items-center rounded-full border border-line bg-elevated text-[18px] font-semibold" aria-label="Settings" onClick={() => { useApp.setState({ settingsPane: "overview" }); openDialog("settings"); }}>{(settings?.userName || "You")[0].toUpperCase()}</button>
-          : <RoundButton className="new-bot-button" onClick={() => openDialog("new-bot")} title="New Bot" aria-label="New Bot"><Plus size={16} /></RoundButton>}
+          : <RoundButton className="new-bot-button" onClick={openCreate} title="Create" aria-label="Create"><Plus size={16} /></RoundButton>}
       </div>
 
       {wide && attention && <button className="mobile-attention pop-in" aria-label={`Jump to the chat needing attention ${attention}`} onClick={jumpToAttention}>Needs attention{attention === "above" ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}</button>}
@@ -255,6 +266,8 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
           </div>
         ))}
 
+        <RoomsSection large={wide} />
+
         {Object.keys(bots).length === 0 && (
           <div className="px-3 pt-6 text-center text-[13px] text-muted">
             No Bots yet.
@@ -278,7 +291,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
       {wide ? <div className="mobile-home-toolbar flex shrink-0 items-center gap-3 px-4 py-3">
         <RoundButton className="size-11" onClick={() => openDialog("connect-apps")} aria-label="Connect apps"><Grid2x2Plus size={21} /></RoundButton>
         <UpdateButton large className="me-auto" />
-        <button className="mobile-new-bot" onClick={() => openDialog("new-bot")} aria-label="New Bot"><Plus size={20} aria-hidden="true" /> New Bot</button>
+        <button className="mobile-new-bot" onClick={openCreate} aria-label="Create"><Plus size={20} aria-hidden="true" /> New</button>
       </div> : <AccountRow />}
       {menu && <Menu {...menu} onClose={() => setMenu(null)} />}
       {deletingSection && <Modal onClose={() => { if (!sectionBusy) setDeletingSection(null); }} className="section-delete w-[340px]">

@@ -1133,3 +1133,12 @@ button {
   .instructions-editor-cancel,
   .instructions-editor-save { height: 44px; padding-inline: 16px; font-size: 13px; }
 }
+
+/* Native dropdowns paint their list with the UA colors. On desktop with the dark palette the menu
+   could inherit the app's light foreground over a light sheet, so the options get their own surface
+   and the closed control stops being transparent. */
+select option,
+select optgroup {
+  background-color: var(--bg-elevated);
+  color: var(--fg);
+}
