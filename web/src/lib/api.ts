@@ -93,6 +93,9 @@ export const api = {
   addVoiceCall: (threadId: string, seconds: number) => req<ThreadMeta>("/api/thread-meta/voice-calls", { method: "POST", body: JSON.stringify({ threadId, seconds }) }),
 };
 
+/** The JSON request helper `api` uses, shared with modules that own their own routes. */
+export { req as apiRequest };
+
 /** Behind Cloudflare Access, signing out means ending the Access session too. Ask before the local session goes. */
 export async function signOutTarget() {
   try { return (await api.config()).accessLogout ? "/cdn-cgi/access/logout" : "/"; } catch { return "/"; }

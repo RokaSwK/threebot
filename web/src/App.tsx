@@ -13,6 +13,8 @@ import { UsageStatsPrompt } from "./components/UsageStats";
 import { Sidebar } from "./components/Sidebar";
 import { useAutoUpdateNotice } from "./components/RemoteAccess";
 import { ProjectsPage } from "./components/Projects";
+import { RoomDialog } from "./components/Rooms";
+import { RoomView } from "./components/RoomView";
 import { ColumnDivider } from "./components/ColumnDivider";
 import { Modal, Pill, Spinner } from "./components/ui";
 import { boot, botStatus, machineOf, openDialog, select, setDetailsOpen, setMainBot, setSidebarCompact, updateBot, useApp, useProjectsOn, type MainBotIntent } from "./store";
@@ -126,7 +128,8 @@ function Shell() {
   const remoteLinked = useApp((s) => { const route = machineOf(s.selectedThreadId, s.machines)?.route; return route === "linked" || route === "none"; });
   const projectsOn = useProjectsOn();
   // Settings → Beta → Projects board off: the page (and links to it) lead home instead.
-  const page = useApp((s) => s.page === "projects" && !projectsOn ? null : s.page);
+  const page = useApp((s) => (s.page === "projects" && !projectsOn ? null : s.page));
+  const selectedRoom = useApp((s) => s.selectedRoom);
   const bot = selected ? bots[selected] ?? historicalBots[selected] : undefined;
   const narrow = useNarrow();
   useNavigationHistory(narrow);
@@ -136,11 +139,11 @@ function Shell() {
   }, [settings, projectsOn]);
 
   useEffect(() => {
-    if (!narrow && !bot && Object.keys(bots).length) {
+    if (!narrow && !bot && !page && Object.keys(bots).length) {
       const first = Object.values(bots).find((b) => b.primary && !b.hidden) ?? Object.values(bots).find((b) => !b.hidden);
       if (first) select(first.slug);
     }
-  }, [bot, bots, narrow]);
+  }, [bot, bots, narrow, page]);
 
   return (
     <div className="flex h-full bg-app">
@@ -149,6 +152,8 @@ function Shell() {
       <main className={narrow ? bot || page ? "flex min-w-0 flex-1 overflow-hidden" : "hidden" : "flex min-w-0 flex-1 overflow-hidden rounded-tl-[14px] border-t border-l border-line"}>
         {page === "projects" ? (
           <ErrorBoundary key="projects"><ProjectsPage narrow={narrow} onBack={narrow ? () => history.back() : undefined} /></ErrorBoundary>
+        ) : page === "room" && selectedRoom ? (
+          <ErrorBoundary key={`room:${selectedRoom}`}><RoomView roomId={selectedRoom} onBack={narrow ? () => history.back() : undefined} /></ErrorBoundary>
         ) : bot ? (
           <ErrorBoundary key={bot.slug}>
             {remoteLinked
@@ -196,7 +201,7 @@ function useNavigationHistory(narrow: boolean) {
         else localStorage.removeItem("bot.selected");
       }
       if (restoring) return;
-      const chatChanged = s.selected !== prev.selected || s.selectedThreadId !== prev.selectedThreadId || s.page !== prev.page || s.projectItemId !== prev.projectItemId;
+      const chatChanged = s.selected !== prev.selected || s.selectedThreadId !== prev.selectedThreadId || s.page !== prev.page || s.projectItemId !== prev.projectItemId || s.selectedRoom !== prev.selectedRoom;
       if (chatChanged || s.searchResultRevision !== prev.searchResultRevision) {
         if (narrow && s.detailsOpen) {
           restoring = true;
@@ -253,6 +258,7 @@ function Dialogs() {
       {dialog === "connect-apps" && <ConnectApps />}
       {typeof dialog === "object" && dialog?.kind === "connect-apps" && <ConnectApps initialUrl={dialog.url} />}
       {typeof dialog === "object" && dialog?.kind === "rename-bot" && <RenameBotDialog slug={dialog.slug} />}
+      {typeof dialog === "object" && dialog?.kind === "room" && <RoomDialog roomId={dialog.id} />}
       {typeof dialog === "object" && dialog?.kind === "delete-bot" && (bots[dialog.slug]?.primary && Object.keys(bots).length > 1
         ? <MainBotDialog intent={{ kind: "delete", slug: dialog.slug }} />
         : <DeleteBotDialog slug={dialog.slug} />)}
