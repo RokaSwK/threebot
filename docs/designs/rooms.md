@@ -1,7 +1,6 @@
 # Rooms: group conversations over T3 threads
 
-Status: Design; the foundation and the panel engine are implemented in this change. Roundtable
-arrives in the next one.
+Status: Implemented (foundation, panel and roundtable), pending review
 Date: 2026-11-11
 
 ## Goal
@@ -349,7 +348,7 @@ This is a bounded feature: no new runtime, no database and no T3 change.
 - **PR 2a — Rooms foundation.** Registry, settings, thread creation, read-only room view.
 - **PR 2b — Panel rooms.** Send, wait, read, queue, Stop, one push per turn.
 - **PR 2c — Roundtable.** Waves, cross-mentions, `(pass)`, budgets, late handling.
-  *Planned:* members speak one at a time in room order, the first speaker rotates per turn,
+  *Implemented:* members speak one at a time in room order, the first speaker rotates per turn,
   each prompt carries this turn's floor, a reply's `@mention` opens the next wave while `maxWaves`
   and `maxReplies` allow it, and `(pass)` is neither a room line nor a spent reply. A member past
   `memberTimeoutMin` is marked `late` on the run: its reply still lands in its thread and in the

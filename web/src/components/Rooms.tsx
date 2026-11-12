@@ -187,7 +187,7 @@ function RoomRow({ room, selected, large, onMenu }: { room: RoomSummary; selecte
         <span className="min-w-0 flex-1 pr-7">
           <span className="bot-row-name block truncate text-[13.5px] leading-5 text-fg">{room.name}</span>
           <span className="bot-row-preview flex min-w-0 items-center gap-1.5 text-[12.5px] leading-[18px] text-muted">
-            <span className="min-w-0 truncate">{room.running ? "A turn is running…" : `${room.members.length} bots · Panel`}</span>
+            <span className="min-w-0 truncate">{room.running ? "A turn is running…" : `${room.members.length} bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`}</span>
           </span>
         </span>
       </HoldButton>
@@ -412,6 +412,36 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
         </Field>
 
         <div>
+          <span className="text-[13px] font-medium">Mode</span>
+          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+            <ModeCard
+              selected={settings.mode === "panel"}
+              disabled={busy}
+              title="Panel"
+              tagline="Independent answers"
+              body="Each Bot answers on its own and never sees the others. Good to compare points of view."
+              onSelect={() => update({ mode: "panel" })}
+            />
+            <ModeCard
+              selected={settings.mode === "roundtable"}
+              disabled={busy}
+              title="Roundtable"
+              tagline="They hear each other"
+              body="They speak in order, each one sees what was said before, and a member who @mentions a teammate brings them back in. Good to debate."
+              onSelect={() => update({ mode: "roundtable" })}
+            />
+          </div>
+          <p className="mt-1.5 text-[12px] text-muted">
+            {settings.mode === "panel"
+              ? "Everyone addressed starts at once; a mention inside a reply does nothing."
+              : `Up to ${settings.maxWaves} waves and ${settings.maxReplies} spoken replies per message.`}
+          </p>
+          {settings.mode === "roundtable" && settings.defaultResponder === "lead" && (
+            <p className="mt-1 text-[12px] text-faint">Tip: with “Only {leadName}” the room answers through {leadName} alone; “Everyone” gives a real round.</p>
+          )}
+        </div>
+
+        <div>
           <span className="text-[13px] font-medium">When you mention nobody</span>
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {([["lead", "Only the lead"], ["everyone", "Everyone"], ["mentions", "Nobody"]] as [RoomSettings["defaultResponder"], string][]).map(([value, title]) => (
@@ -468,7 +498,16 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               )}
             </Field>
 
+            {settings.mode === "roundtable" && (
+              <Toggle label="Members can @mention each other" hint="A reply's mention opens the next round." checked={settings.allowCrossMentions} disabled={busy} onChange={(value) => update({ allowCrossMentions: value })} />
+            )}
+
             <div className="grid grid-cols-2 gap-3">
+              {settings.mode === "roundtable" && (
+                <Field label="Rounds" hint="Roundtable only: how many times the floor can go around. The first counts (1–5).">
+                  <NumberInput label="Rounds" value={settings.maxWaves} min={1} max={5} disabled={busy} onChange={(value) => update({ maxWaves: value })} />
+                </Field>
+              )}
               <Field label="Reply limit" hint="Total spoken replies one message can produce. A pass doesn't count (1–20).">
                 <NumberInput label="Reply limit" value={settings.maxReplies} min={1} max={20} disabled={busy} onChange={(value) => update({ maxReplies: value })} />
               </Field>
@@ -480,7 +519,8 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               </Field>
             </div>
             <p className="text-[12px] text-muted">
-              One message can produce up to <span className="text-fg">{settings.maxReplies}</span> replies, and a member is dropped after <span className="text-fg">{settings.memberTimeoutMin}</span> min.
+              One message can produce up to <span className="text-fg">{settings.maxReplies}</span> replies
+              {settings.mode === "roundtable" ? <> across <span className="text-fg">{settings.maxWaves}</span> rounds</> : null}, and a member is dropped after <span className="text-fg">{settings.memberTimeoutMin}</span> min.
             </p>
 
             <Toggle label="Notifications" hint="One push when the turn finishes." checked={settings.notifications} disabled={busy} onChange={(value) => update({ notifications: value })} />
@@ -564,6 +604,33 @@ function Select({ value, options, onChange, disabled, placeholder, label }: { va
       {placeholder && !value && <option value="" className="bg-elevated text-fg">{placeholder}</option>}
       {options.map(([id, label]) => <option key={id} value={id} className="bg-elevated text-fg">{label}</option>)}
     </select>
+  );
+}
+
+/** One of the two modes. A card, because a `<select>` hid what the difference actually is. */
+function ModeCard({ selected, disabled, title, tagline, body, onSelect }: { selected: boolean; disabled?: boolean; title: string; tagline: string; body: string; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={clsx(
+        "rounded-xl border p-2.5 text-left transition-colors",
+        selected ? "border-accent bg-active" : "border-line hover:bg-hover",
+        disabled && "opacity-50",
+      )}
+    >
+      <span className="flex items-center gap-2">
+        <span className={clsx("grid size-4 shrink-0 place-items-center rounded-full border", selected ? "border-accent" : "border-line-strong")}>
+          {selected && <span className="size-2 rounded-full bg-accent" />}
+        </span>
+        <span className="text-[13px] font-medium">{title}</span>
+        <span className="truncate text-[11px] text-muted">{tagline}</span>
+      </span>
+      <span className="mt-1 block text-[12px] leading-[17px] text-muted">{body}</span>
+    </button>
   );
 }
 

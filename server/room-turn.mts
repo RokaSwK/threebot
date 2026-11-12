@@ -65,8 +65,16 @@ export function linesFor(room: Room, member: RoomMember, history: RoomLine[] = [
 }
 
 /**
- * The framed prompt: who the Bot is in this room, and what just happened.
+ * Round-robin the first speaker of a roundtable turn. The turn index, not a counter, keeps the
+ * rotation stable across restarts and queued messages.
  */
+export function rotateSpeakers(members: RoomMember[], by: number): RoomMember[] {
+  if (members.length < 2 || by <= 0) return members;
+  const offset = by % members.length;
+  return [...members.slice(offset), ...members.slice(0, offset)];
+}
+
+/** The framed prompt: who the Bot is in this room, and what just happened. */
 export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }: {
   room: Room;
   member: RoomMember;
@@ -81,12 +89,36 @@ export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }:
     + "Your final reply of this turn is the one message the room sees; keep it short. "
     + "If the user addresses you directly, answer briefly even if it is a single line; reply exactly \"(pass)\" only when the message is for the room in general and you have nothing to add.";
   const about = [room.description, room.guidance].filter((part) => part && part.trim() !== "").join("\n");
-  const mode = "Teammates in this room answer independently; they do not see your reply, and mentioning a teammate here does not wake it.";
+  const mode = room.settings.mode === "roundtable"
+    ? "Members speak in order and you see what they said before you in this turn. To bring someone back in, @mention them."
+    : "Teammates in this room answer independently; they do not see your reply, and mentioning a teammate here does not wake it.";
   const body = lines.length > 0 ? `Recent room:\n${lines.join("\n")}` : "";
   const quote = message.replyTo ? "[replying to a message from the room]" : "";
   return [header, intro, about, mode, body, quote, `It's your turn, ${nameOf(member.slug)}.`]
     .filter((part) => part !== "")
     .join("\n\n");
+}
+
+/**
+ * Members a wave brings back in: the teammates a reply @mentions, or everyone but the speaker for
+ * `@all`. Only ready members, and only when the room allows cross-mentions.
+ */
+export function crossMentions(replies: { slug: string; text: string }[], room: Room, nameOf: (slug: string) => string = nameOfSlug): RoomMember[] {
+  const available = room.members.filter((member) => member.status !== "unavailable");
+  const roster = available.map((member) => ({ slug: member.slug, name: nameOf(member.slug) }));
+  const next = new Map<string, RoomMember>();
+  for (const reply of replies) {
+    const { slugs, all } = addressedMembers(reply.text, roster, "anywhere");
+    if (all) {
+      for (const member of available) if (member.slug !== reply.slug) next.set(member.slug, member);
+      continue;
+    }
+    for (const slug of slugs) {
+      const member = available.find((candidate) => candidate.slug === slug);
+      if (member) next.set(member.slug, member);
+    }
+  }
+  return [...next.values()];
 }
 
 export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () => {}, pollMs = 1_000, nowMs = () => Date.now() }: EngineDeps) {
@@ -181,11 +213,17 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     // Two clocks: one member may not hold the turn forever, and the turn itself stops opening rounds.
     const turnDeadline = started + room.settings.turnDeadlineMin * 60_000;
     const deadline = Math.min(turnDeadline, started + room.settings.memberTimeoutMin * 60_000);
+    const roundtable = room.settings.mode === "roundtable";
+    const maxWaves = roundtable ? room.settings.maxWaves : 1;
     const budget = Math.max(1, room.settings.maxReplies);
     /** One run per member, the latest one; `null` when the member could not start. */
     const runs = new Map<string, string | null>();
-    /** What this turn has said so far, in order: the push preview reads the last one. */
+    /** Members that passed their timeout. `patchTurn` must not drop what `markRunLate` recorded. */
+    const lateMembers = new Set<string>();
+    /** What this turn has said so far, in order: the roundtable's shared floor. */
     const spoken: { slug: string; text: string }[] = [];
+    let said = 0;
+    let wave = 0;
 
     const speakOne = async (candidate: RoomMember): Promise<void> => {
       try {
@@ -193,11 +231,13 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         if (!member.threadId) throw new Error("the member has no thread");
         const messageId = randomUUID();
         state.threads.set(member.slug, member.threadId);
+        // The member's own unseen user messages, then — in a roundtable — what was said before it.
+        const floor = roundtable ? spoken.filter((line) => line.slug !== member.slug).map((line) => `${nameOf(line.slug)}: ${line.text}`) : [];
         await rpc.dispatch({
           type: "message.dispatch",
           threadId: member.threadId,
           messageId,
-          text: promptFor({ room, member, message, lines: linesFor(room, member, history), nameOf }),
+          text: promptFor({ room, member, message, lines: [...linesFor(room, member, history), ...floor], nameOf }),
           attachments: [],
           createdBy: "agent",
           creationSource: "server",
@@ -207,23 +247,48 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           void rooms.setTurnRun(roomId, turn.id, member.slug, runId).catch(() => {});
         });
         runs.set(member.slug, result.runId);
+        if (result.status === "timeout" && result.runId) {
+          lateMembers.add(member.slug);
+          await rooms.markRunLate(roomId, turn.id, member.slug, result.runId).catch(() => {});
+        }
         const replied = result.reply && !isPass(result.reply.text) ? result.reply.text : null;
         if (replied) {
+          said += 1;
           spoken.push({ slug: member.slug, text: clip(replied, 1_200) });
         }
         await rooms.setMember(roomId, member.slug, { lastTurnAt: (replied ? result.reply?.at : null) ?? new Date(nowMs()).toISOString() });
-        log(`[rooms] ${room.name}: ${member.slug} ${result.status}${replied ? "" : " (no reply)"}`);
+        log(`[rooms] ${room.name}: ${member.slug} ${result.status === "timeout" ? "late" : result.status}${replied ? "" : " (no reply)"}`);
       } catch (err) {
         log(`[rooms] ${room.name}: ${candidate.slug} failed: ${(err as Error).message}`);
         runs.set(candidate.slug, null);
       }
     };
 
-    // A panel dispatches every addressed member at once and reads their replies as they land.
-    const speakers = speakersFor(room, message, nameOf).slice(0, budget);
-    if (!state.abort && nowMs() < turnDeadline) await Promise.all(speakers.map((member) => speakOne(member)));
+    let speakers = speakersFor(room, message, nameOf);
+    if (roundtable) {
+      const turnIndex = Math.max(0, room.turns.findIndex((candidate) => candidate.id === turn.id));
+      speakers = rotateSpeakers(speakers, turnIndex);
+    }
+    while (!state.abort && speakers.length > 0 && wave < maxWaves && said < budget && nowMs() < turnDeadline) {
+      wave += 1;
+      const batch = speakers.slice(0, Math.max(1, budget - said));
+      if (roundtable) {
+        // A roundtable hears itself: one at a time, in room order, so each reply can be answered.
+        for (const member of batch) {
+          if (state.abort || said >= budget) break;
+          await speakOne(member);
+        }
+      } else {
+        await Promise.all(batch.map((member) => speakOne(member)));
+      }
+      if (!roundtable || !room.settings.allowCrossMentions || state.abort) break;
+      // One turn per member per message: a member that already spoke is not woken again by a
+      // courtesy mention, which used to produce the same "nothing pending" twice in a row.
+      speakers = crossMentions(spoken.slice(-batch.length), room, nameOf)
+        .filter((member) => !spoken.some((line) => line.slug === member.slug));
+    }
 
-    const runList = [...runs].map(([slug, runId]) => ({ slug, runId }));
+    const runList = [...runs].map(([slug, runId]) => ({ slug, runId, ...(lateMembers.has(slug) ? { late: true } : {}) }));
     const failed = runList.length > 0 && runList.every((run) => run.runId === null);
     const status: RoomTurn["status"] = state.abort ? "stopped" : failed ? "failed" : "done";
     await rooms.patchTurn(roomId, turn.id, { runs: runList, status });

@@ -16,7 +16,7 @@ import type { MemberView, RoomTurn } from "../lib/rooms";
 import type { TurnItem } from "../lib/types";
 import "../mobile-chat.css";
 
-type Reply = { id: string; at: string; member: MemberView; text: string; runId: string | null; pass: boolean };
+type Reply = { id: string; at: string; member: MemberView; text: string; runId: string | null; pass: boolean; late: boolean };
 type TimelineRow =
   | { kind: "user"; id: string; at: string; turn: RoomTurn }
   | { kind: "reply"; id: string; at: string; reply: Reply }
@@ -54,6 +54,8 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     return () => { for (const unsubscribe of unsubs) unsubscribe(); };
   }, [threadKey]);
 
+  const lateRuns = useMemo(() => new Set((room?.turns ?? []).flatMap((turn) => (turn.runs ?? []).flatMap((run) => (run.late && run.runId ? [run.runId] : [])))), [room?.turns]);
+
   const replies = useMemo<Reply[]>(() => {
     if (!room) return [];
     const out: Reply[] = [];
@@ -75,11 +77,11 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
         // `(pass)` is the room's "nothing to add": it is not a Bot line, but the view still says the
         // member was asked and declined, so a whole silent room doesn't look broken.
         const pass = /^\(pass\)$/i.test(text);
-        out.push({ id: `${member.threadId}:${item.id}`, at: item.completedAt ?? item.updatedAt, member, text, runId: item.runId ?? null, pass });
+        out.push({ id: `${member.threadId}:${item.id}`, at: item.completedAt ?? item.updatedAt, member, text, runId: item.runId ?? null, pass, late: !!item.runId && lateRuns.has(item.runId) });
       }
     }
     return out;
-  }, [room, threadData]);
+  }, [room, threadData, lateRuns]);
 
   // A member can stop mid-turn to ask for approval, a question or a secret. Those cards live in its
   // thread; the room shows the pending ones inline so the user never has to leave the room to
@@ -166,7 +168,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     );
   }
 
-  const modeLabel = "Panel";
+  const modeLabel = room.settings.mode === "panel" ? "Panel" : "Roundtable";
   const notReady = room.members.filter((member) => member.status !== "ready");
 
   return (
@@ -206,7 +208,9 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
       >
         <div className="chat-messages mx-auto flex w-full max-w-[960px] flex-col px-4 pt-16 pb-4">
           <p className="mx-auto my-2 max-w-[560px] text-center text-[11.5px] text-faint">
-            Panel: members answer independently and don't see each other's replies.
+            {room.settings.mode === "panel"
+              ? "Panel: members answer independently and don't see each other's replies."
+              : "Roundtable: members speak in order and hear each other; a member's @mention brings that teammate back in."}
           </p>
           {notReady.length > 0 && (
             <p role="status" className="mx-auto my-2 rounded-full bg-card px-3 py-1.5 text-[12.5px] text-muted">
@@ -250,7 +254,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
               <div className="min-w-0 max-w-[85%]">
                 <div className="mb-1 flex items-baseline gap-2">
                   <span className="text-[12.5px] font-medium" style={{ color: botTextColor(row.reply.member.color) }}>{row.reply.member.name}</span>
-                  <span className="text-[11px] text-faint">{time(row.reply.at)}</span>
+                  <span className="text-[11px] text-faint">{time(row.reply.at)}{row.reply.late ? " · late" : ""}</span>
                 </div>
                 <div data-message-body="markdown" className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
                   <RichMarkdown bots={botNames} components={{ a: BotLink }}>{row.reply.text}</RichMarkdown>

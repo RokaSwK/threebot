@@ -73,6 +73,8 @@ export type RoomTurnStatus = "running" | "done" | "stopped" | "interrupted" | "f
 export type RoomRun = {
   slug: string;
   runId: string | null;
+  /** The member passed `memberTimeoutMin`; its reply may still arrive, but it opens no wave. */
+  late?: boolean;
 };
 export type RoomTurn = {
   id: string;
@@ -371,6 +373,23 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         const entry = turn.runs.find((candidate) => candidate.slug === slug);
         if (entry) entry.runId = runId;
         else turn.runs.push({ slug, runId });
+        await save(state);
+      });
+    },
+    /** The member passed its timeout: its reply is late and must not open a wave. */
+    async markRunLate(id: string, turnId: string, slug: string, runId: string | null): Promise<void> {
+      return serialize(async (state) => {
+        const room = state.rooms.find((candidate) => candidate.id === id);
+        const turn = room?.turns.find((candidate) => candidate.id === turnId);
+        if (!turn) return;
+        const entry = turn.runs.find((candidate) => candidate.slug === slug);
+        if (!entry) {
+          turn.runs.push({ slug, runId, late: true });
+        } else {
+          if (entry.runId !== runId) entry.runId = runId;
+          if (entry.late) return;
+          entry.late = true;
+        }
         await save(state);
       });
     },

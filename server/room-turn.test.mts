@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createRooms, validateMembers, type Room } from "./rooms.mts";
-import { createRoomEngine, promptFor, speakersFor } from "./room-turn.mts";
+import { createRoomEngine, crossMentions, promptFor, speakersFor } from "./room-turn.mts";
 
 const roster = [
   { slug: "alpha", name: "Alpha" },
@@ -166,6 +166,46 @@ test("`mentions: [\"all\"]` wakes every member", async () => {
   await done();
 });
 
+test("a roundtable passes the floor: each member sees what was said before", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone" });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "debatan" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  assert.equal(runtime.dispatched[0].threadId, "thread-alpha", "members speak in room order");
+  runtime.complete("thread-alpha", "Alpha abre el debate");
+  await waitFor(() => runtime.dispatched.length === 2, "the second speaker");
+  assert.equal(runtime.dispatched[1].threadId, "thread-beta");
+  assert.match(runtime.dispatched[1].text, /Alpha: Alpha abre el debate/, "the second member hears the first");
+  runtime.complete("thread-beta", "Beta responde");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  await done();
+});
+
+test("a roundtable rotates the first speaker on the next turn", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone" });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "primero" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  assert.equal(runtime.dispatched[0].threadId, "thread-alpha");
+  runtime.complete("thread-alpha", "uno");
+  await waitFor(() => runtime.dispatched.length === 2, "the second speaker");
+  runtime.complete("thread-beta", "dos");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the first turn");
+
+  await engine.send(room.id, { text: "segundo" });
+  await waitFor(() => runtime.dispatched.length === 3, "the next turn's first speaker");
+  assert.equal(runtime.dispatched[2].threadId, "thread-beta", "the next turn starts one member later");
+  runtime.complete("thread-beta", "tres");
+  await waitFor(() => runtime.dispatched.length === 4, "the next turn's second speaker");
+  runtime.complete("thread-alpha", "cuatro");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[1].status === "done", "the second turn");
+  await done();
+});
+
 test("a prompt carries teammates' replies from earlier turns", async () => {
   const { room, file, done } = await roomWith({ mode: "panel" });
   const runtime = fakeRuntime();
@@ -185,6 +225,46 @@ test("a prompt carries teammates' replies from earlier turns", async () => {
   await done();
 });
 
+test("a member past its timeout is marked late and does not reopen the turn", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  let clock = Date.parse("2026-01-01T00:00:00.000Z");
+  const engine = createRoomEngine({
+    rooms,
+    rpc: runtime,
+    bots: async () => bots,
+    defaults: async () => ({}),
+    pollMs: 1,
+    nowMs: () => { clock += 61_000; return clock; },
+  });
+  await engine.send(room.id, { text: "@Alpha tarda" });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status !== "running", "the turn to close");
+  const stored = (await rooms.get(room.id))!;
+  assert.deepEqual(stored.turns[0].runs, [{ slug: "alpha", runId: "run-1", late: true }]);
+  assert.equal(runtime.dispatched.filter((command) => command.type === "message.dispatch").length, 1, "a late member is not dispatched again");
+  await done();
+});
+
+test("a mention inside a roundtable reply brings that member back in", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", allowCrossMentions: true, maxWaves: 3 });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "@Alpha empieza tú" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  runtime.complete("thread-alpha", "Le paso la palabra a @Beta");
+  await waitFor(() => runtime.dispatched.length === 2, "the wave the mention started");
+  assert.equal(runtime.dispatched[1].threadId, "thread-beta");
+  assert.match(runtime.dispatched[1].text, /Alpha: Le paso la palabra a @Beta/);
+  runtime.complete("thread-beta", "Gracias, aquí estoy");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  const stored = (await rooms.get(room.id))!;
+  assert.equal(stored.turns[0].runs.length, 2, "the turn records both runs");
+  await done();
+});
+
 test("a panel ignores mentions inside a reply", async () => {
   const { room, file, done } = await roomWith({ mode: "panel" });
   const runtime = fakeRuntime();
@@ -200,7 +280,7 @@ test("a panel ignores mentions inside a reply", async () => {
 });
 
 test("maxReplies caps how many members speak in one turn", async () => {
-  const { room, file, done } = await roomWith({ mode: "panel", defaultResponder: "everyone", maxReplies: 1 });
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone", maxReplies: 1 });
   const runtime = fakeRuntime();
   const rooms = createRooms({ file });
   const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
@@ -210,6 +290,30 @@ test("maxReplies caps how many members speak in one turn", async () => {
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(runtime.dispatched.length, 1);
+  await done();
+});
+
+test("a member that already spoke is not woken again by a courtesy mention", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone", maxWaves: 5, maxReplies: 15 });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "preséntense" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  runtime.complete("thread-alpha", "Alpha se presenta. @Beta, ¿algo que decir?");
+  await waitFor(() => runtime.dispatched.length === 2, "the second speaker");
+  runtime.complete("thread-beta", "Beta se presenta");
+  // Alpha named Beta, who had not spoken yet; Beta naming Alpha back must not loop.
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  assert.deepEqual(runtime.dispatched.map((command) => command.threadId), ["thread-alpha", "thread-beta"]);
+  await done();
+});
+
+test("crossMentions reads the mentions of the last wave", async () => {
+  const { room, done } = await roomWith({ mode: "roundtable" });
+  assert.deepEqual(crossMentions([{ slug: "alpha", text: "@Beta mira esto" }], room).map((member) => member.slug), ["beta"]);
+  assert.deepEqual(crossMentions([{ slug: "alpha", text: "@all a ver" }], room).map((member) => member.slug), ["beta"]);
+  assert.deepEqual(crossMentions([{ slug: "alpha", text: "sin menciones" }], room), []);
   await done();
 });
 

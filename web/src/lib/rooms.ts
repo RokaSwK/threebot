@@ -23,7 +23,7 @@ export type RoomTurn = {
   mentions: string[];
   replyTo: string | null;
   status: "running" | "done" | "stopped" | "interrupted" | "failed";
-  runs: { slug: string; runId: string | null }[];
+  runs: { slug: string; runId: string | null; late?: boolean }[];
 };
 
 export type RoomMode = "panel" | "roundtable";
