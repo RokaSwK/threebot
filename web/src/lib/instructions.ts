@@ -36,4 +36,4 @@ export const instructionsApi = {
 
 /** The short example the empty state and the editor placeholder show. Not written to the file. */
 export const INSTRUCTIONS_EXAMPLE =
-  "## What this Bot does\n- Review code changes and tell me what blocks a merge.\n\n## What this Bot doesn't do\n- Don't push or open a PR without asking me.\n\n## How this Bot talks\n- Spanish, direct, technical.";
+  "## What this Bot does\n- Review code changes and tell me what blocks a merge.\n\n## What this Bot doesn't do\n- Don't touch the billing settings.\n\n## How this Bot talks\n- Spanish, direct, technical.";

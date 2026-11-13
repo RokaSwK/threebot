@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -1012,5 +1012,29 @@ test('release-notes scenario: the real gateway passes on the offered and the run
     assert.equal(body.current.version, body.version);
     assert.match(body.current.notes, /^## What's Changed\n\* Landing: show the GitHub star count by @RokaSwK/);
     assert.deepEqual([body.notice.kind, body.notice.version], ['updated', body.version]);
+  } finally { await fixture.close(); }
+});
+
+test('a helper Bot written by another Bot gets its standing instructions before its first session', { timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  try {
+    const dir = path.join(fixture.root, 'bots', 'helper');
+    await mkdir(path.join(dir, '.bot'), { recursive: true });
+    await writeFile(path.join(dir, '.bot', 'bot.json'), JSON.stringify({ name: 'Helper', label: 'Docs', shape: 'sphere', color: 'teal', createdBy: 'Alpha',
+      instructions: '## What this Bot does\n- Keep the docs true.\n', brief: 'Read the docs folder.' }));
+    let agents = '';
+    for (let i = 0; i < 75 && !agents.includes('Keep the docs true'); i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      agents = await readFile(path.join(dir, 'AGENTS.md'), 'utf8').catch(() => '');
+    }
+    assert.match(agents, /<!-- bot:managed:end -->\n\n## What this Bot does\n- Keep the docs true\.\n$/);
+    let meta: Json = {};
+    for (let i = 0; i < 50; i++) {
+      meta = JSON.parse(await readFile(path.join(dir, '.bot', 'bot.json'), 'utf8'));
+      if (meta.instructions == null) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    assert.equal(meta.instructions ?? null, null, 'the seed is cleared once written');
+    assert.doesNotMatch(agents, /Read the docs folder/, 'the brief is a first message, not a standing instruction');
   } finally { await fixture.close(); }
 });

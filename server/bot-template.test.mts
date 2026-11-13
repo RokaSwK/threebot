@@ -4,6 +4,14 @@ import { renderAgentsMd, mergeManaged, codingWorkSection, MANAGED_START, MANAGED
 
 const render = (settings = {}) => renderAgentsMd({ bot: { name: "Roka", slug: "roka", projectId: "p", mainThreadId: "t" }, settings, botsRoot: "/bots" });
 
+test("helper Bots get a standing role and a first task, not one for the other", () => {
+  const text = render();
+  assert.match(text, /"instructions": "its standing role and rules"/);
+  assert.match(text, /"brief": "its first task"/);
+  assert.doesNotMatch(text, /"brief": "its first instructions"/);
+  assert.match(text, /gives it those instructions, and delivers the brief as its first message/);
+});
+
 test("Bots can park threads and read what's parked across projects", () => {
   const text = render({ userName: "Sam", timezone: "Europe/Madrid" });
   assert.match(text, /`t3_thread_organize` with action `snooze` and `snoozedUntil`/);
