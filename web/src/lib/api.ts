@@ -80,7 +80,7 @@ export const api = {
   saveSettings: (patch: Partial<Settings>) => req<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   bots: (signal?: AbortSignal) => req<{ bots: Bot[] }>("/api/bots", { signal }).then((r) => r.bots),
   botIdentities: (signal?: AbortSignal) => req<{ bots: Bot[] }>("/api/bot-identities", { signal }).then((r) => r.bots),
-  createBot: (input: Partial<Bot>) => req<Bot>("/api/bots", { method: "POST", body: JSON.stringify(input) }),
+  createBot: (input: Partial<Bot> & { label?: string; instructions?: string }) => req<Bot>("/api/bots", { method: "POST", body: JSON.stringify(input) }),
   saveBot: (slug: string, patch: Partial<Bot>) => req<Bot>(`/api/bots/${slug}`, { method: "PUT", body: JSON.stringify(patch) }),
   setMainBot: (slug: string) => req<{ bots: Bot[] }>("/api/main-bot", { method: "PUT", body: JSON.stringify({ slug }) }),
   deleteBot: (slug: string) => req<{ ok: true; bots: Bot[] }>(`/api/bots/${slug}`, { method: "DELETE" }),

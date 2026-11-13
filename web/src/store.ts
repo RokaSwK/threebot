@@ -633,7 +633,7 @@ export function toast(msg: string, link: { href: string; label: string } | null 
   window.setTimeout(() => get().toast === msg && set({ toast: null, toastLink: null }), msg.length > 80 || link ? 12_000 : 3500);
 }
 
-export async function createBot(input: { name: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
+export async function createBot(input: { name: string; label?: string; instructions?: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
   const model = input.model ?? defaultModel();
   if (!model) throw new Error("No agent provider is ready on T3");
   // The gateway creates the folder, the T3 project and the main thread.

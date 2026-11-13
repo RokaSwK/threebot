@@ -502,6 +502,8 @@ button {
 .new-bot-preview { padding-top: 36px; }
 .new-bot-name { height: 58px; font-size: 21px; font-weight: 500; background: var(--bg-card); border: 0; margin-top: 24px; }
 .new-bot-sheet .dialog-body { flex: 1; }
+.new-bot-more[open] .new-bot-more-chevron { transform: rotate(90deg); }
+.new-bot-more summary { list-style: none; }
 .new-bot-sheet .avatar-picker { padding-top: 22px; }
 .new-bot-sheet .avatar-shapes { grid-template-columns: repeat(5, 52px); gap: 9px; max-width: 320px; }
 .new-bot-sheet .avatar-shapes button { width: 52px; height: 49px; }

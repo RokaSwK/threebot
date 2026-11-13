@@ -5,6 +5,7 @@ import { AvatarEditorDialog, AvatarPicker, type AvatarDraft } from "./AvatarEdit
 import { Modal, Pill, Spinner } from "./ui";
 import { createBot, defaultModel, deleteBot, openDialog, releaseBot, toast, updateBot, useApp } from "../store";
 import { DEFAULT_AVATAR } from "../lib/character";
+import { composeBotInstructions, BOT_INSTRUCTIONS_MAX } from "../lib/botInstructions";
 
 export { AvatarPicker } from "./AvatarEditor";
 
@@ -12,16 +13,24 @@ export function NewBotDialog() {
   const bots = useApp((s) => s.bots);
   const first = Object.keys(bots).length === 0;
   const [name, setName] = useState(first ? "Threebot" : "");
+  const [label, setLabel] = useState("");
+  const [does, setDoes] = useState("");
+  const [doesNot, setDoesNot] = useState("");
+  const [style, setStyle] = useState("");
   const [avatar, setAvatar] = useState<AvatarDraft>({ ...DEFAULT_AVATAR });
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const close = () => openDialog(null);
+  const instructions = composeBotInstructions({ does, doesNot, style });
+  const tooLong = instructions.length > BOT_INSTRUCTIONS_MAX;
 
   const create = async () => {
-    if (!name.trim() || busy) return;
+    if (!name.trim() || busy || tooLong) return;
     setBusy(true);
     try {
-      await createBot({ name: name.trim(), ...avatar, model: defaultModel(), primary: first });
+      await createBot({
+        name: name.trim(), label: label.trim(), instructions, ...avatar, model: defaultModel(), primary: first,
+      });
       if (first) await updateBot(Object.values(useApp.getState().bots)[0].slug, { pinned: true });
       close();
     } catch (e) {
@@ -43,11 +52,42 @@ export function NewBotDialog() {
             placeholder="Name your Bot"
             className="new-bot-name mt-4 h-10 w-full rounded-xl border border-line bg-transparent text-center text-[14px] outline-none placeholder:text-faint focus:border-line-strong"
           />
+          <input
+            aria-label="What is this Bot for?"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && create()}
+            placeholder="What is this Bot for? (optional)"
+            className="new-bot-role mt-1 h-8 w-full border-0 bg-transparent text-center text-[13px] text-muted outline-none placeholder:text-faint focus:text-fg"
+          />
+          <p className="new-bot-role-hint mt-0.5 text-center text-[11.5px] text-muted">One line. It appears under the Bot's name.</p>
         </div>
+        <details className="new-bot-more mx-5 mt-2 rounded-xl border border-line bg-card">
+          <summary className="new-bot-more-summary flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-[13.5px] text-fg [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={14} className="new-bot-more-chevron transition-transform text-muted" /> Add more detail
+            <span className="ml-auto text-[12px] font-normal text-muted">Optional</span>
+          </summary>
+          <div className="space-y-3 border-t border-line px-3 py-3">
+            <label className="block text-[12.5px] text-muted">What should it do?
+              <textarea value={does} maxLength={BOT_INSTRUCTIONS_MAX} onChange={(e) => setDoes(e.target.value)} rows={2} placeholder="Review code changes and tell me what blocks a merge." className="mt-1 w-full rounded-xl border border-line bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:border-line-strong" />
+            </label>
+            <label className="block text-[12.5px] text-muted">What should it not do?
+              <textarea value={doesNot} maxLength={BOT_INSTRUCTIONS_MAX} onChange={(e) => setDoesNot(e.target.value)} rows={2} placeholder="Don't push or open a PR without asking me." className="mt-1 w-full rounded-xl border border-line bg-transparent px-3 py-2 text-[13px] outline-none placeholder:text-faint focus:border-line-strong" />
+            </label>
+            <label className="block text-[12.5px] text-muted">How should it talk to you?
+              <input value={style} maxLength={BOT_INSTRUCTIONS_MAX} onChange={(e) => setStyle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && create()} placeholder="Spanish, direct, technical." className="mt-1 h-9 w-full rounded-xl border border-line bg-transparent px-3 text-[13px] outline-none placeholder:text-faint focus:border-line-strong" />
+            </label>
+            <div className="flex items-center gap-2 text-[11.5px] text-muted">
+              <span>You can change all of this later in Details › Instructions.</span>
+              <span className={tooLong ? "ml-auto shrink-0 text-danger" : "ml-auto shrink-0"}>{instructions.length.toLocaleString()} / {BOT_INSTRUCTIONS_MAX.toLocaleString()}</span>
+            </div>
+            {tooLong && <p role="alert" className="text-[12px] text-danger">These details are too long. Shorten them to {BOT_INSTRUCTIONS_MAX.toLocaleString()} characters or fewer.</p>}
+          </div>
+        </details>
         <AvatarPicker shape={avatar.shape} color={avatar.color} disabled={busy} onChange={(shape, color) => setAvatar({ shape, color, avatarImage: null, avatarDefinition: shape === avatar.shape ? avatar.avatarDefinition : null })} />
       </div>
       <div className="dialog-footer flex items-center gap-2 border-t border-line px-3 py-3">
-        <Pill onClick={create} disabled={!name.trim() || busy}>
+        <Pill onClick={create} disabled={!name.trim() || busy || tooLong}>
           {busy && <Spinner />} Create
         </Pill>
         <button type="button" disabled={busy} onClick={() => openDialog("adopt-project")} className="new-bot-from-project ml-auto flex h-9 items-center gap-2 rounded-full px-3 text-[13px] text-muted hover:bg-hover hover:text-fg">
