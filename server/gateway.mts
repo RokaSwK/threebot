@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { readInstructions, saveInstructions } from "./instructions.mts";
+import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
@@ -520,6 +522,12 @@ async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<strin
 // Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
 const releasing = new Set<string>();
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
+  // One writer per AGENTS.md: the memory watcher, a settings save and the Instructions tab all
+  // read-merge-write this file, and an unlocked stale merge would silently restore old custom text.
+  if (bot.adopted) return writeAgentsMdInner(bot, settings, snapshot);
+  return withFileLock(path.join(bot.workspaceRoot, "AGENTS.md"), () => writeAgentsMdInner(bot, settings, snapshot));
+}
+async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   if (releasing.has(bot.slug)) return;
   const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
   if (bot.adopted && !adoption) return;
@@ -1203,6 +1211,31 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
       return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
+    }
+    if (p === "/api/instructions" && req.method === "GET") {
+      const bot = await getBot(url.searchParams.get("slug") ?? "");
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (bot.adopted) return send(res, 409, { error: "This Bot was made from a project. Its instructions live in the project's own files." });
+      let file = await readInstructions({ botDir: bot.dataDir });
+      if (!file.managed) {
+        await writeAgentsMd(bot, await getSettings());
+        file = await readInstructions({ botDir: bot.dataDir });
+      }
+      return send(res, 200, file, { "cache-control": "no-store" });
+    }
+    if (p === "/api/instructions" && req.method === "PUT") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (bot.adopted) return send(res, 409, { error: "This Bot was made from a project. Its instructions live in the project's own files." });
+      let file = await readInstructions({ botDir: bot.dataDir });
+      if (!file.managed) {
+        await writeAgentsMd(bot, await getSettings());
+        file = await readInstructions({ botDir: bot.dataDir });
+      }
+      const result = await saveInstructions({ botDir: bot.dataDir, text: body?.text, expectedRevision: body?.expectedRevision });
+      return send(res, result.ok ? 200 : result.code === "conflict" ? 409 : 400, result, { "cache-control": "no-store" });
     }
     if (p === "/api/memory" && req.method === "PUT") {
       requireJson(req);

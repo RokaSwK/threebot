@@ -78,6 +78,19 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.equal((await request('/api/bots/beta', 'DELETE')).status, 409);
     assert.equal((await request('/api/main-bot', 'PUT', { slug: 'missing' })).status, 404);
     assert.equal((await request('/api/main-bot', 'PUT', null)).status, 400);
+
+    // Instructions: the owner's part is editable; the managed block is left alone.
+    const agents = path.join(botsRoot, 'alpha', 'AGENTS.md');
+    await writeFile(agents, '<!-- bot:managed:start -->\n# You are Alpha\n\nManaged text.\n<!-- bot:managed:end -->\n\n## Mine\n- Review code.\n');
+    const instructionsResponse = await request('/api/instructions?slug=alpha');
+    assert.equal(instructionsResponse.status, 200);
+    assert.match(instructionsResponse.body.text, /Review code/u);
+    const savedInstructions = await request('/api/instructions', 'PUT', { slug: 'alpha', text: '## Mine\n- Be direct.\n', expectedRevision: instructionsResponse.body.revision });
+    assert.equal(savedInstructions.status, 200);
+    const rewritten = await readFile(agents, 'utf8');
+    assert.match(rewritten, /<!-- bot:managed:start -->[\s\S]*Managed text\.[\s\S]*<!-- bot:managed:end -->/u);
+    assert.match(rewritten, /## Mine\n- Be direct\.\n$/u);
+    assert.equal((await request('/api/instructions', 'PUT', { slug: 'alpha', text: 'stale', expectedRevision: instructionsResponse.body.revision })).status, 409);
     assert.equal((await request('/api/bots/missing', 'PUT', { primary: true })).status, 404);
     // A colour is a palette name or a hex colour, stored as "#rrggbb"; anything else is refused.
     assert.equal((await request('/api/bots/alpha', 'PUT', { color: '#3FA7D6' })).body.color, '#3fa7d6');
