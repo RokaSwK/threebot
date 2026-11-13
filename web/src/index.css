@@ -113,9 +113,18 @@ body {
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
   /* 16px inputs stop iOS and Android from zooming in on focus. */
   textarea,
-  input {
+  input,
+  select {
     font-size: 16px !important;
   }
+  .pane-title { display: none; }
+  .instructions-copy { font-size: 13.5px !important; line-height: 20px; }
+  .instructions-meta { font-size: 12px !important; }
+  .instructions-shortcut { display: none; }
+  .instructions-example { font-size: 12.5px !important; line-height: 19px; }
+  .instructions-preview { font-size: 14.5px !important; line-height: 23px; }
+  .instructions-disclosure { font-size: 13px !important; }
+  .instructions-role { min-height: 40px; }
 }
 
 body {
@@ -134,6 +143,21 @@ button {
 
 ::selection {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* The Details panel is 280–480px wide, so its tabs adapt to the panel, not the viewport.
+   At narrow widths every destination stays visible: inactive tabs show their icon, the
+   selected tab keeps its label. No hidden carousel and no wrapped second row. */
+.details-content { container-type: inline-size; }
+.details-profile.details-profile-tab-hidden { display: none; }
+.details-tab-icon { display: none; }
+@container (max-width: 440px) {
+  .details-tabs { gap: 3px; }
+  .details-tab { min-width: 30px; min-height: 32px; gap: 0; padding: 6px 7px; justify-content: center; }
+  .details-tab-icon { display: inline-flex; width: 15px; height: 15px; }
+  .details-tab-label { display: none; }
+  .details-tab[aria-selected="true"] { gap: 5px; padding-inline: 8px; }
+  .details-tab[aria-selected="true"] .details-tab-label { display: inline; }
 }
 
 .scroll-thin {
@@ -913,3 +937,321 @@ button {
 .dark[data-palette="ember"] { --p-canvas: oklch(0.246 0.019 42); --p-sidebar: oklch(0.293 0.030 47); --p-surface: oklch(0.246 0.019 42); --p-raised: oklch(0.351 0.016 38); --p-text: oklch(0.990 0.008 326); --p-muted: oklch(0.654 0.010 13); --p-border: oklch(0.441 0.040 49); --p-input: oklch(0.503 0.046 49); --p-accent: oklch(0.762 0.124 52); --p-message: oklch(0.448 0.062 51); }
 [data-palette="iris"] { --p-canvas: oklch(0.977 0.004 303); --p-sidebar: oklch(0.941 0.015 300); --p-surface: oklch(0.977 0.004 303); --p-raised: oklch(0.953 0.005 308); --p-text: oklch(0.222 0.035 329); --p-muted: oklch(0.543 0.019 326); --p-border: oklch(0.870 0.018 304); --p-input: oklch(0.835 0.023 304); --p-accent: oklch(0.525 0.154 294); --p-message: oklch(0.897 0.029 300); }
 .dark[data-palette="iris"] { --p-canvas: oklch(0.226 0.031 294); --p-sidebar: oklch(0.267 0.045 294); --p-surface: oklch(0.226 0.031 294); --p-raised: oklch(0.335 0.026 296); --p-text: oklch(0.990 0.008 326); --p-muted: oklch(0.640 0.016 304); --p-border: oklch(0.409 0.059 296); --p-input: oklch(0.468 0.066 296); --p-accent: oklch(0.672 0.169 294); --p-message: oklch(0.400 0.087 294); }
+
+/* ---------- Instructions: two sections and a focused editor ---------- */
+.instructions-intro { max-width: 42ch; }
+.instructions-section { margin-bottom: 22px; }
+.instructions-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 7px;
+  padding-inline: 2px;
+}
+.instructions-section-title {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 18px;
+}
+.instructions-section-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instructions-saved-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.instructions-role-button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: 10px 12px;
+  color: var(--fg);
+  font-size: 14.5px;
+  line-height: 20px;
+  text-align: left;
+  transition: background-color .14s ease, border-color .14s ease;
+}
+.instructions-role-button:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.instructions-role-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.instructions-role-editor {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: 4px 4px 4px 12px;
+}
+.instructions-role-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14.5px;
+  line-height: 20px;
+  outline: none;
+}
+.instructions-role-input::placeholder { color: var(--fg-faint); }
+.instructions-role-actions { display: flex; gap: 4px; }
+.instructions-role-action {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+}
+.instructions-role-action:hover { background: var(--bg-hover); color: var(--fg); }
+.instructions-role-action:disabled { opacity: .45; }
+.instructions-section-hint { margin-top: 5px; padding-inline: 2px; color: var(--fg-muted); font-size: 11.5px; line-height: 16px; }
+.instructions-body-section .instructions-section-head { align-items: center; margin-bottom: 9px; }
+.instructions-edit-button {
+  flex-shrink: 0;
+  min-height: 44px;
+  height: auto;
+  margin-left: auto;
+  padding-inline: 11px;
+  font-size: 12.5px;
+}
+.instructions-body-section .instructions-preview { margin-top: 0; }
+.instructions-empty { margin-top: 0; }
+.instructions-saved { line-height: 17px; }
+
+.instructions-how {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+.instructions-how summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+.instructions-how summary::-webkit-details-marker { display: none; }
+.instructions-how-chevron { transition: transform .16s ease; }
+.instructions-how[open] .instructions-how-chevron { transform: rotate(90deg); }
+.instructions-how-body {
+  padding: 2px 2px 8px;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.instructions-how-body p + p { margin-top: 8px; }
+.instructions-how-path {
+  overflow-wrap: anywhere;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* The editor leaves the 280–480px panel on desktop and takes the phone screen on mobile. */
+.instructions-editor {
+  width: min(760px, calc(100vw - 32px));
+  height: min(720px, calc(100dvh - 32px));
+  max-width: min(760px, calc(100vw - 32px));
+  max-height: min(720px, calc(100dvh - 32px));
+  overflow: hidden;
+}
+.instructions-editor-shell { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.instructions-editor-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.instructions-editor-toolbar-title {
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.instructions-editor-view { display: none; }
+.instructions-editor-shortcut { margin-left: auto; color: var(--fg-faint); }
+.instructions-editor-grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  gap: 12px;
+  padding: 14px 16px 0;
+}
+.instructions-editor-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+.instructions-editor-pane-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  color: var(--fg-muted);
+  font-size: 10.5px;
+}
+.instructions-editor-pane-head span:last-child { margin-left: auto; color: var(--fg-faint); }
+.instructions-editor-textarea {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  resize: none;
+  border: 0;
+  background: transparent;
+  padding: 12px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 20px;
+  outline: none;
+}
+.instructions-editor-textarea::placeholder { color: var(--fg-faint); }
+.instructions-editor-preview-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 21px;
+}
+.instructions-editor-hint {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+.instructions-editor-alert { padding: 6px 16px 0; font-size: 12px; line-height: 17px; }
+.instructions-editor-conflict,
+.instructions-editor-confirm {
+  margin: 8px 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  padding: 9px 10px;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 17px;
+}
+.instructions-editor-confirm { display: flex; align-items: center; gap: 10px; }
+.instructions-editor-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+}
+.instructions-editor-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+.instructions-editor-actions { display: flex; flex-shrink: 0; gap: 8px; margin-left: auto; }
+.instructions-editor-cancel,
+.instructions-editor-save { height: 32px; padding-inline: 12px; font-size: 12.5px; }
+
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
+  .instructions-intro { max-width: none; font-size: 13.5px !important; line-height: 20px; }
+  .instructions-section-title { font-size: 13px; }
+  .instructions-section-meta { font-size: 11px; }
+  .instructions-role-button { font-size: 15.5px; }
+  .instructions-role-action { width: 44px; height: 44px; }
+  .instructions-section-hint { font-size: 12px; }
+  .instructions-edit-button { min-height: 44px; font-size: 13px; }
+  .instructions-how summary { font-size: 13px; }
+  .instructions-how-body { font-size: 13px; line-height: 1.55; }
+
+  .instructions-editor {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    border-radius: 22px 22px 0 0;
+  }
+  .instructions-editor-toolbar { padding: 6px 18px; border-bottom: 1px solid var(--border); }
+  .instructions-editor-toolbar-title { display: none; }
+  .instructions-editor-view {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    padding: 2px;
+  }
+  .instructions-editor-view button {
+    min-height: 30px;
+    border-radius: 6px;
+    padding: 0 10px;
+    color: var(--fg-muted);
+    font-size: 11.5px;
+  }
+  .instructions-editor-view button[aria-pressed="true"] { background: var(--bg-active); color: var(--fg); }
+  .instructions-editor-shortcut { display: none; }
+  .instructions-editor-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: 8px 16px 0;
+    overflow: hidden;
+  }
+  .instructions-editor-pane { flex: 1; min-height: 0; border: 0; border-radius: 0; background: transparent; }
+  .instructions-editor-pane-head { display: none; }
+  .instructions-editor-write, .instructions-editor-preview { display: none; }
+  .instructions-editor-shell[data-view="write"] .instructions-editor-write { display: flex; }
+  .instructions-editor-shell[data-view="preview"] .instructions-editor-preview { display: flex; }
+  .instructions-editor-textarea { padding: 8px 0; font-size: 16px !important; line-height: 24px; }
+  .instructions-editor-preview-body { padding: 8px 0; font-size: 14.5px; line-height: 23px; }
+  .instructions-editor-hint { padding: 8px 18px 0; font-size: 12px; }
+  .instructions-editor-alert { padding: 6px 18px 0; font-size: 12.5px; }
+  .instructions-editor-conflict, .instructions-editor-confirm { margin-inline: 18px; }
+  .instructions-editor-confirm { flex-wrap: wrap; }
+  .instructions-editor-footer { padding: 8px 18px max(12px, env(safe-area-inset-bottom)); }
+  .instructions-editor-meta { font-size: 11.5px; }
+  .instructions-editor-cancel,
+  .instructions-editor-save { height: 44px; padding-inline: 16px; font-size: 13px; }
+}

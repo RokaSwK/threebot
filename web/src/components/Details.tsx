@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowLeft, ChevronsRight, ChevronLeft, ChevronRight, Clock, Folder, Library as LibraryIcon, Monitor, Play, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Brain, ChevronsRight, ChevronLeft, ChevronRight, CircleUser, Clock, FileText, Folder, Library as LibraryIcon, Monitor, Play, Plus, Trash2 } from "lucide-react";
 import { ModelPicker } from "./ModelPicker";
 import { CodingWorkRows } from "./MachinesPane";
 import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
 import { Library } from "./Library";
 import { MemoryTab } from "./Memory";
+import { InstructionsTab } from "./Instructions";
 import { ThreadFamily } from "./ThreadFamily";
 import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
@@ -24,6 +25,19 @@ import "./routines.css";
 import { changeRoutineEnabled, changeRoutineFreshSession, copyWebhookUrl, displayTimezone, removeRoutine, routineDate, routineHistory, scheduleText, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
 
+/**
+ * The five sections of the Details panel. At narrow panel widths the inactive tabs show only
+ * their icon and the selected one keeps its label, so every destination stays visible and
+ * clickable without a hidden carousel (see `.details-tabs` in index.css).
+ */
+const DETAILS_TABS = [
+  { id: "details", label: "Details", icon: CircleUser },
+  { id: "instructions", label: "Instructions", icon: FileText },
+  { id: "library", label: "Library", icon: LibraryIcon },
+  { id: "computer", label: "Computer", icon: Monitor },
+  { id: "memory", label: "Memory", icon: Brain },
+] as const;
+
 export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }) {
   const threads = useApp((s) => s.threads);
   useApp((s) => s.threadData);
@@ -36,10 +50,28 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   const [editing, setEditing] = useState<"name" | "label" | null>(null);
   const [draft, setDraft] = useState("");
   const [routine, setRoutine] = useState<string | null>(null);
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const allTasks = useApp((s) => s.tasks);
   const tasks = useMemo(() => allTasks.filter((t) => t.projectId === bot.projectId), [allTasks, bot.projectId]);
   const openRoutine = tasks.find((t) => t.id === routine);
   useEffect(() => { setRoutine(null); setShowRoutines(false); }, [bot.slug]);
+  // An adopted Bot has no Instructions tab yet; never leave the panel on a tab that is not there.
+  useEffect(() => { if (bot.adopted && tab === "instructions") useApp.setState({ detailsTab: "details" }); }, [bot.adopted, tab]);
+  const tabs = DETAILS_TABS.filter((entry) => !(bot.adopted && entry.id === "instructions"));
+
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const ids = tabs.map((entry) => entry.id);
+    let next = index;
+    if (event.key === "ArrowRight") next = (index + 1) % ids.length;
+    else if (event.key === "ArrowLeft") next = (index - 1 + ids.length) % ids.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = ids.length - 1;
+    else return;
+    event.preventDefault();
+    const id = ids[next];
+    useApp.setState({ detailsTab: id });
+    requestAnimationFrame(() => tabRefs.current[id]?.focus());
+  };
 
   const routineChat = (text: string) => {
     const draft = chatDraft(bot, bot.mainThreadId);
@@ -58,14 +90,14 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
     <aside className={clsx("bot-details flex h-full shrink-0 flex-col border-l border-line bg-details", (showRoutines || openRoutine) && "routine-page")} style={{ width }} aria-label="Conversation details">
       <div className="details-header flex h-[52px] shrink-0 items-center justify-end px-3">
         <IconButton onClick={() => { if (openRoutine) { setRoutine(null); return; } if (tab !== "details" || showRoutines) { useApp.setState({ detailsTab: "details" }); setShowRoutines(false); } else setDetailsOpen(false); }} title="Back" className="details-back mr-auto hidden"><ChevronLeft size={20} /></IconButton>
-        <span className="details-page-title hidden flex-1 text-center text-[17px] font-medium">{openRoutine ? "Routine" : tab === "library" ? "Library" : tab === "computer" ? "Computer" : tab === "memory" ? "Memory" : showRoutines ? "Routines" : ""}</span>
+        <span className="details-page-title hidden flex-1 text-center text-[17px] font-medium">{openRoutine ? "Routine" : tab === "library" ? "Library" : tab === "computer" ? "Computer" : tab === "memory" ? "Memory" : tab === "instructions" ? "Instructions" : showRoutines ? "Routines" : ""}</span>
         <IconButton onClick={() => setDetailsOpen(false)} title="Hide details" className="details-close"><ChevronsRight size={16} /></IconButton>
       </div>
       {openRoutine ? (
         <RoutineDetail key={`routine-detail:${openRoutine.id}`} bot={bot} task={openRoutine} onBack={() => setRoutine(null)} onEdit={() => routineChat(`Edit your routine: ${openRoutine.title}`)} />
       ) : (
         <div className="details-content scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-          <div className={clsx("details-profile flex flex-col items-center pt-1 pb-4", (tab !== "details" || showRoutines) && "details-profile-mobile-hidden")}>
+          <div className={clsx("details-profile flex flex-col items-center pt-1 pb-4", (tab !== "details" || showRoutines) && "details-profile-mobile-hidden details-profile-tab-hidden")}>
             <button disabled={archived || threadId !== bot.mainThreadId} onClick={() => setPicker(true)} title="Change avatar" className="rounded-full transition-transform enabled:hover:scale-105">
               <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={88} star={bot.primary && threadId === bot.mainThreadId} />
             </button>
@@ -87,17 +119,43 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             {!archived && threadId === bot.mainThreadId && <Pill variant="soft" className="profile-edit mt-3 hidden" onClick={() => openDialog({ kind: "rename-bot", slug: bot.slug })}>Edit</Pill>}
           </div>
 
-          <div className="details-tabs mb-4 flex justify-center gap-1">
-            {(["details", "library", "computer", "memory"] as const).map((t) => (
-              <button key={t} onClick={() => useApp.setState({ detailsTab: t })} className={clsx("rounded-full px-3 py-1 text-[13px] capitalize", tab === t ? "bg-active text-fg" : "text-muted hover:text-fg")}>
-                {t}
-              </button>
-            ))}
+          {tab !== "details" && !showRoutines && (
+            <div className="details-identity mb-2 flex items-center gap-2 px-1">
+              <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={22} />
+              <span className="truncate text-[12.5px] text-muted">{identity.name}</span>
+            </div>
+          )}
+
+          <div className="details-tabs mb-4 flex justify-center gap-1" role="tablist" aria-label="Bot details sections">
+            {tabs.map((entry, index) => {
+              const Icon = entry.icon;
+              return (
+                <button
+                  key={entry.id}
+                  ref={(element) => { tabRefs.current[entry.id] = element; }}
+                  type="button"
+                  role="tab"
+                  id={`details-tab-${entry.id}`}
+                  aria-selected={tab === entry.id}
+                  aria-controls={`details-panel-${entry.id}`}
+                  tabIndex={tab === entry.id ? 0 : -1}
+                  title={entry.label}
+                  onClick={() => useApp.setState({ detailsTab: entry.id })}
+                  onKeyDown={(event) => onTabKeyDown(event, index)}
+                  className={clsx("details-tab inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px]", tab === entry.id ? "bg-active text-fg" : "text-muted hover:text-fg")}
+                >
+                  <Icon size={14} className="details-tab-icon" />
+                  <span className="details-tab-label">{entry.label}</span>
+                </button>
+              );
+            })}
           </div>
 
+          <div role="tabpanel" id={`details-panel-${tab}`} aria-labelledby={`details-tab-${tab}`}>
           {tab === "details" && <>
             {!showRoutines && <div className="profile-actions mb-6 hidden overflow-hidden rounded-[20px] bg-card px-4">
               <ProfileAction icon={<Clock size={20} />} label="Routines" detail={`${tasks.filter((t) => t.enabled).length} on`} onClick={() => setShowRoutines(true)} />
+              {!bot.adopted && <ProfileAction icon={<FileText size={20} />} label="Instructions" onClick={() => useApp.setState({ detailsTab: "instructions" })} />}
               <ProfileAction icon={<LibraryIcon size={20} />} label="Library" onClick={() => useApp.setState({ detailsTab: "library" })} />
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}
@@ -109,8 +167,10 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             {!archived && <div className={showRoutines ? "" : "profile-routines"}><DetailsTab bot={bot} tasks={tasks} onOpenRoutine={setRoutine} onCreate={() => routineChat("Set up a routine")} routinesOnly={showRoutines} /></div>}
           </>}
           {tab === "library" && <Library bot={bot} />}
+          {tab === "instructions" && <InstructionsTab bot={bot} />}
           {tab === "computer" && <ComputerTab bot={bot} />}
           {tab === "memory" && <MemoryTab bot={bot} />}
+          </div>
         </div>
       )}
       {picker && <AvatarDialog key={bot.slug} bot={bot} onClose={() => setPicker(false)} />}
