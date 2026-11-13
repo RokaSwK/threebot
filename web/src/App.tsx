@@ -19,6 +19,7 @@ import { boot, botStatus, machineOf, openDialog, select, setDetailsOpen, setMain
 import { api } from "./lib/api";
 import { MOBILE_LAYOUT_QUERY } from "./lib/layout";
 import { navigationFor, navigationUrl, readNavigation, restoreNavigation } from "./lib/navigation";
+import { runBackGuard } from "./lib/backGuard";
 import "./home-avatar.css";
 import { DEFAULT_PALETTE, isDarkMode } from "./lib/themes";
 
@@ -183,8 +184,23 @@ function useNavigationHistory(narrow: boolean) {
     const onPop = (event: PopStateEvent) => {
       const route = readNavigation(event.state);
       if (!route) return;
-      restoring = true;
+      // An editor or confirmation opened inside a route can pin it: Back asks that surface to
+      // close (or to keep an unsaved draft) instead of popping the screen underneath it.
+      if (runBackGuard()) {
+        const next = navigationFor(useApp.getState(), narrowRef.current);
+        history.pushState(next, "", navigationUrl(next, location.pathname));
+        return;
+      }
       const s = useApp.getState();
+      // On a phone the Details sheet is one history entry. Back from a section tab should return
+      // to the profile tab, not close the whole sheet; the next Back closes it.
+      if (narrowRef.current && s.detailsOpen && s.detailsTab !== "details" && route.view !== "overlay") {
+        useApp.setState({ detailsTab: "details" });
+        const next = navigationFor(useApp.getState(), true);
+        history.pushState(next, "", navigationUrl(next, location.pathname));
+        return;
+      }
+      restoring = true;
       useApp.setState(restoreNavigation(route, { ...s.historicalBots, ...s.bots }));
       restoring = false;
     };

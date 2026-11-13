@@ -203,3 +203,23 @@ export function mergeManaged(existing: string, block: string): string {
   if (s === -1 || e === -1) return block + "\n" + existing;
   return existing.slice(0, s) + block.trimEnd() + existing.slice(e + MANAGED_END.length);
 }
+
+/** The two parts of `AGENTS.md`: the block Threebot owns and the text the owner owns. */
+export function splitManaged(existing: string): { managed: string; custom: string } | null {
+  const start = existing.indexOf(MANAGED_START);
+  if (start === -1) return null;
+  const end = existing.indexOf(MANAGED_END, start + MANAGED_START.length);
+  if (end === -1) return null;
+  return {
+    managed: existing.slice(start, end + MANAGED_END.length),
+    custom: existing.slice(end + MANAGED_END.length),
+  };
+}
+
+/** Keeps the managed block exactly as it is and replaces everything after it. */
+export function replaceCustom(existing: string, custom: string): string {
+  const parts = splitManaged(existing);
+  if (!parts) throw new Error("The managed block is missing.");
+  const body = custom.trim();
+  return body ? `${parts.managed.trimEnd()}\n\n${body}\n` : `${parts.managed.trimEnd()}\n`;
+}

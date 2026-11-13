@@ -188,12 +188,13 @@ test("breakpoint transitions retain chat, draft, dialog nodes and desktop resizi
   assert.equal(useApp.getState().detailsWidth, 328);
 });
 
-for (const tab of ["details", "library", "computer"]) test(`Details ${tab} profile visibility follows mobile condition`, async () => {
+for (const tab of ["details", "library", "computer"]) test(`Details ${tab} profile hides outside the profile tab`, async () => {
   useApp.setState({ detailsTab: tab }); await act(async () => root.render(h(Details, { bot, threadId: "main" })));
   const profile = host.querySelector(".details-profile"); assert.ok(profile);
-  for (const [width, height, input, mobile] of [[390, 844, "coarse", true], [844, 390, "coarse", true], [844, 390, "fine", false], [1024, 768, "coarse", true], [1920, 1080, "coarse", false]]) {
+  for (const [width, height, input] of [[390, 844, "coarse"], [844, 390, "coarse"], [844, 390, "fine"], [1024, 768, "coarse"], [1920, 1080, "coarse"]]) {
     viewport(width, height, input); const style = stylesForViewport();
-    assert.equal(getComputedStyle(profile).display === "none", mobile && tab !== "details"); style.remove();
+    assert.equal(getComputedStyle(profile).display === "none", tab !== "details");
+    style.remove();
   }
 });
 
