@@ -1,3 +1,5 @@
+export type DetailsTab = "details" | "instructions" | "library" | "computer" | "memory";
+
 export type Bot = {
   slug: string;
   workspaceRoot: string;

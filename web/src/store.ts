@@ -9,7 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
-import type { Bot, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
+import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
   items: Record<string, TurnItem>;
@@ -71,7 +71,7 @@ type State = {
   sidebarCompact: boolean;
   sidebarWidth: number;
   detailsWidth: number;
-  detailsTab: "details" | "library" | "computer" | "memory";
+  detailsTab: DetailsTab;
   dialog: Dialog;
   searchSession: SearchSession;
   searchResultRevision: number;
@@ -633,7 +633,7 @@ export function toast(msg: string, link: { href: string; label: string } | null 
   window.setTimeout(() => get().toast === msg && set({ toast: null, toastLink: null }), msg.length > 80 || link ? 12_000 : 3500);
 }
 
-export async function createBot(input: { name: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
+export async function createBot(input: { name: string; label?: string; instructions?: string; shape: string; color: string; avatarImage?: string | null; avatarDefinition?: unknown; model?: ModelSelection | null; section?: string | null; primary?: boolean }) {
   const model = input.model ?? defaultModel();
   if (!model) throw new Error("No agent provider is ready on T3");
   // The gateway creates the folder, the T3 project and the main thread.

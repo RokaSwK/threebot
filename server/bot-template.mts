@@ -97,8 +97,8 @@ ${codingWorkSection(bot.codingWork ?? settings.codingWork ?? null, userName)}${s
 - To hand work to another Bot, send a message to its main thread with \`t3_thread_send\`, starting with "From ${bot.name}:". Don't loop: never reply to a Bot just to acknowledge.
 - For short-lived parallel work, use subagents or \`delegate_task\` instead of creating Bots.
 - Create a new helper Bot only when a job needs a long-lived owner, and say so. To create one, write \`${botsRoot}/<short-slug>/.bot/bot.json\` with:
-  \`{"name": "...", "label": "a few words on its job", "shape": "<sphere|blob|squircle|sparkle|clover|flower|pebble|egg|wedge|hexagon|cloud|star|heart|drop>", "color": "<a colour name, or #rrggbb>", "section": ${bot.section ? JSON.stringify(bot.section) : "null"}, "createdBy": "${bot.name}", "brief": "its first instructions"}\`
-  The app sets it up within a few seconds and delivers the brief. It then appears in ${userName}'s sidebar like any other Bot.
+  \`{"name": "...", "label": "a few words on its job", "shape": "<sphere|blob|squircle|sparkle|clover|flower|pebble|egg|wedge|hexagon|cloud|star|heart|drop>", "color": "<a colour name, or #rrggbb>", "section": ${bot.section ? JSON.stringify(bot.section) : "null"}, "createdBy": "${bot.name}", "instructions": "its standing role and rules", "brief": "its first task"}\`
+  The app sets it up within a few seconds, gives it those instructions, and delivers the brief as its first message. It then appears in ${userName}'s sidebar like any other Bot. \`instructions\` is its job description and stays; \`brief\` is the task for today and is not kept as an instruction.
 
 ## Connected apps
 ${executor?.kind === 'cloud' ? cloudInstructions(userName, executor) : executor ? `- ${userName}'s apps (email, calendar, Slack, GitHub, Notion, docs and so on) are connected through **Executor**, available to you as the \`executor\` MCP server (tools named \`mcp__executor__*\`).
@@ -202,4 +202,24 @@ export function mergeManaged(existing: string, block: string): string {
   const e = existing.indexOf(MANAGED_END);
   if (s === -1 || e === -1) return block + "\n" + existing;
   return existing.slice(0, s) + block.trimEnd() + existing.slice(e + MANAGED_END.length);
+}
+
+/** The two parts of `AGENTS.md`: the block Threebot owns and the text the owner owns. */
+export function splitManaged(existing: string): { managed: string; custom: string } | null {
+  const start = existing.indexOf(MANAGED_START);
+  if (start === -1) return null;
+  const end = existing.indexOf(MANAGED_END, start + MANAGED_START.length);
+  if (end === -1) return null;
+  return {
+    managed: existing.slice(start, end + MANAGED_END.length),
+    custom: existing.slice(end + MANAGED_END.length),
+  };
+}
+
+/** Keeps the managed block exactly as it is and replaces everything after it. */
+export function replaceCustom(existing: string, custom: string): string {
+  const parts = splitManaged(existing);
+  if (!parts) throw new Error("The managed block is missing.");
+  const body = custom.trim();
+  return body ? `${parts.managed.trimEnd()}\n\n${body}\n` : `${parts.managed.trimEnd()}\n`;
 }

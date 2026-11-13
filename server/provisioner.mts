@@ -15,9 +15,47 @@ type ProvisionerSettings = { defaultModel?: unknown; autoReview?: boolean };
 
 const DEFAULT_MODEL = { instanceId: "claudeAgent", model: "claude-opus-5-5", options: [{ id: "effort", value: "medium" }] };
 
-export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings, intervalMs = 5000 }: {
+export type SeedDeps = {
+  writeInstructions?: (bot: Bot, text: string) => Promise<unknown>;
+  saveBot: (slug: string, patch: BotPatch) => Promise<unknown>;
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+};
+
+/**
+ * Writes the standing instructions a helper Bot brought in its bot.json, before T3 starts it.
+ * A bad seed must not keep the Bot from starting: a permanent 400 drops the field, anything
+ * else stays for the next tick. Returns whether the text was written.
+ */
+export async function seedInstructions(bot: Bot, { writeInstructions, saveBot, log = console.log, error = console.error }: SeedDeps): Promise<boolean> {
+  if (bot.adopted) {
+    if (typeof bot.instructions === "string" && bot.instructions.trim()) {
+      await saveBot(bot.slug, { instructions: null }).catch((cause) => error(`[provisioner] ${bot.slug}: could not clear its instruction seed: ${(cause as Error).message ?? cause}`));
+    }
+    return false;
+  }
+  const text = typeof bot.instructions === "string" ? bot.instructions : "";
+  if (!text.trim() || !writeInstructions) return false;
+  try {
+    await writeInstructions(bot, text);
+  } catch (cause) {
+    error(`[provisioner] ${bot.slug}: could not write its instructions: ${(cause as Error).message ?? cause}`);
+    if ((cause as { status?: number }).status === 400) {
+      await saveBot(bot.slug, { instructions: null }).catch((clearError) => error(`[provisioner] ${bot.slug}: could not drop its invalid instruction seed: ${(clearError as Error).message ?? clearError}`));
+      error(`[provisioner] ${bot.slug}: dropped an invalid instruction seed`);
+    }
+    return false;
+  }
+  await saveBot(bot.slug, { instructions: null }).catch((cause) => error(`[provisioner] ${bot.slug}: could not clear its instruction seed: ${(cause as Error).message ?? cause}`));
+  log(`[provisioner] wrote instructions for ${bot.slug}`);
+  return true;
+}
+
+export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings, writeInstructions, intervalMs = 5000 }: {
   t3Url: string; token: string; listBots: () => Promise<Bot[]>; saveBot: (slug: string, patch: BotPatch) => Promise<unknown>;
   getSettings: () => Promise<ProvisionerSettings>; intervalMs?: number;
+  /** Writes a Bot's standing instructions into its AGENTS.md; absent in tests that don't need files. */
+  writeInstructions?: (bot: Bot, text: string) => Promise<unknown>;
 }) {
   let client: T3Client | null = null;
   let busy = false;
@@ -43,14 +81,21 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
       const byId = new Map<string, T3Project>(projects.map((p: T3Project) => [p.id, p]));
       const settings = await getSettings();
       for (const bot of bots) {
-        if (!bot.projectId || !byId.has(bot.projectId)) {
-          await provision(c, bot, settings, byId);
-        } else {
-          const p = byId.get(bot.projectId)!;
-          // A project the Bot was made from keeps its own title and icon.
-          if (!bot.adopted) await syncBotProject(c, bot, p);
-          if (!bot.mainThreadId) await launchMain(c, bot, settings, p.defaultModelSelection);
-          else if (bot.pendingBrief) await deliverBrief(c, bot);
+        // One bad Bot (a malformed seed, an unavailable project) must not starve the rest of the roster.
+        try {
+          // Seed the standing role before either path can launch a session.
+          if (typeof bot.instructions === "string" && bot.instructions.trim()) await seedInstructions(bot, { writeInstructions, saveBot });
+          if (!bot.projectId || !byId.has(bot.projectId)) {
+            await provision(c, bot, settings, byId);
+          } else {
+            const p = byId.get(bot.projectId)!;
+            // A project the Bot was made from keeps its own title and icon.
+            if (!bot.adopted) await syncBotProject(c, bot, p);
+            if (!bot.mainThreadId) await launchMain(c, bot, settings, p.defaultModelSelection);
+            else if (bot.pendingBrief) await deliverBrief(c, bot);
+          }
+        } catch (error) {
+          console.error(`[provisioner] ${bot.slug}:`, (error as Error).message ?? error);
         }
       }
     } catch (err) {

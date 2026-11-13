@@ -72,7 +72,17 @@ A Bot's memory is plain Markdown: `memory/MEMORY.md` in its folder, plus `.botap
 
 - **Snapshot** (`server/memory.mts`): a bounded `<memory>` block (200 lines or 8,000 characters of the Bot's file, 60 lines or 2,500 of the shared one) in the managed `AGENTS.md`, refreshed by a watcher within a few seconds of a change. A file that doesn't fit is cut with a note telling the Bot to read the rest and tidy it.
 - **App API** (behind the normal login): `GET /api/memory?slug=...` returns both files whole with their revisions; `PUT /api/memory` (`{slug, scope, text, expectedRevision}`) saves one. A save whose revision is stale gets a 409 with the current text, so an edit the Bot made meanwhile is never replaced silently. Saves to one file run one at a time.
-- **UI**: Details › Memory shows both files as formatted Markdown, with Edit, Save and Cancel; while nobody is editing it picks up the Bot's own edits every few seconds. "Ask the Bot to tidy" drafts a request in chat.
+- **UI**: Details › Memory shows both files as formatted Markdown, with Edit, Save and Cancel; while nobody is editing it picks up the Bot's own edits every few seconds. "Ask the Bot to tidy" drafts a request in chat. Phones reach it from the Memory row in the details sheet, since the tab bar is hidden there.
+
+## Standing instructions
+
+`AGENTS.md` has two parts: the block Threebot generates and the owner's text after it. The owner edits the second part in Details › Instructions; the generated block is never touched.
+
+- **Format**: the text after `<!-- bot:managed:end -->`. A save reads the current managed block from disk and replaces only what follows, so a memory or settings refresh cannot lose the owner's text.
+- **App API**: `GET /api/instructions?slug=...` returns the owner's part with its revision, its size and the file's size; `PUT /api/instructions` (`{slug, text, expectedRevision}`) saves it. A stale revision gets a 409 with the current text. Saves are limited to 12,000 characters and a 32 KB file; over 24 KB the tab warns that some harnesses may cut it.
+- **Creation**: Create New Bot asks for a one-line role and, optionally, what the Bot does, what it does not do and how it talks. The gateway composes that into the owner's part and writes it before the provisioner starts a session. A helper Bot's `bot.json` can carry the same `instructions`; the provisioner writes them before `launchMain` and clears the field. `brief` stays the first message, not a standing instruction.
+- **UI**: Details › Instructions has two sections. Role is a 44px line that becomes an input in place (Enter saves, Escape cancels); Instructions has its own "Edit instructions" action in the section header and renders the owner's Markdown. Editing opens a focused overlay on desktop (Markdown + live preview) and a full-screen sheet on phones, with Cancel/Save, a preview toggle, conflict choices and a discard guard. Phones get Instructions and Memory rows in the details sheet because the tab bar is hidden there; on narrow desktop panels the inactive tabs show their icons and the selected one keeps its label, so all five stay visible without a carousel. The editorial copy (automatic manual, Vault, `/clear`, managed block) lives in a collapsed "How this works"; new sessions read the file and `/clear` applies a change in the current chat.
+- **Scope**: a Bot made from an existing project keeps its instructions in that project's files and does not get this tab yet.
 
 ## Projects
 

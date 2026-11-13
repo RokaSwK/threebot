@@ -9,8 +9,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
-import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
+import { renderAgentsMd, mergeManaged, replaceCustom, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { readInstructions, saveInstructions, sanitizeInstructions, instructionTextError, instructionTotalError } from "./instructions.mts";
+import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
@@ -59,7 +61,7 @@ type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: str
 /** A new Bot as the app posts it. objectAvatarPatch and decodeAvatarImage check the avatar fields. */
 type NewBot = {
   name?: string; label?: string; shape?: string; color?: string; avatarDefinition?: unknown; avatarImage?: unknown;
-  section?: string | null; pinned?: unknown; primary?: unknown; model?: unknown; [key: string]: unknown;
+  section?: string | null; pinned?: unknown; primary?: unknown; model?: unknown; instructions?: string; [key: string]: unknown;
 };
 type McpServer = { type: string; url: string | undefined; headers: Record<string, string> };
 
@@ -520,6 +522,12 @@ async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<strin
 // Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
 const releasing = new Set<string>();
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
+  // One writer per AGENTS.md: the memory watcher, a settings save and the Instructions tab all
+  // read-merge-write this file, and an unlocked stale merge would silently restore old custom text.
+  if (bot.adopted) return writeAgentsMdInner(bot, settings, snapshot);
+  return withFileLock(path.join(bot.workspaceRoot, "AGENTS.md"), () => writeAgentsMdInner(bot, settings, snapshot));
+}
+async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   if (releasing.has(bot.slug)) return;
   const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
   if (bot.adopted && !adoption) return;
@@ -539,6 +547,28 @@ async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: Me
   const claude = path.join(dir, "CLAUDE.md");
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
 }
+
+/** The owner's part of a regular Bot's AGENTS.md, after the managed block. */
+async function writeBotInstructions(bot: Bot, text: string) {
+  if (bot.adopted) return;
+  const clean = sanitizeInstructions(text).trim();
+  const textError = instructionTextError(clean);
+  if (textError) throw Object.assign(new Error(textError), { status: 400 });
+  const file = path.join(bot.workspaceRoot, "AGENTS.md");
+  // The managed block and the owner's text are one write: hold the same file lock the watcher
+  // and the Instructions tab use, so a concurrent refresh cannot land between the two steps.
+  await withFileLock(file, async () => {
+    await writeAgentsMdInner(bot, await getSettings());
+    const existing = await fs.readFile(file, "utf8");
+    const content = replaceCustom(existing, clean);
+    const totalBytes = Buffer.byteLength(content, "utf8");
+    const totalError = instructionTotalError(totalBytes);
+    if (totalError) throw Object.assign(new Error(totalError), { status: 400 });
+    await writeTextAtomic(file, content);
+    if (totalBytes > 24_000) console.warn(`[memory] ${bot.slug}'s AGENTS.md is over 24 KB; some harnesses may cut it`);
+  });
+}
+
 /**
  * A Bot made from a project reads its instructions from files git doesn't track: Claude from
  * CLAUDE.local.md (beside the project's CLAUDE.md), Codex from AGENTS.override.md (instead of the
@@ -586,6 +616,11 @@ function startMemoryWatcher() {
 }
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
+  // Validate before the folder exists: a too-long seed must not leave an orphan Bot behind.
+  if (typeof input.instructions === "string" && input.instructions.trim()) {
+    const textError = instructionTextError(sanitizeInstructions(input.instructions).trim());
+    if (textError) throw Object.assign(new Error(textError), { status: 400 });
+  }
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
   const slug = await freeSlug(input.name ?? "bot");
   const dir = botDir(slug);
@@ -614,6 +649,8 @@ async function createBot(input: NewBot) {
     model: input.model ?? null,
     createdAt: new Date().toISOString(),
   }, { create: true });
+  // The Bot's folder and managed block exist now; seed the owner's part before T3 starts a session.
+  if (typeof input.instructions === "string" && input.instructions.trim()) await writeBotInstructions(bot, input.instructions);
   await provisioner.runNow();
   return (await getBot(slug)) ?? bot;
 }
@@ -1204,6 +1241,31 @@ const server = http.createServer(async (req, res) => {
       if (!bot) return send(res, 404, { error: "Bot not found" });
       return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
     }
+    if (p === "/api/instructions" && req.method === "GET") {
+      const bot = await getBot(url.searchParams.get("slug") ?? "");
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (bot.adopted) return send(res, 409, { error: "This Bot was made from a project. Its instructions live in the project's own files." });
+      let file = await readInstructions({ botDir: bot.dataDir });
+      if (!file.managed) {
+        await writeAgentsMd(bot, await getSettings());
+        file = await readInstructions({ botDir: bot.dataDir });
+      }
+      return send(res, 200, file, { "cache-control": "no-store" });
+    }
+    if (p === "/api/instructions" && req.method === "PUT") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      if (bot.adopted) return send(res, 409, { error: "This Bot was made from a project. Its instructions live in the project's own files." });
+      let file = await readInstructions({ botDir: bot.dataDir });
+      if (!file.managed) {
+        await writeAgentsMd(bot, await getSettings());
+        file = await readInstructions({ botDir: bot.dataDir });
+      }
+      const result = await saveInstructions({ botDir: bot.dataDir, text: body?.text, expectedRevision: body?.expectedRevision });
+      return send(res, result.ok ? 200 : result.code === "conflict" ? 409 : 400, result, { "cache-control": "no-store" });
+    }
     if (p === "/api/memory" && req.method === "PUT") {
       requireJson(req);
       const body = await readBody(req);
@@ -1423,7 +1485,7 @@ function codingWorkPatch(value: unknown): CodingWork | null {
   return { preferred: machine(work.preferred), fallback: machine(work.fallback) };
 }
 
-const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings });
+const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings, writeInstructions: writeBotInstructions });
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
