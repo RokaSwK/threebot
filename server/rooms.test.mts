@@ -41,7 +41,7 @@ test("settings are validated at their boundaries", () => {
   assert.throws(() => normalizeSettings({ mode: "party" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ defaultResponder: "nobody" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ mentionPolicy: "sometimes" }, ["a"]), RoomsError);
-  assert.throws(() => normalizeSettings({ lead: "ghost" }, ["a", "b"]), RoomsError);
+  assert.equal(normalizeSettings({ lead: "ghost" }, ["a", "b"]).lead, "a", "a removed lead falls back to the first member");
   assert.equal(normalizeSettings({}, ["a", "b"]).lead, "a");
 });
 

@@ -14,16 +14,27 @@ export type MemberView = {
   model: unknown;
   runtimeMode: string;
   lastTurnAt: string | null;
+  /** A member that left the room: its thread is kept for history, never addressed. */
+  removed?: boolean;
 };
 
+export type RoomTurnStatus = "queued" | "running" | "done" | "stopped" | "interrupted" | "failed";
+export type RoomRun = {
+  slug: string;
+  runId: string | null;
+  late?: boolean;
+  status?: "replied" | "passed" | "no-reply" | "failed" | "timeout" | "stopped";
+  error?: string;
+  at?: string;
+};
 export type RoomTurn = {
   id: string;
   at: string;
   text: string;
   mentions: string[];
   replyTo: string | null;
-  status: "running" | "done" | "stopped" | "interrupted" | "failed";
-  runs: { slug: string; runId: string | null }[];
+  status: RoomTurnStatus;
+  runs: RoomRun[];
 };
 
 export type RoomMode = "panel" | "roundtable";
@@ -53,6 +64,11 @@ export type RoomSummary = {
   mode: RoomMode;
   members: MemberView[];
   lastTurnAt: string | null;
+  /** The newest user message or member reply; used for ordering and the unread dot. */
+  lastActivityAt: string | null;
+  /** A one-line preview of the last user message (or the room's description). */
+  lastText: string;
+  queued: number;
   running: boolean;
 };
 
@@ -66,6 +82,7 @@ export type RoomView = {
   createdAt: string;
   settings: RoomSettings;
   members: MemberView[];
+  formerMembers: MemberView[];
   turns: RoomTurn[];
 };
 
@@ -105,6 +122,17 @@ export type UpdateRoomInput = {
   settings?: Partial<RoomSettings>;
 };
 
+export type SendRoomMessageInput = {
+  text: string;
+  mentions?: string[];
+  replyTo?: string | null;
+};
+
+export type DeleteRoomResult = {
+  ok: true;
+  threads: { deleted: number; failed: { threadId: string; error: string }[] };
+};
+
 const roomPath = (id: string) => `/api/rooms/${encodeURIComponent(id)}`;
 
 export function fetchRooms(): Promise<RoomSummary[]> {
@@ -123,10 +151,18 @@ export function updateRoom(id: string, input: UpdateRoomInput): Promise<RoomView
   return apiRequest<{ room: RoomView }>(roomPath(id), { method: "PATCH", body: JSON.stringify(input) }).then((body) => body.room);
 }
 
-export function deleteRoom(id: string): Promise<{ ok: true }> {
-  return apiRequest<{ ok: true }>(roomPath(id), { method: "DELETE", body: "{}" });
+export function deleteRoom(id: string): Promise<DeleteRoomResult> {
+  return apiRequest<DeleteRoomResult>(roomPath(id), { method: "DELETE", body: "{}" });
 }
 
 export function recreateRoom(id: string, slug?: string): Promise<RoomView> {
   return apiRequest<{ room: RoomView }>(`${roomPath(id)}/recreate`, { method: "POST", body: JSON.stringify(slug ? { slug } : {}) }).then((body) => body.room);
+}
+
+export function sendRoomMessage(id: string, input: SendRoomMessageInput): Promise<RoomTurn> {
+  return apiRequest<{ turn: RoomTurn }>(`${roomPath(id)}/messages`, { method: "POST", body: JSON.stringify(input) }).then((body) => body.turn);
+}
+
+export function stopRoom(id: string): Promise<{ ok: true }> {
+  return apiRequest<{ ok: true }>(`${roomPath(id)}/stop`, { method: "POST", body: "{}" });
 }

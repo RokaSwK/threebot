@@ -3,7 +3,7 @@ import clsx from "clsx";
 import { FileText, Grid2x2Plus, Clock, MessageSquareText, Search, X } from "lucide-react";
 import { Avatar, GroupAvatar } from "./Avatar";
 import { Modal } from "./ui";
-import { botReferenceKey, navigateSearchHit, openDialog, selectRoom, selectThread, toast, useApp, type SearchFilter } from "../store";
+import { botReferenceKey, navigateSearchHit, openDialog, selectThread, showRoom, toast, useApp, type SearchFilter } from "../store";
 import { t3 } from "../lib/t3";
 import { executorApi, type ExecutorApp } from "../lib/executor";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
@@ -125,7 +125,7 @@ export function SearchDialog() {
   const go = (result: Result) => {
     if (result.kind === "file") { setResource(result); return; }
     if (result.kind === "app") { openDialog("connect-apps"); return; }
-    if (result.kind === "room") { selectRoom(result.room.id); openDialog(null); return; }
+    if (result.kind === "room") { showRoom(result.room.id); return; }
     if (result.kind === "message") void navigateSearchHit(result.bot, { threadId: result.threadId, messageId: result.messageId, query: needle }).catch((error: Error) => toast(error.message));
     else if (result.bot.mainThreadId) { selectThread(result.bot, result.bot.mainThreadId, true); if (result.kind === "routine") useApp.setState({ detailsOpen: true, detailsTab: "details" }); }
   };
