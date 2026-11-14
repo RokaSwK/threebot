@@ -290,8 +290,10 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
     /** Applies a partial update; `members` replaces the member list (threads are kept). */
     async update(id: string, patch: Record<string, unknown>): Promise<Room> {
       return serialize(async (state) => {
-        const room = state.rooms.find((candidate) => candidate.id === id);
-        if (!room) throw new RoomsError("no such room", 404);
+        const current = state.rooms.find((candidate) => candidate.id === id);
+        if (!current) throw new RoomsError("no such room", 404);
+        // Work on a copy: a patch that fails validation halfway must leave the cached room as it was.
+        const room = clone(current);
         if (patch.name !== undefined) {
           const name = normalizeName(patch.name);
           if (state.rooms.some((candidate) => candidate.id !== id && candidate.name.toLowerCase() === name.toLowerCase())) {
@@ -308,7 +310,7 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
           room.members = slugs.map((slug) => room.members.find((member) => member.slug === slug) ?? pendingMember(slug, now()));
         }
         room.settings = normalizeSettings(patch.settings, room.members.map((member) => member.slug), room.settings);
-        await save(state);
+        await save({ ...state, rooms: state.rooms.map((candidate) => (candidate.id === id ? room : candidate)) });
         return clone(room);
       });
     },

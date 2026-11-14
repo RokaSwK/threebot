@@ -147,3 +147,17 @@ test("changing members keeps existing threads and leaves the new one pending", a
   assert.equal(shrunk.members[0].threadId, "thread-alpha");
   await done();
 });
+
+test("a rejected update leaves the room as it was", async () => {
+  const { file, done } = await dir();
+  const rooms = createRooms({ file });
+  const room = await rooms.create({ name: "Design", members: validateMembers(["alpha", "beta", "gamma"], bots) });
+  // Removing the lead without naming a new one is refused, and nothing of it may stick.
+  await assert.rejects(rooms.update(room.id, { name: "Renamed", members: ["beta", "gamma"] }), RoomsError);
+  await rooms.update(room.id, { pinned: true });
+  const stored = (await rooms.get(room.id))!;
+  assert.equal(stored.name, "Design");
+  assert.deepEqual(stored.members.map((member) => member.slug), ["alpha", "beta", "gamma"]);
+  assert.equal(stored.pinned, true);
+  await done();
+});
