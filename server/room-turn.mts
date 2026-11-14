@@ -16,7 +16,8 @@ export type EngineDeps = {
   rpc: EngineRpc;
   bots: () => Promise<Map<string, RoomBot>>;
   defaults: () => Promise<LaunchDefaults>;
-  notify?: (payload: { title: string; body: string; url: string }) => Promise<void> | void;
+  /** A room-level notification. `room` lets the gateway hold it back on a device that has it open. */
+  notify?: (payload: { title: string; body: string; url: string; room: string }) => Promise<void> | void;
   log?: (line: string) => void;
   /** How often a run's projection is read. Tests pass 0. */
   pollMs?: number;
@@ -300,6 +301,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
               title: `#${room.name}`,
               body: `${nameOf(member.slug)} is waiting for you`,
               url: `/?room=${room.id}`,
+              room: room.id,
             })).catch(() => {});
           },
         });
@@ -375,6 +377,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           title: `#${room.name}`,
           body: clip(last.text.replace(/\s+/g, " "), 140),
           url: `/?room=${room.id}`,
+          room: room.id,
         })).catch(() => {});
       }
     } catch (err) {

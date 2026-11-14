@@ -369,6 +369,21 @@ function subscribeTasks() {
 export function watchedBot(): string | null {
   return document.visibilityState === "visible" && document.hasFocus() ? get().selected : null;
 }
+
+/**
+ * What this device has open and in focus, as the presence key the gateway compares against a push.
+ * A room wins when the room page is showing; otherwise it is the selected Bot's conversation, unless
+ * the Projects page covers it.
+ * Returning both null means the page is not looking at either, so nothing should be held back.
+ */
+export function watchedView(): { bot: string | null; room: string | null } {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return { bot: null, room: null };
+  const state = get();
+  if (state.page === "room" && state.selectedRoom) return { bot: null, room: state.selectedRoom };
+  // The Projects page covers the conversation, so a push about the selected Bot is not on screen.
+  if (state.page === "projects") return { bot: null, room: null };
+  return { bot: state.selected, room: null };
+}
 const ACTIVE = ["preparing", "queued", "starting", "running", "waiting"];
 function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   if (!prev) return;

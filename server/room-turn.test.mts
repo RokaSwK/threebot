@@ -5,6 +5,8 @@ import path from "node:path";
 import { test } from "node:test";
 import { createRooms, validateMembers, type Room } from "./rooms.mts";
 import { createRoomEngine, crossMentions, promptFor, speakersFor } from "./room-turn.mts";
+import { createPushStore } from "./push.mts";
+import { generateVAPIDKeys } from "web-push";
 
 const roster = [
   { slug: "alpha", name: "Alpha" },
@@ -415,7 +417,45 @@ test("a reply sends one push with the room deep link", async () => {
   await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
   runtime.complete("thread-alpha", "listo, revisado");
   await waitFor(() => pushed.length === 1, "the push");
-  assert.deepEqual(pushed[0], { title: "#Design", body: "listo, revisado", url: `/?room=${room.id}` });
+  assert.deepEqual(pushed[0], { title: "#Design", body: "listo, revisado", url: `/?room=${room.id}`, room: room.id });
+  await done();
+});
+
+test("a room reply is held back on the device that has the room open and reaches the others", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const keys = generateVAPIDKeys();
+  const delivered: { endpoint: string; payload: any }[] = [];
+  const pushStore = createPushStore({
+    file: path.join(path.dirname(file), "push.json"),
+    generateKeys: () => keys,
+    sender: async (target, body) => { delivered.push({ endpoint: target.endpoint, payload: JSON.parse(String(body)) }); },
+  });
+  const phone = { endpoint: "https://push.example/phone", keys: { p256dh: "p256dh-value-1234567890", auth: "auth-value-1234" } };
+  const laptop = { endpoint: "https://push.example/laptop", keys: phone.keys };
+  await pushStore.subscribe(phone);
+  await pushStore.subscribe(laptop);
+  // The gateway's notify, as wired in gateway.mts.
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1, notify: async (payload) => { await pushStore.send({ ...payload, tag: payload.url }); } });
+
+  // The laptop has the room open; the phone is looking at a Bot.
+  await pushStore.presence(laptop.endpoint, null, room.id);
+  await pushStore.presence(phone.endpoint, "alpha", null);
+  await engine.send(room.id, { text: "algo" });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  runtime.complete("thread-alpha", "listo, revisado");
+  await waitFor(() => delivered.length === 1, "the push");
+  assert.deepEqual(delivered.map((item) => item.endpoint), [phone.endpoint]);
+  assert.equal(delivered[0]!.payload.url, `/?room=${room.id}`, "the click-through still opens the room");
+
+  // The laptop looks away: the next reply reaches it too.
+  await pushStore.presence(laptop.endpoint, null, null);
+  await engine.send(room.id, { text: "otra" });
+  await waitFor(() => runtime.dispatched.length === 2, "the second dispatch");
+  runtime.complete("thread-alpha", "hecho");
+  await waitFor(() => delivered.length === 3, "the second push");
+  assert.deepEqual(delivered.slice(1).map((item) => item.endpoint).sort(), [laptop.endpoint, phone.endpoint]);
   await done();
 });
 

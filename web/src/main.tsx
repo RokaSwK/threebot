@@ -4,7 +4,7 @@ import "./index.css";
 import App from "./App";
 import "./threebot.css";
 import { ensurePushSubscription, startPushPresence } from "./lib/push";
-import { useApp, watchedBot } from "./store";
+import { useApp, watchedView } from "./store";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -22,5 +22,5 @@ if ("serviceWorker" in navigator && window.isSecureContext && !import.meta.env.D
       .then(() => ensurePushSubscription())
       .catch(() => {});
   });
-  startPushPresence(watchedBot, (listener) => useApp.subscribe(listener));
+  startPushPresence(watchedView, (listener) => useApp.subscribe(listener));
 }

@@ -107,7 +107,7 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("push", (event) => {
   // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
   // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
-  // back a push about the Bot this device has open (lib/push.ts reports that). The tag is the one
+  // back a push about the Bot or room this device has open (lib/push.ts reports that). The tag is the one
   // the page's own notification uses, so the two replace each other instead of stacking.
   let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }

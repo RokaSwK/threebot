@@ -138,10 +138,10 @@ const roomEngine = createRoomEngine({
   rpc: roomRpc,
   bots: async () => new Map((await listBots()).filter((bot) => !bot.adopted).map((bot) => [bot.slug, bot])),
   defaults: launchDefaults,
-  // One push per turn. The pseudo slug keeps the "device is already watching this Bot" skip from
-  // silencing a room push: no device watches a room that way.
+  // One push per turn. It carries the room, so the device that has that room open is skipped the
+  // same way a device looking at a Bot's conversation is.
   notify: async (payload) => {
-    await pushStore.send({ ...payload, tag: payload.url, bot: payload.url });
+    await pushStore.send({ ...payload, tag: payload.url });
   },
   log: (line) => console.log(line),
 });
@@ -1290,7 +1290,9 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/push/presence" && req.method === "POST") {
       requireJson(req);
       const body = await readBody(req);
-      return send(res, 200, await pushStore.presence(body?.endpoint, body?.bot), { "cache-control": "no-store" });
+      const result = await pushStore.presence(body?.endpoint, body?.bot, body?.room);
+      if (!result.ok) return send(res, 400, { error: result.message });
+      return send(res, 200, result, { "cache-control": "no-store" });
     }
     if (p === "/api/push/unsubscribe" && req.method === "POST") {
       requireJson(req);

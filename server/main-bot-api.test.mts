@@ -153,6 +153,12 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.deepEqual([watching.status, watching.body], [200, { ok: true, watching: true }]);
     const away = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: null });
     assert.deepEqual([away.status, away.body], [200, { ok: true, watching: false }]);
+    const roomWatch = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: null, room: 'room-1' });
+    assert.deepEqual([roomWatch.status, roomWatch.body], [200, { ok: true, watching: true }]);
+    const badRoom = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: null, room: { id: 'room-1' } });
+    assert.deepEqual([badRoom.status, typeof badRoom.body.error], [400, 'string']);
+    const badBot = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: '../../etc' });
+    assert.equal(badBot.status, 400);
     await stop();
     await start();
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
