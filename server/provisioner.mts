@@ -24,12 +24,12 @@ export type SeedDeps = {
 
 /**
  * Writes the standing instructions a helper Bot brought in its bot.json, before T3 starts it.
- * A bad seed must not keep the Bot from starting: a permanent 400 drops the field, anything
- * else stays for the next tick. Returns whether the text was written.
+ * A permanent 400 drops the field and lets the Bot start without them. Anything else is
+ * "retry": the caller holds the Bot back this tick, so its first session never misses them.
  */
-export async function seedInstructions(bot: Bot, { writeInstructions, saveBot, log = console.log, error = console.error }: SeedDeps): Promise<boolean> {
+export async function seedInstructions(bot: Bot, { writeInstructions, saveBot, log = console.log, error = console.error }: SeedDeps): Promise<"none" | "written" | "dropped" | "retry"> {
   const text = typeof bot.instructions === "string" ? bot.instructions : "";
-  if (!text.trim() || !writeInstructions) return false;
+  if (!text.trim() || !writeInstructions) return "none";
   try {
     await writeInstructions(bot, text);
   } catch (cause) {
@@ -37,12 +37,13 @@ export async function seedInstructions(bot: Bot, { writeInstructions, saveBot, l
     if ((cause as { status?: number }).status === 400) {
       await saveBot(bot.slug, { instructions: null }).catch((clearError) => error(`[provisioner] ${bot.slug}: could not drop its invalid instruction seed: ${(clearError as Error).message ?? clearError}`));
       error(`[provisioner] ${bot.slug}: dropped an invalid instruction seed`);
+      return "dropped";
     }
-    return false;
+    return "retry";
   }
   await saveBot(bot.slug, { instructions: null }).catch((cause) => error(`[provisioner] ${bot.slug}: could not clear its instruction seed: ${(cause as Error).message ?? cause}`));
   log(`[provisioner] wrote instructions for ${bot.slug}`);
-  return true;
+  return "written";
 }
 
 export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings, writeInstructions, intervalMs = 5000 }: {
@@ -78,7 +79,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
         // One bad Bot (a malformed seed, an unavailable project) must not starve the rest of the roster.
         try {
           // Seed the standing role before either path can launch a session.
-          if (typeof bot.instructions === "string" && bot.instructions.trim()) await seedInstructions(bot, { writeInstructions, saveBot });
+          if (typeof bot.instructions === "string" && bot.instructions.trim() && await seedInstructions(bot, { writeInstructions, saveBot }) === "retry") continue;
           if (!bot.projectId || !byId.has(bot.projectId)) {
             await provision(c, bot, settings, byId);
           } else {

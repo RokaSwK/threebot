@@ -35,7 +35,7 @@ test("a valid seed is written before the field is cleared", async () => {
     writeInstructions: async (_bot, text) => { written = text; },
     saveBot: rec.saveBot, log: rec.log, error: rec.error,
   });
-  assert.equal(ok, true);
+  assert.equal(ok, "written");
   assert.equal(written, "## What this Bot does\n- Review code.\n");
   assert.deepEqual(rec.saves, [{ slug: "helper", patch: { instructions: null } }]);
   assert.match(rec.logs[0] ?? "", /wrote instructions/u);
@@ -48,7 +48,7 @@ test("a permanent 400 drops the seed and does not throw", async () => {
     writeInstructions: async () => { throw Object.assign(new Error("too long"), { status: 400 }); },
     saveBot: rec.saveBot, log: rec.log, error: rec.error,
   });
-  assert.equal(ok, false);
+  assert.equal(ok, "dropped");
   assert.deepEqual(rec.saves, [{ slug: "helper", patch: { instructions: null } }]);
   assert.match(rec.errors.join(" "), /could not write/u);
   assert.match(rec.errors.join(" "), /dropped an invalid seed|dropped an invalid instruction seed/u);
@@ -60,7 +60,7 @@ test("a transient write failure keeps the seed for the next tick", async () => {
     writeInstructions: async () => { throw new Error("disk busy"); },
     saveBot: rec.saveBot, log: rec.log, error: rec.error,
   });
-  assert.equal(ok, false);
+  assert.equal(ok, "retry", "the caller holds the Bot back so its first session doesn't miss them");
   assert.deepEqual(rec.saves, []);
   assert.match(rec.errors.join(" "), /disk busy/u);
   assert.doesNotMatch(rec.errors.join(" "), /dropped/u);
