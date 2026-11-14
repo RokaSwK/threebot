@@ -74,6 +74,14 @@ A Bot's memory is plain Markdown: `memory/MEMORY.md` in its folder, plus `.botap
 - **App API** (behind the normal login): `GET /api/memory?slug=...` returns both files whole with their revisions; `PUT /api/memory` (`{slug, scope, text, expectedRevision}`) saves one. A save whose revision is stale gets a 409 with the current text, so an edit the Bot made meanwhile is never replaced silently. Saves to one file run one at a time.
 - **UI**: Details › Memory shows both files as formatted Markdown, with Edit, Save and Cancel; while nobody is editing it picks up the Bot's own edits every few seconds. "Ask the Bot to tidy" drafts a request in chat.
 
+## Standing instructions
+
+A Bot's standing instructions are its owner's words on how it should work. Threebot never mixes them with the block it generates: each side only writes its own part.
+
+- **Where they live**: for a Bot in its own folder, the text after `<!-- bot:managed:end -->` in `AGENTS.md`. A save reads the current managed block from disk and replaces only what follows, and every managed-block rewrite goes through the same per-file lock (`server/file-lock.mts`), so neither side can restore stale text. A Bot made from a project keeps them in `.bot/INSTRUCTIONS.md`; the gateway copies them, sanitized, into a "Standing instructions" section at the end of the managed block of `CLAUDE.local.md` and `AGENTS.override.md`. The text after those blocks is the user's own, so the tab never writes there, and releasing the Bot archives the file with the rest of `.bot/`.
+- **App API** (behind the normal login): `GET /api/instructions?slug=...` returns the text with its revision, its size and the size of the largest file it ends up in; `PUT /api/instructions` (`{slug, text, expectedRevision}`) saves it. A stale revision gets a 409 with the current text. Saves are limited to 12,000 characters and a 32 KB file; over 24 KB the tab warns that some harnesses may cut it. Managed markers, `<memory>` tags and control characters are stripped.
+- **UI**: Details › Instructions renders the Markdown with an Edit action. Editing opens a focused editor (Markdown and a live preview side by side on desktop, a Write/Preview switch on phones) with a discard guard and conflict choices; Back closes the editor before the sheet under it. Phones reach the tab from the Instructions row in the details sheet. On narrow desktop panels the inactive tabs show only their icons, so all five stay visible. New sessions read the instructions; `/clear` applies a change in the current chat.
+
 ## Projects
 
 One live board shared by the user and every Bot (the Projects page): projects, to-dos, machines, services (what runs where), repos, notes and links.

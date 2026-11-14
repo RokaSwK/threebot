@@ -12,6 +12,8 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { ADOPTED_INSTRUCTIONS, readAdoptedInstructions, readInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
+import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
@@ -532,6 +534,12 @@ async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<strin
 // Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
 const releasing = new Set<string>();
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
+  // One writer per AGENTS.md: the memory watcher, a settings save and the Instructions tab all
+  // read-merge-write this file, and an unlocked stale merge would silently restore old custom text.
+  if (bot.adopted) return writeAgentsMdInner(bot, settings, snapshot);
+  return withFileLock(path.join(bot.workspaceRoot, "AGENTS.md"), () => writeAgentsMdInner(bot, settings, snapshot));
+}
+async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   if (releasing.has(bot.slug)) return;
   const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
   if (bot.adopted && !adoption) return;
@@ -541,7 +549,8 @@ async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: Me
   const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
     organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
   const memory = snapshot ?? await readSnapshot({ botDir: bot.dataDir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
-  const block = renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor, memory });
+  const instructions = adoption ? await readAdoptedInstructions(bot.dataDir) : null;
+  const block = renderAgentsMd({ bot, settings, botsRoot: cfg.botsRoot, executor, memory, instructions });
   if (adoption) return writeAdoptedInstructions(adoption, block);
   const file = path.join(dir, "AGENTS.md");
   const existing = await fs.readFile(file, "utf8").catch(() => "");
@@ -567,6 +576,19 @@ async function writeAdoptedInstructions(adoption: AdoptedBot, block: string) {
     if (Buffer.byteLength(content, "utf8") > 32_000) console.warn(`[memory] ${adoption.slug}'s ${name} is over 32 KB; Codex cuts project instructions there`);
   }
 }
+/** Where the Instructions tab reads and writes a Bot's standing instructions (see instructions.mts). */
+function instructionsTarget(bot: Bot): InstructionsTarget {
+  if (!bot.adopted) return { kind: "agents", botDir: bot.dataDir };
+  return { kind: "adopted", botDir: bot.dataDir, renderedFiles: [CLAUDE_FILE, CODEX_FILE].map((name) => path.join(bot.workspaceRoot, name)) };
+}
+/** The tab's view of a Bot's instructions; a free zone without its managed block is repaired first. */
+async function loadInstructions(bot: Bot) {
+  const target = instructionsTarget(bot);
+  const file = await readInstructions(target);
+  if (file.managed) return file;
+  await writeAgentsMd(bot, await getSettings());
+  return readInstructions(target);
+}
 /** Rewrites a Bot's instructions when its memory changed, so a fresh session sees the new snapshot. */
 function startMemoryWatcher() {
   const seen = new Map<string, string>();
@@ -580,7 +602,9 @@ function startMemoryWatcher() {
         try {
           const snapshot = await readSnapshot({ botDir: bot.dataDir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });
           // An adopted Bot's AGENTS.override.md also carries the project's AGENTS.md, so follow that file too.
-          const signature = memorySignature(snapshot) + (bot.adopted ? createHash("sha256").update(await projectAgentsMd(bot.workspaceRoot)).digest("hex") : "");
+          // Its standing instructions live in .bot/INSTRUCTIONS.md and are copied into the block, so follow that too.
+          const signature = memorySignature(snapshot) + (bot.adopted ? createHash("sha256").update(await projectAgentsMd(bot.workspaceRoot))
+            .update(await fs.readFile(path.join(bot.dataDir, ADOPTED_INSTRUCTIONS), "utf8").catch(() => "")).digest("hex") : "");
           if (seen.get(bot.slug) === signature) continue;
           await writeAgentsMd(bot, settings, snapshot);
           seen.set(bot.slug, signature);
@@ -1226,6 +1250,22 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
       return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
+    }
+    if (p === "/api/instructions" && req.method === "GET") {
+      const bot = await getBot(url.searchParams.get("slug") ?? "");
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      return send(res, 200, await loadInstructions(bot), { "cache-control": "no-store" });
+    }
+    if (p === "/api/instructions" && req.method === "PUT") {
+      requireJson(req);
+      const body = await readBody(req);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      await loadInstructions(bot);
+      const result = await saveInstructions(instructionsTarget(bot), { text: body?.text, expectedRevision: body?.expectedRevision });
+      // An adopted Bot's text is copied into its managed files; write them now, not on the next watcher tick.
+      if (result.ok && bot.adopted) await writeAgentsMd(bot, await getSettings());
+      return send(res, result.ok ? 200 : result.code === "conflict" ? 409 : 400, result, { "cache-control": "no-store" });
     }
     if (p === "/api/memory" && req.method === "PUT") {
       requireJson(req);

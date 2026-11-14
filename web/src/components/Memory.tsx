@@ -56,7 +56,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   return (
     <div className="memory-pane">
       <div className="mb-1 flex items-center gap-2">
-        <h2 className="text-[18px] font-medium">Memory</h2>
+        <h2 className="pane-title text-[18px] font-medium">Memory</h2>
         <Pill variant="soft" onClick={() => void load()} className="ml-auto h-8" aria-label="Refresh memory" title="Refresh"><RefreshCw size={13} /></Pill>
       </div>
       <p className="mb-4 text-[12.5px] leading-relaxed text-muted">What {bot.name} remembers between sessions. It edits these files as it learns, and so can you. New sessions start with them.</p>

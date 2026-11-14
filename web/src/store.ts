@@ -9,7 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
-import type { Bot, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
+import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
 
 export type ThreadData = {
   items: Record<string, TurnItem>;
@@ -71,7 +71,7 @@ type State = {
   sidebarCompact: boolean;
   sidebarWidth: number;
   detailsWidth: number;
-  detailsTab: "details" | "library" | "computer" | "memory";
+  detailsTab: DetailsTab;
   dialog: Dialog;
   searchSession: SearchSession;
   searchResultRevision: number;
