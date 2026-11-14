@@ -152,8 +152,8 @@ test("a rejected update leaves the room as it was", async () => {
   const { file, done } = await dir();
   const rooms = createRooms({ file });
   const room = await rooms.create({ name: "Design", members: validateMembers(["alpha", "beta", "gamma"], bots) });
-  // Removing the lead without naming a new one is refused, and nothing of it may stick.
-  await assert.rejects(rooms.update(room.id, { name: "Renamed", members: ["beta", "gamma"] }), RoomsError);
+  // An invalid setting is refused after the name and members were applied: nothing of it may stick.
+  await assert.rejects(rooms.update(room.id, { name: "Renamed", members: ["beta", "gamma"], settings: { mode: "party" } }), RoomsError);
   await rooms.update(room.id, { pinned: true });
   const stored = (await rooms.get(room.id))!;
   assert.equal(stored.name, "Design");

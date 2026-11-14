@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { buildOnce, entryChunk } from "./support.mts";
-import type { MemberView } from "../src/lib/rooms.ts";
 import type { Bot, RuntimeRequest, TurnItem } from "../src/lib/types.ts";
 
 // `roomCards` reads the same `buildEntries` the chat uses, which pulls in the app's module graph;
@@ -26,7 +25,9 @@ const entry = entryChunk(bundle);
 const directory = await mkdtemp(join(tmpdir(), "bot-room-cards-"));
 const filename = join(directory, "room-cards.mjs");
 await writeFile(filename, entry.code);
-const { roomCards } = await import(pathToFileURL(filename).href) as typeof import("../src/lib/roomCards.ts");
+// Typed loosely, like the other bundle-driven tests: roomCards.ts reaches the app's API client, which
+// this type check (erasableSyntaxOnly) doesn't cover.
+const { roomCards } = await import(pathToFileURL(filename).href) as { roomCards: (...args: any[]) => any[] };
 after(() => rm(directory, { recursive: true, force: true }));
 
 const bot = (slug: string, name: string): Bot => ({
@@ -35,9 +36,10 @@ const bot = (slug: string, name: string): Bot => ({
   projectId: `project-${slug}`, mainThreadId: `main-${slug}`, createdAt: "2026-01-01T00:00:00.000Z",
 });
 
-const member = (slug: string, threadId: string | null): MemberView => ({
+// A member as the room view gets it (MemberView in src/lib/rooms.ts).
+const member = (slug: string, threadId: string | null) => ({
   slug, name: slug[0].toUpperCase() + slug.slice(1), label: "", color: "blue", shape: "sphere",
-  avatarImage: null, threadId, status: "ready", model: null, runtimeMode: "inherit", lastTurnAt: null,
+  avatarImage: null, threadId, status: "ready" as const, model: null, runtimeMode: "inherit", lastTurnAt: null,
 });
 
 const item = (overrides: Partial<TurnItem> & Pick<TurnItem, "id" | "type">): TurnItem => ({
