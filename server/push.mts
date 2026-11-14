@@ -33,8 +33,23 @@ export type PushPayload = {
   body: string;
   tag: string;
   url: string;
-  bot: string;
+  /** The Bot this push is about. A room push leaves it out and sets `room` instead. */
+  bot?: string;
+  /** The room this push is about. A room push is held back on the device looking at that room. */
+  room?: string;
 };
+
+/**
+ * What a device says it is looking at, as one key: the Bot's conversation or a room. Both arrive
+ * from the page, so they are untrusted text and are compared, never used as a path.
+ */
+function viewKey(bot: unknown, room: unknown): string | null {
+  const text = (value: unknown) => typeof value === "string" && value && value.length <= 200 ? value : null;
+  const watchedRoom = text(room);
+  if (watchedRoom) return `room:${watchedRoom}`;
+  const watchedBot = text(bot);
+  return watchedBot ? `bot:${watchedBot}` : null;
+}
 
 type VapidDetails = { subject: string; publicKey: string; privateKey: string };
 type Sender = (subscription: PushSubscription, payload: string, options?: { TTL?: number; urgency?: string; vapidDetails?: VapidDetails }) => Promise<unknown>;
@@ -93,7 +108,7 @@ export function createPushStore({
 }) {
   let state: PushState | null = null;
   let writes = Promise.resolve();
-  const watching = new Map<string, { bot: string; until: number }>();
+  const watching = new Map<string, { view: string; until: number }>();
 
   async function load(): Promise<PushState> {
     if (state) return state;
@@ -155,18 +170,20 @@ export function createPushStore({
     },
 
     /**
-     * A device says which Bot it has open and in focus, or null when it looks away. A push about
-     * that Bot is not sent to that device: the browser must show every push it receives (Safari
-     * drops a subscription after three it didn't show), so what is already on screen isn't sent.
+     * A device says which Bot's conversation or which room it has open and in focus, or nothing
+     * when it looks away. A push about that same thing is not sent to that device: the browser
+     * must show every push it receives (Safari drops a subscription after three it didn't show),
+     * so what is already on screen isn't sent. A room wins over a Bot when both arrive.
      */
-    async presence(endpoint: unknown, bot: unknown): Promise<{ ok: true; watching: boolean }> {
+    async presence(endpoint: unknown, bot: unknown, room: unknown = null): Promise<{ ok: true; watching: boolean }> {
       const current = await load();
       if (typeof endpoint !== "string" || !current.subscriptions.some((subscription) => subscription.endpoint === endpoint)) return { ok: true, watching: false };
-      if (typeof bot !== "string" || !bot || bot.length > 200) {
+      const view = viewKey(bot, room);
+      if (!view) {
         watching.delete(endpoint);
         return { ok: true, watching: false };
       }
-      watching.set(endpoint, { bot, until: now().getTime() + WATCHING_MS });
+      watching.set(endpoint, { view, until: now().getTime() + WATCHING_MS });
       return { ok: true, watching: true };
     },
 
@@ -180,10 +197,12 @@ export function createPushStore({
       let skipped = 0;
       const keep: PushSubscriptionRecord[] = [];
       const time = now().getTime();
+      // A push is about one thing: a room, or a Bot. With neither there is nothing to hold back.
+      const target = payload.room ? `room:${payload.room}` : payload.bot ? `bot:${payload.bot}` : null;
       for (const subscription of current.subscriptions) {
         const seen = watching.get(subscription.endpoint);
         if (seen && seen.until <= time) watching.delete(subscription.endpoint);
-        else if (seen?.bot === payload.bot) {
+        else if (target && seen?.view === target) {
           skipped += 1;
           keep.push(subscription);
           continue;

@@ -127,6 +127,40 @@ test("a device that has the Bot open is not sent that Bot's push, until it looks
   assert.deepEqual(await store.presence("https://push.example/unknown", "alpha"), { ok: true, watching: false });
 });
 
+test("a room push is held back on the device that has that room open", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const sent: string[] = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => { sent.push(target.endpoint); },
+  });
+  await store.subscribe(subscription);
+  await store.subscribe(second);
+  const roomPush = (room: string) => ({
+    title: "#Design review",
+    body: "Max answered",
+    tag: `/?room=${room}`,
+    url: `/?room=${room}`,
+    room,
+  });
+
+  assert.deepEqual(await store.presence(subscription.endpoint, null, "room-1"), { ok: true, watching: true });
+  assert.deepEqual(await store.send(roomPush("room-1")), { sent: 1, removed: 0, watching: 1 });
+  assert.deepEqual(sent.splice(0), [second.endpoint]);
+  // Another room, and a Bot, still reach the device that is looking at room-1.
+  assert.equal((await store.send(roomPush("room-2"))).sent, 2);
+  sent.length = 0;
+  assert.equal((await store.send(payload("alpha"))).sent, 2);
+  sent.length = 0;
+
+  // Saying it is looking at a Bot, or at nothing, moves the claim off the room.
+  await store.presence(subscription.endpoint, "alpha", null);
+  assert.equal((await store.send(roomPush("room-1"))).sent, 2);
+  await store.presence(subscription.endpoint, null, null);
+  assert.equal((await store.send(roomPush("room-1"))).sent, 2);
+});
+
 test("pushes are signed with a contact Apple accepts", async () => {
   assert.equal(usableSubject("mailto:threebot@localhost"), null);
   assert.equal(usableSubject("http://bot.example.com"), null);
