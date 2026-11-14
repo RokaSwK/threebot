@@ -136,7 +136,7 @@ const roomRpc = {
 const roomEngine = createRoomEngine({
   rooms,
   rpc: roomRpc,
-  bots: async () => new Map((await listBots()).map((bot) => [bot.slug, bot])),
+  bots: async () => new Map((await listBots()).filter((bot) => !bot.adopted).map((bot) => [bot.slug, bot])),
   defaults: launchDefaults,
   // One push per turn. The pseudo slug keeps the "device is already watching this Bot" skip from
   // silencing a room push: no device watches a room that way.

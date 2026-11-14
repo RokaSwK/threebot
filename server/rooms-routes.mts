@@ -203,7 +203,8 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
             await engine.stop(id).catch(() => {});
             // T3 settles a stop asynchronously; deleting a thread in the same tick can be refused.
             await new Promise((resolve) => setTimeout(resolve, 300));
-            const threads = await deleteThreads(room);
+            // Read again: a member thread may have been launched while the stop settled.
+            const threads = await deleteThreads((await rooms.get(id)) ?? room);
             await rooms.remove(id);
             return send(res, 200, { ok: true, threads }), true;
           }
@@ -225,13 +226,14 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
         }
 
         if (action === "recreate" && method === "POST") {
-          const body = (await readBody(req)) ?? {};
-          const targets = typeof body.slug === "string" ? [body.slug] : room.members.map((member) => member.slug);
-          if (targets.some((slug) => !room.members.some((member) => member.slug === slug))) {
-            return send(res, 404, { error: "no such member" }), true;
-          }
+          const targets = room.members.map((member) => member.slug);
           // A recreate that is already running has nothing left to answer: it would keep reading old threads.
           await engine.stop(id).catch(() => {});
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          // The old threads belong to the conversation being thrown away: delete them like a room
+          // delete does, or nothing would ever clean them up. Former members keep theirs.
+          const current = (await rooms.get(id)) ?? room;
+          await deleteThreads({ ...current, formerMembers: [] });
           let latest = room;
           for (const slug of targets) latest = await rooms.setMember(id, slug, { threadId: null, status: "pending" });
           const launched = await launchMembers(latest, targets, roster);

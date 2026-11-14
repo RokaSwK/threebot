@@ -47,8 +47,9 @@ export function formatRoomLine(line: RoomLine): string {
   return `${who}: ${quote}${clip(line.text, 1_200)}`;
 }
 
+/** Cuts long text with an ellipsis. Line breaks stay: pasted lists and code keep their shape. */
 export function clip(text: string, max: number): string {
-  const clean = text.replace(/\s+/g, " ").trim();
+  const clean = text.trim();
   return clean.length > max ? `${clean.slice(0, Math.max(0, max - 1))}…` : clean;
 }
 

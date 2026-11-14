@@ -34,6 +34,8 @@ type ActiveTurn = { turnId: string; abort: boolean; threads: Map<string, string 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const nameOfSlug = (slug: string) => slug;
+/** A member's part ended because the room was stopped before its message went out. */
+class StoppedError extends Error {}
 
 /**
  * The members a message addresses. An explicit `mentions` list from the composer wins; otherwise
@@ -88,7 +90,7 @@ export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }:
   const others = room.members.filter((candidate) => candidate.slug !== member.slug).map((candidate) => nameOf(candidate.slug));
   const header = `[Room "#${room.name}" · with ${others.join(", ") || "the user"}]`;
   const intro = `You are ${nameOf(member.slug)}, in a room with the user${others.length ? ` and ${others.join(", ")}` : ""}. `
-    + "This is not your private chat: don't reveal private context and don't update memory unless the user asks. "
+    + "This is a shared conversation, not your private chat: keep private details from your one-to-one chats out of it. "
     + "Your final reply of this turn is the one message the room sees; keep it short. "
     + "If the user addresses you directly, answer briefly even if it is a single line; reply exactly \"(pass)\" only when the message is for the room in general and you have nothing to add.";
   const about = [room.description, room.guidance].filter((part) => part && part.trim() !== "").join("\n");
@@ -97,7 +99,10 @@ export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }:
     : "Teammates in this room answer independently; they do not see your reply, and mentioning a teammate here does not wake it.";
   const body = lines.length > 0 ? `Recent room:\n${lines.join("\n")}` : "";
   const quote = message.replyTo ? "[replying to a message from the room]" : "";
-  return [header, intro, about, mode, body, quote, `It's your turn, ${nameOf(member.slug)}.`]
+  // The message being answered is always there in full, even when it waited in the queue behind a
+  // turn the member already answered.
+  const asked = message.text.trim() ? `The user's message:\n${message.text.trim()}` : "";
+  return [header, intro, about, mode, body, quote, asked, `It's your turn, ${nameOf(member.slug)}.`]
     .filter((part) => part !== "")
     .join("\n\n");
 }
@@ -235,6 +240,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
 
     const roster = await bots();
     for (const [slug, bot] of roster) names.set(slug, bot.name);
+    // A member whose Bot was deleted (or can no longer join) never answers, even as the lead.
+    room.members = room.members.map((member) => (roster.has(member.slug) ? member : { ...member, status: "unavailable" as const }));
     for (const former of room.formerMembers) if (!names.has(former.slug) && former.name) names.set(former.slug, former.name);
     const launchDefaults = await defaults();
     const history = await readHistory(room);
@@ -265,16 +272,25 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         state.threads.set(member.slug, member.threadId);
         // The member's own unseen user messages, then — in a roundtable — what was said before it.
         const floor = roundtable ? spoken.filter((line) => line.slug !== member.slug).map((line) => `${nameOf(line.slug)}: ${line.text}`) : [];
+        // The user's messages from this one on are not history: this one is quoted in full below,
+        // and later ones are still waiting in the queue.
+        const before = history.filter((line) => line.author.kind !== "user" || line.at < turn.at);
+        if (state.abort) throw new StoppedError();
         await rpc.dispatch({
           type: "message.dispatch",
           threadId: member.threadId,
           messageId,
-          text: promptFor({ room, member, message, lines: [...linesFor(room, member, history), ...floor], nameOf }),
+          text: promptFor({ room, member, message, lines: [...linesFor(room, member, before), ...floor], nameOf }),
           attachments: [],
           createdBy: "agent",
           creationSource: "server",
           dispatchMode: { type: "queue_after_active" },
         });
+        // Stop may have run while this message was on its way; it could not stop a run that did not exist yet.
+        if (state.abort) {
+          await rpc.dispatch({ type: "thread.stop", threadId: member.threadId, stopDelegatedTasks: true }).catch(() => {});
+          throw new StoppedError();
+        }
         // Each member gets its own wait. In a roundtable the fifth speaker must not inherit the
         // seconds the first four left from one shared deadline.
         const memberDeadline = Math.min(turnDeadline, nowMs() + memberTimeoutMs);
@@ -309,6 +325,10 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         await rooms.setMember(roomId, member.slug, { lastTurnAt: (replied ? result.reply?.at : null) ?? at() });
         log(`[rooms] ${room.name}: ${member.slug} ${result.status === "timeout" ? "late" : result.status}${replied ? "" : " (no reply)"}`);
       } catch (err) {
+        if (err instanceof StoppedError) {
+          outcomes.set(candidate.slug, { status: "stopped", at: at() });
+          return;
+        }
         log(`[rooms] ${room.name}: ${candidate.slug} failed: ${(err as Error).message}`);
         runs.set(candidate.slug, null);
         outcomes.set(candidate.slug, { status: "failed", error: clip((err as Error).message, 200), at: at() });
@@ -360,7 +380,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         const last = spoken.at(-1)!;
         await Promise.resolve(notify?.({
           title: `#${room.name}`,
-          body: clip(last.text, 140),
+          body: clip(last.text.replace(/\s+/g, " "), 140),
           url: `/?room=${room.id}`,
         })).catch(() => {});
       }

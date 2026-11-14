@@ -79,7 +79,7 @@ function useRoomMenu() {
       {deleting && (
         <Modal onClose={() => { if (!busy) setDeleting(null); }} className="w-[340px]">
           <div className="p-5 text-[16px]">Delete “{deleting.name}”?</div>
-          <p className="px-5 pb-2 text-[13px] text-muted">The room and the threads of its Bots are deleted from T3. This cannot be undone.</p>
+          <p className="px-5 pb-2 text-[13px] text-muted">Each Bot's thread for this room is deleted in T3 too. This can't be undone.</p>
           <div className="flex justify-end gap-3 p-4">
             <Pill variant="ghost" disabled={busy} onClick={() => setDeleting(null)}>Cancel</Pill>
             <Pill variant="danger" disabled={busy} onClick={() => void destroy()}>{busy && <Spinner />} Delete</Pill>
@@ -102,8 +102,14 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(readCollapsed);
   const { openRoomMenu, nodes: roomMenu } = useRoomMenu();
 
+  // Rooms that aren't open still get replies: refresh the list now and then so their unread dot
+  // and "answering" state don't wait for a reload.
   useEffect(() => {
-    void loadRooms().catch(() => {});
+    const refresh = () => { if (document.visibilityState === "visible") void loadRooms().catch(() => {}); };
+    refresh();
+    const timer = setInterval(refresh, 15_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, []);
   // Folding is a view preference: it survives a reload like the sidebar width does.
   useEffect(() => {
@@ -178,10 +184,10 @@ export function RoomsSection({ large = false }: { large?: boolean }) {
 
 function RoomRow({ room, selected, unread, large, onMenu }: { room: RoomSummary; selected: boolean; unread: boolean; large: boolean; onMenu: (point: MenuPoint, room: RoomSummary) => void }) {
   const preview = room.running
-    ? "A turn is running…"
+    ? "Answering…"
     : room.queued > 0
       ? `${room.queued} queued`
-      : room.lastText?.trim() || `${room.members.length} bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`;
+      : room.lastText?.trim() || `${room.members.length} Bots · ${room.mode === "roundtable" ? "Roundtable" : "Panel"}`;
   return (
     <div className="relative">
       <HoldButton
@@ -441,7 +447,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
           <p className="mt-1.5 text-[12px] text-muted">
             {settings.mode === "panel"
               ? "Everyone addressed starts at once; a mention inside a reply does nothing."
-              : `Up to ${settings.maxWaves} waves and ${settings.maxReplies} spoken replies per message.`}
+              : `Up to ${settings.maxWaves} rounds and ${settings.maxReplies} replies per message.`}
           </p>
           {settings.mode === "roundtable" && settings.defaultResponder === "lead" && (
             <p className="mt-1 text-[12px] text-faint">Tip: with “Only {leadName}” the room answers through {leadName} alone; “Everyone” gives a real round.</p>
@@ -483,10 +489,10 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <input value={description} disabled={busy} onChange={(e) => setDescription(e.target.value)} aria-label="Room description" className="h-9 w-full rounded-xl border border-line bg-elevated px-2 text-[13px] outline-none focus:border-line-strong" />
             </Field>
 
-            <Field label="Model" hint="Inherit uses each Bot's own model. Pin one to use it for the whole room.">
+            <Field label="Model" hint="Each Bot uses its own model unless you pick one for the whole room.">
               <div className="flex items-center justify-between gap-2 rounded-xl border border-line px-2 py-1.5">
-                <span className="text-[12.5px] text-muted">Inherit each Bot's model</span>
-                <Switch checked={settings.model === "inherit"} disabled={busy} onChange={(on) => update({ model: on ? "inherit" : firstModel() })} label="Inherit each Bot's model" />
+                <span className="text-[12.5px] text-muted">Each Bot's own model</span>
+                <Switch checked={settings.model === "inherit"} disabled={busy} onChange={(on) => update({ model: on ? "inherit" : firstModel() })} label="Each Bot's own model" />
               </div>
               {settings.model !== "inherit" && (
                 <div className="rounded-xl bg-card p-1.5">
@@ -557,11 +563,11 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <Pill variant="soft" disabled={busy} onClick={() => { setConfirmReset(true); setConfirmDelete(false); }}><RefreshCw size={13} /> Start over</Pill>
               <Pill variant="ghost" className="text-danger" disabled={busy} onClick={() => { setConfirmDelete(true); setConfirmReset(false); }}><Trash2 size={13} /> Delete room</Pill>
             </div>
-            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span> deletes this room's messages and opens a fresh thread for every Bot. The old threads stay in T3 as history.</p>
+            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span> clears this room's messages and gives every Bot a fresh thread. The old threads are deleted in T3.</p>
             <p className="text-[12px] text-muted"><span className="text-fg">Delete room</span> removes the room and deletes its Bot threads in T3. This cannot be undone.</p>
             {confirmReset && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl bg-card p-2">
-                <span className="mr-auto text-[12.5px]">Delete the messages and start over?</span>
+                <span className="mr-auto text-[12.5px]">Clear the messages and start over?</span>
                 <Pill variant="ghost" disabled={busy} onClick={() => setConfirmReset(false)}>Cancel</Pill>
                 <Pill variant="danger" disabled={busy} onClick={() => void recreate()}>{busy && <Spinner />} Start over</Pill>
               </div>

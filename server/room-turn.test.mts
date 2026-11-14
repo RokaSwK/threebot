@@ -44,7 +44,7 @@ function fakeRuntime() {
         turnItems: [...(items.get(payload.threadId) ?? [])],
       };
     },
-    complete(threadId: string, text: string) {
+    complete(threadId: string, text: string, completedAt = "2026-01-01T00:00:05.000Z") {
       const run = runs.get(threadId);
       if (!run) return;
       run.status = "completed";
@@ -55,7 +55,7 @@ function fakeRuntime() {
         type: "assistant_message",
         status: "completed",
         text,
-        completedAt: "2026-01-01T00:00:05.000Z",
+        completedAt,
       }]);
     },
     fail(threadId: string) {
@@ -100,7 +100,7 @@ test("a mention starts only the member it names", async () => {
   await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
   assert.equal(runtime.dispatched[0].threadId, "thread-beta");
   assert.match(runtime.dispatched[0].text, /You are Beta/);
-  assert.match(runtime.dispatched[0].text, /User: Hola @Beta, ¿ping\?/);
+  assert.match(runtime.dispatched[0].text, /The user's message:\nHola @Beta, ¿ping\?/);
   runtime.complete("thread-beta", "pong");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
   const stored = (await rooms.get(room.id))!;
@@ -147,9 +147,11 @@ test("a message sent during a turn waits and then runs", async () => {
   const second = await engine.send(room.id, { text: "segundo" });
   assert.equal(second.queued, true);
   assert.equal(runtime.dispatched.length, 1, "nothing dispatched while the turn runs");
-  runtime.complete("thread-alpha", "ok");
+  // Alpha's first reply lands after "segundo" was sent: the queued message must still reach it.
+  runtime.complete("thread-alpha", "ok", new Date(Date.now() + 60_000).toISOString());
   await waitFor(() => runtime.dispatched.length === 2, "the queued dispatch");
-  assert.match(runtime.dispatched[1].text, /User: segundo/);
+  assert.match(runtime.dispatched[1].text, /The user's message:\nsegundo/);
+  assert.doesNotMatch(runtime.dispatched[0].text, /segundo/, "a queued message is not history for the turn before it");
   runtime.complete("thread-alpha", "ok2");
   await waitFor(async () => {
     const stored = (await rooms.get(room.id))!;
@@ -568,5 +570,33 @@ test("recover marks queued messages interrupted", async () => {
   const interrupted = await engine.recover();
   assert.deepEqual(interrupted, [`${room.id}/q1`]);
   assert.equal((await rooms.get(room.id))!.turns[0].status, "interrupted");
+  await done();
+});
+
+test("a member whose Bot was deleted never answers, even as the lead", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const withoutAlpha = new Map([...bots].filter(([slug]) => slug !== "alpha"));
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => withoutAlpha, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "@Alpha are you there?" });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  assert.equal(runtime.dispatched[0].threadId, "thread-beta", "the deleted lead is skipped");
+  runtime.complete("thread-beta", "Alpha is gone");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  await done();
+});
+
+test("a long message reaches the Bots whole, line breaks included", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  const text = `- one\n- two\n${"x".repeat(3_000)}`;
+  await engine.send(room.id, { text });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  assert.ok(runtime.dispatched[0].text.includes(text));
+  runtime.complete("thread-alpha", "ok");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
   await done();
 });

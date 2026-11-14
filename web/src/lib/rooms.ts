@@ -86,7 +86,7 @@ export type RoomView = {
   turns: RoomTurn[];
 };
 
-/** Defaults from `docs/designs/rooms.md`. `lead` is filled with the first member on create. */
+/** The same defaults as `server/rooms.mts`. `lead` is filled with the first member on create. */
 export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   mode: "panel",
   defaultResponder: "lead",
@@ -155,8 +155,8 @@ export function deleteRoom(id: string): Promise<DeleteRoomResult> {
   return apiRequest<DeleteRoomResult>(roomPath(id), { method: "DELETE", body: "{}" });
 }
 
-export function recreateRoom(id: string, slug?: string): Promise<RoomView> {
-  return apiRequest<{ room: RoomView }>(`${roomPath(id)}/recreate`, { method: "POST", body: JSON.stringify(slug ? { slug } : {}) }).then((body) => body.room);
+export function recreateRoom(id: string): Promise<RoomView> {
+  return apiRequest<{ room: RoomView }>(`${roomPath(id)}/recreate`, { method: "POST", body: "{}" }).then((body) => body.room);
 }
 
 export function sendRoomMessage(id: string, input: SendRoomMessageInput): Promise<RoomTurn> {

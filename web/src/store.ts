@@ -759,8 +759,8 @@ export async function removeRoom(id: string) {
   return result;
 }
 
-export async function recreateRoomThreads(id: string, slug?: string) {
-  const room = await recreateRoomApi(id, slug);
+export async function recreateRoomThreads(id: string) {
+  const room = await recreateRoomApi(id);
   set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
   await loadRooms().catch(() => {});
   return room;

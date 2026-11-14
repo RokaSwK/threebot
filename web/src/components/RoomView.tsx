@@ -9,7 +9,8 @@ import { RoomMembers } from "./RoomMembers";
 import { IconButton, Spinner } from "./ui";
 import { UserMessageText } from "./UserMessageText";
 import { ensureRoom, loadRoom, sendRoomMessage, stopRoom, stopRoomPoll, useApp, watchThread } from "../store";
-import { activeMentionQuery, mentionSuggestions, withMention, type MentionBot } from "../lib/mentionMenu";
+import { activeMentionQuery, mentionEdit, mentionSuggestions, type MentionBot } from "../lib/mentionMenu";
+import { replaceText } from "../lib/chatBehavior";
 import { botTextColor } from "../lib/character";
 import { roomCards, type RoomCard } from "../lib/roomCards";
 import { clearRoomDraft, readRoomDraft, writeRoomDraft } from "../lib/roomDrafts";
@@ -123,7 +124,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     const rows: EventRow[] = [];
     for (const turn of room?.turns ?? []) {
       if (turn.status === "stopped") rows.push({ kind: "event", id: `event:${turn.id}:stopped`, at: turn.at, text: "You stopped the room" });
-      if (turn.status === "interrupted") rows.push({ kind: "event", id: `event:${turn.id}:interrupted`, at: turn.at, text: "The room was interrupted when the gateway restarted" });
+      if (turn.status === "interrupted") rows.push({ kind: "event", id: `event:${turn.id}:interrupted`, at: turn.at, text: "Threebot restarted before this message was answered" });
       const failedRuns = (turn.runs ?? []).filter((run) => run.status === "failed");
       for (const run of failedRuns) {
         rows.push({
@@ -243,7 +244,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
           <GroupAvatar members={room.members} size={onBack ? 26 : 24} />
           <span className="chat-title-text min-w-0">
             <span className="chat-title-name flex min-w-0 items-center gap-1.5 text-[13.5px]"><span className="truncate">{room.name}</span></span>
-            <span className="chat-status block truncate text-[11px] text-muted">{modeLabel} · {room.members.length} {room.members.length === 1 ? "bot" : "bots"}</span>
+            <span className="chat-status block truncate text-[11px] text-muted">{modeLabel} · {room.members.length} {room.members.length === 1 ? "Bot" : "Bots"}</span>
           </span>
         </button>
       </header>
@@ -275,7 +276,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
           {timeline.map((row) => row.kind === "user" ? (
             <div key={row.id} className="fade-up mt-3 flex flex-col items-end">
               <div data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap" style={{ background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}>
-                <UserMessageText text={row.turn.text} />
+                <UserMessageText text={row.turn.text} muted />
               </div>
               {row.turn.status === "queued" && <p className="chat-model-switch">Queued · the room is answering first</p>}
             </div>
@@ -337,7 +338,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
         >
           <span className="size-2 rounded-full bg-[var(--attention)]" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-left">
-            {cards.length === 1 ? `${cards[0].member.name} needs you` : `${cards.length} bots need you`}
+            {cards.length === 1 ? `${cards[0].member.name} needs you` : `${cards.length} Bots need you`}
           </span>
           <span className="text-muted">Review</span>
         </button>
@@ -389,7 +390,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
   // answer "who is going to see this?" before sending, and a room has no other way to show it.
   const addressed = useMemo(() => {
     if (!text.trim()) return [] as { key: string; name: string; member?: MemberView }[];
-    const matched = new Set(mentionsInText(text, members.map((member) => member.name), mentionPolicy).map((name) => name.toLowerCase()));
+    const matched = new Set(mentionsInText(text, [...members.map((member) => member.name), "everyone"], mentionPolicy).map((name) => name.toLowerCase()));
     return [...matched].map((key) => {
       if (key === "all" || key === "everyone") return { key, name: "Everyone" };
       const member = members.find((candidate) => candidate.name.toLowerCase() === key);
@@ -427,14 +428,10 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
 
   const pick = (picked: MentionBot) => {
     const element = ta.current;
-    const cursor = element?.selectionStart ?? text.length;
-    const next = withMention(text, cursor, picked);
-    setText(next.value);
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    replaceText(element, mentionEdit(element.value, element.selectionStart, picked), setText);
     setMention(null);
-    requestAnimationFrame(() => {
-      element?.focus({ preventScroll: true });
-      element?.setSelectionRange(next.cursor, next.cursor);
-    });
   };
 
   useEffect(() => {
@@ -450,8 +447,9 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
     if (!trimmed || sending) return;
     const names = members.map((member) => member.name);
     // The server's explicit list wins and ignores "@all" as a slug, so it expands to every member.
-    const mentions = Array.from(new Set(mentionsInText(trimmed, names, mentionPolicy).flatMap((name) => {
-      if (name === "all") return members.map((member) => member.slug);
+    // `@all` and `@everyone` both mean every member, as on the server.
+    const mentions = Array.from(new Set(mentionsInText(trimmed, [...names, "everyone"], mentionPolicy).flatMap((name) => {
+      if (name === "all" || name.toLowerCase() === "everyone") return members.map((member) => member.slug);
       const member = members.find((candidate) => candidate.name.toLowerCase() === name.toLowerCase());
       return member ? [member.slug] : [];
     })));
@@ -476,7 +474,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
       <div className="composer-content mx-auto w-full max-w-[820px]">
         {error && <p role="alert" className="px-1 pb-1 text-[12.5px] text-danger">{error}</p>}
         <div className="composer-shell relative rounded-[22px] border border-line bg-elevated focus-within:border-line-strong">
-          {mention && (
+          {mention && suggestions.length > 0 && (
             <MentionMenu
               id={listId}
               bots={suggestions}
@@ -536,22 +534,17 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
                 recompute(value, event.currentTarget.selectionStart);
               }}
               onSelect={(event) => recompute(event.currentTarget.value, event.currentTarget.selectionStart)}
-              onKeyUp={(event) => {
-                if (!["ArrowDown", "ArrowUp", "Enter", "Escape", "Tab"].includes(event.key)) recompute(event.currentTarget.value, event.currentTarget.selectionStart);
-              }}
               onCompositionStart={() => setMention(null)}
               onCompositionEnd={(event) => recompute(event.currentTarget.value, event.currentTarget.selectionStart)}
               onKeyDown={(event) => {
-                if (mention) {
-                  if (suggestions.length > 0) {
-                    if (event.key === "ArrowDown") { event.preventDefault(); setMention((current) => current ? { ...current, index: (current.index + 1) % suggestions.length } : null); return; }
-                    if (event.key === "ArrowUp") { event.preventDefault(); setMention((current) => current ? { ...current, index: (current.index - 1 + suggestions.length) % suggestions.length } : null); return; }
-                    if (event.key === "Enter" || event.key === "Tab") {
-                      event.preventDefault();
-                      const picked = suggestions[mention.index];
-                      if (picked) pick(picked);
-                      return;
-                    }
+                if (mention && suggestions.length > 0) {
+                  if (event.key === "ArrowDown") { event.preventDefault(); setMention((current) => current ? { ...current, index: (current.index + 1) % suggestions.length } : null); return; }
+                  if (event.key === "ArrowUp") { event.preventDefault(); setMention((current) => current ? { ...current, index: (current.index - 1 + suggestions.length) % suggestions.length } : null); return; }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    event.preventDefault();
+                    const picked = suggestions[mention.index];
+                    if (picked) pick(picked);
+                    return;
                   }
                   if (event.key === "Escape") {
                     event.preventDefault();

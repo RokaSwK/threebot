@@ -357,6 +357,13 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
         if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt!.localeCompare(a.settledAt!) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
         if (tag === 'orchestration.searchThreads') return exit(ws, id, { matches: threads.flatMap((t) => (items.get(t.id) ?? []).filter((item) => /^(user|assistant)_message$/.test(item.type) && item.text!.toLowerCase().includes(payload.query.toLowerCase())).slice(0,1).map((item) => ({ threadId: t.id, projectId: t.projectId, messageId: item.id, snippet: item.text!.slice(0,240), source: item.type === 'user_message' ? 'user' : 'assistant', messageCreatedAt: item.updatedAt }))).slice(0, payload.limit) });
         if (tag === 'orchestration.searchThread') { const match = (items.get(payload.threadId) ?? []).find((item) => item.text?.toLowerCase().includes(payload.query.toLowerCase())); return exit(ws, id, { snapshotSequence: sequence, totalMatches: match ? 1 : 0, activeIndex: 0, match: match ? { entryId: match.id, runId: match.runId, occurrence: 0 } : null, navigation: [] }); }
+        if (scenario === 'rooms' && tag === 'orchestration.dispatchCommand' && payload.type === 'thread.delete') {
+          const index = threads.findIndex((t) => t.id === payload.threadId);
+          if (index < 0) return fail(ws, id, 'Unknown fixture thread');
+          threads.splice(index, 1);
+          publish();
+          return exit(ws, id, { sequence: ++sequence });
+        }
         // Making a Bot from a project, and a room's member threads.
         if ((scenario === 'adopt' || scenario === 'rooms') && tag === 'orchestration.launchThread') {
           if (!projects.some((p) => p.id === payload.projectId)) return fail(ws, id, 'Unknown fixture project');
@@ -396,6 +403,19 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
             entries.push(item(thread.id, entries.length + 1, 'user_message', { messageId: payload.messageId, text: payload.text, runId: run.id, createdBy: payload.createdBy === 'agent' ? 'agent' : 'user', creationSource: payload.creationSource === 'server' ? 'server' : 'web', attachments: payload.attachments ?? [], ...(payload.freshContext === true ? { freshContext: true } : {}), updatedAt: now }));
             Object.assign(thread, { status: 'running', activityRunStatus: 'running', activeRunId: run.id, latestRunId: run.id, latestRunStartedAt: now });
             avatars?.afterMessage(thread, payload.text, publish);
+            // A room thread answers with a scripted line a moment later, so a room conversation can be seen.
+            if (scenario === 'rooms' && thread.title.startsWith('#')) {
+              const answered = run;
+              setTimeout(() => {
+                if (answered.status !== 'running') return;
+                const done = new Date().toISOString();
+                const name = projects.find((p) => p.id === thread.projectId)?.title ?? 'A Bot';
+                entries.push(item(thread.id, entries.length + 1, 'assistant_message', { text: `${name} here. A scripted reply from the local fixture; no model runs.`, runId: answered.id, startedAt: done, completedAt: done, updatedAt: done }));
+                Object.assign(answered, { status: 'completed', completedAt: done });
+                Object.assign(thread, { status: 'idle', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: done, updatedAt: done });
+                publish();
+              }, 1200);
+            }
           } else {
             for (const run of threadRuns) if (run.status === 'running') Object.assign(run, { status: 'interrupted', completedAt: now });
             Object.assign(thread, { status: 'idle', activityRunStatus: null, activeRunId: null, pendingRuntimeRequest: null });
