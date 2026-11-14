@@ -50,13 +50,14 @@ export function Pill({ variant = "primary", className, children, ...rest }: Butt
   );
 }
 
-export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
+export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         onChange(!checked);
@@ -111,6 +112,35 @@ export function Modal({ onClose, onBack, children, className, title, label = "Di
 }
 
 export type MenuItem = { label: string; icon?: ReactNode; onSelect?: () => void; items?: MenuItem[]; danger?: boolean; detail?: string; chevron?: boolean; disabled?: boolean } | "divider";
+
+export type MenuPoint = { clientX: number; clientY: number; preventDefault: () => void };
+
+/**
+ * A row that opens a menu: long-press on touch, right-click on a mouse. A long press swallows the
+ * click, so the row does not navigate while its menu opens.
+ */
+export function HoldButton({ onMenu, onClick, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { onMenu: (point: MenuPoint) => void }) {
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const origin = useRef<{ x: number; y: number } | null>(null);
+  const held = useRef(false);
+  const cancel = () => { clearTimeout(timer.current); };
+  useEffect(() => cancel, []);
+  return <button
+    {...props}
+    onPointerDown={(event) => {
+      if (event.pointerType === "mouse" || event.button !== 0) return;
+      held.current = false;
+      origin.current = { x: event.clientX, y: event.clientY };
+      const point = { clientX: event.clientX, clientY: event.clientY, preventDefault() {} };
+      timer.current = setTimeout(() => { held.current = true; onMenu(point); }, 500);
+    }}
+    onPointerMove={(event) => { if (origin.current && Math.hypot(event.clientX - origin.current.x, event.clientY - origin.current.y) > 12) cancel(); }}
+    onPointerUp={cancel}
+    onPointerCancel={cancel}
+    onContextMenu={(event) => { event.preventDefault(); cancel(); if (!held.current) onMenu(event); }}
+    onClick={(event) => { if (held.current) { held.current = false; event.preventDefault(); return; } onClick?.(event); }}
+  />;
+}
 
 export function Menu({ items, onClose, x, y }: { items: MenuItem[]; onClose: () => void; x: number; y: number }) {
   const ref = useRef<HTMLDivElement>(null);

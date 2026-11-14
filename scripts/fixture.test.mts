@@ -235,8 +235,8 @@ test('activity scenario shows Bots in different activities and walks Alpha throu
 });
 
 test('basic protocol remains unchanged and interaction handlers are opt-in', { timeout: 15000 }, async () => {
-  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt or release-notes/);
-  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt or release-notes/);
+  await assert.rejects(startFakeT3('/unused', 0, { scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt, release-notes or rooms/);
+  await assert.rejects(createFixture({ scenario: 'unknown' }), /Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt, release-notes or rooms/);
   const fake = await startFakeT3('/unused');
   const rpc = new T3Client({ baseUrl: `http://127.0.0.1:${fake.port}`, token: 'fixture-only' });
   try {
@@ -1036,5 +1036,21 @@ test('a helper Bot written by another Bot gets its standing instructions before 
     }
     assert.equal(meta.instructions ?? null, null, 'the seed is cleared once written');
     assert.doesNotMatch(agents, /Read the docs folder/, 'the brief is a first message, not a standing instruction');
+  } finally { await fixture.close(); }
+});
+
+test('a room launches one idle thread per member in its own project, with the Bot\'s own runtime mode', { timeout: 60000 }, async () => {
+  const fixture = await createFixture({ scenario: 'rooms' });
+  try {
+    const created = await fixture.request('/api/rooms', 'POST', { name: 'Design review', members: ['alpha', 'beta'], settings: { runtimeMode: 'full-access' } });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const room = created.body.room;
+    assert.deepEqual(room.members.map((member: Json) => [member.slug, member.status, typeof member.threadId]), [['alpha', 'ready', 'string'], ['beta', 'ready', 'string']]);
+    assert.ok(room.members.every((member: Json) => member.runtimeMode !== 'full-access'), 'a room never raises a Bot\'s runtime mode');
+    const listed = await fixture.request('/api/rooms');
+    assert.deepEqual(listed.body.rooms.map((entry: Json) => entry.name), ['Design review']);
+    const removed = await fixture.request(`/api/rooms/${room.id}`, 'DELETE', {});
+    assert.equal(removed.status, 200);
+    assert.deepEqual((await fixture.request('/api/rooms')).body.rooms, []);
   } finally { await fixture.close(); }
 });

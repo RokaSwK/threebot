@@ -95,6 +95,12 @@ test('phone back/forward restores the exact child, exchange and overlay',()=>{
  assert.equal(restoreNavigation(readNavigation(exchange),bots).exchangeBotSlug,'beta');
  const settings=navigationFor({...base,dialog:'settings'},true);assert.equal(settings.view,'overlay');
  const restored=restoreNavigation(readNavigation(settings),bots);assert.equal(restored.dialog,'settings');assert.equal(restored.detailsOpen,false);assert.equal(restored.selectedThreadId,'child');
+ // A "new room" dialog is transient: it has no id and restoring it reopened a blank form on top of
+ // the room that had just been created. An edit dialog (with an id) is still restored.
+ const newRoom=restoreNavigation(readNavigation({view:'overlay',slug:'alpha',threadId:null,details:false,dialog:{kind:'room'}}),bots);
+ assert.equal(newRoom.dialog,null);
+ const editRoom=restoreNavigation(readNavigation({view:'overlay',slug:'alpha',threadId:null,details:false,dialog:{kind:'room',id:'abc12345'}}),bots);
+ assert.deepEqual(editRoom.dialog,{kind:'room',id:'abc12345'});
  assert.equal(readNavigation({view:'chat',slug:null,threadId:'child'}),null);
  assert.equal(readNavigation({view:'overlay',slug:'alpha',threadId:null,details:false,dialog:{kind:'evil'}}),null);
 });

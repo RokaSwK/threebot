@@ -77,7 +77,7 @@ export const INTERACTION_IDS = {
 };
 
 export function validateScenario(scenario: string) {
-  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars', 'activity', 'adopt', 'release-notes'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt or release-notes.');
+  if (!['basic', 'interactions', 'executor', 'library', 'landing', 'latest-t3', 'avatars', 'activity', 'adopt', 'release-notes', 'rooms'].includes(scenario)) throw new Error('Scenario must be basic, interactions, executor, library, landing, latest-t3, avatars, activity, adopt, release-notes or rooms.');
 }
 
 // A believable personal setup for product screenshots. Everything here is invented;
