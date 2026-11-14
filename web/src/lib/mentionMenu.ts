@@ -51,7 +51,8 @@ export function mentionSuggestions(query: string, bots: MentionBot[]): MentionBo
  */
 export function activeMentionQuery(text: string, cursor: number, bots: MentionBot[]): MentionQuery | null {
   const visibleNames = bots.filter((b) => !b.hidden && b.name.trim().length > 0).map((b) => b.name);
-  const q = mentionQueryAt(text, cursor, visibleNames);
+  // The completed-name check is below, where a name that can still grow into a longer one is known.
+  const q = mentionQueryAt(text, cursor);
   if (!q) return null;
 
   const textFromAt = text.slice(q.start, cursor).toLowerCase();

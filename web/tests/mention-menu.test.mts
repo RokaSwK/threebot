@@ -71,4 +71,5 @@ test("activeMentionQuery closes once the mention is complete and prose follows",
     { slug: "max-power", name: "Max Power", label: "" },
   ];
   assert.deepEqual(activeMentionQuery("@Max P", 6, bots), { start: 0, query: "Max P" });
+  assert.deepEqual(activeMentionQuery("@Max ", 5, bots), { start: 0, query: "Max " }, "the space after Max keeps Max Power on offer");
 });
