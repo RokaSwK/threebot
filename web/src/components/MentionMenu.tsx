@@ -23,7 +23,7 @@ export const MentionMenu = memo(function MentionMenu({
     <div
       role="listbox"
       aria-label="Bot suggestions"
-      className="absolute bottom-full left-0 right-0 z-30 mb-2 max-h-[240px] overflow-y-auto rounded-2xl border border-line bg-card p-1.5 shadow-pop scroll-thin"
+      className="pop-in scroll-thin absolute bottom-full left-0 right-0 z-30 mb-2 max-h-[240px] overflow-y-auto rounded-xl border border-line bg-elevated p-1 shadow-[var(--shadow-pop)]"
     >
       {bots.length === 0 ? (
         <div className="px-3 py-2 text-[13px] text-muted select-none" role="status">
@@ -44,8 +44,8 @@ export const MentionMenu = memo(function MentionMenu({
                 onPick(bot);
               }}
               className={clsx(
-                "flex cursor-pointer select-none items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-[13px] transition-colors",
-                active ? "bg-hover text-foreground" : "text-foreground hover:bg-hover"
+                "flex h-9 cursor-pointer select-none items-center gap-2.5 rounded-lg px-2.5 text-[13px]",
+                active && "bg-hover"
               )}
             >
               <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={22} />
