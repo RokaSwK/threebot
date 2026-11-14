@@ -883,6 +883,20 @@ test('a T3 project in a git repo becomes a Bot in place, keeps git status clean,
     for (let i = 0; i < 50 && !(await read('CLAUDE.local.md')).includes('ships on Fridays'); i++) await new Promise((r) => setTimeout(r, 200));
     assert.match(await read('CLAUDE.local.md'), /ships on Fridays/, 'memory reaches the instructions');
     assert.match(await read('AGENTS.override.md'), /ships on Fridays/);
+    // Standing instructions: kept in .bot/, copied into both managed blocks right away, repo untouched.
+    const instructions = await fixture.request('/api/instructions?slug=app-keeper');
+    assert.equal(instructions.status, 200, JSON.stringify(instructions.body));
+    assert.equal(instructions.body.path, '.bot/INSTRUCTIONS.md');
+    assert.equal(instructions.body.text, '');
+    const savedInstructions = await fixture.request('/api/instructions', 'PUT', { slug: 'app-keeper', text: '## What this Bot does\n- Keep the sample app green.\n', expectedRevision: instructions.body.revision });
+    assert.equal(savedInstructions.status, 200, JSON.stringify(savedInstructions.body));
+    assert.equal(await read('.bot/INSTRUCTIONS.md'), '## What this Bot does\n- Keep the sample app green.\n');
+    for (const file of ['CLAUDE.local.md', 'AGENTS.override.md']) {
+      assert.match(await read(file), /## Standing instructions[\s\S]*Keep the sample app green\.\n[\s\S]*<!-- bot:managed:end -->/, file);
+    }
+    assert.equal((await fixture.request('/api/instructions', 'PUT', { slug: 'app-keeper', text: 'stale', expectedRevision: instructions.body.revision })).status, 409);
+    assert.equal(await read('AGENTS.md'), before.agents);
+    assert.equal(status(), '', 'git status stays clean');
     const t3projects = (await fixture.request('/t3/api/projects')).body.projects;
     assert.equal(t3projects.find((p: Json) => p.id === 'project-app').title, 'Sample App');
     assert.equal(status(), '');

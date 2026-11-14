@@ -35,21 +35,12 @@ after(async () => { for (const channel of channels) { channel.port1.close(); cha
 const bot = { slug: "alpha", name: "Alpha", label: "Code reviewer" } as any;
 const revision = (text: string) => `r${text.length}:${text.slice(-8)}`;
 const baseText = "## What this Bot is for\n- Review code changes.\n";
-let root, host, disk, puts, labelPuts;
+let root, host, disk, puts;
 beforeEach(() => {
   disk = { text: baseText, total: 19000 };
   puts = [];
-  labelPuts = [];
   useApp.setState({ bots: { alpha: bot } });
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
-    if (init.method === "PUT" && String(url).endsWith("/api/bots/alpha")) {
-      const body = JSON.parse(String(init.body));
-      labelPuts.push(body);
-      return new Response(JSON.stringify({ ...bot, ...body }), { status: 200 });
-    }
-    if (String(url).endsWith("/api/bots")) {
-      return new Response(JSON.stringify({ bots: [{ ...bot, label: labelPuts.at(-1)?.label ?? bot.label }] }), { status: 200 });
-    }
     if (init.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push(body);
@@ -84,9 +75,7 @@ test("the Instructions tab shows the owner's part and saves an edit", async () =
   await act(async () => root.render(h(InstructionsTab, { bot })));
   await settle();
   assert.match(host.textContent ?? "", /Review code changes/u);
-  assert.match(host.textContent ?? "", /Role/u);
-  assert.match(host.textContent ?? "", /Code reviewer/u);
-  await click(button("Edit instructions"));
+  await click(button("Edit"));
   const modal = dialog();
   assert.ok(modal);
   const editor = modal.querySelector("textarea") as HTMLTextAreaElement;
@@ -102,14 +91,14 @@ test("the Instructions tab shows the owner's part and saves an edit", async () =
 test("an edit the Bot made meanwhile is never overwritten without asking", async () => {
   await act(async () => root.render(h(InstructionsTab, { bot })));
   await settle();
-  await click(button("Edit instructions"));
+  await click(button("Edit"));
   const modal = dialog();
   assert.ok(modal);
   const editor = modal.querySelector("textarea") as HTMLTextAreaElement;
   await type(editor, "- Mine\n");
   disk.text = "## What this Bot is for\n- Bot edit\n";
   await click(button("Save", modal));
-  assert.match(modal.querySelector('[role="alert"]')?.textContent ?? "", /changed these instructions while you were editing/u);
+  assert.match(modal.querySelector('[role="alert"]')?.textContent ?? "", /These instructions changed while you were editing/u);
   assert.equal(disk.text, "## What this Bot is for\n- Bot edit\n");
 
   await click(button("Load theirs", modal));
@@ -122,56 +111,8 @@ test("an empty Instructions tab offers a written example and a way in", async ()
   await settle();
   assert.match(host.textContent ?? "", /No instructions yet/u);
   assert.match(host.textContent ?? "", /Review code changes and tell me what blocks a merge/u);
-  await click(button("Write instructions"));
+  await click(button("Write"));
   assert.ok(dialog()?.querySelector("textarea"));
-});
-
-test("the role is a one-line inline edit with Escape to cancel", async () => {
-  await act(async () => root.render(h(InstructionsTab, { bot })));
-  await settle();
-  const role = host.querySelector('button[aria-label="Edit role"]');
-  assert.ok(role);
-  await click(role);
-  const input = host.querySelector('input[aria-label="One-line role"]') as HTMLInputElement;
-  assert.ok(input);
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "Reviewer");
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-    input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  });
-  await settle();
-  assert.equal(host.querySelector('input[aria-label="One-line role"]'), null);
-  assert.match(host.textContent ?? "", /Code reviewer/u);
-});
-
-test("saving the role sends only the label and leaves the edit state", async () => {
-  await act(async () => root.render(h(InstructionsTab, { bot })));
-  await settle();
-  await click(host.querySelector('button[aria-label="Edit role"]'));
-  const input = host.querySelector('input[aria-label="One-line role"]') as HTMLInputElement;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "Reviewer");
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-    input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  });
-  await settle();
-  assert.deepEqual(labelPuts.at(-1), { label: "Reviewer" });
-  assert.equal(host.querySelector('input[aria-label="One-line role"]'), null);
-});
-
-test("a role change does not close a dirty instructions editor", async () => {
-  await act(async () => root.render(h(InstructionsTab, { bot })));
-  await settle();
-  await click(button("Edit instructions"));
-  const modal = dialog();
-  assert.ok(modal);
-  const editor = modal.querySelector("textarea") as HTMLTextAreaElement;
-  await type(editor, "- In progress\n");
-  // The store updates bot.label after a role save; the tab must keep the draft.
-  await act(async () => root.render(h(InstructionsTab, { bot: { ...bot, label: "Reviewer" } })));
-  await settle();
-  assert.ok(dialog());
-  assert.equal((dialog()!.querySelector("textarea") as HTMLTextAreaElement).value, "- In progress\n");
 });
 
 test("an older refresh cannot replace a newer file", async () => {
@@ -200,7 +141,7 @@ test("an older refresh cannot replace a newer file", async () => {
 test("closing a dirty editor asks before throwing the draft away", async () => {
   await act(async () => root.render(h(InstructionsTab, { bot })));
   await settle();
-  await click(button("Edit instructions"));
+  await click(button("Edit"));
   const modal = dialog();
   assert.ok(modal);
   await type(modal.querySelector("textarea") as HTMLTextAreaElement, "- Unsaved\n");
@@ -217,7 +158,7 @@ test("closing a dirty editor asks before throwing the draft away", async () => {
 test("the editor has a write/preview view switch", async () => {
   await act(async () => root.render(h(InstructionsTab, { bot })));
   await settle();
-  await click(button("Edit instructions"));
+  await click(button("Edit"));
   const modal = dialog();
   assert.ok(modal);
   const shell = modal.querySelector(".instructions-editor-shell") as HTMLElement;
@@ -229,10 +170,11 @@ test("the editor has a write/preview view switch", async () => {
   assert.equal(shell.dataset.view, "write");
 });
 
-test("an adopted Bot's 409 is an error state, not a crashed tab", async () => {
-  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "This Bot was made from a project. Its instructions live in the project's own files." }), { status: 409, headers: { "content-type": "application/json" } })) as typeof fetch;
-  await act(async () => root.render(h(InstructionsTab, { bot: { ...bot, adopted: true } })));
+test("a failed load is an error state with a retry, not a crashed tab", async () => {
+  globalThis.fetch = (async () => new Response(JSON.stringify({ error: "Bot not found" }), { status: 404, headers: { "content-type": "application/json" } })) as typeof fetch;
+  await act(async () => root.render(h(InstructionsTab, { bot })));
   await settle();
   assert.match(host.textContent ?? "", /Couldn't load instructions/u);
-  assert.match(host.textContent ?? "", /made from a project/u);
+  assert.match(host.textContent ?? "", /Bot not found/u);
+  assert.ok(button("Retry"));
 });

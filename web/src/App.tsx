@@ -191,16 +191,8 @@ function useNavigationHistory(narrow: boolean) {
         history.pushState(next, "", navigationUrl(next, location.pathname));
         return;
       }
-      const s = useApp.getState();
-      // On a phone the Details sheet is one history entry. Back from a section tab should return
-      // to the profile tab, not close the whole sheet; the next Back closes it.
-      if (narrowRef.current && s.detailsOpen && s.detailsTab !== "details" && route.view !== "overlay") {
-        useApp.setState({ detailsTab: "details" });
-        const next = navigationFor(useApp.getState(), true);
-        history.pushState(next, "", navigationUrl(next, location.pathname));
-        return;
-      }
       restoring = true;
+      const s = useApp.getState();
       useApp.setState(restoreNavigation(route, { ...s.historicalBots, ...s.bots }));
       restoring = false;
     };

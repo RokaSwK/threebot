@@ -81,17 +81,48 @@ function customText(existing: string): { managed: boolean; text: string } {
   return { managed: true, text: parts.custom.replace(/^\n+/u, "") };
 }
 
-/** What the Instructions tab loads: the owner's part, its revision, and the file's size. */
-export async function readInstructions({ botDir }: { botDir: string }): Promise<InstructionFile> {
-  const file = path.join(botDir, "AGENTS.md");
-  const existing = await readIfExists(file);
-  const { managed, text } = customText(existing);
+/**
+ * Where a Bot keeps its standing instructions.
+ * - A Bot in its own folder: the text after the managed block in its `AGENTS.md` (the "free zone").
+ * - A Bot made from a project: `.bot/INSTRUCTIONS.md`, which the gateway copies into the managed
+ *   block of `CLAUDE.local.md` and `AGENTS.override.md`. The text after those blocks is the user's
+ *   own file content from before adoption, so this tab never writes there.
+ */
+export type InstructionsTarget =
+  | { kind: "agents"; botDir: string }
+  | { kind: "adopted"; botDir: string; renderedFiles: string[] };
+
+export const ADOPTED_INSTRUCTIONS = "INSTRUCTIONS.md";
+
+const targetFile = (target: InstructionsTarget) => path.join(target.botDir, target.kind === "agents" ? "AGENTS.md" : ADOPTED_INSTRUCTIONS);
+
+/** An adopted Bot's instructions, sanitized, for the managed block. Empty when there are none. */
+export async function readAdoptedInstructions(botDir: string): Promise<string> {
+  return sanitizeInstructions(await readIfExists(path.join(botDir, ADOPTED_INSTRUCTIONS))).trim();
+}
+
+/** The largest file the instructions end up in, so the tab can warn before a harness cuts it. */
+async function renderedBytes(target: InstructionsTarget, existing: string): Promise<number> {
+  if (target.kind === "agents") return Buffer.byteLength(existing, "utf8");
+  const sizes = await Promise.all(target.renderedFiles.map(async (file) => Buffer.byteLength(await readIfExists(file), "utf8")));
+  return Math.max(0, ...sizes);
+}
+
+async function current(target: InstructionsTarget) {
+  const existing = await readIfExists(targetFile(target));
+  if (target.kind === "agents") return { existing, ...customText(existing) };
+  return { existing, managed: true, text: normalize(existing) };
+}
+
+/** What the Instructions tab loads: the owner's text, its revision, and the file's size. */
+export async function readInstructions(target: InstructionsTarget): Promise<InstructionFile> {
+  const { existing, managed, text } = await current(target);
   return {
-    path: "AGENTS.md",
+    path: target.kind === "agents" ? "AGENTS.md" : `.bot/${ADOPTED_INSTRUCTIONS}`,
     text,
     revision: revisionOf(text),
     bytes: Buffer.byteLength(text, "utf8"),
-    totalBytes: Buffer.byteLength(existing, "utf8"),
+    totalBytes: await renderedBytes(target, existing),
     maxChars: INSTRUCTION_LIMITS.customChars,
     warnAt: INSTRUCTION_LIMITS.warnTotalBytes,
     maxTotalBytes: INSTRUCTION_LIMITS.maxTotalBytes,
@@ -100,36 +131,38 @@ export async function readInstructions({ botDir }: { botDir: string }): Promise<
 }
 
 /**
- * Save the Instructions tab's text. The save only goes through if the owner's part still has
+ * Save the Instructions tab's text. The save only goes through if the owner's text still has
  * the revision the tab loaded; otherwise the Bot (or another tab) changed it, and the caller
- * gets the current text. The managed block is read from disk at save time and left untouched.
+ * gets the current text. A managed block is read from disk at save time and left untouched.
  */
-export function saveInstructions({ botDir, text, expectedRevision }: {
-  botDir: string; text: unknown; expectedRevision: unknown;
+export function saveInstructions(target: InstructionsTarget, { text, expectedRevision }: {
+  text: unknown; expectedRevision: unknown;
 }): Promise<InstructionSaveResult> {
   if (typeof text !== "string" || typeof expectedRevision !== "string") {
     return Promise.resolve({ ok: false, code: "invalid", message: "text and expectedRevision are required" });
   }
   const textError = instructionTextError(text);
   if (textError) return Promise.resolve({ ok: false, code: "invalid", message: textError });
-  const file = path.join(botDir, "AGENTS.md");
+  const file = targetFile(target);
   return withFileLock(file, async () => {
-    const existing = await readIfExists(file);
-    const { managed, text: current } = customText(existing);
+    const { existing, managed, text: before } = await current(target);
     if (!managed) return { ok: false, code: "invalid", message: "The Bot's instructions file is missing its managed block. Reload the tab." };
-    if (revisionOf(current) !== expectedRevision) {
-      return { ok: false, code: "conflict", message: "The instructions changed since you opened them.", revision: revisionOf(current), text: current };
+    if (revisionOf(before) !== expectedRevision) {
+      return { ok: false, code: "conflict", message: "The instructions changed since you opened them.", revision: revisionOf(before), text: before };
     }
     const next = sanitizeInstructions(text).trim();
-    const content = replaceCustom(existing, next);
-    const totalBytes = Buffer.byteLength(content, "utf8");
+    const content = target.kind === "agents" ? replaceCustom(existing, next) : next ? `${next}\n` : "";
+    // An adopted Bot's text lands inside other files; estimate the largest one after the change.
+    const totalBytes = target.kind === "agents"
+      ? Buffer.byteLength(content, "utf8")
+      : await renderedBytes(target, existing) - Buffer.byteLength(before, "utf8") + Buffer.byteLength(content, "utf8");
     const totalError = instructionTotalError(totalBytes);
     if (totalError) return { ok: false, code: "invalid", message: totalError };
     // Keep the temp-and-rename write, so a reader never sees half a file.
     await writeTextAtomic(file, content);
-    // Return what is actually on disk: `replaceCustom` adds the separator and a trailing newline,
-    // and a revision that disagreed with the next read would turn the next save into a false 409.
-    const saved = customText(content).text;
+    // Return what is actually on disk: the separator and trailing newline are added here, and a
+    // revision that disagreed with the next read would turn the next save into a false 409.
+    const saved = target.kind === "agents" ? customText(content).text : content;
     return {
       ok: true,
       revision: revisionOf(saved),

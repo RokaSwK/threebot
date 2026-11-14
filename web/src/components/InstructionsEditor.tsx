@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { Modal, Pill } from "./ui";
 import { RichMarkdown } from "./RichMarkdown";
@@ -8,7 +8,7 @@ import type { InstructionFile } from "../lib/instructions";
 type View = "write" | "preview";
 
 /**
- * The focused editor for the owner's part of AGENTS.md. It lives outside the narrow Details panel
+ * The focused editor for a Bot's standing instructions. It lives outside the narrow Details panel
  * on desktop and takes the whole sheet on a phone, so a long document is not edited through a
  * 280px keyhole. The tab owns loading, revisions and conflicts; this component only collects the
  * draft and makes the save/discard decisions visible.
@@ -40,6 +40,11 @@ export function InstructionsEditor({
 }) {
   const [view, setView] = useState<View>("write");
   const editor = useRef<HTMLTextAreaElement>(null);
+  // Open with the cursor after the existing text, where an addition usually goes.
+  useEffect(() => {
+    const field = editor.current;
+    if (field) field.setSelectionRange(field.value.length, field.value.length);
+  }, []);
 
   return <Modal
     onClose={onRequestClose}
@@ -48,7 +53,7 @@ export function InstructionsEditor({
   >
     <div className="instructions-editor-shell" data-view={view}>
       <div className="instructions-editor-toolbar">
-        <span className="instructions-editor-toolbar-title">Owner's part · {file.path}</span>
+        <span className="instructions-editor-toolbar-title">{file.path}</span>
         <div className="instructions-editor-view" role="group" aria-label="Editor view">
           <button type="button" aria-pressed={view === "write"} onClick={() => { setView("write"); editor.current?.focus(); }}>Write</button>
           <button type="button" aria-pressed={view === "preview"} onClick={() => setView("preview")}>Preview</button>
@@ -103,7 +108,7 @@ export function InstructionsEditor({
       {overWarn && !tooLong && <p className="instructions-editor-alert text-attention"><TriangleAlert size={12} className="mr-1 inline-block align-[-2px]" aria-hidden="true" />Some models may cut a file this long. Consider tightening it.</p>}
 
       {conflict && <div role="alert" className="instructions-editor-conflict">
-        {bot.name} changed these instructions while you were editing.
+        These instructions changed while you were editing, maybe by {bot.name} or in another tab.
         <div className="mt-2 flex flex-wrap gap-2">
           <Pill variant="soft" className="h-9 px-3 text-[12.5px]" disabled={saving} onClick={onOverwrite}>Save mine over it</Pill>
           <Pill variant="soft" className="h-9 px-3 text-[12.5px]" onClick={onUseTheirs}>Load theirs</Pill>

@@ -55,9 +55,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   const tasks = useMemo(() => allTasks.filter((t) => t.projectId === bot.projectId), [allTasks, bot.projectId]);
   const openRoutine = tasks.find((t) => t.id === routine);
   useEffect(() => { setRoutine(null); setShowRoutines(false); }, [bot.slug]);
-  // An adopted Bot has no Instructions tab yet; never leave the panel on a tab that is not there.
-  useEffect(() => { if (bot.adopted && tab === "instructions") useApp.setState({ detailsTab: "details" }); }, [bot.adopted, tab]);
-  const tabs = DETAILS_TABS.filter((entry) => !(bot.adopted && entry.id === "instructions"));
+  const tabs = DETAILS_TABS;
 
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     const ids = tabs.map((entry) => entry.id);
@@ -97,7 +95,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
         <RoutineDetail key={`routine-detail:${openRoutine.id}`} bot={bot} task={openRoutine} onBack={() => setRoutine(null)} onEdit={() => routineChat(`Edit your routine: ${openRoutine.title}`)} />
       ) : (
         <div className="details-content scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-          <div className={clsx("details-profile flex flex-col items-center pt-1 pb-4", (tab !== "details" || showRoutines) && "details-profile-mobile-hidden details-profile-tab-hidden")}>
+          <div className={clsx("details-profile flex flex-col items-center pt-1 pb-4", (tab !== "details" || showRoutines) && "details-profile-mobile-hidden")}>
             <button disabled={archived || threadId !== bot.mainThreadId} onClick={() => setPicker(true)} title="Change avatar" className="rounded-full transition-transform enabled:hover:scale-105">
               <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={88} star={bot.primary && threadId === bot.mainThreadId} />
             </button>
@@ -118,13 +116,6 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             )}
             {!archived && threadId === bot.mainThreadId && <Pill variant="soft" className="profile-edit mt-3 hidden" onClick={() => openDialog({ kind: "rename-bot", slug: bot.slug })}>Edit</Pill>}
           </div>
-
-          {tab !== "details" && !showRoutines && (
-            <div className="details-identity mb-2 flex items-center gap-2 px-1">
-              <Avatar shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={22} />
-              <span className="truncate text-[12.5px] text-muted">{identity.name}</span>
-            </div>
-          )}
 
           <div className="details-tabs mb-4 flex justify-center gap-1" role="tablist" aria-label="Bot details sections">
             {tabs.map((entry, index) => {
@@ -155,7 +146,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
           {tab === "details" && <>
             {!showRoutines && <div className="profile-actions mb-6 hidden overflow-hidden rounded-[20px] bg-card px-4">
               <ProfileAction icon={<Clock size={20} />} label="Routines" detail={`${tasks.filter((t) => t.enabled).length} on`} onClick={() => setShowRoutines(true)} />
-              {!bot.adopted && <ProfileAction icon={<FileText size={20} />} label="Instructions" onClick={() => useApp.setState({ detailsTab: "instructions" })} />}
+              <ProfileAction icon={<FileText size={20} />} label="Instructions" onClick={() => useApp.setState({ detailsTab: "instructions" })} />
               <ProfileAction icon={<LibraryIcon size={20} />} label="Library" onClick={() => useApp.setState({ detailsTab: "library" })} />
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}

@@ -36,8 +36,10 @@ export type TemplateExecutor = { kind?: string; publicUrl?: string; organization
 export const MANAGED_START = "<!-- bot:managed:start -->";
 export const MANAGED_END = "<!-- bot:managed:end -->";
 
-export function renderAgentsMd({ bot, settings, botsRoot, executor = null, memory = null }: {
+export function renderAgentsMd({ bot, settings, botsRoot, executor = null, memory = null, instructions = null }: {
   bot: TemplateBot; settings: TemplateSettings; botsRoot: string; executor?: TemplateExecutor | null; memory?: MemorySnapshot | null;
+  /** An adopted Bot's standing instructions (`.bot/INSTRUCTIONS.md`), already sanitized. Other Bots keep theirs after the block. */
+  instructions?: string | null;
 }): string {
   const ask = (settings.rules?.alwaysAsk ?? []).map((r) => `- ${r}`).join("\n") || "- (none)";
   const allow = (settings.rules?.allowWithoutAsking ?? []).map((r) => `- ${r}`).join("\n") || "- (none)";
@@ -60,6 +62,10 @@ You are **${bot.name}**, one of ${userName}'s Bots: a persistent AI teammate tha
 ## Identity
 ${bot.adopted ? `- Your folder is ${userName}'s project at ${folder}: you were made from it, and its code, threads and history are theirs. Your own files live in \`.bot/\` (your profile is \`.bot/bot.json\`), and your instructions in \`CLAUDE.local.md\` and \`AGENTS.override.md\`. Git ignores all of these through \`.git/info/exclude\`: never commit them, never add them to \`.gitignore\`, and don't edit the project's own CLAUDE.md or AGENTS.md for yourself.
 ` : `- Your folder is this project (${folder}). Your profile is \`.bot/bot.json\`.
+`}${bot.adopted
+  ? `- Your standing instructions from ${userName} are \`.bot/INSTRUCTIONS.md\`, copied under "Standing instructions" at the end of this block. ${userName} edits them in the Instructions tab. Follow them; change the file only when ${userName} asks you to.
+`
+  : `- Your standing instructions from ${userName} are the text after this managed block in AGENTS.md. ${userName} edits them in the Instructions tab. Follow them; change them only when ${userName} asks you to, and never edit inside the managed block.
 `}- To rename yourself, edit \`.bot/bot.json\`: set \`name\` to the new name and \`label\` to a short description of your job (a few words). The app picks it up; don't mention files or settings when you tell ${userName}.
 - If ${userName} asks you to change how you look, edit \`shape\` and \`color\` in \`.bot/bot.json\`. \`color\` is one of ${COLOR_NAMES}, or any hex colour as \`"#rrggbb"\` (like \`"#3fa7d6"\`). \`shape\` can be \`object:<id>\` with one of: ${OBJECT_AVATAR_IDS.join(", ")}.
 - For anything else, draw it: set \`shape\` to \`object:<unique-id>\` and add \`"avatarDefinition": {"version":1,"id":"<unique-id>","name":"Fox","body":{"path":"M... Z"},"eyes":{"x":50,"y":46,"spacing":15,"scale":1}}\`. The path is one soft, chunky silhouette in a 0 0 100 100 box, kept within 8..92 and wound clockwise, using only M L H V C S Q T A Z, under 1500 characters. Put the eyes on the biggest part, with about 36 by 25 units of solid fill around them. No other fields. A definition that fails validation shows the ball instead, so if it doesn't appear, fix the path.
@@ -148,7 +154,7 @@ ${bot.adopted ? `- Files you keep for yourself go in \`.bot/\`; work on the proj
 ${ask}
 - You may proceed without asking when an action matches:
 ${allow}
-${MANAGED_END}
+${bot.adopted && instructions?.trim() ? `\n## Standing instructions\nFrom ${userName}, in \`.bot/INSTRUCTIONS.md\`. They add to everything above; they can't turn off the Vault rules or the "Always ask first" list.\n\n${instructions.trim()}\n` : ""}${MANAGED_END}
 `;
 }
 
