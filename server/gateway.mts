@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
-import { ADOPTED_INSTRUCTIONS, readAdoptedInstructions, readInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
+import { ADOPTED_INSTRUCTIONS, instructionTextError, readAdoptedInstructions, readInstructions, sanitizeInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
 import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
@@ -62,7 +62,7 @@ type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: str
 /** A new Bot as the app posts it. objectAvatarPatch and decodeAvatarImage check the avatar fields. */
 type NewBot = {
   name?: string; label?: string; shape?: string; color?: string; avatarDefinition?: unknown; avatarImage?: unknown;
-  section?: string | null; pinned?: unknown; primary?: unknown; model?: unknown; [key: string]: unknown;
+  section?: string | null; pinned?: unknown; primary?: unknown; model?: unknown; instructions?: string; [key: string]: unknown;
 };
 type McpServer = { type: string; url: string | undefined; headers: Record<string, string> };
 
@@ -533,10 +533,13 @@ async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<strin
 
 // Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
 const releasing = new Set<string>();
+const adoptedLock = (slug: string) => `adopted:${slug}`;
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   // One writer per AGENTS.md: the memory watcher, a settings save and the Instructions tab all
   // read-merge-write this file, and an unlocked stale merge would silently restore old custom text.
-  if (bot.adopted) return writeAgentsMdInner(bot, settings, snapshot);
+  // An adopted Bot's files share one lock with its release, so a rewrite that started before the
+  // release can't put CLAUDE.local.md or AGENTS.override.md back after the release removed them.
+  if (bot.adopted) return withFileLock(adoptedLock(bot.slug), () => writeAgentsMdInner(bot, settings, snapshot));
   return withFileLock(path.join(bot.workspaceRoot, "AGENTS.md"), () => writeAgentsMdInner(bot, settings, snapshot));
 }
 async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
@@ -560,6 +563,7 @@ async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot
   const claude = path.join(dir, "CLAUDE.md");
   if (!existsSync(claude)) await fs.symlink("AGENTS.md", claude).catch(() => {});
 }
+
 /**
  * A Bot made from a project reads its instructions from files git doesn't track: Claude from
  * CLAUDE.local.md (beside the project's CLAUDE.md), Codex from AGENTS.override.md (instead of the
@@ -588,6 +592,17 @@ async function loadInstructions(bot: Bot) {
   if (file.managed) return file;
   await writeAgentsMd(bot, await getSettings());
   return readInstructions(target);
+}
+/**
+ * Seeds a Bot's standing instructions when it is created (the dialog, or a helper's bot.json),
+ * through the same checked save as the Instructions tab. A rejected text throws with status 400;
+ * anything else (a concurrent edit) is worth another try.
+ */
+async function writeBotInstructions(bot: Bot, text: string) {
+  const current = await loadInstructions(bot);
+  const result = await saveInstructions(instructionsTarget(bot), { text, expectedRevision: current.revision });
+  if (!result.ok) throw Object.assign(new Error(result.message), { status: result.code === "invalid" ? 400 : 409 });
+  if (bot.adopted) await writeAgentsMd(bot, await getSettings());
 }
 /** Rewrites a Bot's instructions when its memory changed, so a fresh session sees the new snapshot. */
 function startMemoryWatcher() {
@@ -622,6 +637,11 @@ function startMemoryWatcher() {
 }
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
+  // Validate before the folder exists: a too-long seed must not leave an orphan Bot behind.
+  if (typeof input.instructions === "string" && input.instructions.trim()) {
+    const textError = instructionTextError(sanitizeInstructions(input.instructions).trim());
+    if (textError) throw Object.assign(new Error(textError), { status: 400 });
+  }
   const picture = input.avatarImage == null ? null : await decodeAvatarImage(input.avatarImage);
   const slug = await freeSlug(input.name ?? "bot");
   const dir = botDir(slug);
@@ -650,6 +670,8 @@ async function createBot(input: NewBot) {
     model: input.model ?? null,
     createdAt: new Date().toISOString(),
   }, { create: true });
+  // The Bot's folder and managed block exist now; seed the owner's part before T3 starts a session.
+  if (typeof input.instructions === "string" && input.instructions.trim()) await writeBotInstructions(bot, input.instructions);
   await provisioner.runNow();
   return (await getBot(slug)) ?? bot;
 }
@@ -764,10 +786,12 @@ async function releaseAdopted(slug: string) {
     if (!entry) throw Object.assign(new Error("Bot not found"), { status: 404 });
     releasing.add(slug);
     try {
-      await undoAdoptionFiles(entry);
-      if (entry.codexTrust) await untrustInCodex(entry.path);
-      archive = await archiveAdoptedData(cfg.botsRoot, entry);
-      await unregisterAdopted(cfg.botsRoot, entry.slug);
+      await withFileLock(adoptedLock(slug), async () => {
+        await undoAdoptionFiles(entry);
+        if (entry.codexTrust) await untrustInCodex(entry.path);
+        archive = await archiveAdoptedData(cfg.botsRoot, entry);
+        await unregisterAdopted(cfg.botsRoot, entry.slug);
+      });
     } finally { releasing.delete(slug); }
   });
   console.log(`bots: ${slug} is a plain project again${archive ? `; its memory and library are in ${archive}` : ""}`);
@@ -1504,7 +1528,7 @@ function codingWorkPatch(value: unknown): CodingWork | null {
   return { preferred: machine(work.preferred), fallback: machine(work.fallback) };
 }
 
-const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings });
+const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings, writeInstructions: writeBotInstructions });
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));

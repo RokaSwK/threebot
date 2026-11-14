@@ -91,6 +91,19 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.match(rewritten, /<!-- bot:managed:start -->[\s\S]*Managed text\.[\s\S]*<!-- bot:managed:end -->/u);
     assert.match(rewritten, /## Mine\n- Be direct\.\n$/u);
     assert.equal((await request('/api/instructions', 'PUT', { slug: 'alpha', text: 'stale', expectedRevision: instructionsResponse.body.revision })).status, 409);
+
+    // A new Bot can be born with its owner's instructions.
+    const created = await request('/api/bots', 'POST', { name: 'Gamma', instructions: '## What this Bot does\n- Keep the docs true.\n' });
+    assert.equal(created.status, 200, JSON.stringify(created.body));
+    const gammaAgents = await readFile(path.join(botsRoot, 'gamma', 'AGENTS.md'), 'utf8');
+    assert.match(gammaAgents, /## What this Bot does\n- Keep the docs true\.\n/u);
+    assert.match(gammaAgents, /<!-- bot:managed:start -->/u);
+    // Leave the rest of this fixture as it was: two Bots, one main.
+    assert.equal((await request('/api/bots/gamma', 'DELETE')).status, 200);
+    // The same 12k cap as the tab applies before the folder exists.
+    const tooLong = await request('/api/bots', 'POST', { name: 'Delta', instructions: 'x'.repeat(12_001) });
+    assert.equal(tooLong.status, 400);
+    assert.equal((await request('/api/bots')).body.bots.some((bot: Bot) => bot.slug === 'delta'), false);
     assert.equal((await request('/api/bots/missing', 'PUT', { primary: true })).status, 404);
     // A colour is a palette name or a hex colour, stored as "#rrggbb"; anything else is refused.
     assert.equal((await request('/api/bots/alpha', 'PUT', { color: '#3FA7D6' })).body.color, '#3fa7d6');
