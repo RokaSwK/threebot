@@ -1049,8 +1049,18 @@ test('a room launches one idle thread per member in its own project, with the Bo
     assert.ok(room.members.every((member: Json) => member.runtimeMode !== 'full-access'), 'a room never raises a Bot\'s runtime mode');
     const listed = await fixture.request('/api/rooms');
     assert.deepEqual(listed.body.rooms.map((entry: Json) => entry.name), ['Design review']);
+    const sent = await fixture.request(`/api/rooms/${room.id}/messages`, 'POST', { text: '@Beta what do you think?' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    let turn: Json = null;
+    for (let i = 0; i < 100 && turn?.status !== 'done'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      turn = (await fixture.request(`/api/rooms/${room.id}`)).body.room.turns[0];
+    }
+    assert.equal(turn.status, 'done', 'the addressed Bot answered');
+    assert.deepEqual(turn.runs.map((run: Json) => [run.slug, run.status]), [['beta', 'replied']], 'only the Bot that was named answers');
     const removed = await fixture.request(`/api/rooms/${room.id}`, 'DELETE', {});
     assert.equal(removed.status, 200);
     assert.deepEqual((await fixture.request('/api/rooms')).body.rooms, []);
+    assert.deepEqual(removed.body.threads, { deleted: 2, failed: [] }, 'deleting a room deletes its member threads');
   } finally { await fixture.close(); }
 });

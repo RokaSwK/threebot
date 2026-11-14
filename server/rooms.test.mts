@@ -41,7 +41,7 @@ test("settings are validated at their boundaries", () => {
   assert.throws(() => normalizeSettings({ mode: "party" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ defaultResponder: "nobody" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ mentionPolicy: "sometimes" }, ["a"]), RoomsError);
-  assert.throws(() => normalizeSettings({ lead: "ghost" }, ["a", "b"]), RoomsError);
+  assert.equal(normalizeSettings({ lead: "ghost" }, ["a", "b"]).lead, "a", "a removed lead falls back to the first member");
   assert.equal(normalizeSettings({}, ["a", "b"]).lead, "a");
 });
 
@@ -152,8 +152,8 @@ test("a rejected update leaves the room as it was", async () => {
   const { file, done } = await dir();
   const rooms = createRooms({ file });
   const room = await rooms.create({ name: "Design", members: validateMembers(["alpha", "beta", "gamma"], bots) });
-  // Removing the lead without naming a new one is refused, and nothing of it may stick.
-  await assert.rejects(rooms.update(room.id, { name: "Renamed", members: ["beta", "gamma"] }), RoomsError);
+  // An invalid setting is refused after the name and members were applied: nothing of it may stick.
+  await assert.rejects(rooms.update(room.id, { name: "Renamed", members: ["beta", "gamma"], settings: { mode: "party" } }), RoomsError);
   await rooms.update(room.id, { pinned: true });
   const stored = (await rooms.get(room.id))!;
   assert.equal(stored.name, "Design");
