@@ -148,3 +148,18 @@ test("a Bot without standing instructions gets no empty section", () => {
   assert.doesNotMatch(plain, /## Standing instructions/u);
   assert.match(plain, /text after this managed block in AGENTS\.md/u);
 });
+
+test("an adopted Bot's size check counts the section the text is wrapped in", async (t) => {
+  const project = await mkdtemp(join(tmpdir(), "instructions-adopted-size-"));
+  t.after(() => rm(project, { recursive: true }));
+  const botDir = join(project, ".bot");
+  await mkdir(botDir);
+  const claude = join(project, "CLAUDE.local.md");
+  const target = { kind: "adopted" as const, botDir, renderedFiles: [claude] };
+  // The text alone fits under 32,000 bytes; with its heading it would not.
+  await writeFile(claude, "x".repeat(INSTRUCTION_LIMITS.maxTotalBytes - 300));
+  const before = await readInstructions(target);
+  const result = await saveInstructions(target, { text: "y".repeat(200), expectedRevision: before.revision });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.message, /limit is 32,000/u);
+});

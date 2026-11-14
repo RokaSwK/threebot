@@ -94,6 +94,10 @@ export type InstructionsTarget =
 
 export const ADOPTED_INSTRUCTIONS = "INSTRUCTIONS.md";
 
+/** Room for the "Standing instructions" heading and attribution the template puts around the text (with a long user name). */
+const ADOPTED_SECTION_OVERHEAD = 400;
+const adoptedSectionBytes = (text: string) => text.trim() ? Buffer.byteLength(text, "utf8") + ADOPTED_SECTION_OVERHEAD : 0;
+
 const targetFile = (target: InstructionsTarget) => path.join(target.botDir, target.kind === "agents" ? "AGENTS.md" : ADOPTED_INSTRUCTIONS);
 
 /** An adopted Bot's instructions, sanitized, for the managed block. Empty when there are none. */
@@ -155,7 +159,7 @@ export function saveInstructions(target: InstructionsTarget, { text, expectedRev
     // An adopted Bot's text lands inside other files; estimate the largest one after the change.
     const totalBytes = target.kind === "agents"
       ? Buffer.byteLength(content, "utf8")
-      : await renderedBytes(target, existing) - Buffer.byteLength(before, "utf8") + Buffer.byteLength(content, "utf8");
+      : await renderedBytes(target, existing) - adoptedSectionBytes(before) + adoptedSectionBytes(content);
     const totalError = instructionTotalError(totalBytes);
     if (totalError) return { ok: false, code: "invalid", message: totalError };
     // Keep the temp-and-rename write, so a reader never sees half a file.
