@@ -533,10 +533,13 @@ async function writeAdoptedMcpConfig(adoption: AdoptedBot, servers: Record<strin
 
 // Adopted Bots being turned back into plain projects: nothing may write their files meanwhile.
 const releasing = new Set<string>();
+const adoptedLock = (slug: string) => `adopted:${slug}`;
 async function writeAgentsMd(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
   // One writer per AGENTS.md: the memory watcher, a settings save and the Instructions tab all
   // read-merge-write this file, and an unlocked stale merge would silently restore old custom text.
-  if (bot.adopted) return writeAgentsMdInner(bot, settings, snapshot);
+  // An adopted Bot's files share one lock with its release, so a rewrite that started before the
+  // release can't put CLAUDE.local.md or AGENTS.override.md back after the release removed them.
+  if (bot.adopted) return withFileLock(adoptedLock(bot.slug), () => writeAgentsMdInner(bot, settings, snapshot));
   return withFileLock(path.join(bot.workspaceRoot, "AGENTS.md"), () => writeAgentsMdInner(bot, settings, snapshot));
 }
 async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot?: MemorySnapshot) {
@@ -783,10 +786,12 @@ async function releaseAdopted(slug: string) {
     if (!entry) throw Object.assign(new Error("Bot not found"), { status: 404 });
     releasing.add(slug);
     try {
-      await undoAdoptionFiles(entry);
-      if (entry.codexTrust) await untrustInCodex(entry.path);
-      archive = await archiveAdoptedData(cfg.botsRoot, entry);
-      await unregisterAdopted(cfg.botsRoot, entry.slug);
+      await withFileLock(adoptedLock(slug), async () => {
+        await undoAdoptionFiles(entry);
+        if (entry.codexTrust) await untrustInCodex(entry.path);
+        archive = await archiveAdoptedData(cfg.botsRoot, entry);
+        await unregisterAdopted(cfg.botsRoot, entry.slug);
+      });
     } finally { releasing.delete(slug); }
   });
   console.log(`bots: ${slug} is a plain project again${archive ? `; its memory and library are in ${archive}` : ""}`);
