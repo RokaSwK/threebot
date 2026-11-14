@@ -40,15 +40,16 @@ test("inherit reads the Bot's main thread once", async () => {
   assert.deepEqual(calls, [{ tag: "orchestration.getThreadProjection", payload: { threadId: "main-alpha" } }]);
 });
 
-test("an explicit room mode and model win over inherit", async () => {
+test("a pinned room model wins, but the Bot keeps its own runtime mode", async () => {
   const { rpc } = fakeRpc();
   const resolved = await resolveMemberLaunch({
     rpc,
     bot: bot("alpha"),
-    settings: settings({ runtimeMode: "approval-required", model: { instanceId: "codex", model: "pinned" } }),
+    // An old rooms.json may still carry a room-wide mode; it must not raise the Bot's.
+    settings: settings({ runtimeMode: "full-access", model: { instanceId: "codex", model: "pinned" } } as never),
     defaults: {},
   });
-  assert.equal(resolved.runtimeMode, "approval-required");
+  assert.equal(resolved.runtimeMode, "auto");
   assert.deepEqual(resolved.modelSelection, { instanceId: "codex", model: "pinned" });
 });
 

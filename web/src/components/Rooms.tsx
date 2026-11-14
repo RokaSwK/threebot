@@ -187,7 +187,7 @@ function RoomRow({ room, selected, large, onMenu }: { room: RoomSummary; selecte
         <span className="min-w-0 flex-1 pr-7">
           <span className="bot-row-name block truncate text-[13.5px] leading-5 text-fg">{room.name}</span>
           <span className="bot-row-preview flex min-w-0 items-center gap-1.5 text-[12.5px] leading-[18px] text-muted">
-            <span className="min-w-0 truncate">{room.members.length} bots · Read-only</span>
+            <span className="min-w-0 truncate">{room.members.length} Bots</span>
           </span>
         </span>
       </HoldButton>
@@ -270,7 +270,8 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   const [sectionChoice, setSectionChoice] = useState(initial?.section ?? "");
   const [newSection, setNewSection] = useState("");
   const appSettings = useApp((s) => s.settings);
-  const [members, setMembers] = useState<string[]>(initial?.members.map((member) => member.slug) ?? []);
+  // A member whose Bot was deleted (or can't join) leaves the room when it is saved.
+  const [members, setMembers] = useState<string[]>(initial?.members.map((member) => member.slug).filter((slug) => bots[slug] && !bots[slug].adopted) ?? []);
   const [settings, setSettings] = useState<RoomSettings>({ ...DEFAULT_ROOM_SETTINGS, ...(initial?.settings ?? {}), lead: initial?.settings?.lead ?? initial?.members[0]?.slug ?? "" });
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -279,14 +280,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   const [error, setError] = useState("");
 
   const update = (patch: Partial<RoomSettings>) => setSettings((current) => ({ ...current, ...patch }));
-  const candidates = useMemo(() => {
-    const known = Object.values(bots).sort((a, b) => a.name.localeCompare(b.name));
-    // A member whose Bot was deleted stays in the room as unavailable; it must remain removable here.
-    const missing = (initial?.members ?? []).filter((member) => !bots[member.slug]).map((member) => ({
-      slug: member.slug, name: member.name, label: "No longer a Bot", shape: member.shape, color: member.color, avatarImage: member.avatarImage,
-    }));
-    return [...known, ...missing];
-  }, [bots, initial]);
+  const candidates = useMemo(() => Object.values(bots).filter((bot) => !bot.adopted).sort((a, b) => a.name.localeCompare(b.name)), [bots]);
 
   const toggleMember = (slug: string) => {
     if (members.includes(slug)) {
@@ -383,16 +377,11 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   return (
     <Modal onClose={() => { if (!busy) onClose(); }} title={editing ? `Room · ${initial.name}` : "New Room"} className="w-[520px] max-w-full">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-        <div className="rounded-xl bg-card px-3 py-2.5 text-[12.5px] leading-[18px] text-muted">
-          <p className="mb-1 font-medium text-fg">How a room works</p>
-          <p>Each member gets its own thread in its own project. The room page reads those threads.</p>
-        </div>
-
         <Field label="Name" hint="Shown in the sidebar.">
           <input autoFocus={!editing} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} aria-label="Room name" className="h-10 w-full rounded-xl border border-line bg-elevated px-3 text-[14px] outline-none focus:border-line-strong" />
         </Field>
 
-        <Field label="Members" hint="Two to eight Bots. Each one gets a thread titled with the room's name.">
+        <Field label="Members" hint="Two to eight Bots. Each answers in its own thread for this room. Bots made from a project can't join.">
           <div role="group" aria-label="Room members" className="grid max-h-[200px] gap-1 overflow-y-auto rounded-xl border border-line p-1 scroll-thin">
             {candidates.map((bot) => {
               const checked = members.includes(bot.slug);
@@ -424,11 +413,6 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
             <Field label="Description" hint="One line about the room. The members see it in their prompt.">
               <input value={description} disabled={busy} onChange={(e) => setDescription(e.target.value)} aria-label="Room description" className="h-9 w-full rounded-xl border border-line bg-elevated px-2 text-[13px] outline-none focus:border-line-strong" />
             </Field>
-
-            <Field label="Runtime mode" hint="Inherit uses each Bot's own approval setting.">
-              <Select label="Runtime mode" value={settings.runtimeMode} disabled={busy} onChange={(value) => update({ runtimeMode: value as RoomSettings["runtimeMode"] })} options={[["inherit", "Inherit each Bot"], ["approval-required", "Approval required"], ["auto-accept-edits", "Auto-accept edits"], ["auto", "Auto"], ["full-access", "Full access"]]} />
-            </Field>
-            {settings.runtimeMode === "full-access" && <p className="text-[12px] text-danger">Full access acts without approval in a shared conversation.</p>}
 
             <Field label="Model" hint="Inherit uses each Bot's own model. Pin one to use it for the whole room.">
               <div className="flex items-center justify-between gap-2 rounded-xl border border-line px-2 py-1.5">

@@ -19,7 +19,8 @@ export type LaunchDefaults = { runtimeMode?: string; model?: unknown };
 type Projection = { thread?: { runtimeMode?: unknown; modelSelection?: unknown } | null } | null;
 
 /**
- * `inherit` reads the Bot's main thread once: its runtime mode and its model selection.
+ * Reads the Bot's main thread once: a room thread always gets the Bot's own runtime mode (a room
+ * never changes what a Bot may do without asking), and its model unless the room pins one.
  * A Bot with no main thread (or an unreadable projection) falls back to the app's defaults.
  */
 export async function resolveMemberLaunch({ rpc, bot, settings, defaults }: {
@@ -32,11 +33,9 @@ export async function resolveMemberLaunch({ rpc, bot, settings, defaults }: {
   if (bot.mainThreadId) {
     projection = (await rpc.call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }).catch(() => null)) as Projection;
   }
-  const runtimeMode = settings.runtimeMode !== "inherit"
-    ? settings.runtimeMode
-    : (typeof projection?.thread?.runtimeMode === "string" && projection.thread.runtimeMode)
-      || defaults.runtimeMode
-      || "auto";
+  const runtimeMode = (typeof projection?.thread?.runtimeMode === "string" && projection.thread.runtimeMode)
+    || defaults.runtimeMode
+    || "auto";
   const modelSelection = settings.model !== "inherit" && settings.model !== undefined && settings.model !== null
     ? settings.model
     : (projection?.thread?.modelSelection ?? bot.model ?? defaults.model ?? null);

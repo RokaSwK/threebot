@@ -958,7 +958,8 @@ const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJso
 const roomRoutes = createRoomRoutes({
   rooms,
   rpc: roomRpc,
-  bots: async () => (await listBots()).map((bot) => ({
+  // A Bot made from a project works in the user's own folder, so it can't join a room.
+  bots: async () => (await listBots()).filter((bot) => !bot.adopted).map((bot) => ({
     slug: bot.slug,
     name: bot.name,
     label: bot.label,

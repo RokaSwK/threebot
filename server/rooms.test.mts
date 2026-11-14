@@ -22,7 +22,6 @@ test("a new room stores the defaults and starts every member pending", async () 
   const room = await rooms.create({ name: "Design", members: validateMembers(["alpha", "beta"], bots) });
   assert.equal(room.settings.mode, DEFAULT_SETTINGS.mode);
   assert.equal(room.settings.lead, "alpha", "the first member is the lead by default");
-  assert.equal(room.settings.runtimeMode, "inherit");
   assert.equal(room.settings.maxWaves, 3);
   assert.deepEqual(room.members.map((member) => [member.slug, member.status, member.threadId]), [
     ["alpha", "pending", null], ["beta", "pending", null],
@@ -41,7 +40,6 @@ test("settings are validated at their boundaries", () => {
   assert.throws(() => normalizeSettings({ turnDeadlineMin: 121 }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ mode: "party" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ defaultResponder: "nobody" }, ["a"]), RoomsError);
-  assert.throws(() => normalizeSettings({ runtimeMode: "root" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ mentionPolicy: "sometimes" }, ["a"]), RoomsError);
   assert.throws(() => normalizeSettings({ lead: "ghost" }, ["a", "b"]), RoomsError);
   assert.equal(normalizeSettings({}, ["a", "b"]).lead, "a");

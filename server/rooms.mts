@@ -13,12 +13,10 @@ export const MAX_NAME = 60;
 export const MAX_DESCRIPTION = 200;
 export const MAX_GUIDANCE = 2_000;
 
-export const RUNTIME_MODES = ["inherit", "approval-required", "auto-accept-edits", "auto", "full-access"] as const;
 export const ROOM_MODES = ["panel", "roundtable"] as const;
 export const RESPONDERS = ["lead", "everyone", "mentions"] as const;
 export const MENTION_POLICIES = ["anywhere", "leading"] as const;
 
-export type RuntimeMode = (typeof RUNTIME_MODES)[number];
 export type RoomMode = (typeof ROOM_MODES)[number];
 export type DefaultResponder = (typeof RESPONDERS)[number];
 export type MentionPolicy = (typeof MENTION_POLICIES)[number];
@@ -28,8 +26,6 @@ export type RoomSettings = {
   defaultResponder: DefaultResponder;
   /** Member slug that answers when nobody is mentioned and the responder is `lead`. */
   lead: string;
-  /** `inherit` keeps each Bot's own runtime mode; resolved once, when its thread is created. */
-  runtimeMode: RuntimeMode;
   /** `inherit` keeps each Bot's own model, or a T3 model selection applied to every member. */
   model: unknown;
   mentionPolicy: MentionPolicy;
@@ -44,7 +40,6 @@ export type RoomSettings = {
 export const DEFAULT_SETTINGS: Omit<RoomSettings, "lead"> = {
   mode: "panel",
   defaultResponder: "lead",
-  runtimeMode: "inherit",
   model: "inherit",
   mentionPolicy: "anywhere",
   allowCrossMentions: true,
@@ -151,7 +146,6 @@ export function normalizeSettings(patch: unknown, members: string[], current?: R
     mode: pick("mode", ROOM_MODES, base.mode),
     defaultResponder: pick("defaultResponder", RESPONDERS, base.defaultResponder),
     lead: current && input.lead === undefined ? current.lead : String(input.lead ?? base.lead),
-    runtimeMode: pick("runtimeMode", RUNTIME_MODES, base.runtimeMode),
     model: input.model === undefined ? base.model : input.model,
     mentionPolicy: pick("mentionPolicy", MENTION_POLICIES, base.mentionPolicy),
     allowCrossMentions: input.allowCrossMentions === undefined ? base.allowCrossMentions : input.allowCrossMentions === true,

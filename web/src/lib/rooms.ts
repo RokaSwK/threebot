@@ -27,7 +27,6 @@ export type RoomTurn = {
 };
 
 export type RoomMode = "panel" | "roundtable";
-export type RoomRuntimeMode = "inherit" | "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 export type RoomMentionPolicy = "anywhere" | "leading";
 export type RoomDefaultResponder = "lead" | "everyone" | "mentions";
 
@@ -35,7 +34,6 @@ export type RoomSettings = {
   mode: RoomMode;
   defaultResponder: RoomDefaultResponder;
   lead: string;
-  runtimeMode: RoomRuntimeMode;
   model: "inherit" | ModelSelection;
   mentionPolicy: RoomMentionPolicy;
   allowCrossMentions: boolean;
@@ -76,7 +74,6 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   mode: "panel",
   defaultResponder: "lead",
   lead: "",
-  runtimeMode: "inherit",
   model: "inherit",
   mentionPolicy: "anywhere",
   allowCrossMentions: true,
