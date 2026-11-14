@@ -89,6 +89,26 @@ for (const kind of ["user", "bot"]) test(`${kind} message Copy uses its displaye
   assert.equal(document.activeElement, button("Message actions"));
 });
 
+test("a user message renders @Bot mentions as the bot chip", async () => {
+  const max = { slug: "max", name: "Max", mainThreadId: "max-main", shape: "sphere", color: "teal" };
+  useApp.setState({ bots: { example: bot, max } });
+  await render("user", "Hola @Max, ping");
+  const chips = [...document.querySelectorAll("button.bot-mention")];
+  assert.equal(chips.length, 1);
+  assert.equal(chips[0].getAttribute("aria-label"), "Open Max's chat");
+  const bubble = host.querySelector('[data-message-body="plain"]');
+  assert.equal(bubble.textContent, "Hola Max, ping");
+  assert.doesNotMatch(bubble.textContent, /@Max/);
+});
+
+test("a user message does not turn @Maxine into a Max mention", async () => {
+  const max = { slug: "max", name: "Max", mainThreadId: "max-main", shape: "sphere", color: "teal" };
+  useApp.setState({ bots: { example: bot, max } });
+  await render("user", "Hola @Maxine");
+  assert.equal(document.querySelectorAll("button.bot-mention").length, 0);
+  assert.match(host.textContent, /@Maxine/);
+});
+
 test("message context menu offers Copy and Escape restores focus without changing chat text", async () => {
   await render("bot", "A message to copy");
   const event = await contextMenu(host.querySelector(".bubble"));

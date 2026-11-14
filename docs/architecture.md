@@ -47,6 +47,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 - Tool calls are hidden. While a run is active, a working line shows the animated avatar and a short phrase from the latest tool (for example "Working on your computer", "Searching the web").
 - Approvals, questions, secret requests, subagents and errors become cards.
 - Only the events listed in the mapping above become centered system lines.
+- Typing `@` in a composer offers the visible Bots (the open Bot is left out). Picking one inserts `@Name` as plain text; Bot and user bubbles both show it as a chip linking to that Bot.
 
 ## Security
 
