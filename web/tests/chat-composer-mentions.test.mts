@@ -241,3 +241,11 @@ test("picking a bot inserts @Name and allows typing to continue", async () => {
   assert.equal(textarea().value, "@Alpha please review");
   assertNoMenu();
 });
+
+test("a query no Bot matches shows nothing and Enter still sends", async () => {
+  await render();
+  await type("Mail me at @nobody");
+  assertNoMenu("no empty panel");
+  await keyDown("Enter");
+  assert.equal(sends.length, 1);
+});

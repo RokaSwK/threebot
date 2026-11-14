@@ -3,8 +3,7 @@ import test from "node:test";
 import {
   activeMentionQuery,
   mentionSuggestions,
-  shouldSendOnEnter,
-  withMention,
+  mentionEdit,
   type MentionBot,
 } from "../src/lib/mentionMenu.ts";
 
@@ -41,24 +40,20 @@ test("mentionSuggestions caps at 8 and sorts alphabetically", () => {
   assert.equal(res[7].name, "Bot H");
 });
 
-test("withMention preserves text before and after, appends one space, and updates cursor", () => {
-  const bot: MentionBot = { slug: "bolt", name: "Bolt", label: "Code reviewer" };
-  const draft = "Hello @Bo and welcome";
-  const cursor = 9; // right after "Bo"
+// Apply the edit the composer makes when a Bot is picked.
+const pick = (draft: string, cursor: number, bot: MentionBot) => {
+  const edit = mentionEdit(draft, cursor, bot);
+  return { value: draft.slice(0, edit.from) + edit.insert + draft.slice(edit.to), cursor: edit.from + edit.insert.length };
+};
 
-  const res = withMention(draft, cursor, bot);
-  assert.equal(res.value, "Hello @Bolt and welcome");
-  assert.equal(res.cursor, 12); // "Hello @Bolt " length is 12
+test("picking keeps the text around the query, adds one space and puts the caret after it", () => {
+  const bot: MentionBot = { slug: "bolt", name: "Bolt", label: "Code reviewer" };
+  assert.deepEqual(pick("Hello @Bo and welcome", 9, bot), { value: "Hello @Bolt and welcome", cursor: 12 });
 });
 
-test("withMention supports names with spaces", () => {
+test("picking supports names with spaces", () => {
   const bot: MentionBot = { slug: "bob-ross", name: "Bob Ross", label: "Painter" };
-  const draft = "Ask @Bob";
-  const cursor = 8;
-
-  const res = withMention(draft, cursor, bot);
-  assert.equal(res.value, "Ask @Bob Ross ");
-  assert.equal(res.cursor, 14);
+  assert.deepEqual(pick("Ask @Bob", 8, bot), { value: "Ask @Bob Ross ", cursor: 14 });
 });
 
 test("activeMentionQuery detects completed mention and closes", () => {
@@ -76,9 +71,4 @@ test("activeMentionQuery closes once the mention is complete and prose follows",
     { slug: "max-power", name: "Max Power", label: "" },
   ];
   assert.deepEqual(activeMentionQuery("@Max P", 6, bots), { start: 0, query: "Max P" });
-});
-
-test("shouldSendOnEnter is false only when menu has a selection", () => {
-  assert.equal(shouldSendOnEnter(true), false);
-  assert.equal(shouldSendOnEnter(false), true);
 });

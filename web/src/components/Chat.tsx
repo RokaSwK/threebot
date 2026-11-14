@@ -34,7 +34,7 @@ import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
 import type { Bot } from "../lib/types";
-import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, splitBubbles, takeAttachmentFiles } from "../lib/chatBehavior";
+import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles, takeAttachmentFiles } from "../lib/chatBehavior";
 import { chatDraft } from "../lib/chatDrafts";
 import { parseReply, replyLabel, withReply } from "../lib/reply";
 import { activeWork, messageCommand, useRuntimeWork, useWorkCommand } from "../lib/runtimeApi";
@@ -45,7 +45,7 @@ import { TaskChanges } from "./TaskChanges";
 import { ChildApprovals, ForceStop } from "./RunControls";
 import { MentionMenu } from "./MentionMenu";
 import { UserMessageText } from "./UserMessageText";
-import { activeMentionQuery, mentionSuggestions, withMention, type MentionBot } from "../lib/mentionMenu";
+import { activeMentionQuery, mentionEdit, mentionSuggestions, type MentionBot } from "../lib/mentionMenu";
 import { useChatScroll } from "../lib/chatScroll";
 import "../mobile-chat.css";
 
@@ -522,7 +522,6 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
   /** The exact text the menu was dismissed for with Escape; cleared on the next edit. */
   const mentionDismissed = useRef<string | null>(null);
-  const pendingCursor = useRef<number | null>(null);
   const suggestions = useMemo(() => (mention ? mentionSuggestions(mention.query, mentionCandidates) : []), [mention, mentionCandidates]);
 
   const recomputeMention = useCallback((value: string, cursor: number | null) => {
@@ -542,45 +541,13 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
     });
   }, [archived, mentionCandidates]);
 
-  /** Leaves the caret after the inserted text: React repaints the textarea and iOS resets the selection. */
-  const applyCursor = useCallback((position: number) => {
-    pendingCursor.current = position;
-    ta.current?.setSelectionRange(position, position);
-    const place = () => {
-      const el = ta.current;
-      if (!el || pendingCursor.current !== position) return;
-      el.setSelectionRange(position, position);
-      if (position >= el.value.length - 2) el.scrollTop = el.scrollHeight;
-    };
-    setTimeout(place, 0);
-    setTimeout(place, 25);
-    requestAnimationFrame(place);
-    setTimeout(() => {
-      if (pendingCursor.current === position) pendingCursor.current = null;
-    }, 150);
-  }, []);
-
-  useEffect(() => {
-    const onSelectionChange = () => {
-      const el = ta.current;
-      if (!el || document.activeElement !== el || pendingCursor.current === null) return;
-      if (el.selectionStart !== pendingCursor.current || el.selectionEnd !== pendingCursor.current) {
-        el.setSelectionRange(pendingCursor.current, pendingCursor.current);
-      }
-    };
-    document.addEventListener("selectionchange", onSelectionChange);
-    return () => document.removeEventListener("selectionchange", onSelectionChange);
-  }, []);
-
   const pickMention = useCallback((picked: MentionBot) => {
     const el = ta.current;
-    const cursor = el ? el.selectionStart : text.length;
-    const next = withMention(text, cursor, picked);
-    setText(next.value);
-    applyCursor(next.cursor);
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    replaceText(el, mentionEdit(el.value, el.selectionStart, picked), setText);
     setMention(null);
-    el?.focus({ preventScroll: true });
-  }, [text, setText, applyCursor]);
+  }, [setText]);
   useEffect(() => {
     focus.onEntry(ta.current);
     setPopover(null);
@@ -597,9 +564,8 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
     if (el) {
       el.style.height = "0px";
       el.style.height = Math.min(el.scrollHeight, 120) + "px";
-      recomputeMention(text, el.selectionStart);
     }
-  }, [text, draft, recomputeMention]);
+  }, [text, draft]);
 
   const t3Voice = useApp((s) => s.runtimeFeatures.voiceTranscription);
   const [transcribing, setTranscribing] = useState(false);
@@ -762,7 +728,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
         }}
       >
         <div ref={shellRef} className="composer-shell relative rounded-[22px] border border-line bg-elevated focus-within:border-line-strong">
-          {mention && !archived && (
+          {mention && !archived && suggestions.length > 0 && (
             <MentionMenu
               bots={suggestions}
               query={mention.query}
@@ -832,11 +798,6 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
                 recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart);
               }}
               onSelect={(e) => recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart)}
-              onKeyUp={(e) => {
-                if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Enter" && e.key !== "Escape" && e.key !== "Tab") {
-                  recomputeMention(e.currentTarget.value, e.currentTarget.selectionStart);
-                }
-              }}
               onChange={(e) => {
                 const target = e.currentTarget;
                 // Typing ends the Escape dismissal.
@@ -857,42 +818,37 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
                   submit();
                   return;
                 }
-                if (mention) {
-                  if (suggestions.length > 0) {
-                    if (e.key === "ArrowDown") {
-                      e.preventDefault();
-                      setMention((current) => current ? { ...current, index: (current.index + 1) % suggestions.length } : null);
-                      return;
-                    }
-                    if (e.key === "ArrowUp") {
-                      e.preventDefault();
-                      setMention((current) => current ? { ...current, index: (current.index - 1 + suggestions.length) % suggestions.length } : null);
-                      return;
-                    }
-                    if (e.key === "Enter" || e.key === "Tab") {
-                      e.preventDefault();
-                      const picked = suggestions[mention.index];
-                      if (picked) pickMention(picked);
-                      return;
-                    }
+                if (mention && suggestions.length > 0) {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setMention((current) => current ? { ...current, index: (current.index + 1) % suggestions.length } : null);
+                    return;
+                  }
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setMention((current) => current ? { ...current, index: (current.index - 1 + suggestions.length) % suggestions.length } : null);
+                    return;
+                  }
+                  if (e.key === "Enter" || e.key === "Tab") {
+                    e.preventDefault();
+                    const picked = suggestions[mention.index];
+                    if (picked) pickMention(picked);
+                    return;
                   }
                   if (e.key === "Escape") {
                     e.preventDefault();
                     mentionDismissed.current = e.currentTarget.value;
                     setMention(null);
+                    return;
+                  }
+                }
                 // A new line in a list item continues the list: Shift+Enter on desktop, Enter on mobile.
                 if (e.key === "Enter" && (mobile || e.shiftKey) && !e.nativeEvent.isComposing) {
                   const el = e.currentTarget;
                   const edit = listNewline(el.value, el.selectionStart, el.selectionEnd);
                   if (edit) {
                     e.preventDefault();
-                    el.setSelectionRange(edit.from, edit.to);
-                    // insertText keeps the browser's undo history and fires onChange; fall back where it is missing.
-                    const done = edit.insert ? document.execCommand?.("insertText", false, edit.insert) : document.execCommand?.("delete");
-                    if (!done) {
-                      el.setRangeText(edit.insert, edit.from, edit.to, "end");
-                      setText(el.value);
-                    }
+                    replaceText(el, edit, setText);
                     return;
                   }
                 }

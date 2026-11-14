@@ -72,25 +72,8 @@ export function activeMentionQuery(text: string, cursor: number, bots: MentionBo
   return q;
 }
 
-/**
- * Inserts `@Name ` in place of the query range [start, cursor) and returns the new value and cursor.
- */
-export function withMention(draft: string, cursor: number, bot: MentionBot): { value: string; cursor: number } {
+/** The edit that puts `@Name ` in place of the query before `cursor` (and one space after it). */
+export function mentionEdit(draft: string, cursor: number, bot: MentionBot): { from: number; to: number; insert: string } {
   const q = mentionQueryAt(draft, cursor);
-  const start = q ? q.start : cursor;
-  const prefix = draft.slice(0, start);
-  let suffix = draft.slice(cursor);
-  if (suffix.startsWith(" ")) {
-    suffix = suffix.slice(1);
-  }
-  const insert = `@${bot.name} `;
-  return {
-    value: prefix + insert + suffix,
-    cursor: start + insert.length,
-  };
-}
-
-/** False only when the menu has a selectable row. */
-export function shouldSendOnEnter(menuHasSelection: boolean): boolean {
-  return !menuHasSelection;
+  return { from: q ? q.start : cursor, to: draft[cursor] === " " ? cursor + 1 : cursor, insert: `@${bot.name} ` };
 }

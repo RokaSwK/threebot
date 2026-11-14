@@ -98,3 +98,15 @@ export function listNewline(value: string, start: number, end = start): { from: 
   const marker = bullet ?? `${Number(number) + 1}${delimiter}`;
   return { from: start, to: end, insert: `\n${indent}${marker} ${task}` };
 }
+
+/**
+ * Replace part of the composer's text as if typed: insertText keeps the browser's undo history,
+ * leaves the caret after the new text and fires onChange. Falls back where it is missing.
+ */
+export function replaceText(el: HTMLTextAreaElement, edit: { from: number; to: number; insert: string }, setText: (value: string) => void) {
+  el.setSelectionRange(edit.from, edit.to);
+  const done = edit.insert ? document.execCommand?.("insertText", false, edit.insert) : document.execCommand?.("delete");
+  if (done) return;
+  el.setRangeText(edit.insert, edit.from, edit.to, "end");
+  setText(el.value);
+}
