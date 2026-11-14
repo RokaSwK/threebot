@@ -39,16 +39,22 @@ export type PushPayload = {
   room?: string;
 };
 
+// What a presence report may name: a Bot reference as the page keeps it (a slug, or
+// `archived:<thread id>`) and a room id. Anything else is a malformed report.
+const BOT_VIEW = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,199}$/;
+const ROOM_VIEW = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
 /**
- * What a device says it is looking at, as one key: the Bot's conversation or a room. Both arrive
- * from the page, so they are untrusted text and are compared, never used as a path.
+ * What a device says it is looking at, as one key: the Bot's conversation or a room. null means
+ * nothing (looked away); undefined means the report is malformed. Both arrive from the page, so
+ * they are untrusted text and are compared, never used as a path. A room wins over a Bot.
  */
-function viewKey(bot: unknown, room: unknown): string | null {
-  const text = (value: unknown) => typeof value === "string" && value && value.length <= 200 ? value : null;
-  const watchedRoom = text(room);
-  if (watchedRoom) return `room:${watchedRoom}`;
-  const watchedBot = text(bot);
-  return watchedBot ? `bot:${watchedBot}` : null;
+function viewKey(bot: unknown, room: unknown): string | null | undefined {
+  const absent = (value: unknown) => value === undefined || value === null || value === "";
+  if (!absent(room) && !(typeof room === "string" && ROOM_VIEW.test(room))) return undefined;
+  if (!absent(bot) && !(typeof bot === "string" && BOT_VIEW.test(bot))) return undefined;
+  if (typeof room === "string" && room) return `room:${room}`;
+  return typeof bot === "string" && bot ? `bot:${bot}` : null;
 }
 
 type VapidDetails = { subject: string; publicKey: string; privateKey: string };
@@ -175,10 +181,11 @@ export function createPushStore({
      * must show every push it receives (Safari drops a subscription after three it didn't show),
      * so what is already on screen isn't sent. A room wins over a Bot when both arrive.
      */
-    async presence(endpoint: unknown, bot: unknown, room: unknown = null): Promise<{ ok: true; watching: boolean }> {
+    async presence(endpoint: unknown, bot: unknown, room: unknown = null): Promise<{ ok: true; watching: boolean } | { ok: false; message: string }> {
+      const view = viewKey(bot, room);
+      if (view === undefined) return { ok: false, message: "bot and room must be a Bot reference, a room id or null." };
       const current = await load();
       if (typeof endpoint !== "string" || !current.subscriptions.some((subscription) => subscription.endpoint === endpoint)) return { ok: true, watching: false };
-      const view = viewKey(bot, room);
       if (!view) {
         watching.delete(endpoint);
         return { ok: true, watching: false };

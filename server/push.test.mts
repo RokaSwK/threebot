@@ -159,6 +159,26 @@ test("a room push is held back on the device that has that room open", async () 
   assert.equal((await store.send(roomPush("room-1"))).sent, 2);
   await store.presence(subscription.endpoint, null, null);
   assert.equal((await store.send(roomPush("room-1"))).sent, 2);
+  sent.length = 0;
+
+  // Switching from a Bot to a room moves the claim the other way: the Bot's push gets through.
+  await store.presence(subscription.endpoint, "alpha", null);
+  await store.presence(subscription.endpoint, null, "room-1");
+  assert.equal((await store.send(payload("alpha"))).sent, 2);
+  assert.deepEqual(await store.send(roomPush("room-1")), { sent: 1, removed: 0, watching: 1 });
+});
+
+test("a malformed presence report is refused and leaves the claim alone", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  await store.subscribe(subscription);
+  // An older page sends only the Bot, and the page's archived references are Bot references too.
+  assert.deepEqual(await store.presence(subscription.endpoint, "archived:2f3c-9a"), { ok: true, watching: true });
+  assert.deepEqual(await store.presence(subscription.endpoint, "alpha"), { ok: true, watching: true });
+  for (const [bot, room] of [[42, null], [{}, null], ["a".repeat(201), null], ["../alpha", null], [null, 7], [null, "room/1"], ["alpha", "x".repeat(65)]]) {
+    assert.equal((await store.presence(subscription.endpoint, bot, room)).ok, false, JSON.stringify([bot, room]));
+  }
+  assert.equal((await store.send(payload("alpha"))).watching, 1);
 });
 
 test("pushes are signed with a contact Apple accepts", async () => {

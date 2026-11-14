@@ -136,11 +136,13 @@ does not add a T3 schema change.
 
 Browsers require every push to show a notification, and Safari drops a subscription after three
 that showed nothing. So `web/src/sw.ts` always shows what it receives, and the gateway is the one
-that holds a push back: while a device has a Bot open and in focus, or a room page open, it says so
-with `POST /api/push/presence` (`{endpoint, bot, room}`, repeated every 12 s, forgotten after 30 s
+that holds a push back: while a device has a Bot's conversation or a room open and in focus, it says
+so with `POST /api/push/presence` (`{endpoint, bot, room}`, repeated every 12 s, forgotten after 30 s
 or when the page looks away), and a push about that Bot — or about that room — is not sent to that
 device. A room push carries the room id, so it is held back on the device looking at that room and
-still reaches a phone looking at a Bot. The push uses the same notification tag as the page's own
+still reaches a phone looking at a Bot or at another room. A report names a room or a Bot (a room
+wins when both arrive); any other value is refused with a 400, and an older page that sends only
+`bot` keeps working. The push uses the same notification tag as the page's own
 notification, so the two replace each other.
 
 Pushes are signed with `VAPID_SUBJECT` when set, else `APP_URL`, else the address the browser
