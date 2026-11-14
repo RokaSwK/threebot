@@ -95,7 +95,7 @@ export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }:
     + "If the user addresses you directly, answer briefly even if it is a single line; reply exactly \"(pass)\" only when the message is for the room in general and you have nothing to add.";
   const about = [room.description, room.guidance].filter((part) => part && part.trim() !== "").join("\n");
   const mode = room.settings.mode === "roundtable"
-    ? "Members speak in order and you see what they said before you in this turn. To bring someone back in, @mention them."
+    ? "Members speak in order and you see what they said before you in this turn. @mention a teammate only when you need their answer: it brings them back in."
     : "Teammates in this room answer independently; they do not see your reply, and mentioning a teammate here does not wake it.";
   const body = lines.length > 0 ? `Recent room:\n${lines.join("\n")}` : "";
   const quote = message.replyTo ? "[replying to a message from the room]" : "";
@@ -123,7 +123,7 @@ export function crossMentions(replies: { slug: string; text: string }[], room: R
     }
     for (const slug of slugs) {
       const member = available.find((candidate) => candidate.slug === slug);
-      if (member) next.set(member.slug, member);
+      if (member && member.slug !== reply.slug) next.set(member.slug, member);
     }
   }
   return [...next.values()];
@@ -252,12 +252,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     const roundtable = room.settings.mode === "roundtable";
     const maxWaves = roundtable ? room.settings.maxWaves : 1;
     const budget = Math.max(1, room.settings.maxReplies);
-    /** One run per member, the latest one; `null` when the member could not start. */
-    const runs = new Map<string, string | null>();
-    /** How each member's part ended; the view turns a failure into a room line. */
-    const outcomes = new Map<string, Pick<RoomRun, "status" | "error" | "at">>();
-    /** Members that passed their timeout. `patchTurn` must not drop what `markRunLate` recorded. */
-    const lateMembers = new Set<string>();
+    /** Every time a member spoke in this turn, in order: a roundtable can bring a member back in. */
+    const parts: RoomRun[] = [];
     /** What this turn has said so far, in order: the roundtable's shared floor. */
     const spoken: { slug: string; text: string }[] = [];
     let said = 0;
@@ -265,6 +261,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
 
     const speakOne = async (candidate: RoomMember): Promise<void> => {
       const at = () => new Date(nowMs()).toISOString();
+      const part: RoomRun = { slug: candidate.slug, runId: null };
+      parts.push(part);
       try {
         const member = await ensureThread(room, candidate, roster, launchDefaults);
         if (!member.threadId) throw new Error("the member has no thread");
@@ -305,9 +303,9 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
             })).catch(() => {});
           },
         });
-        runs.set(member.slug, result.runId);
+        part.runId = result.runId;
         if (result.status === "timeout" && result.runId) {
-          lateMembers.add(member.slug);
+          part.late = true;
           await rooms.markRunLate(roomId, turn.id, member.slug, result.runId).catch(() => {});
         }
         const replied = result.reply && !isPass(result.reply.text) ? result.reply.text : null;
@@ -315,7 +313,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           said += 1;
           spoken.push({ slug: member.slug, text: clip(replied, 1_200) });
         }
-        outcomes.set(member.slug, { at: at(), status: result.status === "completed"
+        Object.assign(part, { at: at(), status: result.status === "completed"
           ? (replied ? "replied" : result.reply ? "passed" : "no-reply")
           : result.status === "timeout"
             ? "timeout"
@@ -326,24 +324,18 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         log(`[rooms] ${room.name}: ${member.slug} ${result.status === "timeout" ? "late" : result.status}${replied ? "" : " (no reply)"}`);
       } catch (err) {
         if (err instanceof StoppedError) {
-          outcomes.set(candidate.slug, { status: "stopped", at: at() });
+          Object.assign(part, { status: "stopped", at: at() });
           return;
         }
         log(`[rooms] ${room.name}: ${candidate.slug} failed: ${(err as Error).message}`);
-        runs.set(candidate.slug, null);
-        outcomes.set(candidate.slug, { status: "failed", error: clip((err as Error).message, 200), at: at() });
+        Object.assign(part, { status: "failed", error: clip((err as Error).message, 200), at: at() });
       }
     };
 
-    const runList = (): RoomRun[] => [...runs].map(([slug, runId]) => ({
-      slug,
-      runId,
-      ...(lateMembers.has(slug) ? { late: true } : {}),
-      ...(outcomes.get(slug) ?? {}),
-    }));
+    const runList = (): RoomRun[] => parts.map((part) => ({ ...part }));
     const statusAfter = (): RoomTurn["status"] => {
       if (state.abort) return "stopped";
-      const list = [...outcomes.values()];
+      const list = parts.filter((part) => part.status !== undefined);
       const everyFailed = list.length > 0 && list.every((outcome) => outcome.status === "failed" || outcome.status === "timeout" || outcome.status === "stopped");
       return everyFailed ? "failed" : "done";
     };
@@ -357,20 +349,21 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
       while (!state.abort && speakers.length > 0 && wave < maxWaves && said < budget && nowMs() < turnDeadline) {
         wave += 1;
         const batch = speakers.slice(0, Math.max(1, budget - said));
+        const heard = spoken.length;
         if (roundtable) {
           // A roundtable hears itself: one at a time, in room order, so each reply can be answered.
           for (const member of batch) {
-            if (state.abort || said >= budget) break;
+            // The time limit counts before each Bot, not only between rounds: a dispatch past it is wasted.
+            if (state.abort || said >= budget || nowMs() >= turnDeadline) break;
             await speakOne(member);
           }
         } else {
           await Promise.all(batch.map((member) => speakOne(member)));
         }
         if (!roundtable || !room.settings.allowCrossMentions || state.abort) break;
-        // One turn per member per message: a member that already spoke is not woken again by a
-        // courtesy mention, which used to produce the same "nothing pending" twice in a row.
-        speakers = crossMentions(spoken.slice(-batch.length), room, nameOf)
-          .filter((member) => !spoken.some((line) => line.slug === member.slug));
+        // A reply that @mentions a teammate brings it back in, even one that already spoke; the
+        // round, reply and time limits bound it.
+        speakers = crossMentions(spoken.slice(heard), room, nameOf);
       }
 
       const finalStatus = statusAfter();
@@ -418,13 +411,15 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     const next = queue?.shift();
     if (!queue || queue.length === 0) queues.delete(roomId);
     if (!next) return;
+    // Reserve the room before the first await: a send or another drain must not start a turn meanwhile.
+    active.set(roomId, { turnId: next.turnId, abort: false, threads: new Map() });
     const room = await rooms.get(roomId);
     const turn = room?.turns.find((candidate) => candidate.id === next.turnId);
     if (!turn || turn.status !== "queued") {
+      if (active.get(roomId)?.turnId === next.turnId) active.delete(roomId);
       void drain(roomId);
       return;
     }
-    active.set(roomId, { turnId: turn.id, abort: false, threads: new Map() });
     try {
       await begin(roomId, turn, next.message);
     } catch (err) {

@@ -301,19 +301,37 @@ test("maxReplies caps how many members speak in one turn", async () => {
   await done();
 });
 
-test("a member that already spoke is not woken again by a courtesy mention", async () => {
-  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone", maxWaves: 5, maxReplies: 15 });
+test("a roundtable reply that @mentions an earlier speaker brings it back in", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone", maxWaves: 3, maxReplies: 10 });
   const runtime = fakeRuntime();
   const rooms = createRooms({ file });
   const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
   await engine.send(room.id, { text: "preséntense" });
   await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
-  runtime.complete("thread-alpha", "Alpha se presenta. @Beta, ¿algo que decir?");
+  runtime.complete("thread-alpha", "Alpha se presenta.");
   await waitFor(() => runtime.dispatched.length === 2, "the second speaker");
-  runtime.complete("thread-beta", "Beta se presenta");
-  // Alpha named Beta, who had not spoken yet; Beta naming Alpha back must not loop.
+  runtime.complete("thread-beta", "Beta se presenta. @Alpha, ¿qué opinas del plan?");
+  await waitFor(() => runtime.dispatched.length === 3, "Alpha brought back in");
+  assert.equal(runtime.dispatched[2].threadId, "thread-alpha");
+  runtime.complete("thread-alpha", "Me gusta.");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
-  assert.deepEqual(runtime.dispatched.map((command) => command.threadId), ["thread-alpha", "thread-beta"]);
+  const runs = (await rooms.get(room.id))!.turns[0].runs;
+  assert.deepEqual(runs.map((run) => [run.slug, run.runId, run.status]), [["alpha", "run-1", "replied"], ["beta", "run-2", "replied"], ["alpha", "run-3", "replied"]], "both of Alpha's replies stay visible");
+  await done();
+});
+
+test("a roundtable stops dispatching once the time limit has passed", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", defaultResponder: "everyone", turnDeadlineMin: 1 });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  let now = Date.parse("2026-01-01T00:00:00.000Z");
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1, nowMs: () => now });
+  await engine.send(room.id, { text: "hola" });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  now += 2 * 60_000;
+  runtime.complete("thread-alpha", "uno");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  assert.equal(runtime.dispatched.length, 1, "Beta gets no dispatch past the limit");
   await done();
 });
 

@@ -422,9 +422,9 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         const room = state.rooms.find((candidate) => candidate.id === id);
         const turn = room?.turns.find((candidate) => candidate.id === turnId);
         if (!turn) return;
-        const entry = turn.runs.find((candidate) => candidate.slug === slug);
-        if (entry) entry.runId = runId;
-        else turn.runs.push({ slug, runId });
+        // A member can speak more than once in a roundtable: one entry per run.
+        if (turn.runs.some((candidate) => candidate.slug === slug && candidate.runId === runId)) return;
+        turn.runs.push({ slug, runId });
         await save(state);
       });
     },
@@ -434,11 +434,10 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         const room = state.rooms.find((candidate) => candidate.id === id);
         const turn = room?.turns.find((candidate) => candidate.id === turnId);
         if (!turn) return;
-        const entry = turn.runs.find((candidate) => candidate.slug === slug);
+        const entry = turn.runs.find((candidate) => candidate.slug === slug && candidate.runId === runId);
         if (!entry) {
           turn.runs.push({ slug, runId, late: true });
         } else {
-          if (entry.runId !== runId) entry.runId = runId;
           if (entry.late) return;
           entry.late = true;
         }
