@@ -5,7 +5,7 @@ import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerRespon
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { promises as fs, existsSync, readFileSync } from "node:fs";
+import { promises as fs, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -90,7 +90,11 @@ const cfg: {
 const executorConfig = executorConfiguration();
 // Bots reach their own tool server (the Vault) here, from this machine only.
 cfg.botMcpUrl = (process.env.BOT_MCP_URL ?? `http://127.0.0.1:${cfg.port}/mcp/bot`).replace(/\/$/, "");
-const token = (process.env.T3_TOKEN ?? readIfExists(process.env.T3_TOKEN_FILE ?? path.join(here, ".t3-token")) ?? "").trim();
+// Where the T3 token lives: what the settings say, else the CLI's copy in the data folder, else a
+// token dropped beside the server (how installer releases ship it).
+const tokenPath = process.env.T3_TOKEN_FILE
+  ?? (existsSync(path.join(dataRoot, "t3-token")) ? path.join(dataRoot, "t3-token") : path.join(here, ".t3-token"));
+const token = (process.env.T3_TOKEN ?? readIfExists(tokenPath) ?? "").trim();
 if (!token) {
   console.error("No T3 token: set T3_TOKEN or T3_TOKEN_FILE");
   process.exit(1);
@@ -1616,6 +1620,12 @@ if (selfUpdating) startUpdateChecks(() => checkUpdates().then(autoUpdate.conside
 telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
+  // Windows restarts the gateway by PID: it has no service manager to ask.
+  if (process.platform === "win32") {
+    try { writeFileSync(path.join(dataRoot, "gateway.pid"), String(process.pid)); } catch (error) {
+      console.error("couldn't write gateway.pid", error);
+    }
+  }
 });
 // A room turn that was running when the gateway stopped does not resume.
 void roomEngine.recover().catch((err) => console.error("[rooms]", (err as Error).message));

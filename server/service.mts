@@ -1,4 +1,4 @@
-// The gateway as a background service, like T3 Code's: a launchd agent on macOS and a systemd user
+﻿// The gateway as a background service, like T3 Code's: a launchd agent on macOS and a systemd user
 // unit on Linux. It runs `threebot serve` from the `current` runtime link (or a source checkout),
 // so an update only swaps the link and restarts the service.
 import { existsSync, realpathSync } from "node:fs";
@@ -99,66 +99,79 @@ export function serviceFile(spec: ServiceSpec, platform: NodeJS.Platform = proce
 export const serviceSupported = (platform = process.platform) => platform === "darwin" || platform === "linux" || platform === "win32";
 const domain = () => `gui/${userInfo().uid}`;
 
+/** The task name older Windows installs used; `up` removes it so the two never fight over the port. */
 export const WINDOWS_TASK_NAME = "ThreebotGateway";
 
-export function windowsTaskXml(spec: ServiceSpec): string {
-  const env = Object.entries(spec.env).map(([k, v]) => `      <Variable name="${xml(k)}">${xml(v)}</Variable>`).join("\n");
-  const args = [spec.cli, "serve"].map((a) => `"${String(a).replace(/"/g, "&quot;")}"`).join(" ");
-  return `<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo>
-    <Description>Threebot gateway</Description>
-    <URI>\\Threebot\\Gateway</URI>
-  </RegistrationInfo>
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal id="Author">
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <AllowHardTerminate>true</AllowHardTerminate>
-    <StartWhenAvailable>true</StartWhenAvailable>
-    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
-    <IdleSettings>
-      <StopOnIdleEnd>true</StopOnIdleEnd>
-      <RestartOnIdle>false</RestartOnIdle>
-    </IdleSettings>
-    <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>true</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <DisallowStartOnRemoteAppSession>false</DisallowStartOnRemoteAppSession>
-    <UseUnifiedSchedulingEngine>true</UseUnifiedSchedulingEngine>
-    <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
-    <RestartOnFailure>
-      <Interval>PT1M</Interval>
-      <Count>3</Count>
-    </RestartOnFailure>
-  </Settings>
-  <Actions Context="Author">
-    <Exec>
-      <Command>${xml(spec.node)}</Command>
-      <Arguments>${xml(spec.cli)} serve</Arguments>
-      <EnvironmentVariables>
-${env}
-      </EnvironmentVariables>
-      <WorkingDirectory>${xml(spec.home)}</WorkingDirectory>
-    </Exec>
-  </Actions>
-</Task>
-`;
+/**
+ * Windows starts the gateway from the per-user Startup folder, not Task Scheduler: creating a task
+ * needs an elevated token on locked-down machines, and a portable app must never ask for that.
+ */
+export function windowsRunnerPath(spec: ServiceSpec): string {
+  return path.join(spec.home, "threebot-serve.cmd");
 }
+
+export function windowsRunnerScript(spec: ServiceSpec): string {
+  const env = Object.entries(spec.env).map(([k, v]) => `set "${k}=${v}"`);
+  return ["@echo off", "setlocal", ...env,
+    `"${spec.node}" "${spec.cli}" serve >> "${spec.log}" 2>&1`,
+    "endlocal", ""].join("\r\n");
+}
+
+export const windowsPidPath = (spec: ServiceSpec) => path.join(spec.home, "gateway.pid");
+const comspecPath = () => process.env.ComSpec || path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
+
+/** `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`, where Windows runs a shortcut at logon. */
+export function windowsStartupDir(env: NodeJS.ProcessEnv = process.env): string {
+  const appData = env.APPDATA || path.join(homedir(), "AppData", "Roaming");
+  return path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
+}
+
+export const windowsStartupShortcut = (spec: ServiceSpec) => path.join(windowsStartupDir(), "Threebot Gateway.lnk");
+
+/** A .lnk pointing at a command, written through WScript.Shell (no extra dependency, no elevation). */
+export async function createWindowsShortcut({ lnk, target, args = "", workdir, icon, description }: { lnk: string; target: string; args?: string; workdir?: string; icon?: string; description?: string }, exec: typeof run = run): Promise<string> {
+  const q = (value: string) => `'${String(value).replace(/'/g, "''")}'`;
+  const lines = [
+    "$ErrorActionPreference = 'Stop'",
+    `$s = (New-Object -ComObject WScript.Shell).CreateShortcut(${q(lnk)})`,
+    `$s.TargetPath = ${q(target)}`,
+    `$s.Arguments = ${q(args)}`,
+    ...(workdir ? [`$s.WorkingDirectory = ${q(workdir)}`] : []),
+    ...(icon ? [`$s.IconLocation = ${q(icon)}`] : []),
+    ...(description ? [`$s.Description = ${q(description)}`] : []),
+    "$s.WindowStyle = 7",
+    "$s.Save()",
+  ];
+  await fs.mkdir(path.dirname(lnk), { recursive: true });
+  const script = path.join(path.dirname(lnk), `.threebot-shortcut-${process.pid}.ps1`);
+  await fs.writeFile(script, lines.join("\r\n") + "\r\n");
+  try {
+    await exec("powershell", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script]);
+  } finally {
+    await fs.rm(script, { force: true });
+  }
+  return lnk;
+}
+
+/** Start the runner detached, with no console window, so `up` can return and the app keeps running. */
+export async function startWindowsGateway(spec: ServiceSpec): Promise<void> {
+  const runner = windowsRunnerPath(spec);
+  if (!existsSync(runner)) throw new Error(`Threebot's runner script is missing: ${runner}`);
+  const { spawn } = await import("node:child_process");
+  const child = spawn(comspecPath(), ["/d", "/s", "/c", `""${runner}""`], {
+    cwd: spec.home, detached: true, stdio: "ignore", windowsHide: true, windowsVerbatimArguments: true,
+    env: { ...process.env, ...spec.env },
+  });
+  child.unref();
+}
+
+export async function stopWindowsGateway(spec: ServiceSpec, exec: typeof run = run): Promise<void> {
+  let pid = NaN;
+  try { pid = Number((await fs.readFile(windowsPidPath(spec), "utf8")).trim()); } catch { /* never started */ }
+  if (Number.isFinite(pid) && pid > 0) await exec("taskkill", ["/PID", String(pid), "/F", "/T"]).catch(() => {});
+  await fs.rm(windowsPidPath(spec), { force: true });
+}
+
 
 export async function installService(spec: ServiceSpec, { platform = process.platform, exec = run }: ServiceOptions = {}): Promise<string> {
   if (!serviceSupported(platform)) throw new Error("Background services are supported on macOS and Linux.");
@@ -175,12 +188,18 @@ export async function installService(spec: ServiceSpec, { platform = process.pla
     await exec("systemctl", ["--user", "daemon-reload"]);
     await exec("systemctl", ["--user", "enable", "--now", spec.unit]);
   } else if (platform === "win32") {
-    const xmlPath = path.join(path.dirname(file), "threebot-task.xml");
-    await fs.writeFile(xmlPath, windowsTaskXml(spec));
+    await fs.writeFile(windowsRunnerPath(spec), windowsRunnerScript(spec));
     await exec("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]).catch(() => {});
-    await exec("schtasks", ["/Create", "/TN", WINDOWS_TASK_NAME, "/XML", xmlPath, "/F"]);
+    await createWindowsShortcut({
+      lnk: windowsStartupShortcut(spec),
+      target: comspecPath(),
+      args: `/d /s /c ""${windowsRunnerPath(spec)}""`,
+      workdir: spec.home,
+      description: "Threebot gateway",
+    }, exec);
     await fs.writeFile(file, "");
-    await exec("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME]).catch(() => {});
+    await stopWindowsGateway(spec, exec);
+    await startWindowsGateway(spec);
   }
   return file;
 }
@@ -189,7 +208,12 @@ export async function uninstallService(spec: ServiceSpec, { platform = process.p
   const file = serviceFile(spec, platform);
   if (platform === "darwin") await exec("launchctl", ["bootout", `${domain()}/${spec.label}`]).catch(() => {});
   if (platform === "linux") await exec("systemctl", ["--user", "disable", "--now", spec.unit]).catch(() => {});
-  if (platform === "win32") await exec("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]).catch(() => {});
+  if (platform === "win32") {
+    await stopWindowsGateway(spec, exec);
+    await exec("schtasks", ["/Delete", "/TN", WINDOWS_TASK_NAME, "/F"]).catch(() => {});
+    await fs.rm(windowsStartupShortcut(spec), { force: true });
+    await fs.rm(windowsRunnerPath(spec), { force: true });
+  }
   if (file) await fs.rm(file, { force: true });
   if (platform === "linux") await exec("systemctl", ["--user", "daemon-reload"]).catch(() => {});
 }
@@ -198,14 +222,16 @@ export async function restartService(spec: ServiceSpec, { platform = process.pla
   if (platform === "darwin") return exec("launchctl", ["kickstart", "-k", `${domain()}/${spec.label}`]);
   if (platform === "linux") return exec("systemctl", ["--user", "restart", spec.unit]);
   if (platform === "win32") {
-    await exec("schtasks", ["/End", "/TN", WINDOWS_TASK_NAME]).catch(() => {});
+    await stopWindowsGateway(spec, exec);
     await new Promise((r) => setTimeout(r, 500));
-    return exec("schtasks", ["/Run", "/TN", WINDOWS_TASK_NAME]);
+    await startWindowsGateway(spec);
+    return "Restarted";
   }
   throw new Error("Background services are not supported on this platform.");
 }
 
 export function serviceInstalled(spec: ServiceSpec, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === "win32") return existsSync(windowsStartupShortcut(spec));
   const file = serviceFile(spec, platform);
   return Boolean(file && existsSync(file));
 }

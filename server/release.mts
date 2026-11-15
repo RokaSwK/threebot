@@ -120,9 +120,20 @@ async function download(url: string, fetchImpl: FetchBytes): Promise<Buffer> {
 
 /** What run() rejects with when the command fails: its exit code and output come along. */
 export type RunError = Error & { code?: number | string | null; stdout?: string; stderr?: string };
+const quoteCmdToken = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+
 export function run(command: string, args: string[], options: SpawnOptions = {}): Promise<string> {
+  // Windows only starts .cmd/.bat scripts through cmd.exe; spawn() rejects them with EINVAL.
+  // `/d /s /c` with every token quoted keeps paths with spaces (C:\Users\Some Name) working.
+  const viaCmd = process.platform === "win32" && !options.shell && /\.(cmd|bat)$/i.test(command);
+  if (viaCmd) {
+    // The outer pair is what `/s` strips, leaving the inner quoting untouched (npm does the same).
+    const line = `"${[command, ...args].map(quoteCmdToken).join(" ")}"`;
+    command = process.env.ComSpec || "cmd.exe";
+    args = ["/d", "/s", "/c", line];
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsVerbatimArguments: viaCmd, ...options });
     let out = "", err = "";
     child.stdout?.on("data", (d) => { out += d; });
     child.stderr?.on("data", (d) => { err += d; });

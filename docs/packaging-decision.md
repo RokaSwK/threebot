@@ -20,20 +20,32 @@ extension.
 
 ## Windows packaging
 
-Threebot now packages for Windows as a first-class target:
+Threebot packages for Windows as a first-class target, and Windows asks for no
+elevation at any point.
 
-- `install.ps1` installs a release under `%THREEBOT_HOME%\runtime\versions` and
-  creates a `threebot.cmd` launcher (uses junctions, no elevation required).
-- `server/service.mts` supports Windows via Task Scheduler (hidden, restart on
-  failure, runs at logon) through `threebot up` / `threebot service`.
-- PATH/node resolution and `findT3` handle Windows drive letters and `.cmd`
-  launchers; `swapLink` uses junctions on Windows.
-- `windows/` provides an optional Edge app-mode launcher and an optional native
-  WebView2 shell (Rust + `wry`, requires MSVC build tools).
+- The portable bundle (`windows/build-bundle.ps1`) is the download: `Threebot.exe`,
+  `app\` and a bundled Node. The first run copies the app to
+  `%LOCALAPPDATA%\Programs\Threebot`, adds Start Menu and Startup shortcuts with
+  Threebot's icon, starts the gateway and only then opens the app window.
+- `Threebot.exe` is a Go launcher (`windows/launcher`), so building it needs no
+  Visual Studio; `rsrc` compiles `threebot.ico` into the exe.
+- `server/service.mts` starts the gateway from the per-user Startup folder.
+  Task Scheduler was the first design and is gone: creating a task needs an
+  elevated token on locked-down machines. The gateway writes `gateway.pid`, which
+  is how a restart or an upgrade stops the old process.
+- `install.ps1` still works for a release installed under
+  `%THREEBOT_HOME%\runtime\versions`; `threebot up` writes the same runner script
+  and Startup shortcut. Junctions stand in for symlinks, and PATH/node/`t3`
+  lookups understand drive letters, `node.exe` and `.cmd` launchers.
+- `run()` starts `.cmd`/`.bat` through `cmd.exe /d /s /c`: Node refuses to spawn
+  them directly with `EINVAL`, which is what made `threebot up` die while asking
+  T3 Code for a token.
 
 Install on Windows:
 
 ```powershell
+# portable bundle: unzip, then double-click Threebot.exe
+# or from a checkout:
 irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex
 threebot up
 ```
