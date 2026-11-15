@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Run the actual Composer, AttachmentPicker, React DOM and store. Only the RPC
 // and upload HTTP boundaries are replaced; no shared browser or server is used.
@@ -24,7 +25,7 @@ globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 // width matcher for the app's mobile query in this phone-sized DOM.
 const matchMedia = window.matchMedia.bind(window);
 window.matchMedia = (query) => matchMedia(query === "(max-width: 760px), (pointer: coarse)" ? "(max-width: 760px)" : query);
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{
@@ -35,7 +36,7 @@ const bundle = await buildOnce({
       export { Composer, Chat } from ${JSON.stringify(`${src}components/Chat.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}components/Chat.tsx` ? { code: `${code}\nexport { Composer };`, map: null } : undefined,
+    transform: (code, id) => isModule(id, `${src}components/Chat.tsx`) ? { code: `${code}\nexport { Composer };`, map: null } : undefined,
   }],
   ssr: { noExternal: true }, build: { ssr: "virtual:mobile-composer", write: false },
 });

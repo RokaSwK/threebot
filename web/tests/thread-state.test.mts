@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import { buildOnce, entryChunk } from './support.mts';
+import { fileURLToPath } from "node:url";
 
 globalThis.localStorage = { getItem: () => null, setItem() {} } as unknown as Storage;
 globalThis.location = new URL('http://thread-state.test') as unknown as Location;
 globalThis.window = { setInterval() {}, clearInterval() {} } as unknown as typeof window;
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins: [{ name: 'thread-state',
   resolveId: id => id.endsWith('virtual:thread-state') ? '\0thread-state' : undefined,
   load: id => id === '\0thread-state' ? `export * from ${JSON.stringify(src + 'store.ts')}; export { t3 } from ${JSON.stringify(src + 'lib/t3.ts')}; export { api } from ${JSON.stringify(src + 'lib/api.ts')};` : undefined,

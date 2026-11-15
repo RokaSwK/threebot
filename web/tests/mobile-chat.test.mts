@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { buildOnce, entryChunk } from "./support.mts";
+import { buildOnce, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
-const chatPath = new URL("../src/components/Chat.tsx", import.meta.url).pathname;
-const behaviorPath = new URL("../src/lib/chatBehavior.ts", import.meta.url).pathname;
-const storePath = new URL("../src/store.ts", import.meta.url).pathname;
+const chatPath = fileURLToPath(new URL("../src/components/Chat.tsx", import.meta.url));
+const behaviorPath = fileURLToPath(new URL("../src/lib/chatBehavior.ts", import.meta.url));
+const storePath = fileURLToPath(new URL("../src/store.ts", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
@@ -23,7 +24,7 @@ const bundle = await buildOnce({
       export { renderToStaticMarkup } from "react-dom/server";
     ` : undefined,
     // Exercise the real components without making their implementation public app APIs.
-    transform: (code, id) => id === chatPath
+    transform: (code, id) => isModule(id, chatPath)
       ? { code: code + "\nexport { Composer, AttachmentPicker, AttachmentList };", map: null }
       : undefined,
   }],

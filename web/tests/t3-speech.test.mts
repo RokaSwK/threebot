@@ -5,9 +5,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 async function load(path) {
-  const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: new URL(path, import.meta.url).pathname, write: false }, ssr: { noExternal: true } });
+  const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: fileURLToPath(new URL(path, import.meta.url)), write: false }, ssr: { noExternal: true } });
   const directory = await mkdtemp(join(tmpdir(), "bot-t3-speech-"));
   try {
     const file = join(directory, "module.mjs");
