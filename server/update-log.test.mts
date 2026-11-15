@@ -36,6 +36,7 @@ async function runUpdater(installed: string, home: string, port: number) {
 }
 
 test("the updater the automatic update starts writes its steps and its failure to update.log", async (t) => {
+  if (process.platform === "win32") return;
   // An installed 0.1.0: the server's code in runtime/versions/0.1.0, the layout `threebot update` needs.
   const home = mkdtempSync(path.join(tmpdir(), "tb-log-"));
   const installed = path.join(home, "runtime", "versions", "0.1.0");

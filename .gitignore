@@ -65,3 +65,5 @@ vault*.enc
 /server/t3-probe/
 web/public/welcome/img/ball.js
 release/
+
+windows/target/

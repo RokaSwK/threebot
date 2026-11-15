@@ -1,0 +1,11 @@
+[package]
+name = "threebot-windows"
+version = "0.1.8"
+edition = "2021"
+
+[dependencies]
+wry = "0.46"
+
+[[bin]]
+name = "Threebot"
+path = "src/main.rs"

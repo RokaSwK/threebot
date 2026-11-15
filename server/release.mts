@@ -153,7 +153,7 @@ export async function installRelease(release: Pick<Release, "version" | "archive
     const unpacked = currentVersion(staging);
     if (unpacked !== release.version) throw new Error(`The archive holds version ${unpacked}, not ${release.version}`);
     log("Installing server dependencies");
-    await run(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(staging, "server") });
+    await run(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(staging, "server"), shell: process.platform === "win32" });
     await fs.writeFile(path.join(staging, ".install-complete"), new Date().toISOString() + "\n");
     await fs.rm(target, { recursive: true, force: true });
     await fs.rename(staging, target);
@@ -198,8 +198,14 @@ export function startUpdater(version: string, { preview = false, cli = path.join
 async function swapLink(link: string, target: string) {
   const temp = `${link}.${process.pid}.tmp`;
   await fs.rm(temp, { force: true });
-  await fs.symlink(target, temp);
-  await fs.rename(temp, link); // rename over a link is atomic, so `current` is never missing.
+  if (process.platform === "win32") await fs.symlink(target, temp, "junction");
+  else await fs.symlink(target, temp);
+  if (process.platform === "win32") {
+    await fs.rm(link, { force: true, recursive: true });
+    await fs.rename(temp, link);
+  } else {
+    await fs.rename(temp, link); // rename over a link is never missing.
+  }
 }
 export async function readLink(link: string): Promise<string | null> {
   try { return path.resolve(path.dirname(link), await fs.readlink(link)); } catch { return null; }

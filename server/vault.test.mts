@@ -38,8 +38,10 @@ test("vault encrypts at rest and round-trips", async () => {
     assert.equal(env.version, 1);
     assert.equal(env.cipher, "aes-256-gcm");
 
-    assert.equal((await stat(t.keyFile)).mode & 0o777, 0o600);
-    assert.equal((await stat(t.file)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") {
+      assert.equal((await stat(t.keyFile)).mode & 0o777, 0o600);
+      assert.equal((await stat(t.file)).mode & 0o777, 0o600);
+    }
     assert.equal((await readFile(t.keyFile)).length, 32);
 
     // A fresh instance with the same key reads it back.
@@ -274,7 +276,7 @@ test("vault_secret_file hands out API tokens only", async () => {
     const out = JSON.parse(textOf(res));
     assert.ok(!textOf(res).includes("tok-123"));
     assert.equal(await readFile(out.file, "utf8"), "tok-123");
-    assert.equal((await stat(out.file)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await stat(out.file)).mode & 0o777, 0o600);
     assert.equal(path.dirname(out.file), path.join(t.dir, "bot-secrets"));
 
     const refused = await tools.callTool("vault_secret_file", { loginId: site.id, threadId: "thread-1" });

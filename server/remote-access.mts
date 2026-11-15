@@ -69,9 +69,12 @@ function exists(file: string) {
 
 const TAILSCALE_APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
 export function findOnPath(name: string, pathEnv: string = process.env.PATH ?? ""): string | null {
+  const names = process.platform === "win32" ? [name, `${name}.exe`, `${name}.cmd`, `${name}.bat`] : [name];
   for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
-    const file = path.join(dir, name);
-    if (exists(file)) return file;
+    for (const candidate of names) {
+      const file = path.join(dir, candidate);
+      if (exists(file)) return file;
+    }
   }
   return null;
 }
@@ -179,7 +182,7 @@ export const CLOUDFLARED_ASSETS: Record<string, { url: string; sha256: string; a
   "linux-x64": { url: `${CF}/cloudflared-linux-amd64`, sha256: "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42", archive: "binary" },
 };
 export const pinnedCloudflared = (home: string, platform: string = process.platform, arch: string = process.arch) =>
-  path.join(home, "tools", "cloudflared", CLOUDFLARED_VERSION, `${platform}-${arch}`, "cloudflared");
+  path.join(home, "tools", "cloudflared", CLOUDFLARED_VERSION, `${platform}-${arch}`, platform === "win32" ? "cloudflared.exe" : "cloudflared");
 
 export function findCloudflared(home: string, env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.CLOUDFLARED_PATH) return env.CLOUDFLARED_PATH;

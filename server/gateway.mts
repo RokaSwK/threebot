@@ -1060,8 +1060,9 @@ async function proxyT3(req: IncomingMessage, res: ServerResponse, t3Path: string
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
 async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string) {
   const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  const safePosix = safe.replace(/\\/g, "/");
   // The public landing page is the one route outside the single-page app.
-  let file = path.join(cfg.staticDir, /^\/welcome\/?$/.test(safe) ? "welcome/index.html" : safe);
+  let file = path.join(cfg.staticDir, /^\/welcome\/?$/.test(safePosix) ? "welcome/index.html" : safe);
   if (!file.startsWith(cfg.staticDir)) return send(res, 403, "forbidden");
   let stat = await fs.stat(file).catch(() => null);
   if (!stat || stat.isDirectory()) { file = path.join(cfg.staticDir, "index.html"); stat = await fs.stat(file).catch(() => null); }
