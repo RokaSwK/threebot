@@ -9,6 +9,7 @@ import { Window } from "happy-dom";
 import { buildOnce, domWindow, entryChunk } from "./support.mts";
 import type { Question } from "../src/lib/runtimeRequests.ts";
 import type { RuntimeRequest, TurnItem } from "../src/lib/types.ts";
+import { fileURLToPath } from "node:url";
 
 // Real React DOM and store; only the RPC transport boundary is mocked.
 // Generic server snapshots below are fixtures, never live request responses.
@@ -18,7 +19,7 @@ const window = domWindow(new Window({ url: "http://runtime-cards.test" }));
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "IntersectionObserver"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.getComputedStyle = (element) => window.getComputedStyle(element);
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "runtime-cards-test-entry", resolveId: (id) => id.endsWith("virtual:runtime-cards-tests") ? "\0runtime-cards-tests" : undefined,
