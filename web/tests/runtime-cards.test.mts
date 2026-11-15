@@ -456,6 +456,22 @@ for (const status of ["saved", "declined", "cancelled"]) test(`secret ${status} 
   assert.equal(document.querySelectorAll("input,button").length, 0); assert.match(document.body.textContent, new RegExp(status === "saved" ? "Saved securely" : status, "i")); assert.equal(calls.length, 0);
 });
 
+test("secret card opens the agent's sign-in page: its url, else the one link in the reason, http(s) only", async () => {
+  const links = () => [...document.querySelectorAll("a")].map((a) => [a.textContent.trim(), a.getAttribute("href"), a.getAttribute("target")]);
+  const show = async (extra) => { const value = fixtures.secret(); Object.assign(value.item, extra); await render("secret", value); };
+  await show({ url: "https://auth.example.test/device?state=a1", reason: "See https://docs.example.test" });
+  assert.deepEqual(links(), [["Open auth.example.test", "https://auth.example.test/device?state=a1", "_blank"]]);
+  assert.match(document.body.textContent, /https:\/\/auth\.example\.test\/device\?state=a1/, "the url is shown, since the reason doesn't hold it");
+  // Older T3 Code has no url; agents put the link in the reason.
+  await show({ reason: "Open https://login.example.test/code. Then paste the code." });
+  assert.deepEqual(links(), [["Open login.example.test", "https://login.example.test/code", "_blank"]]);
+  for (const extra of [{ reason: "Paste the code the CLI printed." }, { reason: "Either https://a.example.test or https://b.example.test" }, { url: "javascript:alert(1)" }, { url: "file:///etc/hosts", reason: "https://a.example.test" }]) {
+    await show(extra); assert.deepEqual(links(), [], JSON.stringify(extra));
+  }
+  const value = fixtures.secret(); Object.assign(value.item, { url: "https://auth.example.test", secretStatus: "saved", status: "completed" }); await render("secret", value);
+  assert.deepEqual(links(), [], "a closed card has nothing to open");
+});
+
 test("stale pending secret is not actionable after item cancellation", async () => {
   const value = fixtures.secret(); value.item.status = "cancelled"; await render("secret", value);
   assert.equal(document.querySelectorAll("input,button").length, 0); assert.match(document.body.textContent, /Cancelled/);

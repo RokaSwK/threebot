@@ -544,12 +544,13 @@ export function botStatus(bot: Bot, s = get()): BotStatus {
   if (!t) return "new";
   if (t.pendingRuntimeRequest) return "waiting";
   if (["preparing", "queued", "starting", "running", "waiting"].includes(t.activityRunStatus ?? t.status)) return "working";
-  if (isSettled(t)) return t.status === "failed" ? "failed" : "done";
   const last = t.latestVisibleMessage;
   // mark-unread rewinds the visit to one millisecond before run completion,
   // which can be later than the final assistant message. Older servers omit it.
   const unreadAt = t.latestRunCompletedAt === undefined ? (last?.role === "assistant" ? last.updatedAt : null) : t.latestRunCompletedAt;
+  // A settled thread (T3 settles idle ones) can still hold a reply nobody has read.
   if (unreadAt && (!t.lastVisitedAt || unreadAt > t.lastVisitedAt) && s.selected !== bot.slug) return "unread";
+  if (isSettled(t)) return t.status === "failed" ? "failed" : "done";
   if (t.status === "failed" || t.lastErrorClass) return "failed";
   return "idle";
 }

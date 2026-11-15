@@ -66,3 +66,11 @@ test('settled and unsettled lifecycle events reach Details state and settled Bot
   receive({ kind: 'event', event: { type: 'thread.unsettled', payload: { ...root, status: 'idle', settledOverride: 'active', settledAt: null, unsettledAt: '2026-01-02T00:00:00Z' } } });
   assert.equal(conversationStatus('root'), 'idle'); assert.equal(botStatus({ mainThreadId: 'root' }), 'idle'); stop();
 });
+
+test('a settled Bot whose last reply was never read stays unread', () => {
+  const settled = { ...root, settledOverride: 'settled', settledAt: '2026-01-09T00:00:00Z', latestRunCompletedAt: '2026-01-02T00:00:00Z', lastVisitedAt: '2026-01-01T00:00:00Z' };
+  useApp.setState({ threads: { root: settled }, selected: null });
+  assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'unread');
+  useApp.setState({ threads: { root: { ...settled, lastVisitedAt: '2026-01-03T00:00:00Z' } } });
+  assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'done');
+});

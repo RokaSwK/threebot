@@ -17,6 +17,7 @@ import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
+import { keepThreadsActive } from "./auto-settle.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
 import {
@@ -1530,12 +1531,16 @@ async function machineFor(environmentId: string): Promise<Machine> {
 }
 /** A remote thread read through T3's link: its latest messages, or the ones after `after`. */
 async function readLinkedThread(environmentId: string, threadId: string, after: number | null) {
-  const read = (afterPosition?: number) => t3Mcp.call("t3_thread_read", { environmentId, threadId, view: "messages", limit: 100, maxCharsPerItem: 20000, runLimit: 1, ...(afterPosition === undefined ? {} : { afterPosition }) });
-  if (after !== null) return read(after);
+  const read = (cursor: { afterPosition?: number; beforePosition?: number } = {}) => t3Mcp.call("t3_thread_read", { environmentId, threadId, view: "messages", limit: 100, maxCharsPerItem: 20000, runLimit: 1, ...cursor });
+  if (after !== null) return read({ afterPosition: after });
+  // T3 Code that reads backward answers with the newest messages that fit, and says so with `earlierPosition`.
+  // Older versions ignore `beforePosition` (or refuse it) and read forward from the oldest.
+  const newest = await read({ beforePosition: 2 ** 31 - 1 }).catch(() => null);
+  if (newest && typeof newest === "object" && "earlierPosition" in newest) return newest;
   // No position yet: find the end, then read the tail of the conversation.
-  const head = await read();
+  const head = newest ?? await read();
   const count = Number(head?.thread?.itemCount) || 0;
-  return count > 200 && head?.hasMore ? read(count - 200) : head;
+  return count > 200 && head?.hasMore ? read({ afterPosition: count - 200 }) : head;
 }
 const outageAlerts = createOutageAlerts({
   file: path.join(appDir, "machines", "outages.json"), log: (line) => console.log(line),
@@ -1586,6 +1591,25 @@ function codingWorkPatch(value: unknown): CodingWork | null {
 }
 
 const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings, writeInstructions: writeBotInstructions });
+
+// T3 settles a thread after a week idle; the threads Threebot owns stay active. A new thread is
+// caught within the hour, long before it could settle.
+async function keepBotThreadsActive() {
+  const bots = await listBots();
+  // A Bot made from a project shares it with the user's own threads, so only its main thread counts.
+  const projectIds = new Set<string | null | undefined>(bots.filter((bot) => !bot.adopted).map((bot) => bot.projectId).filter(Boolean));
+  const tasks = await firstOf<{ projectId?: string | null; threadId?: string | null }[]>("scheduledTasks.subscribe", {}, (event) => Array.isArray(event.tasks) ? event.tasks : undefined).catch(() => []);
+  const owned = [
+    ...bots.map((bot) => bot.mainThreadId),
+    ...(await rooms.list()).flatMap((room) => room.members.map((member) => member.threadId)),
+    ...tasks.filter((task) => projectIds.has(task.projectId)).map((task) => task.threadId),
+  ];
+  const switched = await keepThreadsActive(owned, { threads: () => shellThreads(), dispatch: async (command) => (await t3rpc()).dispatch(command) });
+  if (switched.length) console.log(`[auto-settle] kept ${switched.length} Bot thread${switched.length === 1 ? "" : "s"} active`);
+}
+const keepActive = () => void keepBotThreadsActive().catch((error) => console.error("[auto-settle]", (error as Error).message ?? error));
+setTimeout(keepActive, 5_000).unref();
+setInterval(keepActive, 3_600_000).unref();
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));

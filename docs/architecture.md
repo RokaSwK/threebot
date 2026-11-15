@@ -32,6 +32,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Helper Bots | New Bot projects created by agents (they follow the same folder convention) |
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |
 | Routines | T3 scheduled tasks bound to the Bot's main thread |
+| Staying active | T3 0.1.8+ settles threads idle for a week; at start and hourly the gateway sends `thread.auto-settle.set` (`enabled: false`) for Bot main, room and routine threads that still have it on. A T3 without `autoSettleDisabledAt` is left alone |
 | Approval cards | T3 `approval_request` turn items + `runtime-request.respond` |
 | Question cards | T3 `user_input_request` turn items |
 | Secure secret card | T3 `secret_request` + `secrets.answerRequest` |

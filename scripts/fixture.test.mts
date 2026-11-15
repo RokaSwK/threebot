@@ -689,7 +689,7 @@ test('repeatable Vault values survive real gateway restart and invalid arrays do
   } finally {await fixture.close();}
 });
 
-test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway', { timeout: 30000 }, async () => {
+test('latest-t3 scenario serves T3 0.1.6–0.1.10 shapes through the real gateway', { timeout: 30000 }, async () => {
   const fixture = await createFixture({ scenario: 'latest-t3' });
   const rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
   const first = (tag: string, payload: unknown) => new Promise<Json>((resolve) => { const handle = rpc.stream(tag, payload, (value) => { handle.cancel(); resolve(value); }); });
@@ -703,6 +703,8 @@ test('latest-t3 scenario serves T3 0.1.6–0.1.8 shapes through the real gateway
     assert.match(tasks[1].blockedByPolicy, /Example Org/);
     const shell = (await first('orchestration.subscribeShell', {})).snapshot;
     assert.ok(shell.projects.find((p: Json) => p.id === 'project-gamma').archivedAt);
+    const signIn = (await rpc.call('orchestration.getThreadProjection', { threadId: 'thread-alpha' })).turnItems.find((item: Json) => item.id === 'fixture-secret-signin');
+    assert.deepEqual([signIn.type, signIn.secretStatus, signIn.url], ['secret_request', 'pending', 'https://example.com/settings/tokens']);
     assert.equal(shell.threads.find((t: Json) => t.id === 'thread-alpha-child').pendingRuntimeRequest.kind, 'command');
     await assert.rejects(rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha', requestId: 'fixture-child-approval', decision: 'accept' }), /child thread/);
     await rpc.dispatch({ type: 'runtime-request.respond', threadId: 'thread-alpha-child', requestId: 'fixture-child-approval', decision: 'accept' });
@@ -945,7 +947,8 @@ test('linked machines: discovered from T3, remote threads read and messaged in t
   const links: FixtureLink[] = [{
     environmentId: 'fixture-peer', label: 'Fixture laptop', urls: [`http://127.0.0.1:${peer.port}`], status: 'reachable',
     threads: [{ threadId: 'remote-1', title: 'Remote sample work', status: 'running', messages: [
-      { type: 'user_message', text: 'Fix the generic sample' }, { type: 'assistant_message', text: 'Working on the **generic sample**.' }] }],
+      { type: 'user_message', text: 'Fix the generic sample' }, { type: 'assistant_message', text: 'Working on the **generic sample**.' }] },
+    { threadId: 'remote-long', title: 'Long sample work', status: 'idle', messages: Array.from({ length: 8 }, (_, i) => ({ type: i % 2 ? 'assistant_message' as const : 'user_message' as const, text: `Step ${i + 1}` })) }],
     tasks: [{ parentThreadId: 'thread-alpha', threadId: 'remote-1', title: 'Remote sample work' }],
   }];
   const fixture = await createFixture({ links }); let rpc: T3Client | undefined;
@@ -969,6 +972,16 @@ test('linked machines: discovered from T3, remote threads read and messaged in t
     const read = (await fixture.request('/api/machines/fixture-peer/threads/remote-1')).body.read;
     assert.equal(read.thread.title, 'Remote sample work');
     assert.deepEqual(read.items.map((item: Json) => item.text), ['Fix the generic sample', 'Working on the **generic sample**.']);
+    // A thread opens at its newest messages: newer T3 reads backward within its size budget; older ones (lenient or strict) read forward.
+    const longRead = async () => (await fixture.request('/api/machines/fixture-peer/threads/remote-long')).body.read.items.map((item: Json) => item.text);
+    const allSteps = Array.from({ length: 8 }, (_, i) => `Step ${i + 1}`);
+    assert.deepEqual(await longRead(), allSteps);
+    links[0].readBudget = 3;
+    assert.deepEqual(await longRead(), ['Step 6', 'Step 7', 'Step 8']);
+    assert.deepEqual((await fixture.request('/api/machines/fixture-peer/threads/remote-long?after=5')).body.read.items.map((item: Json) => item.text), ['Step 7', 'Step 8']);
+    delete links[0].readBudget; links[0].strictArgs = true;
+    assert.deepEqual(await longRead(), allSteps);
+    delete links[0].strictArgs;
     assert.equal((await fixture.request('/api/machines/fixture-peer/threads/remote-1/messages', 'POST', { text: 'A generic follow-up' })).status, 200);
     assert.equal(links[0].threads[0].messages.at(-1)!.text, 'A generic follow-up');
     assert.equal((await fixture.request('/api/machines/elsewhere/threads/remote-1')).status, 404);
@@ -1063,4 +1076,20 @@ test('a room launches one idle thread per member in its own project, with the Bo
     assert.deepEqual((await fixture.request('/api/rooms')).body.rooms, []);
     assert.deepEqual(removed.body.threads, { deleted: 2, failed: [] }, 'deleting a room deletes its member threads');
   } finally { await fixture.close(); }
+});
+
+test('the gateway turns T3 auto-settle off for Bot main threads soon after it starts', { timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  let rpc: T3Client | undefined;
+  try {
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const bots = (await fixture.request('/api/bots')).body.bots as Json[];
+    const ids = bots.map((bot) => bot.mainThreadId).filter(Boolean) as string[];
+    assert.ok(ids.length >= 3);
+    const kept = async () => (await Promise.all(ids.map(async (threadId) => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId }))).thread.autoSettleDisabledAt))).every(Boolean);
+    let done = false;
+    for (let i = 0; i < 100 && !done; i += 1) { await new Promise((resolve) => setTimeout(resolve, 200)); done = await kept(); }
+    assert.ok(done, 'every Bot main thread has auto-settle off');
+  } finally { rpc?.close(); await fixture.close(); }
 });
