@@ -1064,3 +1064,19 @@ test('a room launches one idle thread per member in its own project, with the Bo
     assert.deepEqual(removed.body.threads, { deleted: 2, failed: [] }, 'deleting a room deletes its member threads');
   } finally { await fixture.close(); }
 });
+
+test('the gateway turns T3 auto-settle off for Bot main threads soon after it starts', { timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  let rpc: T3Client | undefined;
+  try {
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const bots = (await fixture.request('/api/bots')).body.bots as Json[];
+    const ids = bots.map((bot) => bot.mainThreadId).filter(Boolean) as string[];
+    assert.ok(ids.length >= 3);
+    const kept = async () => (await Promise.all(ids.map(async (threadId) => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId }))).thread.autoSettleDisabledAt))).every(Boolean);
+    let done = false;
+    for (let i = 0; i < 100 && !done; i += 1) { await new Promise((resolve) => setTimeout(resolve, 200)); done = await kept(); }
+    assert.ok(done, 'every Bot main thread has auto-settle off');
+  } finally { rpc?.close(); await fixture.close(); }
+});
