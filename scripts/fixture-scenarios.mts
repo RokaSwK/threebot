@@ -345,10 +345,11 @@ export function seedInteractions({ threads, items, stamp }: { threads: FixtureTh
   };
 }
 
-// Shapes added in T3 Code 0.1.6–0.1.8, so the app can be checked without a real T3:
+// Shapes added in T3 Code 0.1.6–0.1.10, so the app can be checked without a real T3:
 // a child waiting on an approval, a Stop the agent ignored, one-time and policy-blocked
-// routines, and a Bot whose project was archived in T3 Code. Synthetic data only.
-export const LATEST_T3_IDS = { childApproval: 'fixture-child-approval', stuckRun: 'fixture-run-stuck', once: 'fixture-routine-once', blocked: 'fixture-routine-blocked' };
+// routines, a Bot whose project was archived in T3 Code, and a secret card with a sign-in page.
+// Synthetic data only.
+export const LATEST_T3_IDS = { childApproval: 'fixture-child-approval', stuckRun: 'fixture-run-stuck', once: 'fixture-routine-once', blocked: 'fixture-routine-blocked', signInSecret: 'fixture-secret-signin' };
 export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   threads: FixtureThread[]; items: Map<string, FixtureItem[]>; runs: Map<string, FixtureRun[]>; projects: FixtureProject[]; model: FixtureModel; stamp: string;
 }) {
@@ -391,6 +392,9 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
     url: `https://github.com/example/generic/pull/${number}`, source: 'manual', snapshot: { state: stale, title: `Generic change ${number}` }, watch: null }));
   // T3 0.1.8 nightlies: a run can start a fresh session in the same thread.
   items.get(alpha.id)!.push(base(alpha.id, 'user_message', { messageId: 'fixture-fresh-routine-run', text: tasks[0].prompt, scheduledTaskId: tasks[0].id, freshContext: true, createdBy: 'user', creationSource: 'web', attachments: [] }));
+  // T3 0.1.10 nightlies: request_secret takes the sign-in page as `url`, a field on the card's item.
+  items.get(alpha.id)!.push(base(alpha.id, 'secret_request', { id: LATEST_T3_IDS.signInSecret, label: 'Generic access token', status: 'waiting', completedAt: null,
+    reason: 'Synthetic only. Create a token on the sign-in page, then paste it here.', url: 'https://example.com/settings/tokens', secretStatus: 'pending' }));
   // T3 0.1.5+: provider turns carry token usage (0.1.7+ also names the models). Synthetic counts only.
   // They finished an hour ago, so a usage-stats preview (the last day) counts them.
   const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString();

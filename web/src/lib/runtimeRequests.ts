@@ -89,6 +89,34 @@ export function questionAnswerMessageId(item: TurnItem): string | undefined {
   return typeof requestId === "string" && requestId.length > 0 ? `async-answer:${requestId}` : undefined;
 }
 
+/** An http(s) page, or null for anything else, so an agent can't make the card open another scheme. */
+function webPage(value: string): URL | null {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && url.host !== "" ? url : null;
+  } catch { return null; }
+}
+
+/**
+ * The sign-in or setup page a secret card opens: the agent's `url` (newer T3 Code), else the one
+ * link in its reason, as T3 Code's own card does. A bare link drops trailing sentence punctuation.
+ */
+export function secretLink(item: TurnItem): { href: string; host: string } | null {
+  if (typeof item.url === "string") {
+    const url = webPage(item.url.trim());
+    return url && { href: url.href, host: url.host };
+  }
+  const found = typeof item.reason === "string" ? item.reason.match(/https?:\/\/[^\s<>"'`[\]()]+/g) ?? [] : [];
+  const pages = new Map<string, URL>();
+  for (const raw of found) {
+    const url = webPage(raw.replace(/[.,;:!?*]+$/, ""));
+    if (url) pages.set(url.href, url);
+  }
+  if (pages.size !== 1) return null;
+  const [url] = pages.values();
+  return { href: url.href, host: url.host };
+}
+
 export function secretStatus(item: TurnItem): RequestStatus | "saved" | "declined" {
   if (item.secretStatus === "saved" || item.secretStatus === "declined" || item.secretStatus === "cancelled") return item.secretStatus;
   // Secrets have no RuntimeRequest record; cancellation is on the turn item.
