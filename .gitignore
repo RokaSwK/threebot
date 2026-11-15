@@ -67,3 +67,5 @@ web/public/welcome/img/ball.js
 release/
 
 windows/target/
+
+*.exe
