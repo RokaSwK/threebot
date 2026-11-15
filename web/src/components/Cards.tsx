@@ -9,7 +9,7 @@ import { Pill, Spinner } from "./ui";
 import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, useApp } from "../store";
 import type { Entry } from "../lib/transcript";
 import type { Bot } from "../lib/types";
-import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
+import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretLink, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
 import { finishQuestionDraft, questionDraft } from "../lib/questionDrafts";
 import "./RequestCards.css";
 import "./AutomatedCard.css";
@@ -297,12 +297,22 @@ function SecretRequestCard({ entry, threadId }: SecretProps) {
   };
   useEffect(() => { if (!pending) clearPrivateInput(); }, [pending]);
   const save = (secret: string | null) => response.send(() => answerSecret(threadId, item.id, secret), clearPrivateInput);
+  const link = pending ? secretLink(item) : null;
   const statusLabel = status === "saved" ? "Saved securely" : status === "declined" ? "Declined" : status === "cancelled" ? "Cancelled" : status === "expired" ? "Expired" : pending ? "Waiting for you" : "Unavailable";
   return (
     <CardShell>
       <CardHeader icon={<KeyRound size={14} />} title={item.label || "Secret"} status={statusLabel} />
       <div className="rounded-[13px] bg-card-inner px-3 py-2.5">
         {item.reason && <div className="mb-2 text-[13px] text-muted">{item.reason}</div>}
+        {link && (
+          <div className="mb-2.5 flex min-w-0 flex-col items-start gap-1">
+            <a href={link.href} target="_blank" rel="noopener noreferrer" className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full bg-pill-soft px-3.5 text-[13px] font-medium text-fg hover:bg-active">
+              <span className="truncate">Open {link.host}</span><ExternalLink size={13} className="shrink-0" />
+            </a>
+            {/* A link found in the reason is already shown there. */}
+            {typeof item.url === "string" && <div className="font-mono text-[11.5px] break-all text-faint">{link.href}</div>}
+          </div>
+        )}
         {pending ? (
           <form onSubmit={(e) => { e.preventDefault(); const secret = privateInput.current?.value; if (secret) void save(secret); }} className="flex items-center gap-2">
             <Lock size={14} className="text-muted" />

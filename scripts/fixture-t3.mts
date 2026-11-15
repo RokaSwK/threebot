@@ -50,6 +50,10 @@ export type FixtureLink = {
   threads: { threadId: string; title: string; status: string; messages: { type: 'user_message' | 'assistant_message'; text: string }[] }[];
   /** Tasks a local thread runs there (a Bot's delegate_task with target.environmentId). */
   tasks?: { parentThreadId: string; threadId: string; title: string }[];
+  /** Newer T3 Code: reads stop after this many items, and `beforePosition` reads the newest first. Unset: an older T3 that reads forward and ignores it. */
+  readBudget?: number;
+  /** An older T3 that refuses arguments it doesn't declare (`beforePosition`). */
+  strictArgs?: boolean;
 };
 export const FIXTURE_PAIRING_CODE = 'FIXTURE-PAIR-ONLY';
 
@@ -226,10 +230,22 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     const thread = link.threads.find((candidate) => candidate.threadId === args.threadId);
     if (!thread) return toolResult({ message: 'Thread not found there.' }, true);
     if (body.params.name === 't3_thread_read') {
+      if (link.strictArgs && 'beforePosition' in args) return toolResult({ message: 'Unknown argument: beforePosition' }, true);
       const after = typeof args.afterPosition === 'number' ? args.afterPosition : -1;
       const all = thread.messages.map((message, position) => ({ position, itemId: `${thread.threadId}-${position}`, type: message.type, text: message.text, textTruncated: false, status: 'completed', createdBy: message.type === 'user_message' ? 'user' : 'agent', updatedAt: STAMP }));
-      const visible = all.filter((entry) => entry.position > after);
-      return toolResult({ thread: { threadId: thread.threadId, title: thread.title, status: thread.status, itemCount: all.length, activeRunId: null, updatedAt: STAMP }, items: visible, nextPosition: visible.at(-1)?.position ?? null, hasMore: false });
+      const summary = { threadId: thread.threadId, title: thread.title, status: thread.status, itemCount: all.length, activeRunId: null, updatedAt: STAMP };
+      const budget = link.readBudget;
+      if (budget === undefined) {
+        const visible = all.filter((entry) => entry.position > after);
+        return toolResult({ thread: summary, items: visible, nextPosition: visible.at(-1)?.position ?? null, hasMore: false });
+      }
+      if (typeof args.beforePosition === 'number') {
+        const items = all.filter((entry) => entry.position < args.beforePosition).slice(-budget);
+        return toolResult({ thread: summary, items, nextPosition: items.at(-1)?.position ?? null, hasMore: false, earlierPosition: items[0]?.position ? items[0].position : null });
+      }
+      const later = all.filter((entry) => entry.position > after);
+      const items = later.slice(0, budget);
+      return toolResult({ thread: summary, items, nextPosition: items.at(-1)?.position ?? null, hasMore: later.length > items.length, earlierPosition: null });
     }
     if (body.params.name === 't3_thread_send') {
       thread.messages.push({ type: 'user_message', text: String(args.message) });
