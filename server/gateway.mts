@@ -17,6 +17,7 @@ import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
+import { keepThreadsActive } from "./auto-settle.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
 import {
@@ -1581,6 +1582,25 @@ function codingWorkPatch(value: unknown): CodingWork | null {
 }
 
 const provisioner = startProvisioner({ t3Url: cfg.t3Url, token, listBots, saveBot, getSettings, writeInstructions: writeBotInstructions });
+
+// T3 settles a thread after a week idle; the threads Threebot owns stay active. A new thread is
+// caught within the hour, long before it could settle.
+async function keepBotThreadsActive() {
+  const bots = await listBots();
+  // A Bot made from a project shares it with the user's own threads, so only its main thread counts.
+  const projectIds = new Set<string | null | undefined>(bots.filter((bot) => !bot.adopted).map((bot) => bot.projectId).filter(Boolean));
+  const tasks = await firstOf<{ projectId?: string | null; threadId?: string | null }[]>("scheduledTasks.subscribe", {}, (event) => Array.isArray(event.tasks) ? event.tasks : undefined).catch(() => []);
+  const owned = [
+    ...bots.map((bot) => bot.mainThreadId),
+    ...(await rooms.list()).flatMap((room) => room.members.map((member) => member.threadId)),
+    ...tasks.filter((task) => projectIds.has(task.projectId)).map((task) => task.threadId),
+  ];
+  const switched = await keepThreadsActive(owned, { threads: () => shellThreads(), dispatch: async (command) => (await t3rpc()).dispatch(command) });
+  if (switched.length) console.log(`[auto-settle] kept ${switched.length} Bot thread${switched.length === 1 ? "" : "s"} active`);
+}
+const keepActive = () => void keepBotThreadsActive().catch((error) => console.error("[auto-settle]", (error as Error).message ?? error));
+setTimeout(keepActive, 5_000).unref();
+setInterval(keepActive, 3_600_000).unref();
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));
