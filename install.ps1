@@ -43,10 +43,13 @@ try {
   if (-not (Test-Path (Join-Path $target ".install-complete"))) {
     $staging = New-Item -ItemType Directory -Path (Join-Path $versions ".staging-$(Get-Random)")
     tar -xzf (Join-Path $tmp $archive) -C $staging --strip-components=1
+    if ($LASTEXITCODE -ne 0) { throw "Release extraction failed" }
     Say "Installing server dependencies"
     Push-Location (Join-Path $staging "server")
-    npm ci --omit=dev --no-audit --no-fund --loglevel=error
-    Pop-Location
+    try {
+      npm.cmd ci --omit=dev --no-audit --no-fund --loglevel=error
+      if ($LASTEXITCODE -ne 0) { throw "Server dependency installation failed" }
+    } finally { Pop-Location }
     (Get-Date) | Out-File (Join-Path $staging ".install-complete")
     if (Test-Path $target) { Remove-Item -Recurse -Force $target }
     Rename-Item $staging $target
@@ -73,6 +76,11 @@ try {
 set THREEBOT_HOME=$HomeDir
 "$nodeExe" "%THREEBOT_HOME%\runtime\current\server\cli.mjs" %*
 "@ | Out-File -Encoding ASCII $launcher
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (($userPath -split ';') -notcontains $BinDir) {
+    [Environment]::SetEnvironmentVariable("Path", "$BinDir;$userPath", "User")
+  }
+  if (($env:Path -split ';') -notcontains $BinDir) { $env:Path = "$BinDir;$env:Path" }
   Say ""
   Say "Threebot $Version is installed."
   Say "Next: run `threebot up` to connect it to T3 Code and start it in the background."
