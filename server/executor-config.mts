@@ -98,7 +98,7 @@ export function executorCredential(profile: ExecutorProfile | null | undefined):
   try {
     descriptor = openSync(profile.credential.path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || (stat.mode & 0o077) || stat.size > 16_384) throw new Error();
+    if (!stat.isFile() || (process.platform !== "win32" && (stat.mode & 0o077)) || stat.size > 16_384) throw new Error();
     const value = readFileSync(descriptor, 'utf8').trim();
     if (!value) throw new Error();
     return value;

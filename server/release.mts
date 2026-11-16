@@ -120,9 +120,20 @@ async function download(url: string, fetchImpl: FetchBytes): Promise<Buffer> {
 
 /** What run() rejects with when the command fails: its exit code and output come along. */
 export type RunError = Error & { code?: number | string | null; stdout?: string; stderr?: string };
+const quoteCmdToken = (value: string) => `"${String(value).replace(/"/g, '""')}"`;
+
 export function run(command: string, args: string[], options: SpawnOptions = {}): Promise<string> {
+  // Windows only starts .cmd/.bat scripts through cmd.exe; spawn() rejects them with EINVAL.
+  // `/d /s /c` with every token quoted keeps paths with spaces (C:\Users\Some Name) working.
+  const viaCmd = process.platform === "win32" && !options.shell && /\.(cmd|bat)$/i.test(command);
+  if (viaCmd) {
+    // The outer pair is what `/s` strips, leaving the inner quoting untouched (npm does the same).
+    const line = `"${[command, ...args].map(quoteCmdToken).join(" ")}"`;
+    command = process.env.ComSpec || "cmd.exe";
+    args = ["/d", "/s", "/c", line];
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsVerbatimArguments: viaCmd, ...options });
     let out = "", err = "";
     child.stdout?.on("data", (d) => { out += d; });
     child.stderr?.on("data", (d) => { err += d; });
@@ -153,7 +164,7 @@ export async function installRelease(release: Pick<Release, "version" | "archive
     const unpacked = currentVersion(staging);
     if (unpacked !== release.version) throw new Error(`The archive holds version ${unpacked}, not ${release.version}`);
     log("Installing server dependencies");
-    await run(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(staging, "server") });
+    await run(npm, ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: path.join(staging, "server"), shell: process.platform === "win32" });
     await fs.writeFile(path.join(staging, ".install-complete"), new Date().toISOString() + "\n");
     await fs.rm(target, { recursive: true, force: true });
     await fs.rename(staging, target);
@@ -198,8 +209,14 @@ export function startUpdater(version: string, { preview = false, cli = path.join
 async function swapLink(link: string, target: string) {
   const temp = `${link}.${process.pid}.tmp`;
   await fs.rm(temp, { force: true });
-  await fs.symlink(target, temp);
-  await fs.rename(temp, link); // rename over a link is atomic, so `current` is never missing.
+  if (process.platform === "win32") await fs.symlink(target, temp, "junction");
+  else await fs.symlink(target, temp);
+  if (process.platform === "win32") {
+    await fs.rm(link, { force: true, recursive: true });
+    await fs.rename(temp, link);
+  } else {
+    await fs.rename(temp, link); // rename over a link is never missing.
+  }
 }
 export async function readLink(link: string): Promise<string | null> {
   try { return path.resolve(path.dirname(link), await fs.readlink(link)); } catch { return null; }

@@ -72,6 +72,7 @@ test('private credential files materialize exact trimmed tokens without exposing
 });
 
 test('unreadable, empty, nonprivate and symlinked credential files fail closed without selecting backup', async (t) => {
+  if (process.platform === "win32") return;
   const dir = await mkdtemp(path.join(tmpdir(), 'executor-config-invalid-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const good = path.join(dir, 'good'); await writeFile(good, 'fake-private-token', { mode: 0o600 });
   const empty = path.join(dir, 'empty'); await writeFile(empty, '', { mode: 0o600 });

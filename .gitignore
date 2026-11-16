@@ -65,3 +65,9 @@ vault*.enc
 /server/t3-probe/
 web/public/welcome/img/ball.js
 release/
+
+windows/target/
+# Generated from web/public/icon-512.png by windows/launcher/build.ps1.
+windows/launcher/threebot.ico
+
+*.exe

@@ -5,13 +5,17 @@ on:
   pull_request:
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     # The check takes about 3 minutes; a hung test or open handle fails the job instead of running for hours.
     timeout-minutes: 10
     strategy:
       matrix:
         # 22.18 is the oldest Node Threebot supports: the first 22.x that runs TypeScript without a flag.
+        os: [ubuntu-latest]
         node: ["22.18.0", "24"]
+        include:
+          - os: windows-latest
+            node: "24"
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

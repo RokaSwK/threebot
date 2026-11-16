@@ -29,4 +29,4 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS --title "Threebot ${GITHUB_REF_NAME#v}" --generate-notes $prerelease
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS release/install.ps1 --title "Threebot ${GITHUB_REF_NAME#v}" --generate-notes $prerelease
