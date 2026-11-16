@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
 import { buildOnce, domWindow } from './support.mts';
+import { fileURLToPath } from "node:url";
 
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
@@ -26,7 +27,7 @@ class Socket {
 }
 globalThis.WebSocket = Socket as unknown as typeof WebSocket;
 const directory = await mkdtemp(join(tmpdir(), 'bot-computer-browser-'));
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' }, ssr: { noExternal: true },
   plugins: [{ name: 'computer-browser-test', resolveId: id => id.endsWith('virtual:computer-browser') ? '\0computer-browser' : undefined,
     load: id => id === '\0computer-browser' ? `

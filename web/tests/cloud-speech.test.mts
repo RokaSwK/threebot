@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, test } from "node:test";
 import { buildOnce, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
-const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: new URL("../src/lib/cloudSpeech.ts", import.meta.url).pathname, write: false }, ssr: { noExternal: true } });
+const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: fileURLToPath(new URL("../src/lib/cloudSpeech.ts", import.meta.url)), write: false }, ssr: { noExternal: true } });
 const directory = await mkdtemp(join(tmpdir(), "bot-cloud-speech-"));
 const file = join(directory, "module.mjs");
 await writeFile(file, entryChunk(bundle).code);
