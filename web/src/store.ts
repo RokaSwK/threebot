@@ -535,6 +535,12 @@ export function conversationStatus(threadId: string, s = get()) {
   return agentStatus({ thread, fallback: agent?.status, updatedAt: agent?.updatedAt });
 }
 
+/** conversationStatus, except that with Beta → "Settle Bot threads in T3 Code" a settled Bot main thread is idle, not finished. */
+export function botThreadStatus(bot: Pick<Bot, "mainThreadId">, threadId: string, s = get()) {
+  const status = conversationStatus(threadId, s);
+  return status === "completed" && threadId === bot.mainThreadId && s.settings?.beta?.settleBotThreads === true ? "idle" : status;
+}
+
 export function isSnoozed(thread: ThreadShell | undefined, now = Date.now()) { return !!thread?.snoozedUntil && Date.parse(thread.snoozedUntil) > now; }
 export function isSettled(thread: ThreadShell | undefined) { return thread?.settledOverride === "settled" || (thread?.settledOverride !== "active" && !!thread?.settledAt); }
 export type BotStatus = "idle" | "working" | "waiting" | "failed" | "unread" | "new" | "done";
@@ -550,7 +556,8 @@ export function botStatus(bot: Bot, s = get()): BotStatus {
   const unreadAt = t.latestRunCompletedAt === undefined ? (last?.role === "assistant" ? last.updatedAt : null) : t.latestRunCompletedAt;
   // A settled thread (T3 settles idle ones) can still hold a reply nobody has read.
   if (unreadAt && (!t.lastVisitedAt || unreadAt > t.lastVisitedAt) && s.selected !== bot.slug) return "unread";
-  if (isSettled(t)) return t.status === "failed" ? "failed" : "done";
+  // With Beta → "Settle Bot threads in T3 Code" every quiet Bot is settled, so settled isn't "finished".
+  if (isSettled(t) && s.settings?.beta?.settleBotThreads !== true) return t.status === "failed" ? "failed" : "done";
   if (t.status === "failed" || t.lastErrorClass) return "failed";
   return "idle";
 }

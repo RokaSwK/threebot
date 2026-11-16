@@ -5,7 +5,7 @@ import { threadKey } from "../lib/t3";
 import clsx from "clsx";
 import { ActivityAvatar } from "./ActivityAvatar";
 import { isSideChat } from "../lib/sideChats";
-import { botReferenceKey, conversationStatus, loadThreadFamily, selectThread, useApp } from "../store";
+import { botReferenceKey, botThreadStatus, conversationStatus, loadThreadFamily, selectThread, useApp } from "../store";
 import { agentStatus, localAncestors, sameTaskBot, subagentStatus, subagentTarget, supplementSubagents, threadIdentity, threadLink, variantShape, type ThreadTarget } from "../lib/threadFamily";
 import type { Bot, TurnItem } from "../lib/types";
 import { useWorkCommand } from "../lib/runtimeApi";
@@ -85,7 +85,7 @@ export function ThreadFamily({ bot, threadId }: { bot: Bot; threadId: string }) 
       {rows.map(({ thread, relation }) => {
         const identity = threadIdentity(bot, thread.id, threads);
         return <div key={thread.id} className={relation !== "Current" ? "border-b border-line" : ""}>
-          <ThreadRow bot={bot} target={{ kind: "local", threadId: thread.id }} {...identity} title={identity.name} status={conversationStatus(thread.id)} current={thread.id === threadId} />
+          <ThreadRow bot={bot} target={{ kind: "local", threadId: thread.id }} {...identity} title={identity.name} status={botThreadStatus(bot, thread.id)} current={thread.id === threadId} />
         </div>;
       })}
       {(items.length > 0 || descendants.length > 0) && <div className="px-3 pt-3 pb-1 text-[12px] text-muted">Subagents</div>}

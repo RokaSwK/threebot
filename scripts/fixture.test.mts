@@ -1093,3 +1093,25 @@ test('the gateway turns T3 auto-settle off for Bot main threads soon after it st
     assert.ok(done, 'every Bot main thread has auto-settle off');
   } finally { rpc?.close(); await fixture.close(); }
 });
+
+test('with Beta → Settle Bot threads on, the gateway settles quiet Bot threads in T3 and leaves the user\'s own alone', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'adopt' });
+  let rpc: T3Client | undefined;
+  try {
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const bots = (await fixture.request('/api/bots')).body.bots as Json[];
+    const ids = bots.map((bot) => bot.mainThreadId).filter(Boolean) as string[];
+    assert.ok(ids.length >= 3);
+    const state = async (threadId: string) => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId }))).thread.settledOverride;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    assert.deepEqual(await Promise.all(ids.map(state)), ids.map(() => null), 'off by default: nothing is settled');
+    const saved = await fixture.request('/api/settings', 'PUT', { beta: { projects: false, settleBotThreads: true } });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.beta.settleBotThreads, true);
+    let done = false;
+    for (let i = 0; i < 50 && !done; i += 1) { await new Promise((resolve) => setTimeout(resolve, 200)); done = (await Promise.all(ids.map(state))).every((s) => s === 'settled'); }
+    assert.ok(done, `every Bot main thread is settled: ${JSON.stringify(await Promise.all(ids.map(state)))}\n${fixture.logs.slice(-3000)}`);
+    assert.equal(await state('thread-app-1'), null, "a thread in the user's own project stays active");
+  } finally { rpc?.close(); await fixture.close(); }
+});
