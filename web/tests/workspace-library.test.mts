@@ -4,8 +4,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { buildOnce, domWindow, entryChunk } from './support.mts';
+import { buildOnce, domWindow, entryChunk, isModule } from './support.mts';
 import { Window } from 'happy-dom';
+import { fileURLToPath } from "node:url";
 
 const window = domWindow(new Window({ url: 'https://bot.example/', settings: { navigation: { disableChildFrameNavigation: true }, enableImageFileLoading: false } }));
 for (const key of ['window', 'document', 'localStorage', 'location', 'HTMLElement', 'Node', 'Event', 'MouseEvent', 'KeyboardEvent', 'IntersectionObserver', 'ResizeObserver']) globalThis[key] = key === 'window' ? window : window[key];
@@ -17,7 +18,7 @@ globalThis.MessageChannel = class extends NativeMessageChannel { constructor() {
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const source = (path) => new URL(`../src/${path}`, import.meta.url).pathname;
+const source = (path) => fileURLToPath(new URL(`../src/${path}`, import.meta.url));
 const chat = source('components/Chat.tsx');
 const bundle = await buildOnce({
   configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': JSON.stringify('development') }, ssr: { noExternal: true },
@@ -36,7 +37,7 @@ const bundle = await buildOnce({
       export { createElement, act } from 'react';
       export { createRoot } from 'react-dom/client';
     ` : undefined,
-    transform: (code, id) => id === chat ? { code: code + '\nexport { MessageContent };', map: null } : undefined,
+    transform: (code, id) => isModule(id, chat) ? { code: code + '\nexport { MessageContent };', map: null } : undefined,
   }], build: { ssr: 'virtual:workspace-test', write: false },
 });
 const entry = entryChunk(bundle);

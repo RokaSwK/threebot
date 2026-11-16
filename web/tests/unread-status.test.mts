@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { buildOnce, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Exercise the actual store selector with wire-shaped thread summaries. T3 marks
 // unread by rewinding the completion watermark, not the assistant message time.
 globalThis.localStorage = { getItem: () => null } as unknown as Storage;
-const store = new URL("../src/store.ts", import.meta.url).pathname;
+const store = fileURLToPath(new URL("../src/store.ts", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent",
   build: { ssr: store, write: false }, ssr: { noExternal: true },

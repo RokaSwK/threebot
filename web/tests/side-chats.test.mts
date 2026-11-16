@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { buildOnce, entryChunk } from "./support.mts";
 import { beforeEach, mock, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",

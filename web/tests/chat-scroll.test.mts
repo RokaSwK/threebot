@@ -7,6 +7,7 @@ import { after, afterEach, beforeEach, test } from 'node:test';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
 import { buildOnce, domWindow, entryChunk } from './support.mts';
+import { fileURLToPath } from "node:url";
 
 // Real React lifecycle with controlled scroll metrics. Browser geometry and
 // native scrolling still require the real fixture comparison.
@@ -37,7 +38,7 @@ Object.defineProperties(window.HTMLElement.prototype, {
     set(value) { tops.set(this, this.classList.contains('chat-scroller') ? Math.max(0, Math.min(value, height - viewportHeight)) : value); },
   },
 });
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' },
   plugins: [{

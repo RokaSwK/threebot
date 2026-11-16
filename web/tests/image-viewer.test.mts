@@ -7,6 +7,7 @@ import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // The real chat image thumbnails, attachment tiles, gallery and viewer in React DOM. T3's signing RPC and the
 // browser's new tab and downloads are the external boundaries.
@@ -16,7 +17,7 @@ const window = domWindow(new Window({ url: "https://image-viewer.test/chat", set
 for (const key of ["window", "document", "navigator", "history", "location", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "KeyboardEvent", "PointerEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "image-viewer-test", resolveId: (id) => id.endsWith("virtual:image-viewer") ? "\0image-viewer" : undefined,
