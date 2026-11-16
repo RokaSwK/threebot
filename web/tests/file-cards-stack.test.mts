@@ -6,7 +6,7 @@ import {
 } from "../src/lib/fileCards.ts";
 import { workspaceLinkPath } from "../src/lib/workspaceLinks.ts";
 
-const resolve = (href: string) => workspaceLinkPath(href, "/Users/mert/project");
+const resolve = (href: string) => workspaceLinkPath(href, "/home/user/project");
 
 test("message file links collect workspace links in order from any position", () => {
   const sentence = "I created [lorem.pdf](library/lorem.pdf) and [notes.md](library/notes.md) for you.";

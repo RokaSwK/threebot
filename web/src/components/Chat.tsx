@@ -1,4 +1,4 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef } from "react";
 import clsx from "clsx";
 import { defaultUrlTransform, type ExtraProps } from "react-markdown";
 import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
@@ -9,8 +9,9 @@ import { BotExchange } from "./BotExchange";
 import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
-import { fileCardAccent, fileTypeLabel, soloFileLinkParagraph, aboutFilePrompt } from "../lib/fileCards";
+import { fileGlyphKind, fileTypeLabel, soloFileLinkParagraph, soloMarkdownLink, aboutFilePrompt } from "../lib/fileCards";
 import { FileCard as DocumentCard } from "./FileCard";
+import { MessageFileStack } from "./MessageFileStack";
 import { RichMarkdown } from "./RichMarkdown";
 import { BoardItemChip } from "./Projects";
 import { parseItemLink } from "../lib/projects";
@@ -322,17 +323,22 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, on
 
 export function BotBubble({ text, threadId, itemId, runId, onReply }: { text: string; threadId?: string; itemId?: string; runId?: string | null; onReply?: (text: string) => void }) {
   // Agents often write several short paragraphs; they read best as stacked bubbles.
-  const parts = splitBubbles(text);
+  const workspace = useContext(WorkspaceFileContext);
+  // A bubble that is only a file link is drawn by the file stack below, with its card, player or thumbnail.
+  const parts = splitBubbles(text).filter((part) => !workspace || !soloMarkdownLink(part, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)));
   return (
     <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} side="bot">
       <MessageImages>
+        <FileStackContext.Provider value={!!workspace}>
         <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
           {parts.map((p, i) => (
             <div key={i} className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
               <MessageContent text={p} />
             </div>
           ))}
+          <MessageFileStack text={text} />
         </div>
+        </FileStackContext.Provider>
       </MessageImages>
     </ChatMessageActions>
   );
@@ -347,13 +353,18 @@ const MessageContent = memo(function MessageContent({ text }: { text: string }) 
   return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, p: MessageParagraph, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
 });
 
-/** A paragraph holding nothing but a workspace-file link renders as the file card. */
+/** Set inside a Bot message whose file stack draws every linked file under the text. */
+const FileStackContext = createContext(false);
+
+/** A paragraph holding nothing but a workspace-file link renders as the file card, or nothing when the stack below draws it. */
 function MessageParagraph({ node, children }: ComponentPropsWithoutRef<"p"> & ExtraProps) {
   const workspace = useContext(WorkspaceFileContext);
+  const inStack = useContext(FileStackContext);
   const solo = workspace && node ? soloFileLinkParagraph(node, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)) : null;
   if (!solo || !workspace) return <p>{children}</p>;
+  if (inStack) return null;
   const name = solo.text.trim() || solo.path.split("/").at(-1) || solo.path;
-  return <DocumentCard name={name} detail={fileTypeLabel(solo.path)} accent={fileCardAccent(solo.path)} onOpen={() => workspace.openFile(solo.path)} />;
+  return <DocumentCard name={name} detail={fileTypeLabel(solo.path)} kind={fileGlyphKind(solo.path)} workspacePath={solo.path} onOpen={() => workspace.openFile(solo.path)} />;
 }
 
 /** Links to the user's Executor (sign-in links Bots post) render as Connect cards. */
