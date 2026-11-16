@@ -26,6 +26,8 @@ export type Bot = {
   environmentId?: string;
   /** This Bot's own "Where coding work runs"; absent or null uses the global setting. */
   codingWork?: CodingWork | null;
+  /** How Executor answers app approval prompts for this Bot; absent keeps the configured default. */
+  executorApproval?: "ask" | "automatic";
 };
 
 /** A T3 project on this machine that could become a Bot. */

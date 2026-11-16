@@ -72,10 +72,19 @@ export function executorConfiguration(env: Environment = process.env): ExecutorC
   return { active: active as ExecutorBackend, profile: active === 'cloud' ? cloud : selfHosted, profiles: { cloud, 'self-hosted': selfHosted } };
 }
 
-export function executorMcpDefinition(profile: ExecutorProfile | null | undefined) {
+/** How Executor answers its own approval prompts on one MCP connection. */
+export type ExecutorElicitationMode = 'model' | 'automatic';
+
+export function executorMcpDefinition(profile: ExecutorProfile | null | undefined, { elicitationMode }: { elicitationMode?: ExecutorElicitationMode } = {}) {
   const value = executorCredential(profile);
   if (!profile || !value) return null;
-  return { type: 'http', url: profile.mcpUrl, headers: {
+  let url = profile.mcpUrl;
+  if (elicitationMode) {
+    const parsed = new URL(url);
+    parsed.searchParams.set('elicitation_mode', elicitationMode);
+    url = parsed.href.replace(/\/$/, '');
+  }
+  return { type: 'http', url, headers: {
     Authorization: `Bearer ${value}`,
     ...(profile.kind === 'cloud' ? { 'X-Executor-Organization': profile.organization } : {}),
   } };

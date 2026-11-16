@@ -153,6 +153,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
+            {!showRoutines && !archived && <ConnectedAppsSection bot={bot} />}
             {!showRoutines && !archived && threadId === bot.mainThreadId && <CodingWorkSection bot={bot} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
@@ -169,6 +170,35 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
       {picker && <AvatarDialog key={bot.slug} bot={bot} onClose={() => setPicker(false)} />}
     </aside>
   );
+}
+
+/** Executor's own approval, not a T3 permission mode: it decides whether app writes wait for the Bot. */
+function ConnectedAppsSection({ bot }: { bot: Bot }) {
+  const executorUrl = useApp((s) => s.executorUrl);
+  const [busy, setBusy] = useState(false);
+  if (!executorUrl) return null;
+  const automatic = bot.executorApproval === "automatic";
+  const change = async (on: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try { await updateBot(bot.slug, { executorApproval: on ? "automatic" : "ask" }); }
+    catch (error) { toast(error instanceof Error ? error.message : "Couldn't change app approval"); }
+    finally { setBusy(false); }
+  };
+  return <div className="details-connected-apps"><Section title="Connected apps">
+    <div className="rounded-2xl bg-card px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[17px]">Automatic app approval</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-muted">{automatic
+            ? `Executor approves writes to every connected app for ${bot.name} itself, without asking. It covers all apps, not one tool.`
+            : `Executor asks before writing to a connected app. ${bot.name} has to relay the request; writes it doesn't relay expire after 15 minutes.`}</p>
+        </div>
+        <span aria-busy={busy} className={busy ? "pointer-events-none opacity-50" : ""}><Switch checked={automatic} onChange={(on) => void change(on)} label="Automatic app approval" /></span>
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-muted">Applies to new sessions. T3 permissions still decide what this Bot may run.</p>
+    </div>
+  </Section></div>;
 }
 
 /** Which model answers here. Lives with the Bot's other settings rather than in the writing row. */
