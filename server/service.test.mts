@@ -11,7 +11,7 @@ test("the launchd agent runs `serve` from the current link and keeps the user's 
   const plist = launchdPlist(spec);
   assert.match(plist, /<string>tools\.threebot\.gateway<\/string>/);
   assert.match(plist, /<string>\/usr\/bin\/node<\/string>\s*<string>\/home\/me\/\.threebot\/runtime\/current\/server\/cli\.mjs<\/string>\s*<string>serve<\/string>/);
-  assert.match(plist, /<key>PATH<\/key><string>\/usr\/bin:\/opt\/bin:/);
+  assert.match(plist, new RegExp(`<key>PATH</key><string>/usr/bin${path.delimiter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/opt/bin`));
   assert.match(plist, /<key>THREEBOT_SERVICE<\/key><string>1<\/string>/);
   assert.match(plist, /<key>KeepAlive<\/key><true\/>/);
 });
@@ -33,6 +33,6 @@ test("the service uses the PATH entry for node, not the versioned folder it poin
   chmodSync(path.join(cellar, "node"), 0o755);
   mkdirSync(path.join(dir, "bin"));
   symlinkSync(path.join(cellar, "node"), path.join(dir, "bin", "node"));
-  assert.equal(stableNode(path.join(cellar, "node"), `/nowhere:${path.join(dir, "bin")}`), path.join(dir, "bin", "node"));
+  assert.equal(stableNode(path.join(cellar, "node"), `/nowhere${path.delimiter}${path.join(dir, "bin")}`), path.join(dir, "bin", "node"));
   assert.equal(stableNode(path.join(cellar, "node"), "/nowhere"), path.join(cellar, "node"));
 });

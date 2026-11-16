@@ -21,7 +21,7 @@ const stage = path.join(out, ".stage", name);
 rmSync(path.join(out, ".stage"), { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
-for (const file of ["LICENSE", "NOTICE", "README.md", ".env.example", "install.sh"]) cpSync(path.join(root, file), path.join(stage, file));
+for (const file of ["LICENSE", "NOTICE", "README.md", ".env.example", "install.sh", "install.ps1"]) cpSync(path.join(root, file), path.join(stage, file));
 writeFileSync(path.join(stage, "package.json"), JSON.stringify({ ...pkg, version }, null, 2) + "\n");
 // The server without its tests or anything installed or generated locally.
 const skip = (src: string) => /node_modules|\.test\.mts$|\.t3-token$|\.env$/.test(src);

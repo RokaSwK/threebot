@@ -60,10 +60,10 @@ test("GEMINI_HOME in the environment does not override an explicit home director
   const envWithGemini = { GEMINI_HOME: "/env/gemini" } as NodeJS.ProcessEnv;
   assert.equal(
     antigravityConfigPath({ home: "/custom/home", env: envWithGemini }),
-    "/custom/home/.gemini/config/mcp_config.json"
+    path.join("/custom/home", ".gemini", "config", "mcp_config.json")
   );
   assert.equal(
     antigravityConfigPath({ env: envWithGemini }),
-    "/env/gemini/config/mcp_config.json"
+    path.join("/env/gemini", "config", "mcp_config.json")
   );
 });

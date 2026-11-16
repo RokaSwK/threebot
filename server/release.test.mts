@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -63,7 +63,10 @@ test("a release installs only when its checksum matches, then activates, rolls b
     const sum = createHash("sha256").update(archive).digest("hex");
     return { release: { version, archive: `https://dl.test/${version}.tgz`, sums: `https://dl.test/${version}.sums` }, files: { [`https://dl.test/${version}.tgz`]: tamper ? Buffer.concat([archive, Buffer.from("x")]) : archive, [`https://dl.test/${version}.sums`]: Buffer.from(`${sum}  threebot-${version}.tar.gz\n`) } };
   };
-  const npm = "true"; // dependencies aren't the point here
+  // A no-op stand-in for npm: installRelease runs `npm ci`, which we don't need here.
+  const npm = path.join(tmpdir(), `noop-npm-${process.pid}${process.platform === "win32" ? ".cmd" : ""}`);
+  writeFileSync(npm, process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n");
+  if (process.platform !== "win32") chmodSync(npm, 0o755);
 
   const bad = make("1.0.1", true);
   await assert.rejects(installRelease(bad.release, { home, fetchImpl: serveFiles(bad.files), npm }), /Checksum mismatch/);
