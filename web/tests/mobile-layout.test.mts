@@ -197,6 +197,17 @@ for (const tab of ["details", "library", "computer"]) test(`Details ${tab} profi
   }
 });
 
+test("mobile Details lists Memory beside Instructions", async () => {
+  useApp.setState({ detailsTab: "details", detailsOpen: true });
+  await act(async () => root.render(h(Details, { bot, threadId: "main" })));
+  const labels = [...host.querySelectorAll(".profile-actions button")].map((button) => button.textContent ?? "");
+  assert.ok(labels.some((label) => label.includes("Instructions")));
+  assert.ok(labels.some((label) => label.includes("Memory")));
+  const memory = [...host.querySelectorAll(".profile-actions button")].find((button) => button.textContent?.includes("Memory"));
+  await act(async () => memory!.click());
+  assert.equal(useApp.getState().detailsTab, "memory");
+});
+
 test("coarse landscape retains content scrolling and bounded Settings/dialog declarations", () => {
   viewport(844, 390, "coarse"); stylesForViewport();
   host.innerHTML = '<section class="chat-view"><div class="chat-scroller"></div><div class="md"><pre><code>wide code</code></pre><table><tbody><tr><td>wide table</td></tr></tbody></table></div></section><div class="bot-modal-backdrop"><div data-bot-modal class="settings-modal"><div class="dialog-body"></div></div></div>';
