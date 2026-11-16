@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Download, File, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, LoaderCircle } from "lucide-react";
-import { assetUrl } from "../store";
+import { Download, File, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, LoaderCircle, X } from "lucide-react";
+import { assetUrl, type Attachment } from "../store";
 import { workspaceFileKind } from "../lib/workspaceLinks";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
 import { useOpenImage } from "./ImageViewer";
+import { Spinner } from "./ui";
 
 type FileKind = ReturnType<typeof workspaceFileKind>;
 type ChatAttachment = { id: string; name: string; type: "image" | "file"; fileKind: FileKind; mimeType: string | null; sizeBytes: number | null; previewUrl?: string };
@@ -125,4 +126,40 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
     {viewer}
     <span role="status" className="sr-only">{downloadState === "started" ? "Download started." : downloadState === "preparing" ? "Preparing download…" : ""}</span>
   </div>;
+}
+
+/**
+ * The files chosen in a composer, before the message is sent. One place for the chip, the spinner
+ * and the remove button, shared by a Bot's composer and a room's.
+ */
+export function PendingAttachments({ items, onRemove }: {
+  items: { attachment: Attachment; state: "uploading" | "ready" }[];
+  onRemove: (id: string) => void;
+}) {
+  // The strip is part of the composer only while it has something to show. An empty wrapper
+  // still carried its top padding and left a blank band over the text field.
+  if (items.length === 0) return null;
+  return (
+    <div className="composer-pending flex flex-wrap gap-2 px-3 pt-3">
+      {items.map(({ attachment: a, state }) => (
+        <div key={a.id} className="chat-pending-attachment group relative">
+          {a.previewUrl ? (
+            <img src={a.previewUrl} alt={a.name} className={clsx("size-14 rounded-xl object-cover", state === "uploading" && "opacity-50")} />
+          ) : (
+            <div className="flex h-14 items-center gap-2 rounded-xl bg-card px-3 text-[12.5px]">
+              <FileText size={14} /> <span className="max-w-[140px] truncate">{a.name}</span>
+            </div>
+          )}
+          {state === "uploading" && (
+            <span className="absolute inset-0 grid place-items-center">
+              <Spinner />
+            </span>
+          )}
+          <button onClick={() => onRemove(a.id)} className="composer-remove-attachment absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-pill text-pill-fg" aria-label={`Remove ${a.name}`} title={`Remove ${a.name}`}>
+            <X size={11} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }

@@ -79,6 +79,8 @@ const render = async (threadId = bot.mainThreadId, { keyed = false, working = fa
 const textarea = () => host.querySelector("textarea");
 const send = () => host.querySelector('[title="Send"]');
 const attachments = () => [...host.querySelectorAll(".chat-pending-attachment")];
+// The remove button is named after its file, so a screen reader can tell two pictures apart.
+const remove = (chip) => chip.querySelector('[aria-label^="Remove "]');
 const click = async (element) => { assert.ok(element, "control exists"); await runtime.act(async () => element.click()); };
 const type = async (value) => runtime.act(async () => {
   const element = textarea();
@@ -194,8 +196,8 @@ test("pending uploads survive keyed remounts and cannot send until ready", async
 test("removing an active upload and a queued selection never resurrects either file", async () => {
   await render(); await choose(file("active.png", "image/png"), file("queued.png", "image/png"));
   assert.equal(attachments().length, 2, "the entire selection is visible immediately"); assert.equal(uploads.length, 1);
-  await click(attachments()[1].querySelector('[aria-label="Remove"]'));
-  await click(attachments()[0].querySelector('[aria-label="Remove"]'));
+  await click(remove(attachments()[1]));
+  await click(remove(attachments()[0]));
   assert.equal(revokedUrls.length, 2); await render("child"); await finishUpload();
   assert.equal(attachments().length, 0); assert.equal(uploads.length, 1, "removed queued files are never uploaded");
   await render(); assert.equal(attachments().length, 0);
@@ -217,7 +219,7 @@ test("failed sends restore exact whitespace and keep previews until removal", as
   await click(send()); await render("child", { keyed: true }); await rejectSend(); await render(bot.mainThreadId, { keyed: true });
   assert.equal(textarea().value, original); assert.equal(attachments()[0].querySelector("img").src, readyUrl);
   assert.ok(!revokedUrls.includes(readyUrl));
-  await click(attachments()[0].querySelector('[aria-label="Remove"]')); assert.ok(revokedUrls.includes(readyUrl));
+  await click(remove(attachments()[0])); assert.ok(revokedUrls.includes(readyUrl));
 });
 
 test("failure recovery cannot replace a newer upload or an intentionally cleared draft", async () => {
@@ -225,7 +227,7 @@ test("failure recovery cannot replace a newer upload or an intentionally cleared
   assert.equal(textarea().value, ""); assert.equal(attachments().length, 1);
   const recovery = host.querySelector('[aria-label="Unsent message"]'); assert.ok(recovery);
   assert.equal(recovery.querySelector('[aria-label="Edit failed message"]').disabled, true);
-  await finishUpload(); await click(attachments()[0].querySelector('[aria-label="Remove"]'));
+  await finishUpload(); await click(remove(attachments()[0]));
   await click(recovery.querySelector('[aria-label="Edit failed message"]'));
   assert.equal(textarea().value, "Old message"); assert.equal(host.querySelector('[aria-label="Unsent message"]'), null);
   await click(send()); await type("Temporary edit"); await type(""); await rejectSend(1);

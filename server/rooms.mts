@@ -14,6 +14,10 @@ export const MAX_DESCRIPTION = 200;
 export const MAX_GUIDANCE = 2_000;
 /** A room message is relayed to every addressed member; cap what one paste can cost. */
 export const MAX_MESSAGE = 20_000;
+/** Every addressed member gets its own copy of a file in T3, so a room allows fewer and smaller. */
+export const MAX_ATTACHMENTS = 10;
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const MAX_ATTACHMENTS_BYTES = 25 * 1024 * 1024;
 
 export const ROOM_MODES = ["panel", "roundtable"] as const;
 export const RESPONDERS = ["lead", "everyone", "mentions"] as const;
@@ -65,11 +69,16 @@ export type RoomMember = {
   runtimeMode: string;
   /** When the room last showed a reply from this member; the prompt shows lines after it. */
   lastTurnAt: string | null;
+  /** Start over: the next dispatch to this member opens a new provider session, then the flag clears. */
+  fresh?: boolean;
   addedAt: string;
 };
 
 /** A member that left the room. Its thread is kept so the room's history stays readable. */
 export type FormerMember = RoomMember & { removedAt: string };
+
+/** What the room keeps of a file the user sent: T3 holds the bytes, one copy per member thread. */
+export type RoomAttachment = { type: "image" | "file"; id: string; name: string; mimeType: string; sizeBytes: number };
 
 export type RoomTurnStatus = "queued" | "running" | "done" | "stopped" | "interrupted" | "failed";
 export type RoomRun = {
@@ -92,6 +101,8 @@ export type RoomTurn = {
   replyTo: string | null;
   status: RoomTurnStatus;
   runs: RoomRun[];
+  /** The files sent with this message; `id` is the pending upload until a member claims its copy. */
+  attachments?: RoomAttachment[];
 };
 
 export type Room = {
@@ -203,6 +214,34 @@ export function validateMembers(slugs: unknown, bots: BotIdentity[]): BotIdentit
     seen.set(key, bot.slug);
   }
   return resolved;
+}
+
+/**
+ * Files on a room message. The shapes and limits are T3's own (attachment ids, 255-char names,
+ * 100-char mime types, 10 MB per image); the room is stricter about the count and the total because
+ * every addressed member claims its own copy.
+ */
+export function validateAttachments(value: unknown): RoomAttachment[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new RoomsError("attachments must be a list");
+  if (value.length > MAX_ATTACHMENTS) throw new RoomsError(`a message holds at most ${MAX_ATTACHMENTS} files`);
+  const attachments = value.map((item): RoomAttachment => {
+    if (!item || typeof item !== "object") throw new RoomsError("an attachment is malformed");
+    const { type, id, name, mimeType, sizeBytes } = item as Record<string, unknown>;
+    if (type !== "image" && type !== "file") throw new RoomsError("an attachment is neither an image nor a file");
+    if (typeof id !== "string" || !id.trim() || id.length > 256) throw new RoomsError("an attachment needs an id");
+    if (typeof name !== "string" || !name.trim() || name.length > 255) throw new RoomsError("an attachment needs a name");
+    if (typeof mimeType !== "string" || !mimeType.trim() || mimeType.length > 100) throw new RoomsError("an attachment needs a mime type");
+    if (typeof sizeBytes !== "number" || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > MAX_ATTACHMENT_BYTES) {
+      throw new RoomsError("an attachment has a size the room cannot relay");
+    }
+    if (type === "image" && !/^image\//i.test(mimeType)) throw new RoomsError("an image attachment needs an image mime type");
+    return { type, id: id.trim(), name: name.trim(), mimeType: mimeType.trim(), sizeBytes };
+  });
+  if (attachments.reduce((total, attachment) => total + attachment.sizeBytes, 0) > MAX_ATTACHMENTS_BYTES) {
+    throw new RoomsError("the files are larger than a room message allows");
+  }
+  return attachments;
 }
 
 /** A member starts `pending`; the launcher fills in its thread and model. */

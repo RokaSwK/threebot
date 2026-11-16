@@ -27,6 +27,8 @@ export type RoomRun = {
   error?: string;
   at?: string;
 };
+/** A file the user sent with a room message: the room keeps this much, T3 keeps the bytes. */
+export type RoomAttachment = { type: "image" | "file"; id: string; name: string; mimeType: string; sizeBytes: number };
 export type RoomTurn = {
   id: string;
   at: string;
@@ -35,6 +37,7 @@ export type RoomTurn = {
   replyTo: string | null;
   status: RoomTurnStatus;
   runs: RoomRun[];
+  attachments?: RoomAttachment[];
 };
 
 export type RoomMode = "panel" | "roundtable";
@@ -126,6 +129,7 @@ export type SendRoomMessageInput = {
   text: string;
   mentions?: string[];
   replyTo?: string | null;
+  attachments?: RoomAttachment[];
 };
 
 export type DeleteRoomResult = {
@@ -155,8 +159,8 @@ export function deleteRoom(id: string): Promise<DeleteRoomResult> {
   return apiRequest<DeleteRoomResult>(roomPath(id), { method: "DELETE", body: "{}" });
 }
 
-export function recreateRoom(id: string): Promise<RoomView> {
-  return apiRequest<{ room: RoomView }>(`${roomPath(id)}/recreate`, { method: "POST", body: "{}" }).then((body) => body.room);
+export function resetRoom(id: string): Promise<RoomView> {
+  return apiRequest<{ room: RoomView }>(`${roomPath(id)}/reset`, { method: "POST", body: "{}" }).then((body) => body.room);
 }
 
 export function sendRoomMessage(id: string, input: SendRoomMessageInput): Promise<RoomTurn> {

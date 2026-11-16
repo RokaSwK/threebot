@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import clsx from "clsx";
 import { defaultUrlTransform } from "react-markdown";
-import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
+import { ArrowDown, ArrowUp, AudioLines, ChevronLeft, Eraser, Globe, MessageCircle, Mic, Monitor, PanelRight, Square, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { botTextColor, bubbleColors } from "../lib/character";
 import { BotMention, BotEvent } from "./BotMention";
@@ -13,7 +13,8 @@ import { RichMarkdown } from "./RichMarkdown";
 import { BoardItemChip } from "./Projects";
 import { parseItemLink } from "../lib/projects";
 import { ChatMessageActions } from "./ChatMessageActions";
-import { ChatAttachmentList } from "./ChatAttachments";
+import { ChatAttachmentList, PendingAttachments } from "./ChatAttachments";
+import { ComposerActions, type ComposerAction } from "./ComposerActions";
 import { MessageImages } from "./ImageViewer";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
 import { useVoiceSettings, VoiceDock, voiceChatSupported } from "./VoiceDock";
@@ -35,7 +36,7 @@ import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
 import type { Bot } from "../lib/types";
-import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles, takeAttachmentFiles } from "../lib/chatBehavior";
+import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles } from "../lib/chatBehavior";
 import { chatDraft } from "../lib/chatDrafts";
 import { parseReply, replyLabel, withReply } from "../lib/reply";
 import { activeWork, messageCommand, useRuntimeWork, useWorkCommand } from "../lib/runtimeApi";
@@ -410,76 +411,6 @@ function useMobileChat() {
   return mobile;
 }
 
-function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles, onSideChat, onStartFresh }: {
-  mobile: boolean;
-  open: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-  onFiles: (files: File[]) => void;
-  onSideChat?: () => void;
-  onStartFresh?: () => void;
-}) {
-  const libraryInput = useRef<HTMLInputElement>(null);
-  const cameraInput = useRef<HTMLInputElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const selectionOwners = useRef(new WeakMap<HTMLInputElement, typeof onFiles>());
-  const choose = (input: HTMLInputElement | null) => {
-    if (input) selectionOwners.current.set(input, onFiles);
-    onClose();
-    // Stay in this explicit user gesture; never ask for camera access on mount.
-    input?.click();
-  };
-  const selected = (input: HTMLInputElement) => {
-    const files = takeAttachmentFiles(input);
-    const receive = selectionOwners.current.get(input) ?? onFiles;
-    selectionOwners.current.delete(input);
-    if (files.length) receive(files);
-  };
-  useEffect(() => {
-    if (!open) return;
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
-  }, [open, onClose]);
-  return (
-    <div className="relative shrink-0">
-      <IconButton onClick={onToggle} className="size-9 bg-hover" aria-label="Composer actions" aria-haspopup="menu" aria-expanded={open}>
-        <Plus size={18} />
-      </IconButton>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={onClose} />
-          <div role="menu" aria-label="Attachments" className="chat-attachment-menu pop-in absolute bottom-11 left-0 z-50 w-[200px] max-w-[calc(100vw-3rem)] rounded-xl border border-line bg-elevated p-1 shadow-[var(--shadow-pop)]">
-            <button role="menuitem" onClick={() => choose(fileInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <Folder size={14} /> {mobile ? "Choose File" : "Attach files"}
-            </button>
-            {mobile && <>
-              <button role="menuitem" onClick={() => choose(cameraInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-                <Camera size={14} /> Take Photo
-              </button>
-              <button role="menuitem" onClick={() => choose(libraryInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-                <Image size={14} /> Photo or Video
-              </button>
-            </>}
-            {onSideChat && <button role="menuitem" onClick={() => { onClose(); onSideChat(); }} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <MessageCircle size={14} /> Side chat
-            </button>}
-            {onStartFresh && <button role="menuitem" onClick={() => { onClose(); onStartFresh(); }} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <Eraser size={14} /> Start fresh
-            </button>}
-          </div>
-        </>
-      )}
-      {/* Keep the inputs mounted while the menu closes so picker results still arrive. */}
-      {mobile && <>
-        <input ref={libraryInput} aria-label="Photo library" type="file" accept="image/*,video/*" multiple hidden onChange={(e) => selected(e.currentTarget)} />
-        <input ref={cameraInput} aria-label="Take photo" type="file" accept="image/*" capture="environment" hidden onChange={(e) => selected(e.currentTarget)} />
-      </>}
-      <input ref={fileInput} aria-label="Files" type="file" multiple hidden onChange={(e) => selected(e.currentTarget)} />
-    </div>
-  );
-}
-
 function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
   const draft = chatDraft(bot, threadId);
   const { text, attachments: atts, sending, failed, replyTo, fresh } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
@@ -507,13 +438,17 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
   const side = embedded ? null : parseSideCommand(text);
   const freshOn = useApp((s) => !embedded && canStartFresh(threadId, s));
   const startFresh = () => { setFresh(true); ta.current?.focus({ preventScroll: true }); };
+  // The screen's own lines in the composer's menu; the files belong to the shared component.
+  const composerActions: ComposerAction[] = [
+    ...(sideChatsOn ? [{ key: "side-chat", label: "Side chat", icon: MessageCircle, onSelect: () => void startSideChat(bot, threadId!) }] : []),
+    ...(freshOn && !fresh ? [{ key: "start-fresh", label: "Start fresh", icon: Eraser, onSelect: startFresh }] : []),
+  ];
   const clearCommand = () => {
     if (!freshOn) return toast(embedded ? "Side chats can't start fresh" : "Starting fresh needs a newer T3 Code");
     setText("");
     startFresh();
   };
   const submit = () => !atts.length && isClearCommand(text) ? clearCommand() : side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
-  const [popover, setPopover] = useState<"attachments" | null>(null);
   const [listening, setListening] = useState(false);
   useReportLocalActivity(threadId, listening ? "listening" : atts.some((item) => item.state === "uploading") ? "uploading" : sending ? "sending" : null);
   const settings = useVoiceSettings();
@@ -561,7 +496,6 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
   }, [setText]);
   useEffect(() => {
     focus.onEntry(ta.current);
-    setPopover(null);
   }, [draft, focus]);
   const replying = !!replyTo;
   useEffect(() => {
@@ -762,33 +696,11 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
               </div>
             </div>
           ))}
-          {atts.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3">
-              {atts.map(({ attachment: a, state }) => (
-                <div key={a.id} className="chat-pending-attachment group relative">
-                  {a.previewUrl ? (
-                    <img src={a.previewUrl} alt="" className={clsx("size-14 rounded-xl object-cover", state === "uploading" && "opacity-50")} />
-                  ) : (
-                    <div className="flex h-14 items-center gap-2 rounded-xl bg-card px-3 text-[12.5px]">
-                      <FileText size={14} /> <span className="max-w-[140px] truncate">{a.name}</span>
-                    </div>
-                  )}
-                  {state === "uploading" && (
-                    <span className="absolute inset-0 grid place-items-center">
-                      <Spinner />
-                    </span>
-                  )}
-                  <button onClick={() => draft.removeAttachment(a.id)} className="composer-remove-attachment absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-pill text-pill-fg" aria-label="Remove" title={`Remove ${a.name}`}>
-                    <X size={11} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <PendingAttachments items={atts} onRemove={draft.removeAttachment} />
           {fresh && freshOn && <div className="composer-reply composer-fresh" role="status"><span>Your next message starts a fresh session. {bot.name} won't see earlier messages, only its memory and files.</span><button type="button" aria-label="Keep the current session" title="Keep the current session" onClick={() => setFresh(false)}><X size={16} aria-hidden="true" /></button></div>}
           {replyTo && <div className="composer-reply"><span title={replyTo}>{replyLabel(replyTo)}</span><button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}><X size={16} aria-hidden="true" /></button></div>}
           <div className="composer-controls flex items-end gap-1.5 p-1.5" data-expanded={replying}>
-            <AttachmentPicker mobile={mobile} open={popover === "attachments"} onToggle={() => setPopover((v) => v === "attachments" ? null : "attachments")} onClose={() => setPopover(null)} onFiles={addFiles} onSideChat={sideChatsOn ? () => void startSideChat(bot, threadId!) : undefined} onStartFresh={freshOn && !fresh ? startFresh : undefined} />
+            <ComposerActions mobile={mobile} onFiles={addFiles} actions={composerActions} resetKey={`${bot.slug}:${threadId ?? ""}`} />
             <textarea
               ref={ta}
               readOnly={mobile}

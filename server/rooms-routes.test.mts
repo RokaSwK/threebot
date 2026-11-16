@@ -26,8 +26,9 @@ const bots = [
 
 const launched: any[] = [];
 const deleted: string[] = [];
+const sentToEngine: any[] = [];
 const rpc = {
-  async call(tag: string, payload: any) {
+  async call(tag: string, payload: any): Promise<any> {
     if (tag === "orchestration.launchThread") { launched.push(payload); return { ok: true }; }
     return { thread: { runtimeMode: "auto", modelSelection: "model-1" } };
   },
@@ -39,7 +40,10 @@ const rpc = {
 
 const engine = {
   isBusy: () => false,
-  send: async () => ({ turn: { id: "t1", at: "2026-01-01T00:00:00.000Z", text: "x", mentions: [], replyTo: null, status: "running" as const, runs: [] }, queued: false }),
+  send: async (_id: string, message: any) => {
+    sentToEngine.push(message);
+    return { turn: { id: "t1", at: "2026-01-01T00:00:00.000Z", text: "x", mentions: [], replyTo: null, status: "running" as const, runs: [] }, queued: false };
+  },
   stop: async () => true,
   recover: async () => [],
 } as unknown as RoomEngine;
@@ -47,6 +51,7 @@ const engine = {
 async function setup() {
   launched.length = 0;
   deleted.length = 0;
+  sentToEngine.length = 0;
   const dir = await mkdtemp(path.join(tmpdir(), "room-routes-"));
   const rooms = createRooms({ file: path.join(dir, "rooms.json") });
   const routes = createRoomRoutes({
@@ -149,17 +154,73 @@ test("settings can be changed and deleting the room deletes its member threads",
   await done();
 });
 
-test("recreate threads also forgets the room's messages", async () => {
+test("start over keeps the threads, forgets the messages and arms a fresh session", async () => {
   const { routes, rooms, done } = await setup();
   const created = await call(routes, request({ method: "POST", body: { name: "Fresh", members: ["alpha", "beta"] } }), "/api/rooms");
   const id = (created.res.body as any).room.id;
+  const threads = (created.res.body as any).room.members.map((member: any) => member.threadId).sort();
   await rooms.appendTurn(id, { id: "t0", at: "2026-01-01T00:00:00.000Z", text: "hola", mentions: [], replyTo: null, status: "done", runs: [] });
   launched.length = 0;
-  const recreated = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/recreate`);
-  assert.equal(recreated.res.status, 200);
-  assert.deepEqual((recreated.res.body as any).room.turns, [], "the index is empty after a recreate");
-  assert.equal(launched.length, 2, "one fresh thread per member");
-  assert.deepEqual((recreated.res.body as any).room.members.map((member: any) => member.lastTurnAt), [null, null]);
+  deleted.length = 0;
+  const reset = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/reset`);
+  assert.equal(reset.res.status, 200);
+  assert.deepEqual((reset.res.body as any).room.turns, [], "the index is empty after start over");
+  assert.deepEqual((reset.res.body as any).room.members.map((member: any) => member.threadId).sort(), threads, "the threads stay");
+  assert.deepEqual((reset.res.body as any).room.members.map((member: any) => member.lastTurnAt), [null, null]);
+  assert.equal(launched.length, 0, "nothing is relaunched");
+  assert.equal(deleted.length, 0, "nothing is deleted");
+  const stored = (await rooms.get(id))!;
+  assert.deepEqual(stored.members.map((member) => member.fresh), [true, true], "every member starts a new session");
+  await done();
+});
+
+test("start over replaces a member's thread that T3 no longer has", async () => {
+  const { routes, rooms, done } = await setup();
+  const created = await call(routes, request({ method: "POST", body: { name: "Repair", members: ["alpha", "beta"] } }), "/api/rooms");
+  const id = (created.res.body as any).room.id;
+  const betaThread = (created.res.body as any).room.members.find((member: any) => member.slug === "beta").threadId;
+  const original = rpc.call;
+  rpc.call = async (tag: string, payload: any) => {
+    if (tag === "orchestration.getThreadProjection" && payload.threadId === betaThread) return { thread: null };
+    return original(tag, payload);
+  };
+  try {
+    launched.length = 0;
+    const reset = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/reset`);
+    assert.equal(reset.res.status, 200);
+    assert.equal(launched.length, 1, "only the missing thread is launched again");
+    const stored = (await rooms.get(id))!;
+    assert.equal(stored.members.find((member) => member.slug === "beta")!.threadId, launched[0].threadId);
+    assert.equal(stored.members.find((member) => member.slug === "alpha")!.threadId, (created.res.body as any).room.members.find((member: any) => member.slug === "alpha").threadId);
+  } finally {
+    rpc.call = original;
+  }
+  await done();
+});
+
+test("start over applies the room's current model and the Bot's current mode", async () => {
+  const { routes, rooms, done } = await setup();
+  const created = await call(routes, request({ method: "POST", body: { name: "Refresh", members: ["alpha"] } }), "/api/rooms");
+  assert.equal(created.res.status, 400, "a room still needs two members");
+  const two = await call(routes, request({ method: "POST", body: { name: "Refresh", members: ["alpha", "beta"] } }), "/api/rooms");
+  const id = (two.res.body as any).room.id;
+  const original = rpc.call, originalDispatch = rpc.dispatch;
+  const refreshes: any[] = [];
+  rpc.call = async (tag: string, payload: any) => {
+    if (tag === "orchestration.getThreadProjection") return { thread: { runtimeMode: "full-access", modelSelection: "model-2" } };
+    return original(tag, payload);
+  };
+  rpc.dispatch = async (command: any) => { refreshes.push(command); return { ok: true }; };
+  try {
+    const reset = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/reset`);
+    assert.equal(reset.res.status, 200);
+    assert.deepEqual(refreshes.map((command) => command.type).sort(), ["thread.model-selection.set", "thread.runtime-mode.set", "thread.runtime-mode.set", "thread.model-selection.set"].sort());
+    const alpha = (await rooms.get(id))!.members.find((member) => member.slug === "alpha")!;
+    assert.equal(alpha.runtimeMode, "full-access");
+    assert.equal(alpha.model, "model-2");
+  } finally {
+    rpc.call = original; rpc.dispatch = originalDispatch;
+  }
   await done();
 });
 
@@ -174,9 +235,10 @@ test("messages and stop go through the engine", async () => {
   assert.equal(empty.res.status, 400);
   const stop = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/stop`);
   assert.deepEqual(stop.res.body, { ok: true });
-  const recreate = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/recreate`);
-  assert.equal(recreate.res.status, 200);
-  assert.equal(launched.length, 4, "recreate launched one fresh thread per member");
+  launched.length = 0;
+  const reset = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/reset`);
+  assert.equal(reset.res.status, 200);
+  assert.equal(launched.length, 0, "start over relaunched nothing");
   await done();
 });
 
@@ -200,5 +262,29 @@ test("removing the lead promotes another member and keeps the former member's th
   assert.equal(alpha.threadId, alphaThread, "re-adding a member reuses its thread");
   assert.equal(alpha.status, "ready");
   assert.equal(launched.length, 3, "only beta and gamma were launched; alpha kept its thread");
+  await done();
+});
+
+const file = { type: "file", id: "pending-abc", name: "informe.pdf", mimeType: "application/pdf", sizeBytes: 2_048 };
+
+test("a room message carries its files, and an attachment-only message is allowed", async () => {
+  const { routes, done } = await setup();
+  const created = await call(routes, request({ method: "POST", body: { name: "Files", members: ["alpha", "beta"] } }), "/api/rooms");
+  const id = (created.res.body as any).room.id;
+  const sent = await call(routes, request({ method: "POST", body: { text: "", attachments: [file] } }), `/api/rooms/${id}/messages`);
+  assert.equal(sent.res.status, 202);
+  assert.deepEqual(sentToEngine.at(-1).attachments, [file]);
+  assert.equal(sentToEngine.at(-1).text, "");
+
+  for (const attachments of [
+    [{ ...file, type: "audio" }],
+    [{ ...file, sizeBytes: 1.5 }],
+    Array.from({ length: 11 }, (_, index) => ({ ...file, id: `pending-${index}` })),
+    "not-a-list",
+  ]) {
+    const rejected = await call(routes, request({ method: "POST", body: { text: "hi", attachments } }), `/api/rooms/${id}/messages`);
+    assert.equal(rejected.res.status, 400, `${JSON.stringify(attachments).slice(0, 40)} is refused`);
+    assert.equal(sentToEngine.length, 1, "nothing reached the engine");
+  }
   await done();
 });

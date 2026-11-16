@@ -6,7 +6,7 @@ import { enablePushNotifications } from "./lib/push";
 import { t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
-import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, recreateRoom as recreateRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
+import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
@@ -782,16 +782,18 @@ export async function removeRoom(id: string) {
   return result;
 }
 
-export async function recreateRoomThreads(id: string) {
-  const room = await recreateRoomApi(id);
+/** Start over: the room forgets its messages and every Bot opens a new session on its next answer. */
+export async function resetRoom(id: string) {
+  const room = await resetRoomApi(id);
   set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
   await loadRooms().catch(() => {});
   return room;
 }
 
 /** Sends from the room composer; the turn index is re-read so the user's bubble lands at once. */
-export async function sendRoomMessage(id: string, text: string, mentions: string[], replyTo: string | null = null): Promise<RoomTurn> {
-  const turn = await sendRoomMessageApi(id, { text, mentions, replyTo });
+export async function sendRoomMessage(id: string, text: string, mentions: string[], replyTo: string | null = null, attachments: Attachment[] = []): Promise<RoomTurn> {
+  // The room keeps the metadata; T3 keeps the bytes, and every addressed member claims its own copy.
+  const turn = await sendRoomMessageApi(id, { text, mentions, replyTo, attachments: attachments.map(({ previewUrl: _preview, environmentId: _environment, ...attachment }) => attachment) });
   await loadRoom(id, true);
   void loadRooms().catch(() => {});
   return turn;

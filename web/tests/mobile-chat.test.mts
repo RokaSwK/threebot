@@ -8,6 +8,7 @@ import { buildOnce, entryChunk, isModule } from "./support.mts";
 import { fileURLToPath } from "node:url";
 
 const chatPath = fileURLToPath(new URL("../src/components/Chat.tsx", import.meta.url));
+const composerPath = fileURLToPath(new URL("../src/components/ComposerActions.tsx", import.meta.url));
 const behaviorPath = fileURLToPath(new URL("../src/lib/chatBehavior.ts", import.meta.url));
 const storePath = fileURLToPath(new URL("../src/store.ts", import.meta.url));
 const bundle = await buildOnce({
@@ -17,7 +18,8 @@ const bundle = await buildOnce({
     name: "mobile-chat-test",
     resolveId: (id) => id.endsWith("virtual:mobile-chat-test") ? "\0mobile-chat-test" : undefined,
     load: (id) => id === "\0mobile-chat-test" ? `
-      export { Composer, AttachmentPicker, BotBubble, AttachmentList } from ${JSON.stringify(chatPath)};
+      export { Composer, BotBubble, AttachmentList } from ${JSON.stringify(chatPath)};
+      export { ComposerActions } from ${JSON.stringify(composerPath)};
       export * from ${JSON.stringify(behaviorPath)};
       export { useApp } from ${JSON.stringify(storePath)};
       export { createElement } from "react";
@@ -25,7 +27,7 @@ const bundle = await buildOnce({
     ` : undefined,
     // Exercise the real components without making their implementation public app APIs.
     transform: (code, id) => isModule(id, chatPath)
-      ? { code: code + "\nexport { Composer, AttachmentPicker, AttachmentList };", map: null }
+      ? { code: code + "\nexport { Composer, AttachmentList };", map: null }
       : undefined,
   }],
   ssr: { noExternal: true },
@@ -50,7 +52,7 @@ try {
 }
 const {
   composerFocusBehavior, MOBILE_CHAT_QUERY, splitBubbles, takeAttachmentFiles,
-  Composer, AttachmentPicker, BotBubble, AttachmentList, useApp,
+  Composer, ComposerActions, BotBubble, AttachmentList, useApp,
   createElement: h, renderToStaticMarkup: render,
 } = loaded;
 
@@ -146,21 +148,17 @@ test("the real composer renders mobile tap protection while retaining each threa
   assert.match(desktop, />A saved main draft<\/textarea>/);
 });
 
-function picker(mobile, open) {
-  return render(h(AttachmentPicker, {
-    mobile, open, onToggle() {}, onClose() {}, onFiles() {},
-  }));
+function picker(mobile) {
+  return render(h(ComposerActions, { mobile, onFiles() {} }));
 }
 function input(markup, label) {
   return markup.match(new RegExp(`<input[^>]*aria-label="${label}"[^>]*>`))?.[0];
 }
 
 test("mobile attachment actions render distinct native library, camera and file semantics", () => {
-  const markup = picker(true, true);
-  assert.equal((markup.match(/role="menuitem"/g) ?? []).length, 3);
-  for (const label of ["Choose File", "Take Photo", "Photo or Video"]) {
-    assert.ok(markup.includes(` ${label}</button>`), `${label} is offered in the menu`);
-  }
+  // The menu itself is opened by a tap in mobile-composer.test; the inputs are always mounted so a
+  // picker's result still arrives after the menu closes.
+  const markup = picker(true);
   const library = input(markup, "Photo library");
   assert.match(library, /type="file"/);
   assert.match(library, /accept="image\/\*,video\/\*"/);
@@ -176,7 +174,7 @@ test("mobile attachment actions render distinct native library, camera and file 
 });
 
 test("closing the attachment menu leaves all native inputs mounted for picker results", () => {
-  const markup = picker(true, false);
+  const markup = picker(true);
   assert.doesNotMatch(markup, /role="menu"/);
   assert.match(markup, /aria-expanded="false"/);
   for (const label of ["Photo library", "Take photo", "Files"]) {
@@ -184,11 +182,9 @@ test("closing the attachment menu leaves all native inputs mounted for picker re
   }
 });
 
-test("desktop keeps one unrestricted multiple-file picker and Attach files action", () => {
-  const markup = picker(false, true);
+test("desktop keeps one unrestricted multiple-file picker", () => {
+  const markup = picker(false);
   assert.equal((markup.match(/<input/g) ?? []).length, 1);
-  assert.equal((markup.match(/role="menuitem"/g) ?? []).length, 1);
-  assert.ok(markup.includes(" Attach files</button>"));
   assert.doesNotMatch(markup, /capture=|accept=|Photo library|Take photo/);
   assert.match(input(markup, "Files"), /multiple=""/);
 });
