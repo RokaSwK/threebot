@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 const channels: any[] = [];
 globalThis.MessageChannel = class extends MessageChannel {
@@ -27,7 +28,7 @@ for (const key of [
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
@@ -45,7 +46,7 @@ const bundle = await buildOnce({
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};`
         : undefined,
     transform: (code, id) =>
-      id === `${src}components/Chat.tsx` ? { code: `${code}\nexport { Composer };`, map: null } : undefined,
+      isModule(id, `${src}components/Chat.tsx`) ? { code: `${code}\nexport { Composer };`, map: null } : undefined,
   }],
   ssr: { noExternal: true },
   build: { ssr: "virtual:composer-mentions", write: false },

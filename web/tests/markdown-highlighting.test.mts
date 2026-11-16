@@ -8,6 +8,7 @@ import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import { buildOnce, domWindow } from "./support.mts";
 import { installWorkers, loadWorkerHighlighter } from "./highlight-worker-fixture.mts";
+import { fileURLToPath } from "node:url";
 
 // Real ReactMarkdown, React DOM, Shiki and clipboard helper. A test-only module
 // gate controls when the actual highlighter settles, including rejected imports.
@@ -23,7 +24,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const workers = installWorkers();
 const actualHighlighter = await loadWorkerHighlighter();
 globalThis.actualHighlightCode = actualHighlighter.highlightCode;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{

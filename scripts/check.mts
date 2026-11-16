@@ -14,15 +14,24 @@ import path from 'node:path';
 const root = fileURLToPath(new URL('../', import.meta.url));
 // No single test takes more than a few seconds, so one that runs for 2 minutes is hung: fail it.
 const TEST_TIMEOUT = '--test-timeout=120000';
-const run = (command: string, args: string[], cwd = root) => { const { status } = spawnSync(command, args, { cwd, stdio: 'inherit' }); if (status !== 0) process.exit(status ?? 1); };
+const windows = process.platform === 'win32';
+// Windows installs npm as a .cmd shim, which only cmd.exe can start (spawnSync can't run it directly).
+const run = (command: string, args: string[], cwd = root) => {
+  const shim = windows && command === 'npm';
+  const { status } = shim
+    ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', ['npm.cmd', ...args].join(' ')], { cwd, stdio: 'inherit', windowsVerbatimArguments: true })
+    : spawnSync(command, args, { cwd, stdio: 'inherit' });
+  if (status !== 0) process.exit(status ?? 1);
+};
 run('npm', ['test'], path.join(root, 'web'));
 run('npm', ['run', 'build'], path.join(root, 'web'));
 run('npm', ['run', 'typecheck:tests'], path.join(root, 'web'));
 run('npm', ['run', 'typecheck'], path.join(root, 'server'));
 run('node', ['--test', TEST_TIMEOUT, ...readdirSync(path.join(root, 'server')).filter((name) => name.endsWith('.test.mts'))], path.join(root, 'server'));
 run('node', ['--test', TEST_TIMEOUT, 'scripts/fixture.test.mts']);
-// The usage-stats collector (telemetry/), a Cloudflare Worker: its type check and tests.
-run(path.join(root, 'server', 'node_modules', '.bin', 'tsrs'), ['-p', 'telemetry/tsconfig.json']);
+// The usage-stats collector (telemetry/), a Cloudflare Worker: its type check and tests. The npm
+// shim for tsrs is a shell script on Windows, so run the entry file with this same Node instead.
+run('node', [path.join(root, 'server', 'node_modules', 'tsrs', 'bin', 'tsrs'), '-p', 'telemetry/tsconfig.json']);
 run('node', ['--test', TEST_TIMEOUT, 'telemetry/test/worker.test.ts']);
 run('node', ['--test', TEST_TIMEOUT, 'scripts/verify-assets.test.mts', 'scripts/release-notes.test.mts']);
 console.log('All checks passed.');

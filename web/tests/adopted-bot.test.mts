@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildOnce, entryChunk } from './support.mts';
+import { fileURLToPath } from "node:url";
 
-const library = new URL('../src/lib/library.ts', import.meta.url).pathname;
-const adopt = new URL('../src/lib/adopt.ts', import.meta.url).pathname;
-const navigation = new URL('../src/lib/navigation.ts', import.meta.url).pathname;
+const library = fileURLToPath(new URL('../src/lib/library.ts', import.meta.url));
+const adopt = fileURLToPath(new URL('../src/lib/adopt.ts', import.meta.url));
+const navigation = fileURLToPath(new URL('../src/lib/navigation.ts', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins: [{
   name: 'adopted-bot-test',
   resolveId: id => id.endsWith('virtual:adopted-bot-test') ? '\0adopted-bot-test' : undefined,

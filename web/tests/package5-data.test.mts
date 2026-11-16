@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildOnce, entryChunk } from './support.mts';
-const src = new URL('../src/lib/', import.meta.url).pathname;
+import { fileURLToPath } from "node:url";
+const src = fileURLToPath(new URL('../src/lib/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', build: { ssr: true, write: false, rollupOptions: { input: 'virtual:package5' } }, plugins: [{ name: 'package5-data', resolveId: (id) => id === 'virtual:package5' ? '\0package5' : undefined, load: (id) => id === '\0package5' ? `export * from ${JSON.stringify(src + 'usageApi.ts')}; export * from ${JSON.stringify(src + 'skillsApi.ts')}; export * from ${JSON.stringify(src + 'librarySearch.ts')}; export * as transport from ${JSON.stringify(src + 't3.ts')};` : undefined }] });
 const entry = entryChunk(bundle);
 const { parseProviderUsage, peakUsage, resetsIn, parseUsageSummary, usageRange, parseSkills, parseFileSearch, isLibraryPage, searchLibrary, transport } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);

@@ -6,7 +6,8 @@ import { pathToFileURL } from "node:url";
 import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Real chat entries, React DOM, clipboard helper, signed-resource adapter and
 // resource viewer. Only clipboard, RPC, HTTP and browser download are boundaries.
@@ -22,7 +23,7 @@ window.matchMedia = (query) => matchMedia(query === "(max-width: 760px), (pointe
 const actionStyle = document.createElement("style");
 actionStyle.textContent = await readFile(new URL("../src/components/ChatMessageActions.css", import.meta.url), "utf8");
 document.head.append(actionStyle);
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const chat = `${src}components/Chat.tsx`;
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
@@ -35,7 +36,7 @@ const bundle = await buildOnce({
       export { Sidebar } from ${JSON.stringify(`${src}components/Sidebar.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined,
-    transform: (code, id) => id === chat ? { code: `${code}\nexport { EntryView, AttachmentList };`, map: null } : undefined,
+    transform: (code, id) => isModule(id, chat) ? { code: `${code}\nexport { EntryView, AttachmentList };`, map: null } : undefined,
   }], ssr: { noExternal: true }, build: { ssr: "virtual:chat-actions-tests", write: false },
 });
 const entry = entryChunk(bundle);

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { buildOnce, entryChunk } from './support.mts';
-const modules = ['botMessages','transcript','remarkBotLinks','navigation'].map(name=>new URL(`../src/lib/${name}.ts`,import.meta.url).pathname);
+const modules = ['botMessages','transcript','remarkBotLinks','navigation'].map(name=>fileURLToPath(new URL(`../src/lib/${name}.ts`,import.meta.url)));
 const bundle=await buildOnce({configFile:false,logLevel:'silent',plugins:[{name:'messages-test',resolveId:id=>id.endsWith('virtual:messages-test')?'\0messages-test':undefined,load:id=>id==='\0messages-test'?modules.map(path=>`export * from ${JSON.stringify(path)};`).join('\n'):undefined}],build:{ssr:'virtual:messages-test',write:false},ssr:{noExternal:true}});
 const entry=entryChunk(bundle);assert.ok(entry);
 const {shortToolName,botDelivery,botExchange,parseThreadLink,buildEntries,workingPhrases,remarkBotLinks,navigationFor,navigationUrl,readNavigation,restoreNavigation}=await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
