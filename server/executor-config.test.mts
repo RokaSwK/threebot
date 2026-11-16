@@ -41,6 +41,16 @@ test('the bare Cloud MCP endpoint is explicitly organization-bound and skipped a
   assert.deepEqual((config.profile as CloudExecutorProfile).skippedApps, ['gmail', 'calendar']);
 });
 
+test('a Bot approval mode overrides only elicitation_mode and keeps the rest of the MCP URL', () => {
+  const config = executorConfiguration({ ...cloud, EXECUTOR_CLOUD_MCP_URL: 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=native&source=bot' });
+  const base = executorMcpDefinition(config.profile)!;
+  assert.equal(base.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=native&source=bot');
+  const automatic = executorMcpDefinition(config.profile, { elicitationMode: 'automatic' })!;
+  assert.equal(automatic.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=automatic&source=bot');
+  assert.deepEqual(automatic.headers, base.headers);
+  assert.equal(executorMcpDefinition(config.profile, { elicitationMode: 'model' })!.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=model&source=bot');
+});
+
 test('invalid backend, missing organization and cross-organization MCP routes fail without credential leakage', () => {
   for (const input of [
     { ...cloud, EXECUTOR_BACKEND: 'automatic' },

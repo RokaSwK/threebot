@@ -55,6 +55,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 
 - The T3 bearer token never reaches the browser. The gateway requires a password (`BOT_PASSWORD`) and sets an HttpOnly cookie.
 - Agents in `full-access` can run anything as user `t3`. Auto-review on uses `auto` mode.
+- **Connected app writes**: the approval mode belongs to one Bot. `executorApproval` (`ask` or `automatic`) in `bot.json` becomes the `elicitation_mode` query parameter on that Bot's Executor MCP URL, written into its `.mcp.json` and other MCP config files: it decides whether Executor asks the Bot before writing to a connected app, or approves every app write for it. It is Executor's own approval, not a T3 permission mode, and it applies to new sessions; `automatic` covers all of the Bot's apps, not one tool. Unset leaves whatever the configured URL says.
 
 ## Vault
 

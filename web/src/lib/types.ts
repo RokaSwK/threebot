@@ -28,6 +28,8 @@ export type Bot = {
   codingWork?: CodingWork | null;
   /** The T3 routine that tidies this Bot's memory; absent means it has never been set up here. */
   memoryTidyRoutineId?: string;
+  /** How Executor answers app approval prompts for this Bot; absent keeps the configured default. */
+  executorApproval?: "ask" | "automatic";
 };
 
 /** A T3 project on this machine that could become a Bot. */

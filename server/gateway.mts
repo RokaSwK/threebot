@@ -479,11 +479,15 @@ async function untrustInCodex(dir: string) {
   await fs.writeFile(codexGlobalConfig, existing.replace(`\n${lines}`, "").replace(lines, ""), { mode: 0o600 });
 }
 
-async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot) {
+async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot, executorApproval?: Bot['executorApproval']) {
   // Every Bot gets its own tool server (the Vault and Projects); Executor when it's configured.
   const botToken = tokenForBot(botMcpToken, slug);
   const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
-  try { const definition = executorMcpDefinition(executorConfig.profile); if (definition) servers.executor = definition; }
+  try {
+    const elicitationMode = executorApproval === 'automatic' ? 'automatic' : executorApproval === 'ask' ? 'model' : undefined;
+    const definition = executorMcpDefinition(executorConfig.profile, { elicitationMode });
+    if (definition) servers.executor = definition;
+  }
   catch { console.error('Executor credential unavailable; managed Executor MCP is disabled.'); }
   if (adoption) return writeAdoptedMcpConfig(adoption, servers);
   const mcpPath = path.join(dir, ".mcp.json");
@@ -579,7 +583,7 @@ async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot
   const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
   if (bot.adopted && !adoption) return;
   const dir = bot.workspaceRoot;
-  const executorReady = await writeMcpConfig(dir, bot.slug, adoption);
+  const executorReady = await writeMcpConfig(dir, bot.slug, adoption, bot.executorApproval);
   // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
   const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
     organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
