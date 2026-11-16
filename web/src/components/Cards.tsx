@@ -44,10 +44,10 @@ export function EventLine({ entry }: { entry: Extract<Entry, { kind: "event" }> 
 export function RoutineReportLine({ entry, bot }: { entry: Extract<Entry, { kind: "routine-report" }>; bot: Bot }) {
   return (
     <div className="fade-up flex flex-wrap items-center justify-center gap-2 py-2 text-[13px] text-muted">
-      <Sparkles size={13} className="opacity-80" />
+      <Sparkles size={13} className="opacity-80" aria-hidden="true" />
       <span className="text-fg">{entry.title}</span>
       <span className={entry.failed ? "text-danger" : "text-fg"}>{entry.summary}</span>
-      <button type="button" className="underline underline-offset-2 hover:text-fg" onClick={() => selectThread(bot, entry.threadId)}>View</button>
+      <button type="button" aria-label={`View the ${entry.title} conversation`} className="underline underline-offset-2 hover:text-fg" onClick={() => selectThread(bot, entry.threadId)}>View</button>
     </div>
   );
 }

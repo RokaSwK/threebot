@@ -109,22 +109,22 @@ export function MemoryTab({ bot }: { bot: Bot }) {
             <div className="text-[13px]">Tidy now</div>
             <div className="text-[12px] text-muted">Ask {bot.name} to clean up the files above.</div>
           </div>
-          <Pill variant="soft" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
+          <Pill variant="soft" onClick={tidy}><Sparkles size={13} aria-hidden="true" /> Ask {bot.name} to tidy</Pill>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
           <div className="min-w-0 flex-1">
             <div className="text-[13px]">Tidy automatically</div>
             <div className="text-[12px] text-muted">{tidyScheduleText(frequency)}{frequency !== "off" && frequency !== "custom" && " · in its own conversation"}</div>
           </div>
-          <div role="group" aria-label="Tidy frequency" className="flex items-center gap-1.5">
+          <div role="radiogroup" aria-label="Tidy frequency" className="flex items-center gap-1.5">
             {(["off", "weekly", "nightly"] as const).map((value) => (
-              <Pill key={value} variant={frequency === value ? "primary" : "soft"} disabled={Boolean(tidyBusy) || !bot.mainThreadId} onClick={() => void changeTidy(value)} title={!bot.mainThreadId ? "This Bot has no main conversation yet" : undefined}>
+              <Pill key={value} role="radio" aria-checked={frequency === value} variant={frequency === value ? "primary" : "soft"} disabled={Boolean(tidyBusy) || !bot.mainThreadId} onClick={() => void changeTidy(value)} title={!bot.mainThreadId ? "This Bot has no main conversation yet" : undefined}>
                 {value === "off" ? "Off" : value === "weekly" ? "Weekly" : "Nightly"}
               </Pill>
             ))}
           </div>
         </div>
-        {routine?.threadId && <button type="button" className="mt-2 text-[12px] text-fg underline underline-offset-2" onClick={() => { selectThread(bot, routine.threadId!); setDetailsOpen(false); }}>View runs</button>}
+        {routine?.threadId && <button type="button" aria-label={`View tidy runs for ${bot.name}`} className="mt-2 text-[12px] text-fg underline underline-offset-2" onClick={() => { selectThread(bot, routine.threadId!); setDetailsOpen(false); }}>View runs</button>}
       </div>
     </div>
   );

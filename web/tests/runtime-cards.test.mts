@@ -25,7 +25,7 @@ const bundle = await buildOnce({
     load: (id) => id === "\0runtime-cards-tests" ? `
       export { createElement, act, useState } from "react";
       export { createRoot } from "react-dom/client";
-      export { ApprovalCard, QuestionCard, SecretCard, SubagentCard } from ${JSON.stringify(`${src}components/Cards.tsx`)};
+      export { ApprovalCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard } from ${JSON.stringify(`${src}components/Cards.tsx`)};
       export { ModelPicker } from ${JSON.stringify(`${src}components/ModelPicker.tsx`)};
       export { buildEntries } from ${JSON.stringify(`${src}lib/transcript.ts`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
@@ -37,7 +37,7 @@ assert.ok(entry);
 const testDir = await mkdtemp(join(tmpdir(), "bot-runtime-cards-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entry.code);
-const { createElement: h, act, useState, createRoot, ApprovalCard, QuestionCard, SecretCard, SubagentCard, ModelPicker, buildEntries, useApp, t3 } = await import(pathToFileURL(testEntry).href);
+const { createElement: h, act, useState, createRoot, ApprovalCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ModelPicker, buildEntries, useApp, t3 } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 let root, host, calls, transport, questionViews;
 beforeEach(() => {
@@ -749,4 +749,15 @@ test('a remote child on a machine Threebot reaches opens inside the app with its
   // Only the gateway reads a linked-only thread: no live T3 connection to that machine is opened.
   assert.equal(calls.filter((call) => call.tag === 'orchestration.dispatchCommand' || call.tag === 'orchestration.getThreadFamily').length, 0);
   useApp.setState({ machines: null });
+});
+
+test('a routine report says what ran and names the run behind View', async () => {
+  const bot = { slug: 'alpha', name: 'Alpha', mainThreadId: 'root', shape: 'blob', color: 'teal' };
+  const entry = { kind: 'routine-report' as const, id: 'routine-report:task-1', at: '2026-11-16T03:30:00Z', title: 'Tidy memory', summary: 'Running now, in its own conversation.', threadId: 't-tidy', failed: false };
+  await act(async () => root.render(h(RoutineReportLine, { entry, bot })));
+  const view = host.querySelector('button');
+  assert.equal(view.textContent, 'View');
+  assert.equal(view.getAttribute('aria-label'), 'View the Tidy memory conversation');
+  assert.equal(host.querySelector('svg').getAttribute('aria-hidden'), 'true');
+  assert.match(host.textContent ?? '', /Running now, in its own conversation/u);
 });

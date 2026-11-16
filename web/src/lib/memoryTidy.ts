@@ -35,7 +35,11 @@ export type TidyReport = { id: string; at: string; title: string; summary: strin
 
 const firstParagraph = (text: string) => {
   const first = text.trim().split(/\n{2,}/u)[0].replace(/\s+/gu, " ").trim();
-  return first.length > 180 ? `${first.slice(0, 179).trimEnd()}…` : first;
+  if (first.length <= 180) return first;
+  // Cut at a word: a summary ending mid-word reads as a truncated error, not a report.
+  const cut = first.slice(0, 179);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > 120 ? cut.slice(0, space) : cut).trimEnd()}…`;
 };
 
 /**
@@ -43,11 +47,15 @@ const firstParagraph = (text: string) => {
  * "post a note without a turn", so this never sends anything to the Bot's thread.
  */
 export async function readTidyReport(task: ScheduledTask): Promise<TidyReport | null> {
-  if (!task.threadId || !task.lastRunAt || !task.runCount) return null;
+  if (!task.threadId) return null;
+  // A run in progress has no message to read yet; the line says so instead of showing last week's.
+  if (task.lastRunStatus === "running") {
+    return { id: task.id, at: task.lastRunAt ?? new Date().toISOString(), title: task.title, summary: "Running now, in its own conversation.", threadId: task.threadId, failed: false };
+  }
+  if (!task.lastRunAt || !task.runCount) return null;
   if (task.lastRunStatus === "failed") {
     return { id: task.id, at: task.lastRunAt, title: task.title, summary: "The run failed. Open it for details.", threadId: task.threadId, failed: true };
   }
-  if (task.lastRunStatus === "running") return null;
   const projection = await threadClient(task.threadId).call<{ turnItems?: TurnItem[] }>("orchestration.getThreadProjection", { threadId: task.threadId });
   const message = [...(projection?.turnItems ?? [])].reverse().find((item) => item.type === "assistant_message" && typeof item.text === "string" && item.text.trim());
   const text = typeof message?.text === "string" ? message.text.trim() : "";

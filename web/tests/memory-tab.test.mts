@@ -23,19 +23,21 @@ const bundle = await buildOnce({
     load: (id) => id === "\0memory-tab-tests" ? `
       export { createElement, act } from "react";
       export { createRoot } from "react-dom/client";
-      export { MemoryTab } from ${JSON.stringify(`${src}components/Memory.tsx`)};` : undefined }],
+      export { MemoryTab } from ${JSON.stringify(`${src}components/Memory.tsx`)};
+      export { useApp } from ${JSON.stringify(`${src}store.ts`)};` : undefined }],
   ssr: { noExternal: true }, build: { ssr: "virtual:memory-tab-tests", write: false },
 });
 const testDir = await mkdtemp(join(tmpdir(), "bot-memory-tab-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entryChunk(bundle).code);
-const { createElement: h, act, createRoot, MemoryTab } = await import(pathToFileURL(testEntry).href);
+const { createElement: h, act, createRoot, MemoryTab, useApp } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 
 const bot = { slug: "alpha", name: "Alpha", mainThreadId: "t-alpha" };
 const revision = (text: string) => `r${text.length}:${text.slice(-8)}`;
 let root, host, disk, puts, tidies;
 beforeEach(() => {
+  useApp.setState({ tasks: [] });
   disk = { bot: "# Alpha memory\n\n## People\n- **Ana** runs payroll.\n", shared: "" };
   puts = [];
   tidies = [];
@@ -150,4 +152,19 @@ test("choosing a tidy frequency posts it and keeps the manual action", async () 
   await click(button("Weekly"));
   assert.deepEqual(tidies, [{ slug: "alpha", frequency: "weekly" }]);
   assert.ok(button("Ask Alpha to tidy"));
+});
+
+test("the tidy frequency is one choice of three, and the routine link names its Bot", async () => {
+  await act(async () => root.render(h(MemoryTab, { bot: { ...bot, projectId: "p-alpha" } })));
+  await settle();
+  const group = host.querySelector('[role="radiogroup"][aria-label="Tidy frequency"]');
+  assert.ok(group);
+  const options = [...group.querySelectorAll('[role="radio"]')];
+  assert.deepEqual(options.map((option) => option.textContent), ["Off", "Weekly", "Nightly"]);
+  assert.deepEqual(options.map((option) => option.getAttribute("aria-checked")), ["true", "false", "false"]);
+
+  await act(async () => useApp.setState({ tasks: [{ id: "task-9", title: "Tidy memory", projectId: "p-alpha", enabled: true, threadId: "t-tidy", schedule: { type: "fixed_time", timeOfDay: "03:30" } }] }));
+  await settle();
+  const view = button("View runs");
+  assert.equal(view?.getAttribute("aria-label"), "View tidy runs for Alpha");
 });
