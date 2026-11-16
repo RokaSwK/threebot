@@ -18,7 +18,8 @@ interface RecordedRequest { path: string; method: string | undefined; headers: h
 
 const TOKEN = 'fake-private-probe-token';
 const SESSION = 'probe-own-session';
-const CLI = new URL('../scripts/executor-check.mts', import.meta.url).pathname;
+import { fileURLToPath } from 'node:url';
+const CLI = fileURLToPath(new URL('../scripts/executor-check.mts', import.meta.url));
 const json = (res: http.ServerResponse, value: unknown, status = 200, headers: http.OutgoingHttpHeaders = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(value)); };
 
 async function fixture(t: TestContext, options: FixtureOptions = {}) {

@@ -83,8 +83,10 @@ test("the file is written atomically with mode 0600", async () => {
   const rooms = createRooms({ file });
   await rooms.create({ name: "One", members: validateMembers(["alpha", "beta"], bots) });
   await rooms.create({ name: "Two", members: validateMembers(["alpha", "beta"], bots) });
-  const mode = (await stat(file)).mode & 0o777;
-  assert.equal(mode, 0o600);
+  if (process.platform !== "win32") {
+    const mode = (await stat(file)).mode & 0o777;
+    assert.equal(mode, 0o600);
+  }
   const saved = JSON.parse(await readFile(file, "utf8"));
   assert.equal(saved.version, 1);
   assert.equal(saved.rooms.length, 2, "two writes in a row both landed");

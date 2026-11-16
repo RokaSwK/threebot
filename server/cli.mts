@@ -115,9 +115,19 @@ async function waitForHealth({ port = portOf(), version, timeoutMs = 60000 }: { 
 }
 
 function findT3() {
-  for (const dir of (process.env.PATH ?? "").split(":")) if (dir && existsSync(path.join(dir, "t3"))) return path.join(dir, "t3");
-  const own = path.join(homedir(), ".t3", "bin", "t3");
-  return existsSync(own) ? own : null;
+  const names = process.platform === "win32" ? ["t3.cmd", "t3.exe", "t3.ps1", "t3"] : ["t3"];
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (dir && existsSync(candidate)) return candidate;
+    }
+  }
+  const ownDir = path.join(homedir(), ".t3", "bin");
+  for (const name of names) {
+    const own = path.join(ownDir, name);
+    if (existsSync(own)) return own;
+  }
+  return null;
 }
 
 async function ask(question: string, { secret = false }: { secret?: boolean } = {}): Promise<string> {
@@ -186,7 +196,7 @@ PORT=${port}
     say("Settings are ready. Start Threebot with `threebot serve`.");
     return;
   }
-  if (!serviceSupported()) fail("Background services work on macOS and Linux. Start Threebot with `threebot serve`.");
+  if (!serviceSupported()) fail("Background services work on macOS, Linux and Windows. Start Threebot with `threebot serve`.");
   const file = await installService(spec());
   say(`Installed the background service (${file})`);
   const h = await waitForHealth({ port, timeoutMs: 45000 });

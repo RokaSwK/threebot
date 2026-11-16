@@ -84,8 +84,10 @@ test("pairing swaps a one-time code for a private direct route the environment r
     assert.ok(net.asked.includes("https://nas.ts.net/oauth/token"));
     const routes = JSON.parse(await readFile(pairedRoutesFile(root), "utf8"));
     assert.equal(routes.nas.baseUrl, "https://nas.ts.net");
-    assert.equal((await stat(routes.nas.tokenFile)).mode & 0o777, 0o600);
-    assert.equal((await stat(pairedRoutesFile(root))).mode & 0o777, 0o600);
+    if (process.platform !== "win32") {
+      assert.equal((await stat(routes.nas.tokenFile)).mode & 0o777, 0o600);
+      assert.equal((await stat(pairedRoutesFile(root))).mode & 0o777, 0o600);
+    }
     const router = createEnvironmentRouter({ file: [undefined, pairedRoutesFile(root)], fetcher: net.fetcher });
     assert.deepEqual(await router("nas"), { baseUrl: "https://nas.ts.net", token: "peer-session" });
     assert.equal((await machines.list({ maxAge: 0 })).machines[1].route, "direct");

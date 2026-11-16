@@ -65,7 +65,14 @@ curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | 
 threebot up
 ```
 
-The installer downloads the latest [release](https://github.com/RokaSwK/threebot/releases), checks it against the release's SHA-256 sums and installs it in `~/.threebot`. `threebot up` asks T3 Code for a token, starts Threebot as a background service (launchd on macOS, systemd on Linux) and prints its address, <http://127.0.0.1:3780>. Open it and create your first Bot.
+On Windows, download the portable bundle from [releases](https://github.com/RokaSwK/threebot/releases), unzip it and double-click `Threebot.exe`. It installs itself into `%LOCALAPPDATA%\Programs\Threebot`, adds Start Menu and Startup shortcuts, starts the gateway and opens the app; Node and the icon are in the folder already. Or use PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex
+threebot up
+```
+
+The installer downloads the latest [release](https://github.com/RokaSwK/threebot/releases), checks it against the release's SHA-256 sums and installs it in `~/.threebot`. `threebot up` asks T3 Code for a token, starts Threebot as a background service (launchd on macOS, systemd on Linux, the Startup folder on Windows) and prints its address, <http://127.0.0.1:3780>. Open it and create your first Bot.
 
 To use it on your phone, open **Settings → Remote access**:
 
