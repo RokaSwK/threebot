@@ -11,14 +11,19 @@ type RoutineClient = Pick<T3Client, "stream" | "call">;
 
 export const MEMORY_TIDY_TITLE = "Tidy memory";
 
-export const MEMORY_TIDY_PROMPT = `Tidy your memory now. Work only inside your \`memory/\` folder and answer with one short paragraph.
+export function memoryTidyPrompt(bot: Pick<Bot, "adopted">): string {
+  const folder = bot.adopted ? ".bot/memory" : "memory";
+  return `Tidy your memory now. Work only inside your \`${folder}/\` folder and answer with one short paragraph.
 
-1. Read \`memory/MEMORY.md\` and \`memory/log.md\`.
+1. Read \`${folder}/MEMORY.md\` and \`${folder}/log.md\`.
 2. Keep \`MEMORY.md\` inside the snapshot budget: ${MEMORY_LIMITS.snapshotBotLines} lines and ${MEMORY_LIMITS.snapshotBotChars.toLocaleString("en-US")} characters. The gateway copies only that much into a fresh session, so anything past it is invisible. Count by reading the file; do not run shell commands.
-3. Merge repeated facts into one short line under its heading. When two lines disagree, keep the newest and delete the older. Move dated diary entries to \`memory/log.md\`.
+3. Merge repeated facts into one short line under its heading. When two lines disagree, keep the newest and delete the older. Move dated diary entries to \`${folder}/log.md\`.
 4. Remove only what you can prove is stale, superseded or contradicted by a newer line. Never delete a unique fact you cannot verify; list it instead.
 5. Leave the user's own wording alone when it is already a clear fact.
 6. Report the final line and character count, what you merged, removed or moved, and anything you left for the user to decide. If nothing changed, say so in one line.`;
+}
+
+export const MEMORY_TIDY_PROMPT = memoryTidyPrompt({});
 
 export type MemoryTidyFrequency = "off" | "weekly" | "nightly";
 
@@ -94,7 +99,7 @@ export async function setMemoryTidy({ client, bot, frequency, modelSelection }: 
     ...(existing ? { id: existing.id, requireExisting: true } : {}),
     commandId: randomUUID(),
     title: MEMORY_TIDY_TITLE,
-    prompt: MEMORY_TIDY_PROMPT,
+    prompt: memoryTidyPrompt(bot),
     enabled: true,
     schedule: memoryTidySchedule(frequency),
     projectId: bot.projectId,

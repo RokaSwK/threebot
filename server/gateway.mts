@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
-import { MEMORY_TIDY_PROMPT, setMemoryTidy, type MemoryTidyFrequency } from "./memory-tidy.mts";
+import { memoryTidyPrompt, setMemoryTidy, type MemoryTidyFrequency } from "./memory-tidy.mts";
 import { ADOPTED_INSTRUCTIONS, instructionTextError, readAdoptedInstructions, readInstructions, sanitizeInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
 import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
@@ -1329,7 +1329,7 @@ const server = http.createServer(async (req, res) => {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
       const files = await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined });
-      return send(res, 200, { ...files, tidyPrompt: MEMORY_TIDY_PROMPT }, { "cache-control": "no-store" });
+      return send(res, 200, { ...files, tidyPrompt: memoryTidyPrompt(bot) }, { "cache-control": "no-store" });
     }
     if (p === "/api/memory/tidy" && req.method === "POST") {
       requireJson(req);

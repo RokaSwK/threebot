@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MEMORY_TIDY_PROMPT, MEMORY_TIDY_TITLE, findMemoryTidy, listScheduledTasks, memoryTidySchedule, setMemoryTidy, type MemoryTidyTask } from "./memory-tidy.mts";
+import { memoryTidyPrompt, MEMORY_TIDY_PROMPT, MEMORY_TIDY_TITLE, findMemoryTidy, listScheduledTasks, memoryTidySchedule, setMemoryTidy, type MemoryTidyTask } from "./memory-tidy.mts";
 
 function fakeClient(tasks: MemoryTidyTask[]) {
   const calls: { tag: string; payload: Record<string, unknown> }[] = [];
@@ -93,4 +93,17 @@ test("a linked id wins over the title, and a legacy title still links", async ()
 test("the routine list waits for the first snapshot", async () => {
   const client = fakeClient([task]);
   assert.deepEqual(await listScheduledTasks(client), [task]);
+});
+
+
+test("adopted Bot tidy targets only its .bot/memory folder", async () => {
+  const adopted = { ...bot, adopted: true };
+  const prompt = memoryTidyPrompt(adopted);
+  assert.match(prompt, /`\.bot\/memory\/` folder/);
+  assert.match(prompt, /`\.bot\/memory\/MEMORY.md`/);
+  assert.match(prompt, /`\.bot\/memory\/log.md`/);
+  assert.doesNotMatch(prompt, /`memory\//);
+  const client = fakeClient([]);
+  await setMemoryTidy({ client, bot: adopted, frequency: "nightly", modelSelection });
+  assert.equal(client.calls.find((call) => call.tag === "scheduledTasks.upsert")!.payload.prompt, prompt);
 });
