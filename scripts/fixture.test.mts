@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ADOPT_REPO, createFixture, gatewayInvocation, smokeFixture } from './fixture.mts';
 import { FIXTURE_PAIRING_CODE, startFakeT3, type FixtureLink } from './fixture-t3.mts';
 import { APPROVAL_OPTIONS, DUMMY_SECRET, INITIAL_ANSWER, INTERACTION_IDS, fixtureReleases } from './fixture-scenarios.mts';
@@ -149,7 +149,7 @@ test('an occupied port fails without stopping the existing server', { timeout: 1
 });
 
 test('foreground CLI restarts/resets on command and SIGTERM removes only its own fixture', { timeout: 20000 }, async () => {
-  const child = spawn(process.execPath, [new URL('./fixture.mts', import.meta.url).pathname], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./fixture.mts', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'] });
   let output = '';
   let fixtureRoot;
   const lineWaiters = new Set<() => void>();
@@ -320,12 +320,12 @@ test('interactions use exact paired messages and runtime cards through the real 
     const requireWeb = createRequire(new URL('../web/package.json', import.meta.url));
     const { build } = await import(pathToFileURL(requireWeb.resolve('vite')).href);
     const bundle = await build({ configFile: false, logLevel: 'silent', build: {
-      ssr: new URL('../web/src/lib/transcript.ts', import.meta.url).pathname, write: false,
+      ssr: fileURLToPath(new URL('../web/src/lib/transcript.ts', import.meta.url)), write: false,
     }, ssr: { noExternal: true } });
     const entry = bundle.output.find((output: Json) => output.type === 'chunk' && output.isEntry);
     const { buildEntries } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
     const exchangeBundle = await build({ configFile: false, logLevel: 'silent', build: {
-      ssr: new URL('../web/src/lib/botMessages.ts', import.meta.url).pathname, write: false,
+      ssr: fileURLToPath(new URL('../web/src/lib/botMessages.ts', import.meta.url)), write: false,
     }, ssr: { noExternal: true } });
     const exchangeEntry = exchangeBundle.output.find((output: Json) => output.type === 'chunk' && output.isEntry);
     const { botExchange } = await import(`data:text/javascript;base64,${Buffer.from(exchangeEntry.code).toString('base64')}`);
@@ -551,7 +551,7 @@ test('Executor CLI startup failure closes its fake listeners and preserves occup
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   try {
-    const child = spawn(process.execPath, [new URL('./fixture.mts', import.meta.url).pathname, '--scenario', 'executor', '--port', String((server.address() as AddressInfo).port)], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [fileURLToPath(new URL('./fixture.mts', import.meta.url)), '--scenario', 'executor', '--port', String((server.address() as AddressInfo).port)], { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', (chunk) => { output += chunk; }); child.stderr.on('data', (chunk) => { output += chunk; });
     const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
     try { const [code, signal] = await once(child, 'exit'); assert.equal(code, 1, output); assert.equal(signal, null); }

@@ -16,7 +16,7 @@ export function environmentPath(pathname: string): { environmentId: string | nul
 }
 async function privateFile(file: string): Promise<string> {
   const stat = await lstat(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())) throw failure('Environment credentials must be private files owned by the gateway user.');
+  if (!stat.isFile() || stat.isSymbolicLink() || (process.platform !== "win32" && ((stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid())))) throw failure('Environment credentials must be private files owned by the gateway user.');
   return readFile(file, 'utf8');
 }
 export function createEnvironmentRouter<Local = EnvironmentTarget>({ local, file, readPrivate = privateFile, fetcher = fetch }: {

@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, before, describe, test } from 'node:test';
 import { WebSocket } from 'ws';
 import { exposureConfig, landingPath } from './exposure.mts';
@@ -27,7 +28,7 @@ async function startGateway(env: Record<string, string>) {
   await writeFile(path.join(root, 'dist/welcome/index.html'), 'LANDING');
   await writeFile(path.join(root, 'dist/welcome/img/ball.webp'), 'BALL');
   const port = await freePort(), tailnet = await freePort();
-  const child = spawn(process.execPath, [new URL('./gateway.mts', import.meta.url).pathname], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./gateway.mts', import.meta.url))], {
     env: {
       PATH: process.env.PATH, HOME: root, CODEX_HOME: path.join(root, 'codex'), HOST: '127.0.0.1', PORT: String(port),
       BOTS_ROOT: path.join(root, 'bots'), STATIC_DIR: path.join(root, 'dist'), T3_URL: 'http://127.0.0.1:1', T3_TOKEN: 'fixture-only',

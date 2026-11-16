@@ -6,6 +6,7 @@ import net, { type AddressInfo } from 'node:net';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Readable } from 'node:stream';
 import { test, type TestContext } from 'node:test';
 import { startFakeT3 } from '../scripts/fixture-t3.mts';
@@ -65,7 +66,7 @@ async function gateway(t: TestContext, executorEnv: Record<string, string> = {})
     }
     return original(input, init);
   };`);
-  child = spawn(process.execPath, ['--import', networkGuard, new URL('./gateway.mts', import.meta.url).pathname], {
+  child = spawn(process.execPath, ['--import', pathToFileURL(networkGuard).href, fileURLToPath(new URL('./gateway.mts', import.meta.url))], {
     env: { PATH: path.dirname(process.execPath), HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'), HOST: '127.0.0.1', PORT: String(port), BOTS_ROOT: botsRoot,
       T3_URL: `http://127.0.0.1:${fakeT3.port}`, T3_TOKEN: 'fixture-t3-token', BOT_MCP_TOKEN: 'fixture-bot-token', BOT_PASSWORD: PASSWORD,
       VAULT_FILE: path.join(root, 'vault.enc'), VAULT_KEY_FILE: path.join(root, 'vault-key'), T3_SECRETS_DIR: path.join(root, 'secrets'), ...executorEnv },
@@ -160,8 +161,10 @@ for (const hasCredential of [true, false]) test(`every Bot gets the selected Clo
     } else { assert.equal(mcp.mcpServers.executor, undefined); assert.doesNotMatch(toml, /mcp_servers\.executor/); }
     assert.doesNotMatch(JSON.stringify(mcp), /stale-backup-token|fake-backup-token|old-backup\.invalid/);
     assert.doesNotMatch(toml, /fake-backup-token|old-backup\.invalid/);
-    assert.equal((await stat(path.join(directory, '.mcp.json'))).mode & 0o777, 0o600);
-    assert.equal((await stat(path.join(directory, '.codex/config.toml'))).mode & 0o777, 0o600);
+    if (process.platform !== "win32") {
+      assert.equal((await stat(path.join(directory, '.mcp.json'))).mode & 0o777, 0o600);
+      assert.equal((await stat(path.join(directory, '.codex/config.toml'))).mode & 0o777, 0o600);
+    }
     assert.doesNotMatch(instructions, /fake-gateway-executor-token|fake-backup-token/);
   }
 });
