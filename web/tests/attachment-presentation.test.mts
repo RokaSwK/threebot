@@ -7,6 +7,7 @@ import { after, afterEach, beforeEach, mock, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Real attachment tiles, viewer, React DOM and signed-resource adapter. RPC,
 // signed HTTP responses and browser downloads are the external boundaries.
@@ -16,7 +17,7 @@ const window = domWindow(new Window({ url: "https://attachment-presentation.test
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "history"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "attachment-presentation-test", resolveId: (id) => id.endsWith("virtual:attachment-presentation") ? "\0attachment-presentation" : undefined,

@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import { buildOnce, entryChunk } from './support.mts';
+import { fileURLToPath } from "node:url";
 
 globalThis.localStorage = { getItem: () => null, setItem() {} } as unknown as Storage;
 globalThis.location = new URL('http://thread-state.test') as unknown as Location;
 globalThis.window = { setInterval() {}, clearInterval() {} } as unknown as typeof window;
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins: [{ name: 'thread-state',
   resolveId: id => id.endsWith('virtual:thread-state') ? '\0thread-state' : undefined,
   load: id => id === '\0thread-state' ? `export * from ${JSON.stringify(src + 'store.ts')}; export { t3 } from ${JSON.stringify(src + 'lib/t3.ts')}; export { api } from ${JSON.stringify(src + 'lib/api.ts')};` : undefined,
 }], ssr: { noExternal: true }, build: { ssr: 'virtual:thread-state', write: false } });
 const entry = entryChunk(bundle);
-const { boot, useApp, t3, api, loadThreadFamily, watchThread, conversationStatus, botStatus } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
+const { boot, useApp, t3, api, loadThreadFamily, watchThread, conversationStatus, botStatus, botThreadStatus } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
 const streams = new Map(); let reconnect;
 t3.onState = () => () => {};
 t3.onReconnect = fn => { reconnect = fn; return () => {}; };
@@ -72,4 +73,22 @@ test('a settled Bot whose last reply was never read stays unread', () => {
   assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'unread');
   useApp.setState({ threads: { root: { ...settled, lastVisitedAt: '2026-01-03T00:00:00Z' } } });
   assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'done');
+});
+
+test('with Beta → Settle Bot threads on, a settled Bot reads as idle, not finished', () => {
+  const settled = { ...root, settledOverride: 'settled', settledAt: '2026-01-09T00:00:00Z', latestRunCompletedAt: '2026-01-02T00:00:00Z', lastVisitedAt: '2026-01-03T00:00:00Z' };
+  useApp.setState({ threads: { root: settled }, selected: null, settings: { beta: { projects: false, settleBotThreads: true } } as never });
+  assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'idle');
+  useApp.setState({ settings: { beta: { projects: false, settleBotThreads: false } } as never });
+  assert.equal(botStatus({ slug: 'money', mainThreadId: 'root' }), 'done');
+  useApp.setState({ settings: null as never });
+});
+
+test('with Beta → Settle Bot threads on, Details reads a settled main thread as idle and a settled subagent as done', () => {
+  const settled = { ...root, settledOverride: 'settled', settledAt: '2026-01-09T00:00:00Z' };
+  useApp.setState({ threads: { root: settled }, settings: { beta: { projects: false, settleBotThreads: true } } as never });
+  assert.equal(botThreadStatus({ mainThreadId: 'root' }, 'root'), 'idle');
+  assert.equal(botThreadStatus({ mainThreadId: 'other' }, 'root'), 'completed');
+  useApp.setState({ settings: null as never });
+  assert.equal(botThreadStatus({ mainThreadId: 'root' }, 'root'), 'completed');
 });

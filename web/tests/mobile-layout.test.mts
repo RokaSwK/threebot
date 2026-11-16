@@ -7,7 +7,8 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import postcss, { type Declaration, type Rule } from "postcss";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // DOM lifecycle and CSS conditions/declarations only: happy-dom does not prove
 // browser geometry, scrolling, safe areas, or software keyboard behavior.
@@ -59,7 +60,7 @@ function viewport(width, height, nextPointer) {
     }
   }
 }
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{
@@ -73,7 +74,7 @@ const bundle = await buildOnce({
       export { Details } from ${JSON.stringify(`${src}components/Details.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}App.tsx` ? { code: `${code}\nexport { Shell, useNarrow };`, map: null } : undefined,
+    transform: (code, id) => isModule(id, `${src}App.tsx`) ? { code: `${code}\nexport { Shell, useNarrow };`, map: null } : undefined,
   }],
   ssr: { noExternal: true }, build: { ssr: "virtual:mobile-layout", write: false },
 });

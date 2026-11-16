@@ -6,10 +6,11 @@ import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { buildOnce, entryChunk } from "./support.mts";
 import type { Bot, RuntimeRequest, TurnItem } from "../src/lib/types.ts";
+import { fileURLToPath } from "node:url";
 
 // `roomCards` reads the same `buildEntries` the chat uses, which pulls in the app's module graph;
 // bundle it the way the other component tests do instead of asking Node to resolve Vite imports.
-const source = new URL("../src/lib/roomCards.ts", import.meta.url).pathname;
+const source = fileURLToPath(new URL("../src/lib/roomCards.ts", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
