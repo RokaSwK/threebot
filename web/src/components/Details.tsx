@@ -178,6 +178,8 @@ function ConnectedAppsSection({ bot }: { bot: Bot }) {
   const [busy, setBusy] = useState(false);
   if (!executorUrl) return null;
   const automatic = bot.executorApproval === "automatic";
+  const titleId = `connected-apps-title-${bot.slug}`;
+  const noteId = `${titleId}-note`;
   const change = async (on: boolean) => {
     if (busy) return;
     setBusy(true);
@@ -189,14 +191,14 @@ function ConnectedAppsSection({ bot }: { bot: Bot }) {
     <div className="rounded-2xl bg-card px-3.5 py-3">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[17px]">Automatic app approval</div>
-          <p className="mt-1 text-[13px] leading-relaxed text-muted">{automatic
-            ? `Executor approves writes to every connected app for ${bot.name} itself, without asking. It covers all apps, not one tool.`
-            : `Executor asks before writing to a connected app. ${bot.name} has to relay the request; writes it doesn't relay expire after 15 minutes.`}</p>
+          <div id={titleId} className="text-[17px]">Automatic app approval</div>
+          <p id={noteId} className="mt-1 text-[12px] leading-relaxed text-muted">Applies to new sessions. T3 permissions still decide what this Bot may run.</p>
         </div>
-        <span aria-busy={busy} className={busy ? "pointer-events-none opacity-50" : ""}><Switch checked={automatic} onChange={(on) => void change(on)} label="Automatic app approval" /></span>
+        <Switch checked={automatic} onChange={(on) => void change(on)} labelledBy={titleId} describedBy={noteId} busy={busy} disabled={busy} />
       </div>
-      <p className="mt-2 text-[12px] leading-relaxed text-muted">Applies to new sessions. T3 permissions still decide what this Bot may run.</p>
+      <p className={`mt-3 text-[13px] leading-relaxed ${automatic ? "text-attention" : "text-muted"}`}>{automatic
+        ? `Executor approves every connected app write for ${bot.name}, without asking. All apps, not one tool.`
+        : `Executor asks before writing to an app. ${bot.name} relays the request to you; one it doesn't relay expires after 15 minutes.`}</p>
     </div>
   </Section></div>;
 }

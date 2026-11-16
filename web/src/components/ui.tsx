@@ -50,13 +50,16 @@ export function Pill({ variant = "primary", className, children, ...rest }: Butt
   );
 }
 
-export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
+export function Switch({ checked, onChange, label, labelledBy, describedBy, busy, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; labelledBy?: string; describedBy?: string; busy?: boolean; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      aria-busy={busy || undefined}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
