@@ -1644,11 +1644,10 @@ if (selfUpdating) startUpdateChecks(() => checkUpdates().then(autoUpdate.conside
 telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
-  // Windows restarts the gateway by PID: it has no service manager to ask.
+  // Windows restarts the gateway by PID: it has no service manager to ask. A read-only home only
+  // costs that restart, so a failed write stays quiet.
   if (process.platform === "win32") {
-    try { writeFileSync(path.join(dataRoot, "gateway.pid"), String(process.pid)); } catch (error) {
-      console.error("couldn't write gateway.pid", error);
-    }
+    try { writeFileSync(path.join(dataRoot, "gateway.pid"), String(process.pid)); } catch { /* best effort */ }
   }
 });
 // A room turn that was running when the gateway stopped does not resume.
