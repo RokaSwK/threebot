@@ -53,7 +53,7 @@ test("the gateway approves its own MCP client once, keeps it private and calls t
     for (const call of t3.calls) assert.equal(call.auth === "Bearer gateway", ["/oauth/mcp/approval", "/oauth/mcp/decision"].includes(call.route), call.route);
     assert.ok(t3.calls.filter((call) => call.route === "/mcp").every((call) => call.auth === "Bearer mcp-1"));
     assert.equal(t3.calls.find((call) => call.route === "/oauth/mcp/decision")!.body.decision.access, "auto");
-    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal((await stat(file)).mode & 0o777, 0o600);
     assert.equal(JSON.parse(await readFile(file, "utf8")).accessToken, "mcp-1");
     // A second client reuses the stored credential instead of signing in again.
     const again = createT3Mcp({ baseUrl: "http://t3.test", token: "gateway", file, fetcher: t3.fetcher });

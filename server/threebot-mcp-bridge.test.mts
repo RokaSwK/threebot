@@ -5,6 +5,7 @@ import http from "node:http";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 test("the stdio bridge exposes a Bot's HTTP MCP tools and forwards calls", async () => {
@@ -30,7 +31,7 @@ test("the stdio bridge exposes a Bot's HTTP MCP tools and forwards calls", async
   await once(upstream, "listening");
   const url = `http://127.0.0.1:${(upstream.address() as { port: number }).port}/mcp`;
   await writeFile(path.join(bot, ".mcp.json"), JSON.stringify({ mcpServers: { bot: { url, headers: { Authorization: "Bearer test" } } } }));
-  const child = spawn(process.execPath, [new URL("./threebot-mcp-bridge.mts", import.meta.url).pathname], { cwd: bot, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./threebot-mcp-bridge.mts", import.meta.url))], { cwd: bot, stdio: ["pipe", "pipe", "pipe"] });
   const lines: string[] = [];
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => lines.push(...chunk.split("\n").filter(Boolean)));
