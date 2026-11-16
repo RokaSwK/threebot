@@ -1,6 +1,6 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef } from "react";
 import clsx from "clsx";
-import { defaultUrlTransform } from "react-markdown";
+import { defaultUrlTransform, type ExtraProps } from "react-markdown";
 import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { botTextColor, bubbleColors } from "../lib/character";
@@ -9,6 +9,8 @@ import { BotExchange } from "./BotExchange";
 import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
+import { fileCardAccent, fileTypeLabel, soloFileLinkParagraph, aboutFilePrompt } from "../lib/fileCards";
+import { FileCard as DocumentCard } from "./FileCard";
 import { RichMarkdown } from "./RichMarkdown";
 import { BoardItemChip } from "./Projects";
 import { parseItemLink } from "../lib/projects";
@@ -24,7 +26,7 @@ import { startLiveDictation, type LiveDictation } from "../lib/cloudLive";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
-import { canStartFresh, openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
+import { canStartFresh, openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, sendMessage, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
 import { threadKey, threadTarget } from "../lib/t3";
 import { MachineBadge } from "./MachineBadge";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
@@ -134,6 +136,9 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
 
   const { scroller, showJump, onScrollCapture, onUserScrollIntent, visibleEntries, hiddenCount, loadEarlier } = useChatScroll({ threadKey: threadId ?? `bot:${bot.slug}`, loaded: data?.loaded === true, entries });
   const workspace = useMemo(() => ({ workspaceRoot: bot.workspaceRoot, threadId, openFile: setOpenFile }), [bot.workspaceRoot, threadId]);
+  const askAboutFile = useCallback((fileName: string, text: string) => {
+    void sendMessage(bot.slug, aboutFilePrompt(fileName, null, text)).catch(() => {});
+  }, [bot.slug]);
 
   const greeting = data?.loaded && !entries.some((e) => e.kind === "user" || e.kind === "bot");
   const reply = (text: string) => chatDraft(bot, threadId).setReply(text);
@@ -190,7 +195,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {hiddenCount > 0 && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover" onClick={loadEarlier}>Load earlier messages</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
-              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} />
+              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={askAboutFile} />
             </div>
           ))}
           {threadId && <ConversationWork threadId={threadId} readOnly={archived} />}
@@ -242,7 +247,7 @@ function duration(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; accent: string }) {
+function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, onAsk }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; accent: string; onAsk?: (fileName: string, text: string) => void }) {
   const tight = prev && prev.kind === entry.kind && (entry.kind === "bot" || entry.kind === "user");
   switch (entry.kind) {
     case "date":
@@ -264,7 +269,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
         <MessageImages>
         <ChatMessageActions text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} side="user" className={clsx("fade-up flex flex-col items-end", tight ? "mt-1" : "mt-3")}>
           {entry.replyTo && <ReplyChip quote={entry.replyTo} />}
-          {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} />}
+          {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} onAsk={onAsk} />}
           {entry.text && (
             <div
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
@@ -289,7 +294,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
       return (
         <MessageImages>
           <div className={tight ? "mt-1" : "mt-3"}>
-            {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" />}
+            {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" onAsk={onAsk} />}
             {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} />}
           </div>
         </MessageImages>
@@ -339,8 +344,17 @@ const MessageContent = memo(function MessageContent({ text }: { text: string }) 
   // Bot polling replaces objects even when names have not changed. Markdown
   // parsing depends on those names, not on labels, run status or timestamps.
   const referencesKey = JSON.stringify(Object.values(bots).map((b) => ({ slug: b.slug, name: b.name })));
-  return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
+  return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, p: MessageParagraph, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
 });
+
+/** A paragraph holding nothing but a workspace-file link renders as the file card. */
+function MessageParagraph({ node, children }: ComponentPropsWithoutRef<"p"> & ExtraProps) {
+  const workspace = useContext(WorkspaceFileContext);
+  const solo = workspace && node ? soloFileLinkParagraph(node, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)) : null;
+  if (!solo || !workspace) return <p>{children}</p>;
+  const name = solo.text.trim() || solo.path.split("/").at(-1) || solo.path;
+  return <DocumentCard name={name} detail={fileTypeLabel(solo.path)} accent={fileCardAccent(solo.path)} onOpen={() => workspace.openFile(solo.path)} />;
+}
 
 /** Links to the user's Executor (sign-in links Bots post) render as Connect cards. */
 function MessageLink({ href, children }: { href?: string; children?: React.ReactNode }) {
@@ -388,8 +402,8 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
 }
 
 
-function AttachmentList({ attachments, align }: { attachments: unknown[]; align?: "start" | "end" }) {
-  return <ChatAttachmentList attachments={attachments} align={align} />;
+function AttachmentList({ attachments, align, onAsk }: { attachments: unknown[]; align?: "start" | "end"; onAsk?: (fileName: string, text: string) => void }) {
+  return <ChatAttachmentList attachments={attachments} align={align} onAsk={onAsk} />;
 }
 
 /** What the agent is doing right now, shown under its name. Quiet states show nothing. */
@@ -899,7 +913,8 @@ function ComposerRunAction({ threadId, working, hasDraft, inVoiceChat, onVoiceCh
 // ---------- file viewer ----------
 function FileViewer({ bot, threadId, path, onClose, onOpenFile }: { bot: Bot; threadId: string | null; path: string; onClose: () => void; onOpenFile: (path: string) => void }) {
   const validated = workspaceFilePath(path);
+  const ask = (text: string) => void sendMessage(bot.slug, aboutFilePrompt((validated ?? path).split("/").at(-1) ?? path, validated, text)).catch(() => {});
   return <WorkspaceFileContext value={{ workspaceRoot: bot.workspaceRoot, threadId, fromPath: validated ?? undefined, openFile: onOpenFile }}>
-    <WorkspaceResourceViewer key={path} resource={threadId && validated ? { _tag: "workspace-file", threadId, path: validated } : null} title={validated ?? "File unavailable"} onClose={onClose} renderText={(content) => /\.md$/i.test(path) ? <MessageContent text={content} /> : <pre className="whitespace-pre-wrap">{content}</pre>} />
+    <WorkspaceResourceViewer key={path} resource={threadId && validated ? { _tag: "workspace-file", threadId, path: validated } : null} title={validated ?? "File unavailable"} onClose={onClose} onAsk={validated ? ask : undefined} renderText={(content) => /\.md$/i.test(path) ? <MessageContent text={content} /> : <pre className="whitespace-pre-wrap">{content}</pre>} />
   </WorkspaceFileContext>;
 }

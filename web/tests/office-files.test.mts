@@ -265,10 +265,26 @@ test("the viewer opens a workbook through the media-file download route and draw
   assert.equal(document.querySelectorAll(".office-grid tbody tr").length, 1000);
   assert.deepEqual([...document.querySelectorAll(".office-grid tbody tr")].at(-1).textContent, "10001000");
   assert.match(document.querySelector(".office-note").textContent, /Showing the first 1,000 rows/);
-  assert.equal(document.querySelector('[role="dialog"] a').textContent, "Open original file");
+  assert.equal(document.querySelector(".workspace-file-rows").textContent, "1,000+ rows");
+  assert.equal(document.querySelector('[role="dialog"] a').getAttribute("href"), "/t3/assets/signed-1");
   await act(async () => { tabs[1].click(); });
   assert.match(document.querySelector('[role="dialog"]').textContent, /This sheet is empty/);
   assert.equal(document.querySelector(".office-note"), null);
+  assert.equal(document.querySelector(".workspace-file-rows").textContent, "0 rows");
+});
+
+test("an Office file opens in the full-window page sheet with a file-name chip, row count, download and close in the header", async () => {
+  body = xlsx({ sheet1: `<worksheet xmlns="${S}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Number</t></is></c></row><row r="2"><c r="A2"><v>1</v></c></row><row r="3"><c r="A3"><v>2</v></c></row><row r="4"><c r="A4"><v>3</v></c></row></sheetData></worksheet>` });
+  await open("library/rows.xlsx");
+  const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+  assert.ok(dialog.classList.contains("workspace-page-sheet"), "opens in the full-window page sheet");
+  const header = dialog.querySelector(".bot-modal-header") as HTMLElement;
+  assert.equal(header.querySelector(".workspace-file-chip").textContent, "rows.xlsx");
+  assert.equal(header.querySelector(".workspace-file-rows").textContent, "4 rows");
+  const download = header.querySelector('a[aria-label="Download original file"]') as HTMLAnchorElement;
+  assert.equal(download.getAttribute("href"), "/t3/assets/signed-1");
+  assert.equal(download.getAttribute("target"), "_blank");
+  assert.ok(header.querySelector('button[aria-label="Close"]'));
 });
 
 test("the viewer draws a document as headings, paragraphs, lists, tables and a blob image, with RTL direction", async () => {
@@ -294,4 +310,107 @@ test("a refused file explains why and keeps the original-file link", async () =>
   await open("library/locked.docx");
   assert.match(document.querySelector('[role="dialog"] [role="alert"]').textContent, /isn't a readable \.docx file. It may be password-protected/);
   assert.equal(document.querySelector('[role="dialog"] a').getAttribute("href"), "/t3/assets/signed-1");
+});
+
+const SMALL_SHEET = xlsx({ sheet1: `<worksheet xmlns="${S}"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Number</t></is></c></row></sheetData></worksheet>` });
+const type = async (element: HTMLTextAreaElement, value: string) => act(async () => {
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set.call(element, value);
+  element.dispatchEvent(new window.Event("input", { bubbles: true }));
+});
+
+test("the viewer composer is only there when opened from a chat, sends on Enter and closes after sending", async () => {
+  body = SMALL_SHEET;
+  const asked = [];
+  let closed = 0;
+  const mountViewer = (withAsk: boolean) => act(async () => {
+    root.render(h(WorkspaceResourceViewer, { resource: { _tag: "workspace-file", threadId: "main", path: "library/rows.xlsx" }, title: "rows.xlsx", onClose: () => { closed++; },
+      ...(withAsk ? { onAsk: (text: string) => asked.push(text) } : {}) }));
+  });
+  await mountViewer(false);
+  await settle(() => !!document.querySelector('[role="dialog"] table'));
+  assert.equal(document.querySelector("textarea"), null, "without a chat there is no composer");
+  await act(async () => root.unmount());
+  host.remove();
+  host = document.createElement("main"); document.body.append(host); root = createRoot(host);
+  await mountViewer(true);
+  await settle(() => !!document.querySelector('[role="dialog"] textarea'));
+  const input = document.querySelector("textarea");
+  assert.equal(input.placeholder, "Message about “rows.xlsx”");
+  await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  assert.deepEqual(asked, [], "an empty message never sends");
+  assert.equal(closed, 0);
+  await type(input, "What is in row 2?");
+  await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true })); });
+  assert.deepEqual(asked, [], "Shift+Enter inserts a newline instead of sending");
+  await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  assert.deepEqual(asked, ["What is in row 2?"]);
+  assert.equal(closed, 1, "sending closes the viewer");
+});
+
+test("the composer's Escape closes the viewer on an empty message and keeps it while typing", async () => {
+  body = SMALL_SHEET;
+  const asked = [];
+  let closed = 0;
+  await act(async () => { root.render(h(WorkspaceResourceViewer, { resource: { _tag: "workspace-file", threadId: "main", path: "library/rows.xlsx" }, title: "rows.xlsx", onClose: () => { closed++; }, onAsk: (text: string) => asked.push(text) })); });
+  await settle(() => !!document.querySelector('[role="dialog"] textarea'));
+  const input = document.querySelector("textarea");
+  await type(input, "Still typing");
+  await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  assert.equal(closed, 0, "Escape while typing keeps the viewer open");
+  await type(input, "");
+  await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  assert.equal(closed, 1, "Escape on an empty message closes the viewer");
+  assert.deepEqual(asked, []);
+});
+
+const GRID_SHEET = xlsx({ sheet1: `<worksheet xmlns="${S}"><sheetData>
+<row r="1"><c r="A1" t="inlineStr"><is><t>1</t></is></c><c r="B1"><v>2</v></c></row>
+<row r="2"><c r="A2"><v>3</v></c><c r="B2"><v>4</v></c></row>
+</sheetData></worksheet>` });
+
+test("cells select, extend into a range, copy as TSV and clear with Escape", async () => {
+  body = GRID_SHEET;
+  localStorage.clear();
+  await open("library/grid.xlsx");
+  const hint = document.querySelector(".office-hint span");
+  assert.match(hint.textContent, /Click a cell to select it\. Move with the arrow keys, extend with Shift, copy with Ctrl\+C\./);
+  const grid = document.querySelector('[role="grid"]') as HTMLElement;
+  assert.equal(grid.getAttribute("tabindex"), "0");
+  const copied: string[] = [];
+  Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied.push(text); } } });
+  const cells = [...document.querySelectorAll<HTMLElement>('.office-grid td[role="gridcell"]')];
+  assert.equal(cells.length, 4);
+  await act(async () => { cells[0].click(); });
+  assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "false", "false", "false"]);
+  await act(async () => cells[3].dispatchEvent(new window.MouseEvent("click", { shiftKey: true, bubbles: true })));
+  assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "true", "true", "true"], "Shift+click extends to the rectangular range");
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "c", metaKey: true, bubbles: true })));
+  assert.deepEqual(copied, ["1\t2\n3\t4"]);
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["false", "false", "false", "false"]);
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+  assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["false", "false", "true", "false"], "arrow keys move the selection from the top-left cell");
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight", shiftKey: true, bubbles: true })));
+  assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["false", "false", "true", "true"], "Shift+arrows extend the range");
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true })));
+  assert.deepEqual(copied, ["1\t2\n3\t4", "3\t4"], "Ctrl+C copies the same range on non-Mac platforms");
+});
+
+test("the selection hint collapses, is remembered across mounts and expands again", async () => {
+  body = SMALL_SHEET;
+  localStorage.clear();
+  await open("library/hint.xlsx");
+  assert.match(document.querySelector(".office-hint span").textContent, /Click a cell/);
+  await act(async () => (document.querySelector('button[aria-label="Hide selection help"]') as HTMLElement).click());
+  assert.equal(document.querySelector(".office-hint span"), null);
+  assert.equal(localStorage.getItem("office-sheet-hint-collapsed"), "1");
+  await act(async () => root.unmount());
+  host.remove();
+  host = document.createElement("main"); document.body.append(host); root = createRoot(host);
+  await open("library/hint.xlsx");
+  assert.equal(document.querySelector(".office-hint span"), null, "the collapsed bar stays collapsed on the next mount");
+  await act(async () => (document.querySelector('button[aria-label="Show selection help"]') as HTMLElement).click());
+  assert.match(document.querySelector(".office-hint span").textContent, /Click a cell/);
+  assert.equal(localStorage.getItem("office-sheet-hint-collapsed"), "0");
 });
