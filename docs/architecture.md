@@ -76,6 +76,7 @@ A Bot's memory is plain Markdown: `memory/MEMORY.md` in its folder, plus `.botap
 - **Snapshot** (`server/memory.mts`): a bounded `<memory>` block (200 lines or 8,000 characters of the Bot's file, 60 lines or 2,500 of the shared one) in the managed `AGENTS.md`, refreshed by a watcher within a few seconds of a change. A file that doesn't fit is cut with a note telling the Bot to read the rest and tidy it.
 - **App API** (behind the normal login): `GET /api/memory?slug=...` returns both files whole with their revisions; `PUT /api/memory` (`{slug, scope, text, expectedRevision}`) saves one. A save whose revision is stale gets a 409 with the current text, so an edit the Bot made meanwhile is never replaced silently. Saves to one file run one at a time.
 - **UI**: Details › Memory shows both files as formatted Markdown, with Edit, Save and Cancel; while nobody is editing it picks up the Bot's own edits every few seconds. "Ask the Bot to tidy" drafts a request in chat. Phones reach it from the Memory row in the details sheet, since the tab bar is hidden there.
+- **Automatic tidy** (`server/memory-tidy.mts`): Memory's Off/Weekly/Nightly choice writes one T3 routine, `Tidy memory`, linked from `bot.json` as `memoryTidyRoutineId` and bound to a conversation of its own, so a run never reads or writes the Bot's chat. The last report shows as a line in the main chat — the run in progress included — with a link to that conversation; the times are the server's.
 
 ## Standing instructions
 
