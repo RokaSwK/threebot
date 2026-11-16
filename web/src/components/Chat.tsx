@@ -6,7 +6,7 @@ import { Avatar } from "./Avatar";
 import { botTextColor, bubbleColors } from "../lib/character";
 import { BotMention, BotEvent } from "./BotMention";
 import { BotExchange } from "./BotExchange";
-import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
+import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
 import { RichMarkdown } from "./RichMarkdown";
@@ -30,6 +30,7 @@ import { MachineBadge } from "./MachineBadge";
 import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
+import { findTidyTask, readTidyReport, type TidyReport } from "../lib/memoryTidy";
 import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
@@ -81,6 +82,14 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
   const isChild = !!threadId && threadId !== bot.mainThreadId;
   const tasks = useApp((s) => s.tasks);
+  const tidyTask = useMemo(() => findTidyTask(bot, tasks), [bot, tasks]);
+  const [tidyReport, setTidyReport] = useState<TidyReport | null>(null);
+  useEffect(() => {
+    if (threadId !== bot.mainThreadId || !tidyTask) { setTidyReport(null); return; }
+    let live = true;
+    readTidyReport(tidyTask).then((report) => { if (live) setTidyReport(report); }).catch(() => { if (live) setTidyReport(null); });
+    return () => { live = false; };
+  }, [bot.mainThreadId, threadId, tidyTask?.id, tidyTask?.threadId, tidyTask?.lastRunAt, tidyTask?.lastRunStatus, tidyTask?.runCount]);
   const detailsOpen = useApp((s) => s.detailsOpen);
   const exchangeBotSlug = useApp((s) => s.exchangeBotSlug);
   const exchangeBot = useApp((s) => exchangeBotSlug ? s.bots[exchangeBotSlug] ?? s.historicalBots[exchangeBotSlug] : undefined);
@@ -110,7 +119,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
     const model = provider?.models.find((m) => m.slug === selection.model);
     return model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
   }), [runs, providers]);
-  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches]);
+  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches, routineReports: tidyReport ? [tidyReport] : [] }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches, tidyReport]);
   const activeRun = runs.filter(run => isActiveRun(run) && run.status !== "queued").sort((a, b) => b.ordinal - a.ordinal)[0];
   const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest;
   const [tick, setTick] = useState(0);
@@ -240,6 +249,8 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
       return <DateSep label={entry.label} />;
     case "event":
       return <EventLine entry={entry} />;
+    case "routine-report":
+      return <RoutineReportLine entry={entry} bot={bot} />;
     case "automated":
       return <AutomatedCard entry={entry} />;
     case "model-switch":

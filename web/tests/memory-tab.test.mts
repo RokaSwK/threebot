@@ -34,11 +34,17 @@ after(async () => { for (const channel of channels) { channel.port1.close(); cha
 
 const bot = { slug: "alpha", name: "Alpha", mainThreadId: "t-alpha" };
 const revision = (text: string) => `r${text.length}:${text.slice(-8)}`;
-let root, host, disk, puts;
+let root, host, disk, puts, tidies;
 beforeEach(() => {
   disk = { bot: "# Alpha memory\n\n## People\n- **Ana** runs payroll.\n", shared: "" };
   puts = [];
+  tidies = [];
   globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+    if (String(url) === "/api/memory/tidy") {
+      const body = JSON.parse(String(init.body));
+      tidies.push(body);
+      return new Response(JSON.stringify({ frequency: body.frequency, task: { id: "task-1", enabled: body.frequency !== "off", threadId: null, schedule: {} } }), { status: 200 });
+    }
     if (init.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push(body);
@@ -51,6 +57,7 @@ beforeEach(() => {
     return new Response(JSON.stringify({
       bot: { path: "memory/MEMORY.md", text: disk.bot, revision: revision(disk.bot) },
       shared: { path: ".botapp/shared-memory.md", text: disk.shared, revision: revision(disk.shared) },
+      tidyPrompt: "Tidy your memory now.\n",
     }), { status: 200 });
   }) as typeof fetch;
   host = document.createElement("main"); document.body.append(host); root = createRoot(host);
@@ -135,4 +142,12 @@ test("a late reply for the previous Bot doesn't land under the next one", async 
   releaseAlpha();
   await settle();
   assert.match(section("Beta")?.querySelector(".memory-view")?.textContent ?? "", /Beta's own fact/u);
+});
+
+test("choosing a tidy frequency posts it and keeps the manual action", async () => {
+  await act(async () => root.render(h(MemoryTab, { bot })));
+  await settle();
+  await click(button("Weekly"));
+  assert.deepEqual(tidies, [{ slug: "alpha", frequency: "weekly" }]);
+  assert.ok(button("Ask Alpha to tidy"));
 });

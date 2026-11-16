@@ -26,6 +26,8 @@ export type Bot = {
   environmentId?: string;
   /** This Bot's own "Where coding work runs"; absent or null uses the global setting. */
   codingWork?: CodingWork | null;
+  /** The T3 routine that tidies this Bot's memory; absent means it has never been set up here. */
+  memoryTidyRoutineId?: string;
 };
 
 /** A T3 project on this machine that could become a Bot. */
@@ -239,6 +241,7 @@ export type ScheduledTask = {
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunStatus?: string | null;
+  lastRunError?: string | null;
   runCount?: number;
   /** Why T3 won't run this task at all, such as an administrator's policy. */
   blockedByPolicy?: string;

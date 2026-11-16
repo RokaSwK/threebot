@@ -136,6 +136,7 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.equal(memoryFiles.status, 200);
     assert.equal(memoryFiles.body.bot.text, '# Alpha memory\n\n- [preference] Prefers short answers.\n');
     assert.equal(memoryFiles.body.bot.path, 'memory/MEMORY.md');
+    assert.match(memoryFiles.body.tidyPrompt, /snapshot budget/u);
     const saved = await request('/api/memory', 'PUT', { slug: 'alpha', scope: 'bot', text: '# Alpha memory\n\n- Prefers long answers.\n', expectedRevision: memoryFiles.body.bot.revision });
     assert.deepEqual([saved.status, saved.body.ok], [200, true]);
     assert.equal(await readFile(path.join(botsRoot, 'alpha/memory/MEMORY.md'), 'utf8'), '# Alpha memory\n\n- Prefers long answers.\n');
