@@ -1,0 +1,18 @@
+name: Windows launcher
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: windows/launcher/go.mod
+          cache: false
+      - run: go test ./...
+        working-directory: windows/launcher
+      - run: go vet ./...
+        working-directory: windows/launcher

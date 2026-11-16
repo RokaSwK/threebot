@@ -139,7 +139,7 @@ func prepare(root, installDir, home string) (appDir, nodeExe string, err error) 
 			return "", "", err
 		}
 		if _, statErr := os.Stat(payloadNode); statErr == nil {
-			if err := replaceTree(payloadNode, installedNode); err != nil {
+			if err := replaceTree(payloadNode, filepath.Dir(installedNode)); err != nil {
 				return "", "", err
 			}
 		}
@@ -310,6 +310,12 @@ func ensureToken(home string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, t3, "auth", "session", "issue", "--ttl", "365d", "--label", "threebot", "--token-only")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if strings.EqualFold(filepath.Ext(t3), ".cmd") || strings.EqualFold(filepath.Ext(t3), ".bat") {
+		shell := os.Getenv("ComSpec")
+		if shell == "" { shell = "cmd.exe" }
+		cmd = exec.CommandContext(ctx, shell)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CmdLine: `cmd.exe /d /s /c ""` + t3 + `" auth session issue --ttl 365d --label threebot --token-only"`}
+	}
 	out, err := cmd.Output()
 	token := strings.TrimSpace(string(out))
 	if err != nil || token == "" || ctx.Err() != nil {
