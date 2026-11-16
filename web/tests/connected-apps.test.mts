@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
 
 // Real React DOM, store and section; only HTTP is mocked.
 const channels: MessageChannel[] = [];
@@ -15,7 +15,7 @@ const window = domWindow(new Window({ url: "http://connected-apps.test" }));
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "IntersectionObserver"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.getComputedStyle = (element) => window.getComputedStyle(element);
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "connected-apps-test-entry", resolveId: (id) => id.endsWith("virtual:connected-apps-tests") ? "\0connected-apps-tests" : undefined,
@@ -24,7 +24,7 @@ const bundle = await buildOnce({
       export { createRoot } from "react-dom/client";
       export { ConnectedAppsSection } from ${JSON.stringify(`${src}components/Details.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}components/Details.tsx` ? { code: `${code}\nexport { ConnectedAppsSection };`, map: null } : undefined }],
+    transform: (code, id) => isModule(id, `${src}components/Details.tsx`) ? { code: `${code}\nexport { ConnectedAppsSection };`, map: null } : undefined }],
   ssr: { noExternal: true }, build: { ssr: "virtual:connected-apps-tests", write: false },
 });
 const testDir = await mkdtemp(join(tmpdir(), "bot-connected-apps-"));
