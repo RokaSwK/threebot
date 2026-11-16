@@ -6,10 +6,11 @@ import { pathToFileURL } from "node:url";
 import { after, test } from "node:test";
 import { buildOnce } from "./support.mts";
 import { installWorkers, loadWorkerHighlighter } from "./highlight-worker-fixture.mts";
+import { fileURLToPath } from "node:url";
 
 const directory = await mkdtemp(join(tmpdir(), "bot-highlight-code-"));
 after(() => rm(directory, { recursive: true }));
-const source = new URL("../src/lib/highlightCode.tokenize.ts", import.meta.url).pathname;
+const source = fileURLToPath(new URL("../src/lib/highlightCode.tokenize.ts", import.meta.url));
 const workers = installWorkers();
 const actual = await loadWorkerHighlighter();
 after(async () => { await workers.close(); await actual.close(); });

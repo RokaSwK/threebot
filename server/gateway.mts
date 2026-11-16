@@ -17,7 +17,7 @@ import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
 import { startProvisioner } from "./provisioner.mts";
-import { keepThreadsActive } from "./auto-settle.mts";
+import { keepThreadsActive, settleQuietThreads } from "./auto-settle.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
 import {
@@ -1270,6 +1270,7 @@ const server = http.createServer(async (req, res) => {
       if ("codingWork" in patch) next.codingWork = codingWorkPatch(patch.codingWork);
       await writeJson(settingsPath, next);
       if (!next.beta.projects) projectRoutes.closeStreams();
+      if (next.beta.settleBotThreads && !current.beta.settleBotThreads) settleBots();
       if ("rules" in patch || "userName" in patch || "timezone" in patch || "codingWork" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
@@ -1605,6 +1606,28 @@ async function keepBotThreadsActive() {
 const keepActive = () => void keepBotThreadsActive().catch((error) => console.error("[auto-settle]", (error as Error).message ?? error));
 setTimeout(keepActive, 5_000).unref();
 setInterval(keepActive, 3_600_000).unref();
+
+// Settings → Beta → "Settle Bot threads in T3 Code": the user reads Bots in Threebot, so their threads
+// stay out of T3's active list. Every minute, quiet Bot threads that a message woke are settled again.
+async function settleBotThreads() {
+  if (!(await getSettings()).beta.settleBotThreads) return;
+  const bots = await listBots();
+  const settled = await settleQuietThreads({
+    threadIds: [...bots.map((bot) => bot.mainThreadId), ...(await rooms.list()).flatMap((room) => room.members.map((member) => member.threadId))],
+    // A Bot made from a project shares it with the user's own threads, so only its own threads count there.
+    projectIds: bots.filter((bot) => !bot.adopted).map((bot) => bot.projectId),
+    rootIds: bots.map((bot) => bot.mainThreadId),
+  }, { threads: () => shellThreads(false), dispatch: async (command) => (await t3rpc()).dispatch(command) });
+  if (settled.length) console.log(`[settle] settled ${settled.length} Bot thread${settled.length === 1 ? "" : "s"} in T3`);
+}
+let settling = false;
+const settleBots = () => {
+  if (settling) return;
+  settling = true;
+  void settleBotThreads().catch((error) => console.error("[settle]", (error as Error).message ?? error)).finally(() => { settling = false; });
+};
+setTimeout(settleBots, 5_000).unref();
+setInterval(settleBots, 60_000).unref();
 
 // Bot instructions may have changed with this version of the gateway.
 refreshAllAgentsMd().catch((e) => console.error("refreshing AGENTS.md failed", e));

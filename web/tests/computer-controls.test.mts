@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
 import { buildOnce, domWindow } from './support.mts';
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: 'https://bot.example/' }));
@@ -24,7 +25,7 @@ class Socket {
 }
 globalThis.WebSocket = Socket as unknown as typeof WebSocket;
 const directory = await mkdtemp(join(tmpdir(), 'bot-computer-controls-'));
-const source = new URL('../src/components/Computer.tsx', import.meta.url).pathname;
+const source = fileURLToPath(new URL('../src/components/Computer.tsx', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' }, ssr: { noExternal: true },
   plugins: [{ name: 'computer-test', resolveId: id => id.endsWith('virtual:computer-test') ? '\0computer-test' : undefined,
     load: id => id === '\0computer-test' ? `export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'; export { ComputerScreen } from ${JSON.stringify(source)};` : undefined }],

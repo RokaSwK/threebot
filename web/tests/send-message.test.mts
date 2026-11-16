@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { buildOnce, entryChunk } from "./support.mts";
 import { beforeEach, mock, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 // Bundle the real store with the app's compiler, including its TypeScript-only syntax.
-const storeUrl = new URL("../src/store.ts", import.meta.url).pathname;
-const t3Url = new URL("../src/lib/t3.ts", import.meta.url).pathname;
+const storeUrl = fileURLToPath(new URL("../src/store.ts", import.meta.url));
+const t3Url = fileURLToPath(new URL("../src/lib/t3.ts", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",

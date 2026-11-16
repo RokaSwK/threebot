@@ -8,11 +8,12 @@ import vm from "node:vm";
 import { after, before, test } from "node:test";
 import { build } from "vite";
 import { pwaPrecache } from "../plugins/pwaPrecache.ts";
+import { fileURLToPath } from "node:url";
 
 // Execute the produced worker, real Request/Response/digest and real HTTP asset
 // fetches. CacheStorage and lifecycle dispatch are browser-boundary adapters;
 // this proves cache/event behavior, not browser install UI, rendering or eviction.
-const web = new URL("../", import.meta.url).pathname;
+const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let temporary, app, nested, update, origin, server;
 let files, offline = false, failure, edgeTokens = 0;

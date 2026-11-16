@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, afterEach, beforeEach, test } from "node:test";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
 import { MessageChannel } from "node:worker_threads";
 import avatarConfig from "../../server/avatar-config.json" with { type: "json" };
+import { fileURLToPath } from "node:url";
 
 // React act's browser fallback creates Node message ports in this bundled test.
 // Track and close them after the suite so the runner can exit normally.
@@ -24,7 +25,7 @@ globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 // Layout stand-in: visible elements have one 32×32 box (happy-dom does no layout).
 window.HTMLElement.prototype.getClientRects = function (this: HTMLElement) { return (this.hidden ? [] : [{ width: 32, height: 32 }]) as unknown as DOMRectList; };
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "settings-dialog-test-entry", resolveId: (id) => id.endsWith("virtual:settings-tests") ? "\0settings-tests" : undefined,
@@ -42,7 +43,7 @@ const bundle = await buildOnce({
       export { AvatarDialog } from ${JSON.stringify(`${src}components/Details.tsx`)};
       export { Modal } from ${JSON.stringify(`${src}components/ui.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}components/Details.tsx` ? { code: `${code}\nexport { AvatarDialog };`, map: null } : undefined }],
+    transform: (code, id) => isModule(id, `${src}components/Details.tsx`) ? { code: `${code}\nexport { AvatarDialog };`, map: null } : undefined }],
   ssr: { noExternal: true }, build: { ssr: "virtual:settings-tests", write: false },
 });
 const entry = entryChunk(bundle);
