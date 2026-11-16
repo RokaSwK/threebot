@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,12 +31,20 @@ const (
 
 var appURL = "http://127.0.0.1:" + port + "/"
 
+// version is injected at build time by windows/launcher/build.ps1 via -X main.version.
+var version = "dev"
+
 func main() {
 	background := flag.Bool("background", false, "start the gateway at logon without opening a window")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 	if err := run(*background); err != nil {
-		fail(err)
+		fail(err, *background)
 	}
 }
 
@@ -67,7 +77,8 @@ func run(background bool) error {
 		return nil
 	}
 	if !healthy {
-		return errors.New("the gateway didn't answer on " + appURL + "\n\nLog: " + filepath.Join(home, "logs", "gateway.log"))
+		logPath := filepath.Join(home, "logs", "gateway.log")
+		return fmt.Errorf("the gateway didn't answer on %s\n\n%s", appURL, diagnostic(logPath))
 	}
 	return openWindow(installDir)
 }
@@ -118,7 +129,8 @@ func prepare(root, installDir, home string) (appDir, nodeExe string, err error) 
 
 	installedApp := filepath.Join(installDir, "app")
 	installedNode := filepath.Join(installDir, "runtime", "node.exe")
-	if readVersion(installedApp) != readVersion(payloadApp) {
+	// An installed copy without VERSION is incomplete, so treat it as needing a fresh install.
+	if installedVersion := readVersion(installedApp); installedVersion == "" || installedVersion != readVersion(payloadApp) {
 		stopGateway(home) // the running gateway holds the files we are about to replace
 		if err := os.MkdirAll(installDir, 0o755); err != nil {
 			return "", "", err
@@ -148,11 +160,43 @@ func readVersion(appDir string) string {
 	return strings.TrimSpace(string(data))
 }
 
+// replaceTree stages a complete copy next to dst, then swaps it in. A failed copy leaves the old
+// install usable instead of deleting it first; the previous tree is only dropped after the swap.
 func replaceTree(src, dst string) error {
-	if err := os.RemoveAll(dst); err != nil {
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	return copyTree(src, dst)
+	staging, err := os.MkdirTemp(parent, ".threebot-staging-")
+	if err != nil {
+		return err
+	}
+	installed := false
+	defer func() {
+		if !installed {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	if err := copyTree(src, staging); err != nil {
+		return err
+	}
+
+	backup := dst + ".old"
+	_ = os.RemoveAll(backup)
+	if _, err := os.Stat(dst); err == nil {
+		if err := os.Rename(dst, backup); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(staging, dst); err != nil {
+		if _, statErr := os.Stat(backup); statErr == nil {
+			_ = os.Rename(backup, dst)
+		}
+		return err
+	}
+	installed = true
+	_ = os.RemoveAll(backup)
+	return nil
 }
 
 func copyTree(src, dst string) error {
@@ -172,7 +216,7 @@ func copyTree(src, dst string) error {
 	})
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -185,11 +229,16 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	defer func() {
+		if closeErr := out.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			_ = os.Remove(dst) // never leave a truncated file that looks installed
+		}
+	}()
+	_, err = io.Copy(out, in)
+	return err
 }
 
 // ---------- settings and the T3 token ----------
@@ -200,7 +249,7 @@ func writeEnv(home string) error {
 	}
 	file := filepath.Join(home, ".env")
 	token := filepath.Join(home, "t3-token")
-	want := map[string]string{
+	managed := map[string]string{
 		"PORT":          port,
 		"HOST":          "127.0.0.1",
 		"T3_URL":        "http://127.0.0.1:3773",
@@ -214,19 +263,22 @@ func writeEnv(home string) error {
 	if len(lines) == 1 && lines[0] == "" {
 		lines = nil
 	}
-	present := map[string]bool{}
+	// These keys must match the launcher's hardcoded health check. Rewrite them on every run so a
+	// stale PORT from an older install cannot leave the gateway listening somewhere else forever.
+	kept := lines[:0]
 	for _, line := range lines {
-		if key, _, found := strings.Cut(line, "="); found {
-			present[strings.TrimSpace(key)] = true
+		key, _, found := strings.Cut(line, "=")
+		if found {
+			if _, isManaged := managed[strings.TrimSpace(strings.TrimSuffix(key, "\r"))]; isManaged {
+				continue
+			}
 		}
+		kept = append(kept, line)
 	}
 	for _, key := range []string{"PORT", "HOST", "T3_URL", "T3_TOKEN_FILE"} {
-		if present[key] {
-			continue
-		}
-		lines = append(lines, key+"="+quoteEnv(want[key]))
+		kept = append(kept, key+"="+quoteEnv(managed[key]))
 	}
-	return os.WriteFile(file, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	return os.WriteFile(file, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
 }
 
 // quoteEnv keeps a path with spaces readable by the CLI's .env parser.
@@ -254,11 +306,13 @@ func ensureToken(home string) {
 	if t3 == "" {
 		return
 	}
-	cmd := exec.Command(t3, "auth", "session", "issue", "--ttl", "365d", "--label", "threebot", "--token-only")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, t3, "auth", "session", "issue", "--ttl", "365d", "--label", "threebot", "--token-only")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.Output()
 	token := strings.TrimSpace(string(out))
-	if err != nil || token == "" {
+	if err != nil || token == "" || ctx.Err() != nil {
 		return
 	}
 	_ = os.WriteFile(tokenFile, []byte(token+"\n"), 0o600)
@@ -266,6 +320,9 @@ func ensureToken(home string) {
 
 func findOnPath(names ...string) string {
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" { // an empty PATH entry is the current directory, not a safe search target
+			continue
+		}
 		for _, name := range names {
 			candidate := filepath.Join(dir, name)
 			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -326,6 +383,24 @@ func psQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", 
 
 // ---------- the gateway ----------
 
+// cleanGatewayEnv removes inherited variables that cli.mts would otherwise prefer over the
+// managed .env (it only fills keys that are undefined). The launcher health-checks a fixed port,
+// so a parent shell's PORT or HOST must not move the gateway somewhere else.
+func cleanGatewayEnv() []string {
+	managed := map[string]bool{
+		"PORT": true, "HOST": true, "T3_URL": true, "T3_TOKEN_FILE": true, "THREEBOT_HOME": true,
+	}
+	var out []string
+	for _, entry := range os.Environ() {
+		key, _, found := strings.Cut(entry, "=")
+		if found && managed[key] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 func startGateway(appDir, nodeExe, home string) error {
 	if !fileExists(nodeExe) {
 		if found := findOnPath("node.exe"); found != "" {
@@ -343,7 +418,7 @@ func startGateway(appDir, nodeExe, home string) error {
 	}
 	cmd := exec.Command(nodeExe, filepath.Join(appDir, "server", "cli.mjs"), "serve")
 	cmd.Dir = appDir
-	cmd.Env = append(os.Environ(), "THREEBOT_HOME="+home)
+	cmd.Env = append(cleanGatewayEnv(), "THREEBOT_HOME="+home)
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
 	if err := cmd.Start(); err != nil {
@@ -359,11 +434,13 @@ func stopGateway(home string) {
 	if err != nil {
 		return
 	}
-	pid := strings.TrimSpace(string(data))
-	if pid == "" {
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		// A stale or malformed pid file must never turn into a taskkill on an unrelated process.
+		_ = os.Remove(filepath.Join(home, "gateway.pid"))
 		return
 	}
-	cmd := exec.Command("taskkill", "/PID", pid, "/F", "/T")
+	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F", "/T")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	_ = cmd.Run()
 	_ = os.Remove(filepath.Join(home, "gateway.pid"))
@@ -436,22 +513,27 @@ func chromiumCandidates() []string {
 // ---------- diagnostics ----------
 
 // fail tells the user what broke even when the exe was started from Explorer, which swallows stderr.
-func fail(err error) {
-	if !isAttended() {
+// A background autostart stays silent: nobody is there to dismiss a dialog.
+func fail(err error, background bool) {
+	if background {
 		return
 	}
 	showMessageBox(err.Error())
 	os.Exit(1)
 }
 
-func isAttended() bool {
-	// Show a dialog only for an interactive double-click; a logged-on autostart stays silent.
-	for _, arg := range os.Args[1:] {
-		if arg == "--background" {
-			return false
-		}
+// diagnostic includes the tail of the gateway log, so a missing token or a bad .env says what
+// actually happened instead of only reporting "gateway didn't answer".
+func diagnostic(logPath string) string {
+	data, err := os.ReadFile(logPath)
+	if err != nil || len(data) == 0 {
+		return "No gateway log yet: " + logPath
 	}
-	return true
+	lines := strings.Split(strings.TrimRight(string(data), "\r\n"), "\n")
+	if len(lines) > 12 {
+		lines = lines[len(lines)-12:]
+	}
+	return "Last lines of " + logPath + ":\n" + strings.Join(lines, "\n")
 }
 
 func showMessageBox(text string) {

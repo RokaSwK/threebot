@@ -12,6 +12,8 @@ You already have [T3 Code](https://github.com/pingdotgg/t3code) and the AI plan 
 
 Nothing new to pay for. Threebot doesn't resell AI; your Bots use the subscriptions T3 Code already has.
 
+This fork of [RokaSwK/threebot](https://github.com/RokaSwK/threebot) is built on [T3 Code](https://github.com/pingdotgg/t3code) and keeps the original's features, with a branded, self-installing portable bundle for Windows.
+
 | First the Bot | Then its thread, with the same face |
 |---|---|
 | ![Create New Bot](web/public/welcome/img/create.webp) | ![The same icon in T3 Code's sidebar](web/public/welcome/img/thread.webp) |
@@ -60,18 +62,18 @@ Everything stays a normal T3 thread, so you can open any of it in T3 Code at any
 You need [T3 Code](https://t3.codes) on the same machine, with a provider signed in, and Node 22.18 or newer.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/warhammered/threebot/main/install.sh | sh
 threebot up
 ```
 
-On Windows, download the portable bundle from [releases](https://github.com/RokaSwK/threebot/releases), unzip it and double-click `Threebot.exe`. It installs itself into `%LOCALAPPDATA%\Programs\Threebot`, adds Start Menu and Startup shortcuts, starts the gateway and opens the app; Node and the icon are in the folder already. Or use PowerShell:
+On Windows, download the portable bundle from [releases](https://github.com/warhammered/threebot/releases), unzip it and double-click `Threebot.exe`. It installs itself into `%LOCALAPPDATA%\Programs\Threebot`, adds Start Menu and Startup shortcuts, starts the gateway and opens the app; Node and the icon are in the folder already. Or use PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/warhammered/threebot/main/install.ps1 | iex
 threebot up
 ```
 
-The installer downloads the latest [release](https://github.com/RokaSwK/threebot/releases), checks it against the release's SHA-256 sums and installs it in `~/.threebot`. `threebot up` asks T3 Code for a token, starts Threebot as a background service (launchd on macOS, systemd on Linux, the Startup folder on Windows) and prints its address, <http://127.0.0.1:3780>. Open it and create your first Bot.
+The installer downloads the latest [release](https://github.com/warhammered/threebot/releases), checks it against the release's SHA-256 sums and installs it in `~/.threebot`. `threebot up` asks T3 Code for a token, starts Threebot as a background service (launchd on macOS, systemd on Linux, the Startup folder on Windows) and prints its address, <http://127.0.0.1:3780>. Open it and create your first Bot.
 
 To use it on your phone, open **Settings → Remote access**:
 
@@ -88,7 +90,7 @@ Threebot listens on `127.0.0.1` by default, with no sign-in. [docs/self-hosting.
 ### From source
 
 ```sh
-git clone https://github.com/RokaSwK/threebot.git
+git clone https://github.com/warhammered/threebot.git
 cd threebot
 npm run setup
 

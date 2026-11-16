@@ -54,8 +54,10 @@ powershell -ExecutionPolicy Bypass -File windows\launcher\build.ps1
 ```
 
 `launcher/build.ps1` regenerates `threebot.ico` from `web\public\icon-512.png`
-and compiles it into the exe with `rsrc`, so the exe, the Start Menu entry and
-the taskbar all show Threebot's own icon.
+and compiles the icon and the version from `package.json` into a single Windows
+resource with `goversioninfo`, so the exe, the Start Menu entry, the taskbar and
+Explorer's Details tab all show Threebot's own branding. One resource file is
+required: two `.syso` files with `.rsrc` sections cannot be linked into one exe.
 
 ## Window
 

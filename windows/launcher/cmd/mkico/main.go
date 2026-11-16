@@ -45,7 +45,7 @@ func main() {
 		if size >= 256 {
 			b = 0 // 0 means 256 in an ICO directory entry
 		}
-		ico.Write([]byte{b, b, 0, 0})                                  // width, height, palette, reserved
+		ico.Write([]byte{b, b, 0, 0})                                   // width, height, palette, reserved
 		binary.Write(&ico, binary.LittleEndian, uint16(1))              // colour planes
 		binary.Write(&ico, binary.LittleEndian, uint16(32))             // bits per pixel
 		binary.Write(&ico, binary.LittleEndian, uint32(len(images[i]))) // bytes in resource
