@@ -6,7 +6,10 @@ export type MemoryScope = "bot" | "shared";
 
 export type MemoryFile = { path: string; text: string; revision: string };
 
-export type MemoryFiles = { bot: MemoryFile; shared: MemoryFile };
+export type MemoryFiles = { bot: MemoryFile; shared: MemoryFile; tidyPrompt: string };
+
+export type TidyFrequency = "off" | "weekly" | "nightly";
+export type TidyResult = { frequency: TidyFrequency; task: { id: string; enabled: boolean; threadId: string | null; schedule: unknown } | null };
 
 export type MemorySaveResult =
   | { ok: true; revision: string }
@@ -24,4 +27,9 @@ export const memoryApi = {
   get: async (slug: string) => (await request<MemoryFiles>(`/api/memory?slug=${encodeURIComponent(slug)}`)).body,
   save: async (input: { slug: string; scope: MemoryScope; text: string; expectedRevision: string }) =>
     (await request<MemorySaveResult>("/api/memory", { method: "PUT", body: JSON.stringify(input) })).body,
+  tidy: async (slug: string, frequency: TidyFrequency) => {
+    const result = await request<TidyResult & { error?: string }>("/api/memory/tidy", { method: "POST", body: JSON.stringify({ slug, frequency }) });
+    if (result.status !== 200) throw new Error(result.body?.error ?? "Couldn't change the tidy schedule");
+    return result.body;
+  },
 };

@@ -15,6 +15,7 @@ export type Entry =
   | { kind: "bot"; id: string; text: string; at: string; streaming: boolean; attachments: any[]; runId: string | null }
   | { kind: "voice-call"; id: string; seconds: number; at: string }
   | { kind: "event"; id: string; icon?: "routine" | "memory" | "rename" | "send" | "task" | "stop" | "file" | "vault"; text: string; strong?: string; bot?: Bot | null }
+  | { kind: "routine-report"; id: string; at: string; title: string; summary: string; threadId: string; failed: boolean }
   | { kind: "bot-event"; id: string; direction: "sent" | "received"; bots: Bot[]; runId: string | null }
   | { kind: "approval"; id: string; item: TurnItem; request?: RuntimeRequest }
   | { kind: "question"; id: string; item: TurnItem; request?: RuntimeRequest }
@@ -38,6 +39,8 @@ type Ctx = {
   voiceCalls?: { at: string; seconds: number }[];
   /** First message on a new model or effort → the divider above it. */
   modelSwitches?: Map<string, string>;
+  /** A routine's last report, shown as a line in the Bot's chat without waking it. */
+  routineReports?: { id: string; at: string; title: string; summary: string; threadId: string; failed: boolean }[];
 };
 
 const toolName = (i: TurnItem) => String(i.toolName ?? "");
@@ -276,6 +279,10 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
   for (const call of ctx.voiceCalls ?? []) {
     const next = entries.findIndex((e) => "at" in e && e.at > call.at);
     entries.splice(next < 0 ? entries.length : next, 0, { kind: "voice-call", id: `voice-${call.at}`, seconds: call.seconds, at: call.at });
+  }
+  for (const report of [...(ctx.routineReports ?? [])].sort((a, b) => a.at.localeCompare(b.at))) {
+    const next = entries.findIndex((e) => "at" in e && e.at > report.at);
+    entries.splice(next < 0 ? entries.length : next, 0, { kind: "routine-report", ...report, id: `routine-report:${report.id}` });
   }
   return entries;
 }

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { memoryTidyPrompt, setMemoryTidy, type MemoryTidyFrequency } from "./memory-tidy.mts";
 import { ADOPTED_INSTRUCTIONS, instructionTextError, readAdoptedInstructions, readInstructions, sanitizeInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
 import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
@@ -1336,7 +1337,25 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/memory" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
-      return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
+      const files = await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined });
+      return send(res, 200, { ...files, tidyPrompt: memoryTidyPrompt(bot) }, { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/tidy" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req, 4096);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      const frequency = body?.frequency;
+      if (frequency !== "off" && frequency !== "weekly" && frequency !== "nightly") return send(res, 400, { error: "frequency must be off, weekly or nightly" });
+      if (bot.environmentId !== "local") return send(res, 409, { error: "Memory tidy is only available for Bots on this machine." });
+      if (!bot.projectId || !bot.mainThreadId) return send(res, 409, { error: "This Bot needs a main conversation first." });
+      const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
+      const projection = await withTimeout(client.call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15_000, "T3 timed out");
+      const modelSelection = projection?.thread?.modelSelection ?? bot.model;
+      if (!modelSelection) return send(res, 409, { error: "Pick a model for this Bot first." });
+      const result = await setMemoryTidy({ client, bot, frequency: frequency as MemoryTidyFrequency, modelSelection });
+      if (result.task && result.task.id !== bot.memoryTidyRoutineId) await saveBot(bot.slug, { memoryTidyRoutineId: result.task.id });
+      return send(res, 200, { frequency, task: result.task }, { "cache-control": "no-store" });
     }
     if (p === "/api/instructions" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
