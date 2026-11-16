@@ -177,9 +177,16 @@ test('foreground CLI restarts/resets on command and SIGTERM removes only its own
     const exited = once(child, 'exit');
     child.kill('SIGTERM');
     const [code] = await exited;
-    assert.equal(code, 0, output);
-    await assert.rejects(access(fixtureRoot), { code: 'ENOENT' });
-    await assert.rejects(fetch(url, { signal: AbortSignal.timeout(1000) }));
+    // Windows ends a child through TerminateProcess, so no SIGTERM handler runs and the fixture is
+    // left behind; the restart/reset above is what this platform can prove.
+    if (process.platform !== 'win32') {
+      assert.equal(code, 0, output);
+      await assert.rejects(access(fixtureRoot), { code: 'ENOENT' });
+      await assert.rejects(fetch(url, { signal: AbortSignal.timeout(1000) }));
+    } else {
+      // TerminateProcess means no shutdown handler and no exit code, only the signal.
+      assert.equal(child.signalCode, 'SIGTERM');
+    }
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
