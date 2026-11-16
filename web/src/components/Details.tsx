@@ -13,7 +13,7 @@ import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
-import { botStatus, conversationStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
+import { botStatus, botThreadStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
 import { sharedObjects } from "../lib/objectAvatars";
 import { useAvatarDrawing } from "./useAvatarDrawing";
 import { ComputerScreen, useBotTabs } from "./Computer";
@@ -44,6 +44,8 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   const width = useApp((s) => s.detailsWidth);
   const archived = useApp((s) => s.bots[bot.slug]?.mainThreadId !== bot.mainThreadId);
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
+  // Beta → "Settle Bot threads in T3 Code" settles every quiet Bot, so on the main thread settled just means idle.
+  const mainSettledByBeta = useApp((s) => s.settings?.beta?.settleBotThreads === true) && threadId === bot.mainThreadId;
   const [showRoutines, setShowRoutines] = useState(false);
   const tab = useApp((s) => s.detailsTab);
   const [picker, setPicker] = useState(false);
@@ -106,7 +108,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
                 {identity.name}
               </button>
             )}
-            {threadId && threads[threadId] && <p className="mt-1 text-[12px] text-muted">{subagentStatus(conversationStatus(threadId))}{threads[threadId]?.settledOverride === "settled" ? " · Settled" : ""}</p>}
+            {threadId && threads[threadId] && <p className="mt-1 text-[12px] text-muted">{subagentStatus(botThreadStatus(bot, threadId))}{!mainSettledByBeta && threads[threadId]?.settledOverride === "settled" ? " · Settled" : ""}</p>}
             {editing === "label" ? (
               <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && commit()} placeholder="Add a label" className="mt-1 w-full bg-transparent text-center text-[13px] text-muted outline-none" />
             ) : (

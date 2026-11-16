@@ -33,6 +33,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |
 | Routines | T3 scheduled tasks bound to the Bot's main thread |
 | Staying active | T3 0.1.8+ settles threads idle for a week; at start and hourly the gateway sends `thread.auto-settle.set` (`enabled: false`) for Bot main, room and routine threads that still have it on. A T3 without `autoSettleDisabledAt` is left alone |
+| Settled in T3 (beta) | With `beta.settleBotThreads` on, every minute the gateway sends `thread.settle` for quiet Bot threads: main and room threads, threads in a non-adopted Bot project, and descendants of a main thread. It skips archived, settled, pinned, snoozed, busy, waiting, background-work, usage-limit, merge-wait and PR-watched threads, and any whose last run or message is under 2 minutes old. Threebot then shows a settled main thread as idle, not finished |
 | Approval cards | T3 `approval_request` turn items + `runtime-request.respond` |
 | Question cards | T3 `user_input_request` turn items |
 | Secure secret card | T3 `secret_request` + `secrets.answerRequest` |
