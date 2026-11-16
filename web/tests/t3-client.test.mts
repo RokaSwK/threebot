@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, beforeEach, mock, test } from "node:test";
 import { buildOnce, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Exercise the real RPC client. The transport controls connection lifetimes;
 // no real Bot, browser, timers or server receives any request.
 const directory = await mkdtemp(join(tmpdir(), "bot-t3-client-"));
-const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: new URL("../src/lib/t3.ts", import.meta.url).pathname, write: false } });
+const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: fileURLToPath(new URL("../src/lib/t3.ts", import.meta.url)), write: false } });
 const entry = entryChunk(bundle);
 assert.ok(entry);
 const filename = join(directory, "client.mjs");

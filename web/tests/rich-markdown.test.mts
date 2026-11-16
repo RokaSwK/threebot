@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { MessageChannel } from "node:worker_threads";
 import { JSDOM } from "jsdom";
 import { buildOnce, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Actual Markdown parser, KaTeX, Mermaid renderer and DOMPurify. jsdom has no
 // layout engine: only SVG text/bounds metrics are approximated. These assertions
@@ -20,9 +21,9 @@ Object.defineProperty(window.SVGElement.prototype, "getBBox", { configurable: tr
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), "bot-rich-markdown-"));
-await symlink(new URL("../node_modules/", import.meta.url).pathname, join(directory, "node_modules"), "dir");
+await symlink(fileURLToPath(new URL("../node_modules/", import.meta.url)), join(directory, "node_modules"), "dir");
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "rich-markdown-test-entry", resolveId: (id) => id.endsWith("virtual:rich-markdown-tests") ? "\0rich-markdown-tests" : undefined,

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildOnce, entryChunk } from './support.mts';
+import { fileURLToPath } from "node:url";
 
-const family = new URL('../src/lib/threadFamily.ts', import.meta.url).pathname;
-const library = new URL('../src/lib/library.ts', import.meta.url).pathname;
+const family = fileURLToPath(new URL('../src/lib/threadFamily.ts', import.meta.url));
+const library = fileURLToPath(new URL('../src/lib/library.ts', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins: [{
   name: 'family-library-test',
   resolveId: id => id.endsWith('virtual:family-library-test') ? '\0family-library-test' : undefined,

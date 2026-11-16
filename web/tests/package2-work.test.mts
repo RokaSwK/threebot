@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel {
   constructor() {
@@ -39,7 +40,7 @@ globalThis.ResizeObserver = class {
   observe() {}
   disconnect() {}
 } as unknown as typeof ResizeObserver;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
@@ -51,12 +52,12 @@ const bundle = await buildOnce({
       resolveId: (id) =>
         id.endsWith("virtual:package2-tests") ? "\0package2-tests" : undefined,
       transform: (code, id) => {
-        if (id === src + "components/ThreadFamily.tsx")
+        if (isModule(id, src + "components/ThreadFamily.tsx"))
           return code.replace(
             "  const update = useApp",
             "  globalThis.package2ChildRenders = (globalThis.package2ChildRenders ?? 0) + 1;\n  const update = useApp",
           );
-        if (id === src + "components/PlanMessage.tsx")
+        if (isModule(id, src + "components/PlanMessage.tsx"))
           return code.replace(
             "  const text =",
             "  globalThis.package2PlanRenders = (globalThis.package2PlanRenders ?? 0) + 1;\n  const text =",

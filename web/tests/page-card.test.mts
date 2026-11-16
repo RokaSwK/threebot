@@ -7,13 +7,14 @@ import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
 import { buildOnce, domWindow } from './support.mts';
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: 'https://page-card.test/', settings: { navigation: { disableChildFrameNavigation: true } } }));
 for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'Event', 'MouseEvent', 'KeyboardEvent', 'localStorage', 'requestAnimationFrame', 'cancelAnimationFrame']) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const directory = await mkdtemp(join(tmpdir(), 'bot-page-card-'));
-const source = new URL('../src/', import.meta.url).pathname;
+const source = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' }, ssr: { noExternal: true },
   plugins: [{ name: 'page-card-test', resolveId: id => id.endsWith('virtual:page-card-test') ? '\0page-card-test' : undefined,
     load: id => id === '\0page-card-test' ? `export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'; export { PageCard } from ${JSON.stringify(`${source}components/Cards.tsx`)}; export { t3 } from ${JSON.stringify(`${source}lib/t3.ts`)};` : undefined }],

@@ -6,7 +6,8 @@ import { join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
-import { buildOnce, domWindow } from './support.mts';
+import { buildOnce, domWindow, isModule } from './support.mts';
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: 'https://bot.example/', width: 390, height: 844 }));
@@ -14,7 +15,7 @@ for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 
 globalThis.getComputedStyle = window.getComputedStyle.bind(window); globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 // Layout stand-in: visible elements have one 32×32 box (happy-dom does no layout).
 window.HTMLElement.prototype.getClientRects = function (this: HTMLElement) { return (this.hidden ? [] : [{ width: 32, height: 32 }]) as unknown as DOMRectList; };
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), 'bot-executor-ui-'));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' }, ssr: { noExternal: true },
   plugins: [{ name: 'executor-ui-test', resolveId: (id) => id.endsWith('virtual:executor-ui') ? '\0executor-ui' : undefined,
@@ -27,7 +28,7 @@ const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: 
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { readNavigation } from ${JSON.stringify(`${src}lib/navigation.ts`)};
       export * from ${JSON.stringify(`${src}lib/executor.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}components/Chat.tsx` ? { code: `${code}\nexport { MessageContent };`, map: null } : id === `${src}App.tsx` ? { code: `${code}\nexport { Dialogs };`, map: null } : undefined }],
+    transform: (code, id) => isModule(id, `${src}components/Chat.tsx`) ? { code: `${code}\nexport { MessageContent };`, map: null } : isModule(id, `${src}App.tsx`) ? { code: `${code}\nexport { Dialogs };`, map: null } : undefined }],
   build: { ssr: 'virtual:executor-ui', write: false, rollupOptions: { output: { entryFileNames: 'entry.mjs', chunkFileNames: '[name]-[hash].mjs' } } },
 });
 for (const output of bundle.output) { const file = join(directory, output.fileName); await mkdir(dirname(file), { recursive: true }); await writeFile(file, output.type === 'chunk' ? output.code : output.source); }
