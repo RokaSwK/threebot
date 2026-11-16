@@ -23,7 +23,7 @@ export function memoryTidyPrompt(bot: Pick<Bot, "adopted">): string {
 6. Report the final line and character count, what you merged, removed or moved, and anything you left for the user to decide. If nothing changed, say so in one line.`;
 }
 
-export const MEMORY_TIDY_PROMPT = memoryTidyPrompt({});
+export const MEMORY_TIDY_PROMPT = memoryTidyPrompt({ adopted: false });
 
 export type MemoryTidyFrequency = "off" | "weekly" | "nightly";
 
