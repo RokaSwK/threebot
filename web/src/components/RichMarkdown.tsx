@@ -2,6 +2,7 @@ import { useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math-extended";
+import { escapePriceDollars } from "../lib/currencyDollars";
 import katex from "katex";
 import { remarkBotLinks } from "../lib/remarkBotLinks";
 import { parseThreadLink } from "../lib/botMessages";
@@ -53,5 +54,5 @@ export function RichMarkdown({ children, bots = [], components, urlTransform }: 
     remarkPlugins={[remarkGfm, [remarkMath, { backslashDelimiters: true }], [remarkBotLinks, { bots }]]}
     components={{ ...components, pre: RichPre, code: RichCode }}
     urlTransform={urlTransform ?? ((url) => parseThreadLink(url) || url.startsWith("bot:") ? url : defaultUrlTransform(url))}
-  >{children}</ReactMarkdown>;
+  >{escapePriceDollars(children)}</ReactMarkdown>;
 }
