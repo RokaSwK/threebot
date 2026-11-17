@@ -74,7 +74,8 @@ export async function settleQuietThreads(owned: BotOwnership, { threads, dispatc
   const settled: string[] = [];
   for (const thread of await threads()) {
     const mine = ids.has(thread.id) || projects.has(thread.projectId ?? "") || roots.has(thread.lineage?.rootThreadId ?? "") || roots.has(thread.lineage?.parentThreadId ?? "");
-    if (!mine || thread.archivedAt || thread.settledOverride === "settled" || thread.pinnedAt) continue;
+    const isAlreadySettled = thread.settledOverride === "settled" || (thread.settledOverride !== "active" && Boolean(thread.settledAt));
+    if (!mine || thread.archivedAt || isAlreadySettled || thread.pinnedAt) continue;
     if (thread.pendingRuntimeRequest || BUSY.has(thread.activityRunStatus ?? thread.status ?? "") || thread.pendingBackgroundTasks?.length) continue;
     if (thread.waitingForMergeAt || thread.limitRecovery || later(thread.usageLimitResetAt) || later(thread.snoozedUntil)) continue;
     if (thread.pullRequests?.some((link) => link.watch)) continue;

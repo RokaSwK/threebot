@@ -77,13 +77,15 @@ test("leaves busy, waiting, watched, pinned, settled and just-finished Bot threa
     { id: "pinned", projectId: "p", status: "idle", pinnedAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "snoozed", projectId: "p", status: "idle", snoozedUntil: "2026-11-17T00:00:00.000Z", latestRunCompletedAt: quietAt },
     { id: "settled", projectId: "p", status: "idle", settledOverride: "settled", latestRunCompletedAt: quietAt },
+    { id: "settled-by-t3", projectId: "p", status: "idle", settledAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "archived", projectId: "p", status: "idle", archivedAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "just-replied", projectId: "p", status: "idle", latestRunCompletedAt: "2026-11-16T11:59:30.000Z" },
     { id: "just-asked", projectId: "p", status: "idle", latestRunCompletedAt: quietAt, latestUserMessageAt: "2026-11-16T11:59:30.000Z" },
     { id: "visited", projectId: "p", status: "idle", latestRunCompletedAt: quietAt, updatedAt: "2026-11-16T11:59:59.000Z" } as QuietThread,
     { id: "woken", projectId: "p", status: "idle", settledOverride: "active", latestRunCompletedAt: quietAt, pullRequests: [{}] },
+    { id: "unsettled-active", projectId: "p", status: "idle", settledOverride: "active", settledAt: quietAt, latestRunCompletedAt: quietAt },
   ]);
-  assert.deepEqual(settled, ["visited", "woken"]);
+  assert.deepEqual(settled, ["visited", "woken", "unsettled-active"]);
 });
 
 test("does nothing without Bots", async () => {
