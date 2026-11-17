@@ -1,12 +1,13 @@
 import clsx from "clsx";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import "../mobile-settings.css";
 
-export function IconButton({ className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+export function IconButton({ className, children, ref, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { ref?: Ref<HTMLButtonElement> }) {
   return (
     <button
+      ref={ref}
       type="button"
       {...rest}
       className={clsx(

@@ -6,12 +6,12 @@
 //   DELETE /api/rooms/:id           delete the room and its member threads in T3
 //   POST   /api/rooms/:id/messages  start or queue a turn
 //   POST   /api/rooms/:id/stop      interrupt the members that are answering
-//   POST   /api/rooms/:id/recreate  launch fresh member threads with the current settings
+//   POST   /api/rooms/:id/reset     forget the messages and start every Bot a fresh session
 import type { IncomingHttpHeaders } from "node:http";
 import {
-  MAX_MESSAGE, RoomsError, validateMembers, type BotIdentity, type Room, type RoomMember, type RoomsStore,
+  MAX_MESSAGE, RoomsError, validateAttachments, validateMembers, type BotIdentity, type Room, type RoomMember, type RoomsStore,
 } from "./rooms.mts";
-import { launchRoomThread, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
+import { launchRoomThread, resolveMemberLaunch, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
 import type { RoomEngine, RoomMessage } from "./room-turn.mts";
 
 /** A Bot as the room routes need it: identity, the avatar profile, and where its threads live. */
@@ -38,7 +38,7 @@ export type MemberView = RoomBotView & {
 };
 export type RoomView = Omit<Room, "members" | "formerMembers"> & { members: MemberView[]; formerMembers: MemberView[] };
 
-export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine, rpc, bots, launch, send, readBody, requireJson, checkOrigin, log = () => {} }: {
+export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine, rpc, bots, launch, freshContext = async () => true, send, readBody, requireJson, checkOrigin, log = () => {} }: {
   rooms: RoomsStore;
   engine: RoomEngine;
   /** The same T3 client the engine uses. `dispatch` deletes a room's threads. */
@@ -47,6 +47,11 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
   bots: () => Promise<RoomBotView[]>;
   /** Resolves the launch defaults (`inherit`) from the app settings. */
   launch: () => Promise<LaunchDefaults>;
+  /**
+   * Whether T3 starts a fresh provider session on request (`freshContext`). An older T3 ignores the
+   * flag, so Start over launches new threads there instead.
+   */
+  freshContext?: () => Promise<boolean>;
   send: (res: Res, status: number, body: unknown, headers?: Record<string, string>) => void;
   readBody: (req: Req, limit?: number) => Promise<any>;
   requireJson: (req: Req) => void;
@@ -214,9 +219,10 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
         if (action === "messages" && method === "POST") {
           const body = ((await readBody(req)) ?? {}) as RoomMessage;
           const text = typeof body.text === "string" ? body.text : "";
-          if (!text.trim() && !body.mentions?.length) return send(res, 400, { error: "a message needs text" }), true;
+          const attachments = validateAttachments((body as { attachments?: unknown }).attachments);
+          if (!text.trim() && !attachments.length && !body.mentions?.length) return send(res, 400, { error: "a message needs text or a file" }), true;
           if (text.length > MAX_MESSAGE) return send(res, 400, { error: `the message is longer than ${MAX_MESSAGE} characters` }), true;
-          const result = await engine.send(id, { text, mentions: Array.isArray(body.mentions) ? body.mentions : undefined, replyTo: body.replyTo ?? null });
+          const result = await engine.send(id, { text, mentions: Array.isArray(body.mentions) ? body.mentions : undefined, replyTo: body.replyTo ?? null, attachments });
           return send(res, 202, result, { "cache-control": "no-store" }), true;
         }
 
@@ -225,22 +231,56 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
           return send(res, 200, { ok: stopped }), true;
         }
 
-        if (action === "recreate" && method === "POST") {
-          const targets = room.members.map((member) => member.slug);
-          // A recreate that is already running has nothing left to answer: it would keep reading old threads.
+        if (action === "reset" && method === "POST") {
+          // A turn in flight belongs to the conversation being thrown away.
           await engine.stop(id).catch(() => {});
+          // T3 settles a stop asynchronously; the next dispatch must not find a dying run.
           await new Promise((resolve) => setTimeout(resolve, 300));
-          // The old threads belong to the conversation being thrown away: delete them like a room
-          // delete does, or nothing would ever clean them up. Former members keep theirs.
-          const current = (await rooms.get(id)) ?? room;
-          await deleteThreads({ ...current, formerMembers: [] });
-          let latest = room;
-          for (const slug of targets) latest = await rooms.setMember(id, slug, { threadId: null, status: "pending" });
-          const launched = await launchMembers(latest, targets, roster);
-          // Fresh threads mean a fresh conversation: the room's own index goes with them, or the page
-          // would keep showing the user's messages from a conversation nobody can answer any more.
-          const cleared = await rooms.clearTurns(id);
-          return send(res, 200, { room: await view(cleared, roster) }, { "cache-control": "no-store" }), true;
+          if (!(await freshContext().catch(() => false))) {
+            // This T3 cannot start a fresh session in a thread, so the room gets fresh threads. The
+            // old ones belong to the conversation being thrown away: delete them like a room delete
+            // does, or nothing would ever clean them up. Former members keep theirs.
+            const current = (await rooms.get(id)) ?? room;
+            await deleteThreads({ ...current, formerMembers: [] });
+            let relaunched = current;
+            for (const member of current.members) relaunched = await rooms.setMember(id, member.slug, { threadId: null, status: "pending" });
+            await launchMembers(relaunched, current.members.map((member) => member.slug), roster);
+            return send(res, 200, { room: await view(await rooms.clearTurns(id), roster) }, { "cache-control": "no-store" }), true;
+          }
+          // The threads stay: their ids are the room's, and a fresh session is what forgets the talk.
+          let latest = await rooms.clearTurns(id);
+          // A thread T3 no longer has cannot be freshened, so that member gets a new one.
+          const missing: string[] = [];
+          for (const member of latest.members) {
+            if (!member.threadId) { missing.push(member.slug); continue; }
+            const projection = await rpc.call("orchestration.getThreadProjection", { threadId: member.threadId }).catch(() => null) as { thread?: unknown } | null;
+            if (!projection?.thread) missing.push(member.slug);
+          }
+          for (const slug of missing) latest = await rooms.setMember(id, slug, { threadId: null, status: "pending" });
+          if (missing.length > 0) latest = await launchMembers(latest, missing, roster);
+          // A started-over room picks up the room's current model and each Bot's current mode, the
+          // way relaunching the threads used to. Failures are logged, not fatal: the reset still runs.
+          const defaults = await launch();
+          for (const member of latest.members) {
+            const bot = roster.get(member.slug);
+            let patch: Partial<RoomMember> = { fresh: true };
+            if (member.threadId && bot) {
+              try {
+                const resolved = await resolveMemberLaunch({ rpc, bot: bot as RoomBot, settings: latest.settings, defaults });
+                if (resolved.runtimeMode !== member.runtimeMode) {
+                  await rpc.dispatch({ type: "thread.runtime-mode.set", threadId: member.threadId, runtimeMode: resolved.runtimeMode });
+                }
+                if (JSON.stringify(resolved.modelSelection ?? null) !== JSON.stringify(member.model ?? null) && resolved.modelSelection) {
+                  await rpc.dispatch({ type: "thread.model-selection.set", threadId: member.threadId, modelSelection: resolved.modelSelection });
+                }
+                patch = { ...patch, runtimeMode: resolved.runtimeMode, model: resolved.modelSelection };
+              } catch (err) {
+                log(`[rooms] could not refresh ${member.slug}: ${(err as Error).message}`);
+              }
+            }
+            latest = await rooms.setMember(id, member.slug, patch);
+          }
+          return send(res, 200, { room: await view(latest, roster) }, { "cache-control": "no-store" }), true;
         }
 
         return send(res, 404, { error: "no such route" }), true;

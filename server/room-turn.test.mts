@@ -31,6 +31,14 @@ function fakeRuntime() {
       if (command.type === "message.dispatch") {
         counter += 1;
         runs.set(command.threadId, { messageId: command.messageId, runId: `run-${counter}`, status: "running", text: "" });
+        // T3 claims a copy of every pending upload for the thread it dispatches to.
+        const claimed = (command.attachments ?? []).map((attachment: any) => ({ ...attachment, id: `${command.threadId}-${attachment.id}` }));
+        items.set(command.threadId, [...(items.get(command.threadId) ?? []), {
+          id: `message-${command.messageId}`,
+          type: "user_message",
+          messageId: command.messageId,
+          attachments: claimed,
+        }]);
       }
       return { ok: true };
     },
@@ -656,5 +664,106 @@ test("a long message reaches the Bots whole, line breaks included", async () => 
   assert.ok(runtime.dispatched[0].text.includes(text));
   runtime.complete("thread-alpha", "ok");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  await done();
+});
+
+const file = { type: "file" as const, id: "pending-1", name: "informe.pdf", mimeType: "application/pdf", sizeBytes: 2_048 };
+
+test("a file reaches only the addressed member, and the room keeps the claimed copy", async () => {
+  const { room, file: roomsFile, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file: roomsFile });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "", mentions: ["beta"], attachments: [file] });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  assert.deepEqual(runtime.dispatched[0].attachments, [file], "the pending upload goes out as it was");
+  assert.match(runtime.dispatched[0].text, /The user attached: informe\.pdf \(file\)/);
+  assert.match(runtime.dispatched[0].text, /The user sent these files without a message/);
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].attachments?.[0].id === "thread-beta-pending-1", "the claimed id is stored");
+  runtime.complete("thread-beta", "lo leo");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  assert.deepEqual(runtime.dispatched.map((command) => command.threadId), ["thread-beta"], "the unaddressed member got nothing");
+  await done();
+});
+
+test("a member addressed later sees that a file was attached, not the file", async () => {
+  const { room, file: roomsFile, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file: roomsFile });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "lee esto", mentions: ["beta"], attachments: [file] });
+  await waitFor(() => runtime.dispatched.length === 1, "the first dispatch");
+  runtime.complete("thread-beta", "Hecho");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the first turn");
+  await engine.send(room.id, { text: "@Alpha resumen", mentions: ["alpha"] });
+  await waitFor(() => runtime.dispatched.length === 2, "the second dispatch");
+  assert.match(runtime.dispatched[1].text, /\[attached: informe\.pdf\]/);
+  assert.deepEqual(runtime.dispatched[1].attachments, [], "the later member does not get the file");
+  runtime.complete("thread-alpha", "ok");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[1].status === "done", "the second turn");
+  await done();
+});
+
+test("a roundtable wave reuses the copy a member already claimed", async () => {
+  const { room, file: roomsFile, done } = await roomWith({ mode: "roundtable", allowCrossMentions: true, maxWaves: 3 });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file: roomsFile });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "Empieza @Alpha", attachments: [file] });
+  await waitFor(() => runtime.dispatched.length === 1, "the first speaker");
+  assert.deepEqual(runtime.dispatched[0].attachments, [file], "the first dispatch sends the pending upload");
+  runtime.complete("thread-alpha", "Se lo paso a @Beta");
+  await waitFor(() => runtime.dispatched.length === 2, "the wave alpha opened");
+  assert.deepEqual(runtime.dispatched[1].attachments, [file], "each member claims its own copy");
+  runtime.complete("thread-beta", "Te lo devuelvo @Alpha");
+  await waitFor(() => runtime.dispatched.length === 3, "the wave beta opened");
+  assert.deepEqual(runtime.dispatched[2].attachments.map((attachment: any) => attachment.id), ["thread-alpha-pending-1"], "alpha's second turn points at its own copy");
+  runtime.complete("thread-alpha", "Gracias");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to finish");
+  await done();
+});
+
+test("start over arms one fresh session per member, spent by its next message", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  await rooms.setMember(room.id, "alpha", { fresh: true });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "primero" });
+  await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
+  assert.equal(runtime.dispatched[0].freshContext, true, "the first message starts a new session");
+  await waitFor(async () => (await rooms.get(room.id))!.members.find((member) => member.slug === "alpha")!.fresh === false, "the flag to clear");
+  runtime.complete("thread-alpha", "ok");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the first turn");
+  await engine.send(room.id, { text: "segundo" });
+  await waitFor(() => runtime.dispatched.length === 2, "the second dispatch");
+  assert.equal("freshContext" in runtime.dispatched[1], false, "the next message continues the session");
+  runtime.complete("thread-alpha", "ok2");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[1].status === "done", "the second turn");
+  await done();
+});
+
+test("a refused fresh session keeps the flag for the next try", async () => {
+  const { room, file, done } = await roomWith();
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  await rooms.setMember(room.id, "alpha", { fresh: true });
+  const dispatch = runtime.dispatch.bind(runtime);
+  let refuse = true;
+  runtime.dispatch = async (command: any) => {
+    if (refuse && command.type === "message.dispatch") {
+      refuse = false;
+      throw new Error("The current session is still running background agents or commands.");
+    }
+    return dispatch(command);
+  };
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "primero" });
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "failed", "the failed turn");
+  assert.equal((await rooms.get(room.id))!.members.find((member) => member.slug === "alpha")!.fresh, true, "the flag survives the refusal");
+  await engine.send(room.id, { text: "segundo" });
+  await waitFor(() => runtime.dispatched.some((command) => command.type === "message.dispatch"), "the retry");
+  assert.equal(runtime.dispatched.find((command) => command.type === "message.dispatch").freshContext, true);
+  runtime.complete("thread-alpha", "ok");
   await done();
 });
