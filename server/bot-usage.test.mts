@@ -95,18 +95,17 @@ test("a second pass with the same turn replaces its entry instead of doubling it
     assert.equal(rows.length, 1);
     assert.deepEqual([rows[0]!.input, rows[0]!.output, rows[0]!.turns], [20, 9, 1]);
     const state = JSON.parse(await readFile(h.file, "utf8"));
-    assert.deepEqual(state.seen, ["th1:t1"]);
+    assert.deepEqual(state.entries.map((e: UsageEntry) => e.key), ["th1:t1"]);
   } finally { await h.cleanup(); }
 });
 
-test("entries older than 90 days are dropped with their keys", async () => {
+test("entries older than 90 days are dropped", async () => {
   const h = await ledgerHarness();
   try {
     await h.ledger.add([entry({ key: "old", day: "2026-08-01" }), entry({ key: "kept", day: "2026-08-20" }), entry({ key: "fresh", day: "2026-11-16" })]);
     await h.ledger.save();
     const state = JSON.parse(await readFile(h.file, "utf8"));
     assert.deepEqual(state.entries.map((e: UsageEntry) => e.key).sort(), ["fresh", "kept"]);
-    assert.deepEqual(state.seen.sort(), ["fresh", "kept"]);
     assert.match(state.since as string, /^2026-11-16T/);
   } finally { await h.cleanup(); }
 });
@@ -141,8 +140,15 @@ test("the ledger file is written atomically, 0600, and reads back", async () => 
   try {
     await h.ledger.add([entry({})]);
     await h.ledger.save();
-    assert.equal(((await stat(h.file)).mode & 0o777), 0o600);
-    assert.equal((await stat(path.join(h.dir, "usage")).then((s) => s.mode & 0o777)), 0o700);
+    // Windows has no POSIX modes; its file ACLs come from the user's profile directory.
+    if (process.platform !== "win32") {
+      assert.equal(((await stat(h.file)).mode & 0o777), 0o600);
+      assert.equal((await stat(path.join(h.dir, "usage")).then((s) => s.mode & 0o777)), 0o700);
+    }
+    // Counts only: nothing but the entry fields is stored.
+    const saved = JSON.parse(await readFile(h.file, "utf8"));
+    assert.deepEqual(Object.keys(saved).sort(), ["entries", "since", "version"]);
+    assert.deepEqual(Object.keys(saved.entries[0]).sort(), ["bot", "cacheWrite", "cached", "day", "input", "key", "model", "output", "source"]);
     const reopened = createUsageLedger({ file: h.file, now: () => NOW });
     const { rows } = await reopened.rows({ days: 7, timeZone: "UTC" });
     assert.equal(rows.length, 1);
@@ -158,6 +164,18 @@ test("an unreadable ledger is kept aside, not overwritten", async () => {
     const ledger = createUsageLedger({ file: h.file, now: () => NOW });
     assert.deepEqual((await ledger.rows({ days: 7, timeZone: "UTC" })).rows, []);
     assert.equal(await readFile(`${h.file}.broken`, "utf8"), "{not json");
+  } finally { await h.cleanup(); }
+});
+
+test("a ledger written with the old seen list still reads, and is saved without it", async () => {
+  const h = await ledgerHarness();
+  try {
+    await mkdir(path.dirname(h.file), { recursive: true });
+    await writeFile(h.file, JSON.stringify({ version: 1, since: "2026-11-15T00:00:00.000Z", seen: ["th1:t1"], entries: [entry({})] }));
+    const ledger = createUsageLedger({ file: h.file, now: () => NOW });
+    assert.equal((await ledger.rows({ days: 7, timeZone: "UTC" })).rows.length, 1);
+    await ledger.save();
+    assert.equal("seen" in JSON.parse(await readFile(h.file, "utf8")), false);
   } finally { await h.cleanup(); }
 });
 
@@ -181,16 +199,17 @@ test("transcript roots map to provider labels, never to a path", () => {
 
 test("usage-summary buckets become per-account totals without their paths", () => {
   const accounts = accountsFromBuckets([
-    { sourcePath: "/home/u/.claude/projects/abc", totals: { uncachedInputTokens: 10, cachedInputTokens: 2, cacheCreationTokens: 1, outputTokens: 5 }, costUsd: 0.5 },
-    { sourcePath: "/home/u/.claude/projects/def", totals: { uncachedInputTokens: 4, outputTokens: 1 }, costUsd: 0.25 },
+    { sourcePath: "/home/u/.claude/projects/abc", totals: { uncachedInputTokens: 10, cachedInputTokens: 2, cacheCreationTokens: 1, outputTokens: 5 }, costUsd: 0.5, unpricedRecords: 2 },
+    // Reasoning is already part of output, so it is not added again.
+    { sourcePath: "/home/u/.claude/projects/def", totals: { uncachedInputTokens: 4, outputTokens: 1, reasoningTokens: 1 }, costUsd: 0.25 },
     { provider: "gemini", totals: { uncachedInputTokens: 3, outputTokens: 2 }, costUsd: -1 },
     { provider: "   ", totals: { uncachedInputTokens: 1 } },
     "junk",
   ], "/home/u");
   assert.deepEqual(accounts, [
-    { account: "Claude", input: 14, cached: 2, cacheWrite: 1, output: 6, costUsd: 0.75 },
-    { account: "gemini", input: 3, cached: 0, cacheWrite: 0, output: 2, costUsd: 0 },
-    { account: "Unknown", input: 1, cached: 0, cacheWrite: 0, output: 0, costUsd: 0 },
+    { account: "Claude", input: 14, cached: 2, cacheWrite: 1, output: 6, costUsd: 0.75, unpricedRecords: 2 },
+    { account: "gemini", input: 3, cached: 0, cacheWrite: 0, output: 2, costUsd: 0, unpricedRecords: 0 },
+    { account: "Unknown", input: 1, cached: 0, cacheWrite: 0, output: 0, costUsd: 0, unpricedRecords: 0 },
   ]);
   assert.ok(!JSON.stringify(accounts).includes("sourcePath") && !JSON.stringify(accounts).includes("/home/u"));
   assert.deepEqual(accountsFromBuckets(null), []);

@@ -8,7 +8,7 @@ import path from "node:path";
 export type UsageSource = "you" | "routine" | "bot";
 export type UsageEntry = { key: string; day: string; bot: string; source: UsageSource; model: string; input: number; cached: number; cacheWrite: number; output: number };
 export type UsageRow = { day: string; bot: string; source: UsageSource; model: string; input: number; cached: number; cacheWrite: number; output: number; turns: number };
-export type UsageLedgerFile = { version: 1; since: string; seen: string[]; entries: UsageEntry[] };
+export type UsageLedgerFile = { version: 1; since: string; entries: UsageEntry[] };
 
 // The parts of T3's `orchestration.getThreadProjection` result read here (same turns as telemetry.mts,
 // plus the message/run fields that tell a routine or another Bot from the person).
@@ -122,25 +122,16 @@ export function createUsageLedger({ file, now = Date.now }: { file: string; now?
     let saved: UsageLedgerFile | null = null;
     try { raw = await fs.readFile(file, "utf8"); } catch { /* No ledger yet. */ }
     try { saved = raw === null ? null : JSON.parse(raw); } catch { /* Handled below. */ }
-    const valid = !!saved && saved.version === 1 && typeof saved.since === "string" && Array.isArray(saved.seen) && Array.isArray(saved.entries);
+    const valid = !!saved && saved.version === 1 && typeof saved.since === "string" && Array.isArray(saved.entries);
     if (raw !== null && !valid) {
       // Keep an unreadable ledger for inspection instead of overwriting it on the next save.
       await fs.rename(file, `${file}.broken`).catch(() => {});
       console.log(`usage ledger: unreadable file moved to ${path.basename(file)}.broken; starting a new one`);
     }
     state = valid && saved
-      ? { version: 1, since: saved.since, seen: saved.seen.filter((key) => typeof key === "string"), entries: saved.entries.filter(validEntry) }
-      : { version: 1, since: new Date(now()).toISOString(), seen: [], entries: [] };
+      ? { version: 1, since: saved.since, entries: saved.entries.filter(validEntry) }
+      : { version: 1, since: new Date(now()).toISOString(), entries: [] };
     return state;
-  };
-  const prune = () => {
-    const cutoff = new Date(now() - PRUNE_DAYS).toISOString().slice(0, 10);
-    const kept = state!.entries.filter((entry) => entry.day >= cutoff);
-    if (kept.length !== state!.entries.length) {
-      const live = new Set(kept.map((entry) => entry.key));
-      state!.seen = state!.seen.filter((key) => live.has(key));
-      state!.entries = kept;
-    }
   };
   return {
     load,
@@ -149,9 +140,9 @@ export function createUsageLedger({ file, now = Date.now }: { file: string; now?
       const s = await load();
       const byKey = new Map(s.entries.map((entry) => [entry.key, entry]));
       for (const entry of entries) if (validEntry(entry)) byKey.set(entry.key, entry);
-      s.entries = [...byKey.values()];
-      s.seen = [...new Set([...s.seen, ...s.entries.map((entry) => entry.key)])];
-      prune();
+      // An entry's key is the record that its turn was counted, so it goes when the entry does.
+      const cutoff = new Date(now() - PRUNE_DAYS).toISOString().slice(0, 10);
+      s.entries = [...byKey.values()].filter((entry) => entry.day >= cutoff);
     },
     save: async () => {
       const s = await load();
@@ -194,7 +185,7 @@ export function providerForSourcePath(sourcePath: unknown, home: string = homedi
   return null;
 }
 
-export type AccountUsage = { account: string; input: number; cached: number; cacheWrite: number; output: number; costUsd: number };
+export type AccountUsage = { account: string; input: number; cached: number; cacheWrite: number; output: number; costUsd: number; unpricedRecords: number };
 
 /** T3's usage-summary buckets as per-account totals; transcript paths become labels here, never in the browser. */
 export function accountsFromBuckets(buckets: unknown, home: string = homedir()): AccountUsage[] {
@@ -202,11 +193,12 @@ export function accountsFromBuckets(buckets: unknown, home: string = homedir()):
   const totals = new Map<string, AccountUsage>();
   for (const bucket of Array.isArray(buckets) ? buckets : []) {
     if (!bucket || typeof bucket !== "object") continue;
-    const b = bucket as { sourcePath?: unknown; provider?: unknown; costUsd?: unknown; totals?: { uncachedInputTokens?: unknown; cachedInputTokens?: unknown; cacheCreationTokens?: unknown; outputTokens?: unknown } | null };
+    const b = bucket as { sourcePath?: unknown; provider?: unknown; costUsd?: unknown; unpricedRecords?: unknown; totals?: { uncachedInputTokens?: unknown; cachedInputTokens?: unknown; cacheCreationTokens?: unknown; outputTokens?: unknown } | null };
     const t = b.totals ?? {};
     const account = providerForSourcePath(b.sourcePath, home) ?? (typeof b.provider === "string" && b.provider.trim() ? b.provider.trim().slice(0, 60) : "Unknown");
-    const row = totals.get(account) ?? { account, input: 0, cached: 0, cacheWrite: 0, output: 0, costUsd: 0 };
+    const row = totals.get(account) ?? { account, input: 0, cached: 0, cacheWrite: 0, output: 0, costUsd: 0, unpricedRecords: 0 };
     row.input += num(t.uncachedInputTokens); row.cached += num(t.cachedInputTokens); row.cacheWrite += num(t.cacheCreationTokens); row.output += num(t.outputTokens); row.costUsd += num(b.costUsd);
+    row.unpricedRecords += Number.isSafeInteger(b.unpricedRecords) ? num(b.unpricedRecords) : 0;
     totals.set(account, row);
   }
   return [...totals.values()];
