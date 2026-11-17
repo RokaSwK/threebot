@@ -134,6 +134,10 @@ export type Subagent = {
   status: string;
   childThreadId: string | null;
   remoteChild?: { threadId: string; environmentId: string; label?: string };
+  /** The harness and model T3 runs the task on; older servers may omit them. */
+  driver?: string | null;
+  providerInstanceId?: string | null;
+  model?: string | null;
   progress?: string | null;
   result: string | null;
   startedAt: string | null;

@@ -498,7 +498,7 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
               <Field label="Reply limit" hint="Total spoken replies one message can produce. A pass doesn't count (1–20).">
                 <NumberInput label="Reply limit" value={settings.maxReplies} min={1} max={20} disabled={busy} onChange={(value) => update({ maxReplies: value })} />
               </Field>
-              <Field label="Time per Bot" hint="Minutes each Bot has to answer before its reply is marked late (1–60).">
+              <Field label="Time per Bot" hint="Minutes each Bot has to answer before its reply is marked late (1–60). Includes the work it delegates.">
                 <NumberInput label="Time per Bot" value={settings.memberTimeoutMin} min={1} max={60} disabled={busy} onChange={(value) => update({ memberTimeoutMin: value })} />
               </Field>
               <Field label="Turn limit" hint="Minutes one message may take in total before the room stops opening rounds (1–120).">

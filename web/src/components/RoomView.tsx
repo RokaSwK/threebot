@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronLeft, RefreshCw, Square, Users, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, ChevronRight, RefreshCw, Square, Users, X } from "lucide-react";
 import { Avatar, GroupAvatar } from "./Avatar";
 import { BotLink } from "./BotMention";
 import { ApprovalCard, QuestionCard, SecretCard } from "./Cards";
@@ -18,18 +18,19 @@ import { botTextColor } from "../lib/character";
 import { roomCards, type RoomCard } from "../lib/roomCards";
 import { clearRoomDraft, readRoomDraft, writeRoomDraft } from "../lib/roomDrafts";
 import { useMobileChat } from "../lib/useMobileChat";
-import { isPass } from "../../../server/room-lines.mts";
+import { delegatedRows, roomLines, type DelegatedRow, type RoomLine } from "../lib/roomDelegation";
+import { subagentStatus } from "../lib/threadFamily";
 import { mentionsInText } from "../../../server/mention-rules.mts";
 import type { MemberView, RoomTurn } from "../lib/rooms";
-import type { TurnItem } from "../lib/types";
 import "../mobile-chat.css";
 
-type Reply = { id: string; at: string; member: MemberView; text: string; runId: string | null; pass: boolean; late: boolean };
+type Reply = RoomLine;
 type EventRow = { kind: "event"; id: string; at: string; text: string; tone?: "danger" };
 type TimelineRow =
   | { kind: "user"; id: string; at: string; turn: RoomTurn }
   | { kind: "reply"; id: string; at: string; reply: Reply }
   | { kind: "pass"; id: string; at: string; reply: Reply }
+  | { kind: "delegated"; id: string; at: string; row: DelegatedRow }
   | EventRow
   | RoomCard;
 
@@ -73,49 +74,16 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     () => new Set((room?.turns ?? []).flatMap((turn) => (turn.runs ?? []).flatMap((run) => (run.runId ? [run.runId] : [])))),
     [room?.turns],
   );
-  const lateRuns = useMemo(
-    () => new Set((room?.turns ?? []).flatMap((turn) => (turn.runs ?? []).flatMap((run) => (run.late && run.runId ? [run.runId] : [])))),
-    [room?.turns],
-  );
 
-  const replies = useMemo<Reply[]>(() => {
-    if (!room) return [];
-    const out: Reply[] = [];
-    for (const member of historyMembers) {
-      if (!member.threadId) continue;
-      const data = threadData[member.threadId];
-      if (!data) continue;
-      // One room line per run: the last completed assistant message, as the room engine reads it.
-      const latest = new Map<string, TurnItem>();
-      for (const item of Object.values(data.items)) {
-        if ((item.type !== "assistant_message" && item.type !== "assistant") || item.status !== "completed") continue;
-        if (!item.runId || !knownRuns.has(item.runId)) continue;
-        const previous = latest.get(item.runId);
-        if (!previous || item.ordinal >= previous.ordinal) latest.set(item.runId, item);
-      }
-      for (const item of latest.values()) {
-        const text = typeof item.text === "string" ? item.text.trim() : "";
-        if (!text) continue;
-        // `(pass)` is the room's "nothing to add": it is not a Bot line, but the view still says the
-        // member was asked and declined, so a whole silent room doesn't look broken.
-        out.push({
-          id: `${member.threadId}:${item.id}`,
-          at: item.completedAt ?? item.updatedAt,
-          member,
-          text,
-          runId: item.runId ?? null,
-          pass: isPass(text),
-          late: !!item.runId && lateRuns.has(item.runId),
-        });
-      }
-    }
-    return out;
-  }, [historyMembers, threadData, knownRuns, lateRuns]);
+  const replies = useMemo<Reply[]>(() => roomLines(historyMembers, room?.turns ?? [], threadData), [historyMembers, room?.turns, threadData]);
 
   // A member can stop mid-turn to ask for approval, a question or a secret. Those cards live in its
   // thread; the room shows the pending ones inline so the user never has to leave the room to
   // unblock a member. Resolved cards stay out: the member's reply is the room line.
   const cards = useMemo(() => roomCards(room, threadData, bots, knownRuns), [room, threadData, bots, knownRuns]);
+
+  /** Members whose runs delegated work: the card after their line, and why they are still working. */
+  const delegated = useMemo<DelegatedRow[]>(() => delegatedRows(historyMembers, room?.turns ?? [], threadData), [historyMembers, room?.turns, threadData]);
 
   const nameOf = useMemo(() => {
     const names = new Map(historyMembers.map((member) => [member.slug, member.name]));
@@ -139,14 +107,24 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
         });
       }
       for (const run of (turn.runs ?? []).filter((candidate) => candidate.status === "timeout")) {
-        rows.push({ kind: "event", id: `event:${turn.id}:late:${run.slug}`, at: run.at ?? turn.at, text: `${nameOf(run.slug)} didn't answer in time` });
+        // A member past its limit with children still out is working, not missing: say so.
+        const chain = run.runId ? delegated.find((row) => row.runId === run.runId)?.chain ?? null : null;
+        const working = !!chain && chain.children.length > 0 && !chain.settled;
+        rows.push({
+          kind: "event",
+          id: `event:${turn.id}:late:${run.slug}`,
+          at: run.at ?? turn.at,
+          text: working && chain
+            ? `${nameOf(run.slug)} is still working — ${chain.children.length} delegated ${chain.children.length === 1 ? "task" : "tasks"}`
+            : `${nameOf(run.slug)} didn't answer in time`,
+        });
       }
       if (turn.status === "failed" && failedRuns.length === 0) {
         rows.push({ kind: "event", id: `event:${turn.id}:failed`, at: turn.at, text: "The room failed", tone: "danger" });
       }
     }
     return rows;
-  }, [room?.turns, nameOf]);
+  }, [room?.turns, nameOf, delegated]);
 
   const timeline = useMemo<TimelineRow[]>(() => {
     const rows: TimelineRow[] = [
@@ -155,10 +133,11 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
       ...replies.map((reply) => reply.pass
         ? { kind: "pass" as const, id: `pass:${reply.id}`, at: reply.at, reply }
         : { kind: "reply" as const, id: `reply:${reply.id}`, at: reply.at, reply }),
+      ...delegated.map((row) => ({ kind: "delegated" as const, id: row.id, at: row.at, row })),
       ...cards,
     ];
     return rows.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
-  }, [room?.turns, events, replies, cards]);
+  }, [room?.turns, events, replies, delegated, cards]);
 
   /** A member with a pending card is not "answering": it stopped and needs the user. */
   const waiting = useMemo(() => new Set(cards.map((card) => card.member.slug)), [cards]);
@@ -306,6 +285,42 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
                   : row.entry.kind === "question"
                     ? <QuestionCard entry={row.entry} threadId={row.threadId} />
                     : <SecretCard entry={row.entry} threadId={row.threadId} />}
+              </div>
+            </div>
+          ) : row.kind === "delegated" ? (
+            <div key={row.id} className="fade-up mt-2 flex items-start gap-2">
+              <Avatar shape={row.row.member.shape} color={row.row.member.color} picture={row.row.member.avatarImage} size={26} />
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex items-baseline gap-2">
+                  <span className="text-[12.5px] font-medium" style={{ color: botTextColor(row.row.member.color) }}>{row.row.member.name}</span>
+                  <span className="text-[11px] text-faint">{time(row.at)}{row.row.late ? " · late" : ""}</span>
+                </div>
+                <details className="group max-w-[85%] rounded-[12px] border border-line bg-card px-3 py-2">
+                  <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 rounded-[8px] text-[12.5px] text-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+                    <span className="truncate">{delegatedSummary(row.row)}</span>
+                    <ChevronRight size={13} aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-90" />
+                  </summary>
+                  <ul role="list" className="mt-2 space-y-1.5">
+                    {row.row.tasks.map((task) => {
+                      const state = taskState(task.status);
+                      const meta = [task.driver, task.model?.split("/").pop()].filter(Boolean).join(" · ");
+                      return (
+                        <li key={`${row.id}:${task.childThreadId || task.subagentId || task.title}`} className="flex min-w-0 items-start gap-2">
+                          <span
+                            aria-hidden="true"
+                            className={`mt-1.5 size-1.5 shrink-0 rounded-full bg-current ${state === "working" ? "text-attention motion-safe:animate-pulse" : state === "failed" ? "text-danger" : state === "done" ? "text-success" : "text-muted"}`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[12.5px]" title={task.title ?? undefined}>{task.title || "Delegated task"}</span>
+                            <span className="block truncate text-[11px] text-muted" title={[task.driver, task.model].filter(Boolean).join(" · ") || undefined}>
+                              {meta ? `${meta} · ${subagentStatus(task.status)}` : subagentStatus(task.status)}
+                            </span>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
               </div>
             </div>
           ) : (
@@ -648,6 +663,27 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
       </div>
     </div>
   );
+}
+
+/** One line for a delegation card: how many tasks and how far they are, never the whole list. */
+function delegatedSummary(row: DelegatedRow): string {
+  const total = row.tasks.length;
+  const count = { working: 0, done: 0, failed: 0, stopped: 0 };
+  for (const task of row.tasks) count[taskState(task.status)] += 1;
+  const parts = [`${total} ${total === 1 ? "task" : "tasks"}`];
+  if (count.working > 0) parts.push(`${count.working} working`);
+  if (count.done > 0) parts.push(`${count.done} done`);
+  if (count.failed > 0) parts.push(`${count.failed} failed`);
+  if (count.stopped > 0) parts.push(`${count.stopped} stopped`);
+  return `Delegated ${parts.join(" · ")}`;
+}
+
+/** The four states a delegated task's dot and the card's summary share. */
+function taskState(status: string): "working" | "done" | "failed" | "stopped" {
+  if (["pending", "preparing", "queued", "starting", "running", "waiting"].includes(status)) return "working";
+  if (status === "completed") return "done";
+  if (status === "failed" || status === "cancelled" || status === "rolled_back") return "failed";
+  return "stopped";
 }
 
 function time(iso: string) {
