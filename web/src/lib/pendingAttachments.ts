@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast, uploadAttachment, type Attachment } from "../store";
 import { uuid } from "./t3";
 
@@ -31,6 +31,10 @@ export function usePendingAttachments(initial: Attachment[] = []) {
     for (const item of current.current) release(item.attachment);
     update([]);
   };
+
+  useEffect(() => () => {
+    for (const item of current.current) release(item.attachment);
+  }, []);
 
   const addFiles = async (files: FileList | File[]) => {
     const selected = Array.from(files).map((file) => ({ file, attachment: {

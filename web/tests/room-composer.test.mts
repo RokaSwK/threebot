@@ -255,3 +255,13 @@ test("the draft keeps its text and its uploaded files across a remount", async (
   assert.equal(textarea().value, "Pendiente");
   assert.equal(pending().length, 1, "the file survives without its blob preview");
 });
+
+test("unmounting releases blob preview URLs of pending attachments", async () => {
+  const revoked: string[] = [];
+  URL.revokeObjectURL = (url) => { revoked.push(url); };
+  await mount();
+  await choose("shot.png");
+  assert.equal(pending().length, 1);
+  await runtime.act(async () => root.unmount());
+  assert.ok(revoked.some((url) => url.startsWith("blob:")), "object URL revoked on unmount");
+});
