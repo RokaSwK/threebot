@@ -82,7 +82,7 @@ test("a paragraph renders as a file card only when a workspace link is its entir
 });
 
 test("messageFileLinks ignores links inside multi-backtick outer code blocks containing nested 3-backtick blocks", () => {
-  const text = "````markdown\n```python\nx = 1\n```\n````text\n[example.pdf](library/example.pdf)\n`````\n\n[real.pdf](library/real.pdf)";
+  const text = "````markdown\n```python\nx = 1\n```\n[nested.pdf](library/nested.pdf)\n````text\n[example.pdf](library/example.pdf)\n`````\n\n[real.pdf](library/real.pdf)";
   const resolve = (href: string) => (href.startsWith("library/") ? href : null);
   const links = messageFileLinks(text, resolve);
   assert.deepEqual(links.map((l) => l.path), ["library/real.pdf"]);
