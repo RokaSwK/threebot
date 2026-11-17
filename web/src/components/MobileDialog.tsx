@@ -43,10 +43,10 @@ function Option({ title, badge, text, items }: { title: string; badge?: string; 
 function LinkView({ link }: { link: MobileLink }) {
   if (link.kind === "none") return <>
     <div className="min-h-0 overflow-y-auto p-4">
-      <p className="text-[13px] leading-5 text-muted">Your phone needs a way to reach this Mac. Pick one.</p>
+      <p className="text-[13px] leading-5 text-muted">Your phone needs a way to reach this computer. Pick one.</p>
       <div className="mt-3 space-y-3">
         <Option title="Tailscale" badge="Recommended" text="Private and fixed link, free for personal use."
-          items={["Install Tailscale on this Mac and your phone, same account.", "In the Tailscale admin, turn on HTTPS certificates.", "Turn on Tailscale in Remote access."]} />
+          items={["Install Tailscale on this computer and your phone, same account.", "In the Tailscale admin, turn on HTTPS certificates.", "Turn on Tailscale in Remote access."]} />
         <Option title="Cloudflare link" text="No account needed. Public link behind your Threebot password; it changes on every restart."
           items={["Set a password in Remote access.", "Turn on Cloudflare link."]} />
       </div>
@@ -56,14 +56,14 @@ function LinkView({ link }: { link: MobileLink }) {
     </div>
   </>;
   return <div className="min-h-0 overflow-y-auto p-4">
-    {link.kind === "tailscale" && <p className="mb-4 text-[13px] leading-5 text-muted">Scan with your phone's camera.</p>}
+    <p className="mb-4 text-[13px] leading-5 text-muted">Scan with your phone's camera.</p>
     <Qr url={link.url} />
     {link.kind === "tailscale" ? <>
-      <div className="mt-4"><Steps items={["Install Tailscale on your phone and sign in with the same account.", "Scan the code and open the link.", "Share › Add to Home Screen, so it opens like an app."]} /></div>
-      <p className="mt-4 text-[12.5px] leading-5 text-muted">Private: only you can open it, from devices on your tailnet. Works while this Mac is awake.</p>
+      <div className="mt-4"><Steps items={["Install Tailscale on your phone and sign in with the same account.", "Scan the code and open the link.", "Add it to your Home Screen from the browser's Share or ⋮ menu, so it opens like an app."]} /></div>
+      <p className="mt-4 text-[12.5px] leading-5 text-muted">Private: only you can open it, from devices on your tailnet. Works while this computer is awake.</p>
       <p className="mt-2 text-[12.5px] text-muted">Can't use Tailscale on this phone? <button type="button" onClick={openRemoteAccess} className="text-accent underline-offset-2 hover:underline">Use a Cloudflare link instead</button></p>
     </> : <>
-      <div className="mt-4"><Steps items={["Scan the code and sign in with your Threebot password.", "Share › Add to Home Screen."]} /></div>
+      <div className="mt-4"><Steps items={["Scan the code and sign in with your Threebot password.", "Add it to your Home Screen from the browser's Share or ⋮ menu."]} /></div>
       <p className="mt-4 text-[12.5px] leading-5 text-muted">Public link: anyone who has it sees the sign-in page. It changes each time Threebot restarts, so scan again then. For a fixed private link, set up Tailscale.</p>
     </>}
   </div>;
