@@ -120,10 +120,10 @@ function outsideCode(text: string): string {
   return text.split("\n").map((line) => {
     const marker = /^\s*(`{3,}|~{3,})/.exec(line);
     if (marker) {
-      const char = marker[1][0] ?? "";
+      const char = marker[1][0];
       const length = marker[1].length;
       if (!fence) { fence = { char, length }; return ""; }
-      if (char === fence.char && length >= fence.length) { fence = null; return ""; }
+      if (char === fence.char && length >= fence.length && line.slice(marker[0].length).trim() === "") { fence = null; return ""; }
     }
     return fence ? "" : line.replace(/`[^`\n]*`/g, " ");
   }).join("\n");
