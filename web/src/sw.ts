@@ -15,7 +15,8 @@ const SCOPE = new URL(BUILD.base, self.location.origin);
 const CACHE_PREFIX = "bot-shell-" + encodeURIComponent(SCOPE.pathname) + "-";
 const SHELL = CACHE_PREFIX + BUILD.revision;
 const INDEX = new URL("index.html", SCOPE).href;
-const STATIC = new Set(BUILD.entries.map((entry) => new URL(entry.url, self.location.origin).href));
+const STATIC = new Map(BUILD.entries.map((entry) => [new URL(entry.url, self.location.origin).href, entry]));
+const MATCH = { ignoreVary: true };
 
 // One dropped connection must not cost a phone the whole update.
 async function retrying(entry: PrecacheEntry, attempts = 3): Promise<Response> {
@@ -29,8 +30,9 @@ async function retrying(entry: PrecacheEntry, attempts = 3): Promise<Response> {
 }
 
 /** Whether these bytes are the ones this build names: the page by what it loads, everything else by hash. */
-async function matches(entry: PrecacheEntry, response: Response): Promise<boolean> {
-  if (entry.markers) {
+async function matches(entry: PrecacheEntry, response: Response, allowRewrittenPage = false): Promise<boolean> {
+  if (response.status !== 200) return false;
+  if (allowRewrittenPage && entry.markers) {
     const html = await response.clone().text();
     return entry.markers.length > 0 && entry.markers.every((marker) => html.includes(marker));
   }
@@ -46,7 +48,7 @@ async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
   if (!response.ok || response.redirected || response.type !== "basic" || response.url !== request.url) {
     throw new Error("PWA static asset unavailable.");
   }
-  if (!(await matches(entry, response))) throw new Error(entry.markers ? "PWA page is not this build." : "PWA static asset revision changed.");
+  if (!(await matches(entry, response, true))) throw new Error(entry.markers ? "PWA page is not this build." : "PWA static asset revision changed.");
   return response;
 }
 
@@ -58,9 +60,8 @@ async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
  * encoding the browser picked.
  */
 async function reused(entry: PrecacheEntry, url: URL, previous: readonly Cache[]): Promise<Response | null> {
-  if (entry.markers) return null; // the page is rebuilt every time, and it is a kilobyte
   for (const cache of previous) {
-    const hit = await cache.match(url.href, { ignoreVary: true });
+    const hit = await cache.match(url.href, MATCH);
     if (!hit) continue;
     try {
       if (await matches(entry, hit)) return hit;
@@ -85,9 +86,7 @@ self.addEventListener("install", (event) => {
         while (next < BUILD.entries.length) {
           const entry = BUILD.entries[next++];
           const url = new URL(entry.url, self.location.origin);
-          // This cache belongs to one revision, so an interrupted install can resume.
-          if (await cache.match(url.href, { ignoreVary: true })) continue;
-          const kept = await reused(entry, url, previous);
+          const kept = await reused(entry, url, [cache, ...previous]);
           await cache.put(url.href, kept ?? await retrying(entry));
         }
       }));
@@ -124,13 +123,11 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== SCOPE.origin || !url.pathname.startsWith(SCOPE.pathname)) return;
   const route = url.pathname.slice(SCOPE.pathname.length);
   if (/^(api|t3|cdn-cgi|login|logout|auth|welcome)(\/|$)/i.test(route)) return;
-  if (request.mode === "navigate") {
-    // Serve a coherent installed revision. Never overwrite it with runtime HTML
-    // (including an Access login page); a new build installs as another worker.
-    event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(INDEX)) || fetch(request)));
-  } else if (STATIC.has(url.href)) {
-    event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(request, { ignoreVary: true })) || fetch(request)));
-  }
+  const key = request.mode === "navigate" ? INDEX : url.href;
+  const entry = STATIC.get(key);
+  if (!entry) return;
+  // An evicted entry may be served from the network only if it belongs to this worker.
+  event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(key, MATCH)) || verifiedResponse(entry)));
 });
 
 self.addEventListener("push", (event) => {

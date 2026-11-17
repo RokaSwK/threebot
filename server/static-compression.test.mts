@@ -4,22 +4,22 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createCompressionCache, encodeBody, isCompressible, pickEncoding } from "./static-compression.mts";
 
 test("negotiation prefers the best coding the client accepts", () => {
-  assert.equal(pickEncoding(undefined), null, "no header means identity");
-  assert.equal(pickEncoding(""), null);
+  assert.equal(pickEncoding(undefined), "identity", "no header means identity");
+  assert.equal(pickEncoding(""), "identity");
   assert.equal(pickEncoding("gzip, deflate, br"), "br");
   assert.equal(pickEncoding("gzip, deflate"), "gzip");
   assert.equal(pickEncoding("br"), "br");
-  assert.equal(pickEncoding("identity"), null);
+  assert.equal(pickEncoding("identity"), "identity");
 });
 
 test("negotiation honours q-values instead of the first name it sees", () => {
   assert.equal(pickEncoding("br;q=0, gzip"), "gzip", "q=0 is a refusal");
   assert.equal(pickEncoding("br;q=0.4, gzip;q=0.9"), "gzip");
   assert.equal(pickEncoding("br;q=0.9, gzip;q=0.4"), "br");
-  assert.equal(pickEncoding("gzip;q=0, br;q=0"), null);
+  assert.equal(pickEncoding("gzip;q=0, br;q=0"), "identity");
   assert.equal(pickEncoding("*"), "br", "a wildcard covers the codings it does not name");
-  assert.equal(pickEncoding("*;q=0"), null);
-  assert.equal(pickEncoding("br;q=bogus"), "br", "an unparseable weight is treated as absent, not as a refusal");
+  assert.equal(pickEncoding("*;q=0"), "unacceptable");
+  assert.equal(pickEncoding("br;q=bogus"), "identity");
 });
 
 test("only text above the floor is worth compressing", () => {

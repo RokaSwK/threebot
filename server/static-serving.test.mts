@@ -100,6 +100,16 @@ describe("static responses are compressed for clients that ask", () => {
     assert.equal(res.headers["content-encoding"], "gzip");
   });
 
+  test("explicit identity preference is honored and forbidden representations return 406", async () => {
+    const identity = await request(gateway.port, "/assets/big.js", { "accept-encoding": "br;q=0.4, identity;q=0.9" });
+    assert.equal(identity.status, 200);
+    assert.equal(identity.headers.vary, "Accept-Encoding");
+    assert.deepEqual(identity.body, gateway.bundle);
+    for (const url of ["/assets/big.js", "/assets/logo.png"]) {
+      assert.equal((await request(gateway.port, url, { "accept-encoding": "*;q=0" })).status, 406);
+    }
+  });
+
   test("images and tiny files are left alone", async () => {
     const png = await request(gateway.port, "/assets/logo.png", { "accept-encoding": "br, gzip" });
     assert.equal(png.headers["content-encoding"], undefined, "a PNG is already compressed");
@@ -115,6 +125,17 @@ describe("static responses are compressed for clients that ask", () => {
     assert.equal(res.headers["content-encoding"], undefined);
     assert.equal(res.body.length, 100);
     assert.deepEqual(res.body, gateway.mp4.subarray(100, 200));
+  });
+
+  test("If-Range cannot match without a validator and non-video ranges get a full response", async () => {
+    const video = await request(gateway.port, "/media/clip.mp4", { range: "bytes=100-199", "if-range": '"other-build"' });
+    assert.equal(video.status, 200);
+    assert.equal(video.headers.etag, undefined);
+    assert.deepEqual(video.body, gateway.mp4);
+    const script = await request(gateway.port, "/assets/big.js", { "accept-encoding": "br", range: "bytes=100-199" });
+    assert.equal(script.status, 200);
+    assert.equal(script.headers.etag, undefined);
+    assert.deepEqual(brotliDecompressSync(script.body), gateway.bundle);
   });
 
   test("HEAD reports the encoded length without a body", async () => {

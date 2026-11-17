@@ -1180,23 +1180,30 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: s
   const cache = file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : ext === ".mp4" ? "public, max-age=86400" : "no-cache";
   // The bundle is text, and nothing between Tailscale and the browser compresses it.
   const compressible = isCompressible(ext, stat.size);
-  const encoding = compressible ? pickEncoding(req.headers["accept-encoding"]) : null;
+  const encoding = pickEncoding(req.headers["accept-encoding"], compressible);
   const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache, ...(compressible ? { vary: "Accept-Encoding" } : {}) };
+  if (encoding === "unacceptable") {
+    res.writeHead(406, { vary: "Accept-Encoding", "cache-control": "no-store" });
+    return res.end();
+  }
   // Safari won't play a video unless it can ask for pieces of it.
-  const range = ext === ".mp4" && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  // With no validator, If-Range cannot match. Other static files only serve full representations.
+  const range = ext === ".mp4" && req.method === "GET" && !req.headers["if-range"] && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  if (encoding !== "identity") {
+    const body = await staticCompression.get(`${file}:${stat.ino}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}:${encoding}`, async () => encodeBody(await fs.readFile(file), encoding));
+    res.writeHead(200, { ...headers, "content-encoding": encoding, "content-length": body.length });
+    return res.end(req.method === "HEAD" ? undefined : body);
+  }
   if (range) {
     const start = Number(range[1]), end = Math.min(range[2] ? Number(range[2]) : stat.size - 1, stat.size - 1);
     if (start > end) { res.writeHead(416, { "content-range": `bytes */${stat.size}` }); return res.end(); }
-    res.writeHead(206, { ...headers, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${stat.size}`, "content-length": end - start + 1 });
-    return res.end((await fs.readFile(file)).subarray(start, end + 1));
-  }
-  if (encoding) {
-    const body = await staticCompression.get(`${file}:${stat.mtimeMs}:${stat.size}:${encoding}`, async () => encodeBody(await fs.readFile(file), encoding));
-    res.writeHead(200, { ...headers, "content-encoding": encoding, "content-length": body.length });
+    const body = (await fs.readFile(file)).subarray(start, end + 1);
+    res.writeHead(206, { ...headers, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${stat.size}`, "content-length": body.length });
     return res.end(body);
   }
-  res.writeHead(200, ext === ".mp4" ? { ...headers, "accept-ranges": "bytes", "content-length": stat.size } : { ...headers, "content-length": stat.size });
-  res.end(await fs.readFile(file));
+  const body = req.method === "HEAD" ? undefined : await fs.readFile(file);
+  res.writeHead(200, { ...headers, ...(ext === ".mp4" ? { "accept-ranges": "bytes" } : {}), "content-length": body?.length ?? stat.size });
+  res.end(body);
 }
 
 // ---------- router ----------

@@ -34,7 +34,7 @@ function produced(directory, files) {
 async function fixtureBuild(base, revision) {
   const root = path.join(temporary, revision);
   await mkdir(root);
-  await writeFile(path.join(root, "index.html"), '<div id="root">' + revision + '</div><script type="module" src="./main.js"></script>');
+  await writeFile(path.join(root, "index.html"), '<!doctype html><html><head><title>Fixture</title></head><body><div id="root">' + revision + '</div><script type="module" src="./main.js"></script></body></html>' );
   await writeFile(path.join(root, "main.js"), 'import "./style.css"; window.loadDiagram = () => import("./lazy.js");');
   await writeFile(path.join(root, "lazy.js"), 'export const diagram = "' + revision + '";');
   await writeFile(path.join(root, "style.css"), 'body { background: #121212; }');
@@ -250,9 +250,13 @@ test("an interrupted install resumes without downloading verified files again", 
   const caches = cacheStorage();
   const key = "bot-shell-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
   const first = app.manifest.entries[0];
-  await (await caches.open(key)).put(new URL(first.url, origin), new Response("already verified"));
+  const cache = await caches.open(key);
+  const second = app.manifest.entries[1];
+  await cache.put(new URL(first.url, origin), new Response(app.files.get(decodeURIComponent(first.url.slice(1)))));
+  await cache.put(new URL(second.url, origin), new Response("interrupted entry"));
   await worker(app, caches).lifecycle("install");
   assert.equal(seen.includes(first.url), false);
+  assert.equal(seen.includes(second.url), true);
   assert.equal(seen.filter((url) => url !== "/").length, app.manifest.entries.length - 1);
 });
 
@@ -280,7 +284,14 @@ test("content revisions migrate only this app's caches on activation, leaving ol
   assert.notEqual(app.manifest.revision, update.manifest.revision);
   serve(update);
   const next = worker(update, caches);
+  const changed = update.manifest.entries.filter((entry) => !app.manifest.entries.some((old) => old.url === entry.url && old.sha256 === entry.sha256));
+  failure = { url: changed.find((entry) => entry.url.endsWith(".js")).url, kind: "missing" };
+  await assert.rejects(next.lifecycle("install"));
+  assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));
+  failure = undefined;
+  seen.length = 0;
   await next.lifecycle("install");
+  assert.deepEqual(seen.filter((url) => url !== "/").sort(), changed.map((entry) => entry.url).sort());
   assert.ok((await caches.keys()).includes(oldKey), "waiting update cannot delete active old shell");
   offline = true;
   assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));

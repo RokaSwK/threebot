@@ -1,7 +1,5 @@
 // Compresses the static bundle on the way out. The gateway is what Tailscale and the LAN reach
-// directly, and nothing in that path compresses: the whole precached shell is 11.4 MB of text on
-// the wire. Brotli at quality 5 takes ~30 ms for a 1.4 MB bundle (quality 11 takes ~2 s), so the
-// encoded bytes are kept in memory keyed by the file's mtime and size; a rebuild starts a new key.
+// directly. Cache encoded bytes so concurrent installs can share compression work.
 import { brotliCompress, constants, gzip, type BrotliOptions, type ZlibOptions } from "node:zlib";
 
 export type StaticEncoding = "br" | "gzip";
@@ -19,25 +17,23 @@ export function isCompressible(extension: string, size: number): boolean {
  * Picks the best coding the client accepts, honouring q-values: `br;q=0` is a refusal, not an
  * acceptance, and `*` only covers codings the header does not name. Missing header means identity.
  */
-export function pickEncoding(acceptEncoding: string | undefined): StaticEncoding | null {
-  if (!acceptEncoding) return null;
+export function pickEncoding(acceptEncoding: string | undefined, compressible = true): StaticEncoding | "identity" | "unacceptable" {
+  if (!acceptEncoding) return "identity";
   const weights = new Map<string, number>();
   for (const part of acceptEncoding.split(",")) {
     const [name, ...params] = part.trim().toLowerCase().split(";");
     if (!name) continue;
-    let weight = 1;
-    for (const param of params) {
-      const match = /^\s*q\s*=\s*([0-9.]+)\s*$/.exec(param);
-      if (match) weight = Math.min(1, Math.max(0, Number(match[1])));
-    }
-    weights.set(name.trim(), weight);
+    const q = params.length === 0 ? 1 : Number(/^\s*q\s*=\s*(0(?:\.\d{0,3})?|1(?:\.0{0,3})?)\s*$/.exec(params[0])?.[1] ?? 0);
+    weights.set(name.trim(), Math.min(weights.get(name.trim()) ?? 1, q));
   }
   const star = weights.get("*");
   const weight = (coding: string) => weights.get(coding) ?? star ?? 0;
-  const brotli = weight("br"), gzipped = weight("gzip");
-  if (!Number.isFinite(brotli) || !Number.isFinite(gzipped)) return null;
-  if (brotli > 0 && brotli >= gzipped) return "br";
-  return gzipped > 0 ? "gzip" : null;
+  const brotli = compressible ? weight("br") : 0;
+  const gzipped = compressible ? weight("gzip") : 0;
+  const identity = weights.get("identity");
+  const preferred = Math.max(brotli, gzipped);
+  if (preferred > 0 && preferred >= (identity ?? 0)) return brotli >= gzipped ? "br" : "gzip";
+  return (identity ?? (star === 0 ? 0 : 1)) > 0 ? "identity" : "unacceptable";
 }
 
 export function encodeBody(raw: Buffer, encoding: StaticEncoding): Promise<Buffer> {
