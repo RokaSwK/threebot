@@ -67,6 +67,7 @@ export function useFileSize(path: string | undefined, url: string | null): numbe
   const threadId = useContext(WorkspaceFileContext)?.threadId ?? null;
   const [size, setSize] = useState<number | null>(null);
   useEffect(() => {
+    setSize(null);
     if (!threadId || !path || !url) return;
     let live = true;
     void cachedFileSize(`${threadId}:${path}`, () => fileSizeFromHead(url)).then((bytes) => {

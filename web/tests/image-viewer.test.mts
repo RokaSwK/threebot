@@ -27,12 +27,13 @@ const bundle = await buildOnce({
       export { MessageImages } from ${JSON.stringify(src + "components/ImageViewer.tsx")};
       export { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from ${JSON.stringify(src + "components/WorkspaceResource.tsx")};
       export { ChatAttachmentList } from ${JSON.stringify(src + "components/ChatAttachments.tsx")};
+      export { useFileSize } from ${JSON.stringify(src + "components/FileCard.tsx")};
       export { t3 } from ${JSON.stringify(src + "lib/t3.ts")};` : undefined }],
   ssr: { noExternal: true }, build: { ssr: "virtual:image-viewer", write: false },
 });
 const directory = await mkdtemp(join(tmpdir(), "bot-image-viewer-"));
 const filename = join(directory, "components.mjs"); await writeFile(filename, entryChunk(bundle).code);
-const { createElement: h, act, StrictMode, createRoot, MessageImages, WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer, ChatAttachmentList, t3 } = await import(pathToFileURL(filename).href);
+const { createElement: h, act, StrictMode, createRoot, MessageImages, WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer, ChatAttachmentList, useFileSize, t3 } = await import(pathToFileURL(filename).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(directory, { recursive: true }); });
 
 let root, host, calls, downloads, tabs;
@@ -208,4 +209,27 @@ test("the Library and file viewer open images in the same viewer, and StrictMode
   await key("Escape");
   assert.equal(closed, 1);
   assert.equal(history.state.imageViewer, undefined);
+});
+
+test("useFileSize clears size on path change and probe failure", async () => {
+  let probeResult: number | null = 1024;
+  globalThis.fetch = ((_url: string) => Promise.resolve(new Response(null, {
+    status: probeResult === null ? 404 : 200,
+    headers: probeResult === null ? {} : { "Content-Length": String(probeResult) },
+  }))) as typeof fetch;
+
+  function Sizer({ path, url }: { path?: string; url: string | null }) {
+    const size = useFileSize(path, url);
+    return h("div", { "data-size": size === null ? "none" : String(size) });
+  }
+
+  const workspace = { workspaceRoot: "/root", threadId: "thread-1", openFile() {} };
+  await render(h(WorkspaceFileContext, { value: workspace }, h(Sizer, { path: "file1.pdf", url: "/t3/assets/f1" })));
+  await flush();
+  const el = document.querySelector("[data-size]");
+  assert.equal(el?.getAttribute("data-size"), "1024");
+
+  probeResult = null;
+  await render(h(WorkspaceFileContext, { value: workspace }, h(Sizer, { path: "file2.pdf", url: null })));
+  assert.equal(el?.getAttribute("data-size"), "none", "size resets immediately when url resets");
 });
