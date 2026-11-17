@@ -79,7 +79,7 @@ export function pickReply(items: ReplyItem[], runId: string | null | undefined):
     && item.status === "completed"
     && typeof item.text === "string"
     && item.text.trim() !== ""
-  );
+  ).sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
   const last = assistant.at(-1);
   if (!last) return null;
   return { id: String(last.id ?? ""), text: String(last.text), at: last.completedAt ?? last.updatedAt ?? null };
