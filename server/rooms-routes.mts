@@ -38,7 +38,7 @@ export type MemberView = RoomBotView & {
 };
 export type RoomView = Omit<Room, "members" | "formerMembers"> & { members: MemberView[]; formerMembers: MemberView[] };
 
-export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine, rpc, bots, launch, send, readBody, requireJson, checkOrigin, log = () => {} }: {
+export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine, rpc, bots, launch, freshContext = async () => true, send, readBody, requireJson, checkOrigin, log = () => {} }: {
   rooms: RoomsStore;
   engine: RoomEngine;
   /** The same T3 client the engine uses. `dispatch` deletes a room's threads. */
@@ -47,6 +47,11 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
   bots: () => Promise<RoomBotView[]>;
   /** Resolves the launch defaults (`inherit`) from the app settings. */
   launch: () => Promise<LaunchDefaults>;
+  /**
+   * Whether T3 starts a fresh provider session on request (`freshContext`). An older T3 ignores the
+   * flag, so Start over launches new threads there instead.
+   */
+  freshContext?: () => Promise<boolean>;
   send: (res: Res, status: number, body: unknown, headers?: Record<string, string>) => void;
   readBody: (req: Req, limit?: number) => Promise<any>;
   requireJson: (req: Req) => void;
@@ -231,6 +236,17 @@ export function createRoomRoutes<Req extends RoomsRequest, Res>({ rooms, engine,
           await engine.stop(id).catch(() => {});
           // T3 settles a stop asynchronously; the next dispatch must not find a dying run.
           await new Promise((resolve) => setTimeout(resolve, 300));
+          if (!(await freshContext().catch(() => false))) {
+            // This T3 cannot start a fresh session in a thread, so the room gets fresh threads. The
+            // old ones belong to the conversation being thrown away: delete them like a room delete
+            // does, or nothing would ever clean them up. Former members keep theirs.
+            const current = (await rooms.get(id)) ?? room;
+            await deleteThreads({ ...current, formerMembers: [] });
+            let relaunched = current;
+            for (const member of current.members) relaunched = await rooms.setMember(id, member.slug, { threadId: null, status: "pending" });
+            await launchMembers(relaunched, current.members.map((member) => member.slug), roster);
+            return send(res, 200, { room: await view(await rooms.clearTurns(id), roster) }, { "cache-control": "no-store" }), true;
+          }
           // The threads stay: their ids are the room's, and a fresh session is what forgets the talk.
           let latest = await rooms.clearTurns(id);
           // A thread T3 no longer has cannot be freshened, so that member gets a new one.

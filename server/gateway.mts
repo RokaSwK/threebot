@@ -996,6 +996,8 @@ const roomRoutes = createRoomRoutes({
     model: bot.model,
   })),
   launch: launchDefaults,
+  // Feature-detected: a T3 without fresh sessions gets new threads on Start over instead.
+  freshContext: async () => (await localDescriptor().catch(() => null))?.capabilities?.freshContext === true,
   send,
   readBody,
   requireJson,

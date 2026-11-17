@@ -48,7 +48,7 @@ const engine = {
   recover: async () => [],
 } as unknown as RoomEngine;
 
-async function setup() {
+async function setup({ freshContext }: { freshContext?: () => Promise<boolean> } = {}) {
   launched.length = 0;
   deleted.length = 0;
   sentToEngine.length = 0;
@@ -58,6 +58,7 @@ async function setup() {
     rooms, engine, rpc,
     bots: async () => bots,
     launch: async () => ({ runtimeMode: "auto" }),
+    ...(freshContext ? { freshContext } : {}),
     send,
     readBody: async (req: FakeRequest) => req.body,
     requireJson: (req: FakeRequest) => {
@@ -171,6 +172,25 @@ test("start over keeps the threads, forgets the messages and arms a fresh sessio
   assert.equal(deleted.length, 0, "nothing is deleted");
   const stored = (await rooms.get(id))!;
   assert.deepEqual(stored.members.map((member) => member.fresh), [true, true], "every member starts a new session");
+  await done();
+});
+
+test("start over on a T3 without fresh sessions launches new threads and deletes the old ones", async () => {
+  const { routes, rooms, done } = await setup({ freshContext: async () => false });
+  const created = await call(routes, request({ method: "POST", body: { name: "Older", members: ["alpha", "beta"] } }), "/api/rooms");
+  const id = (created.res.body as any).room.id;
+  const threads = (created.res.body as any).room.members.map((member: any) => member.threadId).sort();
+  await rooms.appendTurn(id, { id: "t0", at: "2026-01-01T00:00:00.000Z", text: "hola", mentions: [], replyTo: null, status: "done", runs: [] });
+  launched.length = 0;
+  deleted.length = 0;
+  const reset = await call(routes, request({ method: "POST", body: {} }), `/api/rooms/${id}/reset`);
+  assert.equal(reset.res.status, 200);
+  assert.deepEqual((reset.res.body as any).room.turns, []);
+  assert.deepEqual(deleted.sort(), threads, "the old threads are deleted in T3");
+  assert.equal(launched.length, 2, "every member gets a new thread");
+  const stored = (await rooms.get(id))!;
+  assert.deepEqual(stored.members.map((member) => member.threadId).sort(), launched.map((payload) => payload.threadId).sort());
+  assert.ok(stored.members.every((member) => member.fresh !== true), "a new thread needs no fresh-session flag");
   await done();
 });
 
