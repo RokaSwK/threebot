@@ -4,11 +4,15 @@ import type { DocBlock, DocParagraph, DocRun, DocumentData, Workbook } from "../
 
 type Parsed = { kind: "sheet"; workbook: Workbook } | { kind: "doc"; document: DocumentData } | { kind: "refused"; message: string };
 
+function escapeTsvCell(value: string): string {
+  return /[\t\n\r"]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
 function rangeTsv(rows: string[][], top: number, bottom: number, left: number, right: number): string {
   const lines: string[] = [];
   for (let r = top; r <= bottom; r++) {
     const cells: string[] = [];
-    for (let c = left; c <= right; c++) cells.push(rows[r]?.[c] ?? "");
+    for (let c = left; c <= right; c++) cells.push(escapeTsvCell(rows[r]?.[c] ?? ""));
     lines.push(cells.join("\t"));
   }
   return lines.join("\n");
@@ -125,7 +129,7 @@ function SheetView({ workbook, onRows }: { workbook: Workbook; onRows?: (count: 
     <div className="office-grid scroll-thin">
       {sheet.rows.length ? <table role="grid" tabIndex={0} aria-label={sheet.name} onKeyDown={onKeyDown}>
         <thead><tr><th aria-hidden="true" />{columns.map((name) => <th key={name} scope="col">{name}</th>)}</tr></thead>
-        <tbody>{sheet.rows.map((row, r) => <tr key={r}><th scope="row">{r + 1}</th>{columns.map((name, c) => <td key={name} role="gridcell" aria-selected={inSelection(r, c)} onClick={(event) => select(r, c, event.shiftKey)}>{row[c] ?? ""}</td>)}</tr>)}</tbody>
+        <tbody>{sheet.rows.map((row, r) => <tr key={r}><th scope="row">{r + 1}</th>{columns.map((name, c) => <td key={name} role="gridcell" aria-selected={inSelection(r, c)} onClick={(event) => { select(r, c, event.shiftKey); event.currentTarget.closest("table")?.focus(); }}>{row[c] ?? ""}</td>)}</tr>)}</tbody>
       </table> : !note && <p className="p-6 text-center text-[14px] text-muted">This sheet is empty.</p>}
     </div>
     {note && <p role="status" className="office-note">Showing {note}. Open the original file for the rest.</p>}
