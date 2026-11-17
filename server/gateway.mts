@@ -360,7 +360,7 @@ async function refreshUsageLedger() {
     if (threads) {
       const since = usageScannedAt || started - 7 * 24 * 60 * 60 * 1000;
       const recent = threads.filter((thread) => (Date.parse(thread.updatedAt ?? "") || started) > since);
-      const slugOfProject = new Map(bots.map((bot) => [bot.projectId, bot.slug]).filter(([projectId]) => projectId) as [string, string][]);
+      const slugOfProject = new Map(bots.filter((bot) => !bot.adopted).map((bot) => [bot.projectId, bot.slug]).filter(([projectId]) => projectId) as [string, string][]);
       const slugOfMain = new Map(bots.map((bot) => [bot.mainThreadId, bot.slug]).filter(([mainThreadId]) => mainThreadId) as [string, string][]);
       const { timezone } = await getSettings();
       const timeZone = timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;

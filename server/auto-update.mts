@@ -22,7 +22,7 @@ export interface BotThread {
   lineage?: { rootThreadId?: string | null; parentThreadId?: string | null } | null;
 }
 /** The fields of a Bot this file reads. */
-export interface BotRef { projectId?: string | null; mainThreadId?: string | null }
+export interface BotRef { projectId?: string | null; mainThreadId?: string | null; adopted?: boolean }
 
 export interface AutoUpdateNotice { kind: "updated" | "rolledBack" | "failed" | "waited"; version: string; from: string; url: string; at: string }
 /** What auto-update.json holds. */
@@ -48,7 +48,7 @@ export function busyBotThreads<T extends BotThread>(threads: T[], bots: BotRef[]
 }
 /** The threads that belong to a Bot: in a Bot's project, or descended from a Bot's main thread. */
 export function botThreads<T extends Pick<BotThread, "id" | "projectId" | "lineage">>(threads: T[], bots: BotRef[]): T[] {
-  const projects = new Set(bots.map((bot) => bot.projectId).filter(Boolean));
+  const projects = new Set(bots.filter((bot) => !bot.adopted).map((bot) => bot.projectId).filter(Boolean));
   const mains = new Set(bots.map((bot) => bot.mainThreadId).filter(Boolean));
   return threads.filter((thread) => projects.has(thread.projectId) || mains.has(thread.id) || mains.has(thread.lineage?.rootThreadId) || mains.has(thread.lineage?.parentThreadId));
 }
