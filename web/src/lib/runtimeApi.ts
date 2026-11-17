@@ -45,6 +45,7 @@ export type WorkPlan = {
   id: string;
   status: string;
   detailInTurnItem?: boolean;
+  runId?: string;
 } & (
   | { kind: "todo_list"; steps: PlanStep[]; explanation: string }
   | { kind: "proposed_plan"; markdown: string }
@@ -125,6 +126,7 @@ export function decodePlan(value: unknown): WorkPlan | null {
     id,
     status: text(r.status) || "unknown",
     detailInTurnItem: r.detailInTurnItem === true,
+    ...(text(r.runId) ? { runId: text(r.runId) } : {}),
   };
   if (kind === "proposed_plan" && typeof r.markdown === "string")
     return { ...base, kind, markdown: r.markdown };
@@ -507,7 +509,7 @@ class RuntimeWork {
     const generation = ++this.generation;
     this.stream = t3.stream(
       "orchestration.subscribeThread",
-      { threadId: this.threadId, requestCompletionMarker: true },
+      { threadId: this.threadId, requestCompletionMarker: true, acceptBoundedSnapshot: true },
       (value: unknown) => {
         if (generation !== this.generation) return;
         const r = record(value);
@@ -529,7 +531,8 @@ class RuntimeWork {
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     if (this.listeners.size === 1) {
-      this.reconnect = t3.onReconnect(this.open);
+      // A stream already sent on the new socket (queued before it opened) is live; don't open it twice.
+      this.reconnect = t3.onReconnect(() => { if (!this.stream?.live()) this.open(); });
       this.open();
     }
     return () => {

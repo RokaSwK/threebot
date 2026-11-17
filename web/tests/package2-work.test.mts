@@ -75,7 +75,7 @@ export { QueuedWork } from ${JSON.stringify(src + "components/QueuedWork.tsx")};
 export { PlanMessage } from ${JSON.stringify(src + "components/PlanMessage.tsx")};
 export { GoalCard } from ${JSON.stringify(src + "components/GoalCard.tsx")};
 export { TaskChanges, PR_DONE_LINGER_MS } from ${JSON.stringify(src + "components/TaskChanges.tsx")};
-export { supplementSubagents } from ${JSON.stringify(src + "lib/threadFamily.ts")};
+export { supplementSubagents, loadedRunFloor } from ${JSON.stringify(src + "lib/threadFamily.ts")};
 export { SubagentRow } from ${JSON.stringify(src + "components/ThreadFamily.tsx")};
 export { useApp } from ${JSON.stringify(src + "store.ts")}; export { t3 } from ${JSON.stringify(src + "lib/t3.ts")};`
           : undefined,
@@ -108,6 +108,7 @@ const {
   runtimeWork,
   readWorkDiff,
   supplementSubagents,
+  loadedRunFloor,
   QueuedWork,
   PlanMessage,
   GoalCard,
@@ -666,6 +667,28 @@ test("projection-only child tasks appear once and keep their real ID", () => {
   assert.equal(items[0].childThreadId, "child");
   assert.equal(supplementSubagents([], [agent], "work")[0], items[0]);
   assert.equal(supplementSubagents(items, [agent], "work").length, 1);
+});
+
+test("a partly loaded thread adds only child tasks from the runs it holds rows for", () => {
+  const row = { id: "row", type: "assistant_message", runId: "run:thread:t:ordinal:214", ordinal: 1 };
+  const runs = { "run:thread:t:ordinal:214": { ordinal: 214 } };
+  assert.equal(loadedRunFloor([row], runs, false), null, "a complete thread has no floor");
+  const floor = loadedRunFloor([row], runs, true);
+  assert.equal(floor, 214);
+  const old = { id: "old", runId: "run:thread:t:ordinal:198", status: "failed", updatedAt: "2026-01-01" };
+  const recent = { id: "recent", runId: "run:thread:t:ordinal:216", status: "running", updatedAt: "2026-01-02" };
+  const items = supplementSubagents([row], [old, recent], "t", floor);
+  assert.deepEqual(items.map((item) => item.subagentId ?? item.id), ["row", "recent"]);
+});
+
+test("a child task without a row sits where it started, not at the end of the chat", () => {
+  const row = (id, ordinal, startedAt) => ({ id, type: "assistant_message", runId: "run:thread:t:ordinal:5", ordinal, startedAt });
+  const rows = [row("a", 10, "2026-01-01T10:00:00Z"), row("b", 20, "2026-01-01T11:00:00Z"), row("c", 30, "2026-01-01T12:00:00Z")];
+  const agent = { id: "task", runId: "run:thread:t:ordinal:5", status: "completed", startedAt: "2026-01-01T11:30:00Z", updatedAt: "2026-01-01T11:40:00Z" };
+  const placed = supplementSubagents(rows, [agent], "t").find((item) => item.subagentId === "task");
+  assert.ok(placed.ordinal > 20 && placed.ordinal < 30, "between the rows around its start");
+  const early = { ...agent, id: "early", startedAt: "2026-01-01T09:00:00Z" };
+  assert.equal(supplementSubagents(rows, [early], "t", 5).some((item) => item.subagentId === "early"), false, "a partly loaded thread leaves out tasks from before its oldest row");
 });
 
 test("ambiguous Queue payload keeps both IDs and dispatch mode across reconstruction", () => {
