@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Check, ChevronDown, Copy, Ellipsis, Folder, FolderInput, FolderPlus, MessageSquare, Pencil, Pin, PinOff, RefreshCw, Trash2, Users } from "lucide-react";
+import { Check, ChevronDown, Copy, Ellipsis, Folder, FolderInput, FolderPlus, MessageSquare, Pencil, Pin, PinOff, Trash2, Users } from "lucide-react";
 import { Avatar, GroupAvatar } from "./Avatar";
 import { HoldButton, Menu, Modal, Pill, Spinner, Switch, type MenuItem, type MenuPoint } from "./ui";
-import { createRoom, loadRooms, openDialog, recreateRoomThreads, removeRoom, saveRoom, saveSettings, selectRoom, showRoom, toast, useApp } from "../store";
+import { createRoom, loadRooms, openDialog, removeRoom, saveRoom, saveSettings, selectRoom, showRoom, toast, useApp } from "../store";
 import { DEFAULT_ROOM_SETTINGS, fetchRoom, type RoomSettings, type RoomSummary, type RoomView } from "../lib/rooms";
 import { ModelPicker } from "./ModelPicker";
 import { copyText } from "../lib/t3";
@@ -298,7 +298,6 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
   const [settings, setSettings] = useState<RoomSettings>({ ...DEFAULT_ROOM_SETTINGS, ...(initial?.settings ?? {}), lead: initial?.settings?.lead ?? initial?.members[0]?.slug ?? "" });
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState("");
 
@@ -366,21 +365,6 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn't delete the room");
-      setBusy(false);
-    }
-  };
-
-  const recreate = async () => {
-    if (!initial || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await recreateRoomThreads(initial.id);
-      toast("Room restarted with fresh threads");
-      setConfirmReset(false);
-      setBusy(false);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Couldn't recreate the threads");
       setBusy(false);
     }
   };
@@ -560,18 +544,10 @@ function RoomForm({ initial, onClose }: { initial: RoomView | null; onClose: () 
         {editing && (
           <div className="space-y-2 border-t border-line pt-3">
             <div className="flex flex-wrap gap-2">
-              <Pill variant="soft" disabled={busy} onClick={() => { setConfirmReset(true); setConfirmDelete(false); }}><RefreshCw size={13} /> Start over</Pill>
-              <Pill variant="ghost" className="text-danger" disabled={busy} onClick={() => { setConfirmDelete(true); setConfirmReset(false); }}><Trash2 size={13} /> Delete room</Pill>
+              <Pill variant="ghost" className="text-danger" disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={13} /> Delete room</Pill>
             </div>
-            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span> clears this room's messages and gives every Bot a fresh thread. The old threads are deleted in T3.</p>
+            <p className="text-[12px] text-muted"><span className="text-fg">Start over</span>, in the composer's + menu, clears this room's messages and starts every Bot a fresh session.</p>
             <p className="text-[12px] text-muted"><span className="text-fg">Delete room</span> removes the room and deletes its Bot threads in T3. This cannot be undone.</p>
-            {confirmReset && (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl bg-card p-2">
-                <span className="mr-auto text-[12.5px]">Clear the messages and start over?</span>
-                <Pill variant="ghost" disabled={busy} onClick={() => setConfirmReset(false)}>Cancel</Pill>
-                <Pill variant="danger" disabled={busy} onClick={() => void recreate()}>{busy && <Spinner />} Start over</Pill>
-              </div>
-            )}
             {confirmDelete && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl bg-card p-2">
                 <span className="mr-auto text-[12.5px]">Delete this room and its threads?</span>

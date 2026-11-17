@@ -1104,6 +1104,7 @@ test('a helper Bot written by another Bot gets its standing instructions before 
 
 test('a room launches one idle thread per member in its own project, with the Bot\'s own runtime mode', { timeout: 60000 }, async () => {
   const fixture = await createFixture({ scenario: 'rooms' });
+  let rpc: T3Client | undefined;
   try {
     const created = await fixture.request('/api/rooms', 'POST', { name: 'Design review', members: ['alpha', 'beta'], settings: { runtimeMode: 'full-access' } });
     assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -1121,11 +1122,33 @@ test('a room launches one idle thread per member in its own project, with the Bo
     }
     assert.equal(turn.status, 'done', 'the addressed Bot answered');
     assert.deepEqual(turn.runs.map((run: Json) => [run.slug, run.status]), [['beta', 'replied']], 'only the Bot that was named answers');
+    // Start over keeps the threads and the next message to each member opens a fresh session.
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const reset = await fixture.request(`/api/rooms/${room.id}/reset`, 'POST', {});
+    assert.equal(reset.status, 200, JSON.stringify(reset.body));
+    assert.deepEqual(reset.body.room.turns, []);
+    assert.deepEqual(reset.body.room.members.map((member: Json) => member.threadId), room.members.map((member: Json) => member.threadId), 'the threads stay');
+    const upload = await bounded(rpc.call('attachments.createUploadUrl', { type: 'file', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5 })) as Json;
+    const file = { type: 'file', id: upload.attachmentId, name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5 };
+    const filesOnly = await fixture.request(`/api/rooms/${room.id}/messages`, 'POST', { text: '', mentions: ['beta'], attachments: [file] });
+    assert.equal(filesOnly.status, 202, JSON.stringify(filesOnly.body));
+    let sentItem: Json = null;
+    for (let i = 0; i < 100 && !sentItem; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const projection = await bounded(rpc.call('orchestration.getThreadProjection', { threadId: room.members[1].threadId })) as Json;
+      sentItem = projection.turnItems.filter((item: Json) => item.type === 'user_message').at(-1);
+      if (sentItem?.text?.includes('what do you think')) sentItem = null;
+    }
+    assert.ok(sentItem, 'the file reached the addressed Bot');
+    assert.equal(sentItem.freshContext, true, 'the first message after Start over opens a fresh session');
+    assert.deepEqual(sentItem.attachments.map((attachment: Json) => attachment.name), ['notes.txt']);
+    assert.match(sentItem.text, /The user sent these files without a message/);
     const removed = await fixture.request(`/api/rooms/${room.id}`, 'DELETE', {});
     assert.equal(removed.status, 200);
     assert.deepEqual((await fixture.request('/api/rooms')).body.rooms, []);
     assert.deepEqual(removed.body.threads, { deleted: 2, failed: [] }, 'deleting a room deletes its member threads');
-  } finally { await fixture.close(); }
+  } finally { rpc?.close(); await fixture.close(); }
 });
 
 test('the gateway turns T3 auto-settle off for Bot main threads soon after it starts', { timeout: 30000 }, async () => {

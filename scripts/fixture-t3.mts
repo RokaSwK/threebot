@@ -318,7 +318,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
         const result = latest.transcribe(Buffer.concat(chunks));
         return json(res, result.status, result.body);
       }
-      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId, platform: { os: 'fixture', arch: 'fixture', machine: links ? 'server' : 'laptop' }, ...(links ? { capabilities: { peerLinks: true } } : {}) });
+      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId, platform: { os: 'fixture', arch: 'fixture', machine: links ? 'server' : 'laptop' }, ...(links ? { capabilities: { peerLinks: true } } : scenario === 'rooms' ? { capabilities: { freshContext: true } } : {}) });
       // T3's token exchange for a one-time pairing code; only the fixture's own code works.
       if (url.pathname === '/oauth/token' && req.method === 'POST') {
         const form = new URLSearchParams(await readText(req));
