@@ -5,20 +5,13 @@ import { fileURLToPath } from "node:url";
 const src = fileURLToPath(new URL('../src/lib/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', build: { ssr: true, write: false, rollupOptions: { input: 'virtual:package5' } }, plugins: [{ name: 'package5-data', resolveId: (id) => id === 'virtual:package5' ? '\0package5' : undefined, load: (id) => id === '\0package5' ? `export * from ${JSON.stringify(src + 'usageApi.ts')}; export * from ${JSON.stringify(src + 'skillsApi.ts')}; export * from ${JSON.stringify(src + 'librarySearch.ts')}; export * as transport from ${JSON.stringify(src + 't3.ts')};` : undefined }] });
 const entry = entryChunk(bundle);
-const { parseProviderUsage, peakUsage, resetsIn, parseUsageSummary, usageRange, parseSkills, parseFileSearch, isLibraryPage, searchLibrary, transport } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
+const { parseProviderUsage, peakUsage, resetsIn, parseSkills, parseFileSearch, isLibraryPage, searchLibrary, transport } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
 
 test('quota windows preserve actual provider percent, reset and availability without inventing entitlements', () => {
-  const rows = parseProviderUsage({ providers: [{ instanceId: 'codex', displayName: 'Codex', usageLimits: { checkedAt: '2026-10-31T00:00:00Z', windows: [{ id: 'weekly', label: 'Weekly', usedPercent: 53, resetsAt: '2026-11-04T00:00:00Z' }, { id: 'bad', label: 'Future', usedPercent: 900 }], resetCredits: { availableCount: 1 }, externalUsage: { url: 'javascript:unsafe' } } }, { instanceId: 'other', displayName: 'Other', usageLimits: { unavailable: { reason: 'unsupported' }, windows: [] } }] });
-  assert.deepEqual(rows[0], { id: 'codex', name: 'Codex', windows: [{ id: 'weekly', label: 'Weekly', percent: 53, resetsAt: '2026-11-04T00:00:00Z' }], checkedAt: '2026-10-31T00:00:00Z', unavailable: false, resetCredits: 1, externalUrl: null });
+  const rows = parseProviderUsage({ providers: [{ instanceId: 'codex', driver: 'codex', displayName: 'Codex', usageLimits: { checkedAt: '2026-10-31T00:00:00Z', windows: [{ id: 'weekly', label: 'Weekly', usedPercent: 53, resetsAt: '2026-11-04T00:00:00Z' }, { id: 'bad', label: 'Future', usedPercent: 900 }], resetCredits: { availableCount: 1 }, externalUsage: { url: 'javascript:unsafe' } } }, { instanceId: 'other', displayName: 'Other', usageLimits: { unavailable: { reason: 'unsupported' }, windows: [] } }] });
+  assert.deepEqual(rows[0], { id: 'codex', name: 'Codex', kind: 'codex', windows: [{ id: 'weekly', label: 'Weekly', percent: 53, resetsAt: '2026-11-04T00:00:00Z' }], checkedAt: '2026-10-31T00:00:00Z', unavailable: false, resetCredits: 1, externalUrl: null });
   assert.equal(rows[1].unavailable, true); assert.deepEqual(rows[1].windows, []);
   assert.throws(() => parseProviderUsage({}));
-});
-
-test('cost totals count cache categories once and exclude reasoning already included in output', () => {
-  const totals = { uncachedInputTokens: 10, cachedInputTokens: 20, cacheCreationTokens: 30, outputTokens: 40, reasoningTokens: 35 };
-  assert.deepEqual(parseUsageSummary({ contractVersion: 6, buckets: [{ provider: 'codex', totals, costUsd: 1.25, unpricedRecords: 1 }, { provider: 'codex', totals, costUsd: 0.5, unpricedRecords: 0 }, { type: 'future' }] }), [{ provider: 'codex', tokens: 200, cost: 1.75, unpricedRecords: 1 }]);
-  assert.throws(() => parseUsageSummary({ buckets: [] }), /unsupported/);
-  assert.deepEqual(usageRange(new Date('2026-10-31T23:30:00Z'), 'Europe/Madrid'), { sinceDay: '2026-10-26', untilDay: '2026-11-01', timeZone: 'Europe/Madrid' });
 });
 
 test('skills select exact cwd snapshots and retain provider-qualified identity and invocation permissions', () => {

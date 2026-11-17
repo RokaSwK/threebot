@@ -412,6 +412,16 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
   const calls: Record<string, unknown>[] = [];
   return {
     requests, tasks, usage, serverVersion: '0.1.8-nightly.20261106.4275',
+    // Settings › Usage: the provider's limit windows, and T3's usage summary per transcript root (synthetic).
+    usageLimits: { checkedAt: recent, windows: [
+      { id: 'five-hour', label: 'Session', usedPercent: 34, resetsAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() },
+      { id: 'weekly', label: 'Weekly', usedPercent: 86, resetsAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString() },
+    ], resetCredits: { availableCount: 1 }, externalUsage: { url: 'https://example.com/usage' } },
+    usageSummary: { contractVersion: 6, buckets: [
+      { provider: 'claudeAgent', sourcePath: '~/.claude/projects/-fixture-alpha', totals: { uncachedInputTokens: 90000, cachedInputTokens: 1200000, cacheCreationTokens: 40000, outputTokens: 30000 }, costUsd: 4.2, unpricedRecords: 0 },
+      { provider: 'claudeAgent', sourcePath: '~/.claude-work/projects/-fixture-beta', totals: { uncachedInputTokens: 20000, cachedInputTokens: 300000, cacheCreationTokens: 0, outputTokens: 8000 }, costUsd: 1.1, unpricedRecords: 2 },
+      { provider: 'codex', sourcePath: '/elsewhere/fixture-user/.codex/sessions/2026', totals: { uncachedInputTokens: 5000, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 1000 }, costUsd: 0.05, unpricedRecords: 0 },
+    ] },
     capabilities: { sideChats: true, threadForceStop: true, voiceTranscription: true, freshContext: true, scheduledTaskThreadModes: true },
     voiceStatus: { supported: true, state: 'ready', modelId: 'fixture/speech', model: 'Fixture speech (no model)', size: 0, supportsStreaming: false, supportsTranslation: false,
       languages: ['en', 'es'], supportsLanguageDetection: false, acceleration: 'auto', modelUnloadTimeout: 'min_5', gpuDevices: [] },
@@ -427,6 +437,10 @@ export function seedLatestT3({ threads, items, runs, projects, model, stamp }: {
         child.pendingRuntimeRequest = null;
         calls.push({ tag, threadId: payload.threadId, decision: payload.decision });
         return { ok: true };
+      }
+      if (tag === 'server.getUsageSummary') {
+        calls.push({ tag, sinceDay: payload?.sinceDay, untilDay: payload?.untilDay });
+        return { ok: true, value: this.usageSummary };
       }
       if (tag === 'orchestration.forceStopThread') {
         if (payload?.threadId !== beta.id || payload.runId !== run.id) return { error: 'Fixture force stop needs the stuck run.' };

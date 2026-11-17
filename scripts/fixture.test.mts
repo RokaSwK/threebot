@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -845,6 +845,38 @@ test('usage stats count Bot token usage per model from T3 provider turns (latest
       'fixture-idle': { turns: 1, inputTokens: 500, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 50 },
     });
     assert.doesNotMatch(JSON.stringify(preview), /Alpha|Beta|Gamma|Generic|thread-|project-|\/bots\//);
+  } finally { await fixture.close(); }
+});
+
+test('Settings › Usage routes count Bot turns into a 0600 ledger of numbers, and never send transcript paths (latest-t3)', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'latest-t3' });
+  try {
+    // Both routes take GET only and only 7 or 30 days. (The login gate in front of every /api route is
+    // covered where a password is set; this fixture runs the open dev setup.)
+    for (const route of ['/api/usage/bots?days=7', '/api/usage/accounts?days=7']) assert.equal((await fixture.request(route, 'POST', {})).status, 405, `${route} POST`);
+    assert.equal((await fixture.request('/api/usage/bots?days=9')).status, 400);
+    assert.equal((await fetch(fixture.url + '/api/usage/bots?days=7')).headers.get('cache-control'), 'no-store');
+    const bots = await fixture.request('/api/usage/bots?days=7');
+    assert.equal(bots.status, 200);
+    assert.equal(bots.body.days.length, 7);
+    const byBot = (slug: string) => bots.body.rows.filter((row: Json) => row.bot === slug);
+    // Alpha's main thread (two turns) and its child (one) count for Alpha; Beta's turn uses its run's model.
+    assert.deepEqual(byBot('alpha').map((row: Json) => [row.model, row.turns, row.input, row.cached, row.cacheWrite, row.output]), [['fixture-opus', 3, 3400, 11500, 500, 1040]]);
+    assert.deepEqual(byBot('beta').map((row: Json) => [row.model, row.turns, row.output]), [['fixture-idle', 1, 50]]);
+    // Read again: the same turns replace their entries rather than counting twice.
+    assert.deepEqual((await fixture.request('/api/usage/bots?days=30')).body.rows.filter((row: Json) => row.bot === 'alpha').map((row: Json) => row.turns), [3]);
+    const ledgerFile = path.join(fixture.root, 'bots', '.botapp', 'usage', 'ledger.json');
+    const ledger = await readFile(ledgerFile, 'utf8');
+    if (process.platform !== 'win32') assert.equal((await stat(ledgerFile)).mode & 0o777, 0o600);
+    assert.deepEqual(Object.keys(JSON.parse(ledger)).sort(), ['entries', 'since', 'version']);
+    assert.doesNotMatch(ledger, /Generic|Alpha|Beta|prompt|text|\/bots\//, 'counts only, no messages or paths');
+    const accounts = await fixture.request('/api/usage/accounts?days=30');
+    assert.equal(accounts.status, 200);
+    assert.deepEqual(accounts.body.accounts.map((a: Json) => [a.account, a.input + a.cached + a.cacheWrite + a.output, a.unpricedRecords]), [['Claude', 1360000, 0], ['Claude (work)', 328000, 2], ['codex', 6000, 0]]);
+    assert.doesNotMatch(JSON.stringify(accounts.body), /sourcePath|projects|sessions|fixture-user|elsewhere/);
+    const asked = (await fixture.request('/t3/fixture/interactions')).body.calls.filter((call: Json) => call.tag === 'server.getUsageSummary');
+    assert.equal(asked.length, 1);
+    assert.match(asked[0].sinceDay, /^\d{4}-\d{2}-\d{2}$/);
   } finally { await fixture.close(); }
 });
 
