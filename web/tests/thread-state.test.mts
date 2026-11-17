@@ -141,24 +141,31 @@ test('a room opened on a thread its chat already reads bounded reopens it with t
   useApp.setState({ threads: { root } });
   const stopChat = watchThread('shared');
   assert.equal(payloads.get('orchestration.subscribeThread').acceptBoundedSnapshot, true);
-  streams.get('orchestration.subscribeThread')({ kind: 'snapshot', snapshotSequence: 5, historyCursor: 'c', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [], runs: [], subagents: [] } });
+  const bounded = streams.get('orchestration.subscribeThread');
+  bounded({ kind: 'snapshot', snapshotSequence: 5, historyCursor: 'c', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [], runs: [], subagents: [] } });
   const stopRoom = watchThread('shared', false);
   const reopened = payloads.get('orchestration.subscribeThread');
   assert.equal(reopened.acceptBoundedSnapshot, undefined, 'the room gets a full snapshot');
   assert.equal(reopened.afterSequence, undefined, 'a partial thread is not resumed from its bounded sequence');
+  const full = streams.get('orchestration.subscribeThread');
+  full({ kind: 'snapshot', snapshotSequence: 6, projection: { thread: root, visibleTurnItems: [{ item: { id: 'old', threadId: 'shared', type: 'assistant_message', text: 'a' } }], runs: [], subagents: [] } });
+  bounded({ kind: 'snapshot', snapshotSequence: 6, historyCursor: 'c', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [], runs: [], subagents: [] } });
+  assert.ok(useApp.getState().threadData.shared.items.old, 'a late frame from the replaced bounded stream is ignored');
+  assert.equal(useApp.getState().threadData.shared.hasMoreHistory, false);
   stopRoom();
   stopChat();
 });
 
-test('a history page never merges rows that name another thread', async () => {
+test('a history page keeps the rows a side chat inherits from its parent', async () => {
   useApp.setState({ threads: { root } });
   const stop = watchThread('root');
   streams.get('orchestration.subscribeThread')({ kind: 'snapshot', snapshotSequence: 40, historyCursor: 'c4', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [], runs: [], subagents: [] } });
-  globalThis.fetch = async () => Response.json({ items: [{ item: { id: 'mine', threadId: 'root', type: 'assistant_message', text: 'a' } }, { item: { id: 'foreign', threadId: 'other', type: 'assistant_message', text: 'b' } }], nextCursor: null, hasMoreHistory: false });
+  globalThis.fetch = async () => Response.json({ items: [{ visibility: 'local', item: { id: 'mine', threadId: 'root', type: 'assistant_message', text: 'a' } }, { visibility: 'inherited', sourceThreadId: 'parent', item: { id: 'inherited', threadId: 'parent', type: 'assistant_message', text: 'b' } }, { item: { threadId: 'root', type: 'assistant_message' } }], nextCursor: null, hasMoreHistory: false });
   assert.equal(await loadOlderMessages('root'), true);
   const items = useApp.getState().threadData.root.items;
   assert.ok(items.mine);
-  assert.equal(items.foreign, undefined);
+  assert.ok(items.inherited, 'T3 keeps the parent threadId on rows a fork inherits');
+  assert.equal(Object.keys(items).length, 2, 'a row without an id is dropped');
   globalThis.fetch = async () => Response.json([]);
   stop();
 });

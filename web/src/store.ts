@@ -458,13 +458,20 @@ const completeThreads = new Set<string>();
 /** Bumped on every snapshot, so a history page requested against an older snapshot is dropped. */
 const snapshotGenerations = new Map<string, number>();
 
+/** The newest stream opened per thread; a replaced stream's late frames are ignored. */
+const streamGenerations = new Map<string, number>();
+
 /** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
 function openThreadStream(threadId: string, bounded = true): StreamHandle {
   const target = threadTarget(threadId);
+  const stream = (streamGenerations.get(threadId) ?? 0) + 1;
+  streamGenerations.set(threadId, stream);
   if (target.environmentId) familyThreadIds.add(threadId);
   // acceptBoundedSnapshot: a long thread opens with its recent rows only (older T3 ignores it and sends everything).
   const afterSequence = bounded || completeThreads.has(threadId) ? threadSequences.get(threadId) : undefined;
   return threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
+    // A cancelled stream can still deliver its snapshot; it must not replace the newer stream's rows (a room's full history).
+    if (streamGenerations.get(threadId) !== stream) return;
     if (it.kind === "snapshot") {
       const p = it.projection;
       if (p.thread) p.thread = scopedShell(p.thread, target.environmentId);
@@ -516,10 +523,10 @@ export async function loadOlderMessages(threadId: string): Promise<boolean> {
     const target = threadTarget(threadId);
     const page = await environmentHttp<{ items?: { item: TurnItem }[]; nextCursor?: string | null; hasMoreHistory?: boolean }>(target.environmentId, `/api/orchestration/threads/${encodeURIComponent(target.threadId)}/history?cursor=${encodeURIComponent(data.historyCursor)}`);
     if (snapshotGenerations.get(threadId) !== generation) return false;
-    // Only rows of this thread: a page that names another thread is never merged into it.
+    // Rows a fork (a side chat) inherits keep their source thread's threadId, as in the snapshot, so they are kept.
     const older = Object.fromEntries((page.items ?? []).flatMap((row) => {
       const item = row?.item;
-      return item && typeof item.id === "string" && (typeof item.threadId !== "string" || item.threadId === target.threadId) ? [[item.id, item]] : [];
+      return item && typeof item.id === "string" ? [[item.id, item]] : [];
     }));
     if (page.hasMoreHistory !== true) completeThreads.add(threadId);
     patchThread(threadId, (d) => ({ ...d, items: { ...older, ...d.items }, historyCursor: page.nextCursor ?? null, hasMoreHistory: page.hasMoreHistory === true && typeof page.nextCursor === "string" }));
