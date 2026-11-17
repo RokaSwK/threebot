@@ -27,13 +27,13 @@ const bundle = await buildOnce({
       export { MessageImages } from ${JSON.stringify(src + "components/ImageViewer.tsx")};
       export { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from ${JSON.stringify(src + "components/WorkspaceResource.tsx")};
       export { ChatAttachmentList } from ${JSON.stringify(src + "components/ChatAttachments.tsx")};
-      export { useFileSize } from ${JSON.stringify(src + "components/FileCard.tsx")};
+      export { useFileSize, useWorkspaceAssetUrl } from ${JSON.stringify(src + "components/FileCard.tsx")};
       export { t3 } from ${JSON.stringify(src + "lib/t3.ts")};` : undefined }],
   ssr: { noExternal: true }, build: { ssr: "virtual:image-viewer", write: false },
 });
 const directory = await mkdtemp(join(tmpdir(), "bot-image-viewer-"));
 const filename = join(directory, "components.mjs"); await writeFile(filename, entryChunk(bundle).code);
-const { createElement: h, act, StrictMode, createRoot, MessageImages, WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer, ChatAttachmentList, useFileSize, t3 } = await import(pathToFileURL(filename).href);
+const { createElement: h, act, StrictMode, createRoot, MessageImages, WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer, ChatAttachmentList, useFileSize, useWorkspaceAssetUrl, t3 } = await import(pathToFileURL(filename).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(directory, { recursive: true }); });
 
 let root, host, calls, downloads, tabs;
@@ -233,4 +233,24 @@ test("useFileSize clears size on path change and probe failure", async () => {
   assert.equal(size(), "1024");
   await show("file2.pdf", null);
   assert.equal(size(), "none", "clears the size while the new URL is unavailable");
+});
+
+test("changing the workspace file never probes its previous signed URL as the new file", async () => {
+  const probe = mock.method(globalThis, "fetch", async (url: string) => new Response(null, {
+    headers: { "Content-Length": url.endsWith("-1") ? "1024" : "2048" },
+  }));
+  function Sizer({ path }: { path: string }) {
+    const url = useWorkspaceAssetUrl(path);
+    return h("div", { "data-size": useFileSize(path, url) ?? "none" });
+  }
+
+  const context = { ...workspace, threadId: "size-signing-thread" };
+  const show = (path: string) =>
+    render(h(WorkspaceFileContext, { value: context }, h(Sizer, { path })));
+  const size = () => host.querySelector("[data-size]")?.getAttribute("data-size");
+  await show("before.pdf");
+  assert.equal(size(), "1024");
+  await show("after.pdf");
+  assert.equal(size(), "2048");
+  assert.deepEqual(probe.mock.calls.map((call) => call.arguments[0]), ["/t3/assets/signed-1", "/t3/assets/signed-2"]);
 });
