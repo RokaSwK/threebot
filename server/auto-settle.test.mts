@@ -77,7 +77,7 @@ test("leaves busy, waiting, watched, pinned, settled and just-finished Bot threa
     { id: "pinned", projectId: "p", status: "idle", pinnedAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "snoozed", projectId: "p", status: "idle", snoozedUntil: "2026-11-17T00:00:00.000Z", latestRunCompletedAt: quietAt },
     { id: "settled", projectId: "p", status: "idle", settledOverride: "settled", latestRunCompletedAt: quietAt },
-    { id: "settled-by-t3", projectId: "p", status: "idle", settledAt: quietAt, latestRunCompletedAt: quietAt },
+    { id: "settled-by-t3", projectId: "p", status: "idle", settledOverride: null, settledAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "archived", projectId: "p", status: "idle", archivedAt: quietAt, latestRunCompletedAt: quietAt },
     { id: "just-replied", projectId: "p", status: "idle", latestRunCompletedAt: "2026-11-16T11:59:30.000Z" },
     { id: "just-asked", projectId: "p", status: "idle", latestRunCompletedAt: quietAt, latestUserMessageAt: "2026-11-16T11:59:30.000Z" },
