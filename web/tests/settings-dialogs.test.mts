@@ -36,7 +36,7 @@ const bundle = await buildOnce({
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};
       export { parseVaultCsv, parseCsv } from ${JSON.stringify(`${src}lib/vaultCsv.ts`)};
       export { SettingsDialog } from ${JSON.stringify(`${src}components/SettingsDialog.tsx`)};
-      export { AvatarPicker, NewBotDialog } from ${JSON.stringify(`${src}components/NewBotDialog.tsx`)};
+      export { AvatarPicker, NewBotDialog, RenameBotDialog } from ${JSON.stringify(`${src}components/NewBotDialog.tsx`)};
       export { AvatarEditorDialog } from ${JSON.stringify(`${src}components/AvatarEditor.tsx`)};
       export { createCharacter } from ${JSON.stringify(`${src}lib/character.ts`)};
       export { AvatarPlayer } from ${JSON.stringify(`${src}components/avatarPlayer.ts`)};
@@ -51,7 +51,7 @@ assert.ok(entry);
 const testDir = await mkdtemp(join(tmpdir(), "bot-settings-tests-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entry.code);
-const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, AvatarEditorDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer } = await import(pathToFileURL(testEntry).href);
+const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, RenameBotDialog, AvatarEditorDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 let root, host, requests, settings, handleRequest;
 beforeEach(() => {
@@ -527,6 +527,32 @@ test("the editor previews the selected drawing on the left, with one selection a
     await click(labeled("Close"));
     assert.equal(closed, 1);
   } finally { style.remove(); }
+});
+
+// On a phone, Bot details show Edit, which opens Edit Bot; its avatar editor must offer drawing too.
+test("Edit Bot's avatar editor offers Draw a new object and names the drawing model, which Change opens in Settings", async () => {
+  const luna = { instanceId: "codex", driver: "codex", displayName: "Codex", enabled: true, status: "ready", models: [{ slug: "gpt-6-luna", name: "GPT-6 Luna" }] };
+  useApp.setState({ bots: { example: { ...avatarBot, projectId: "project-example" } }, providers: [luna], dialog: { kind: "rename-bot", slug: "example" } });
+  await render(h(RenameBotDialog, { slug: "example" }));
+  await click(labeled("Edit Bot avatar"));
+  const editor = [...document.querySelectorAll('[role="dialog"]')].at(-1);
+  assert.match(editor.textContent, /Drawn by your Bots/);
+  await click(labeled("Draw a new object", editor));
+  assert.ok(labeled("Describe the new object", editor));
+  assert.match(editor.querySelector(".avatar-draw-model").textContent, /^Drawn with GPT-6 Luna · Change$/);
+  await click(button("Change", editor));
+  assert.equal(useApp.getState().dialog, "settings");
+  assert.equal(useApp.getState().settingsPane, "models");
+});
+
+test("the Settings overview leads to Models, where the avatar drawing model is chosen", async () => {
+  await render();
+  await click([...document.querySelectorAll("button")].find((el) => el.textContent.startsWith("Models")));
+  assert.equal(useApp.getState().settingsPane, "models");
+  assert.match(document.body.textContent, /Avatar drawing model/);
+  assert.match(document.body.textContent, /Default model/);
+  assert.match(document.body.textContent, /Draws the avatars you describe in a Bot's avatar editor/);
+  await click(labeled("Back")); assert.equal(useApp.getState().settingsPane, "overview");
 });
 
 test("computed dialog/grid constraints fit phone and landscape widths", async () => {
