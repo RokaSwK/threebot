@@ -383,7 +383,7 @@ test("cells select, extend into a range, copy as TSV and clear with Escape", asy
   const cells = [...document.querySelectorAll<HTMLElement>('.office-grid td[role="gridcell"]')];
   assert.equal(cells.length, 4);
   await act(async () => { cells[0].click(); });
-  assert.equal(document.activeElement, grid, "clicking a cell focuses the grid table");
+  assert.ok(document.activeElement === grid, "clicking a cell focuses the grid table");
   assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "false", "false", "false"]);
   await act(async () => cells[3].dispatchEvent(new window.MouseEvent("click", { shiftKey: true, bubbles: true })));
   assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "true", "true", "true"], "Shift+click extends to the rectangular range");
