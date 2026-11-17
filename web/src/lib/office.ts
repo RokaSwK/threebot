@@ -1,4 +1,4 @@
-import { unzip, type UnzipFileInfo, type Unzipped } from "fflate";
+import { Inflate } from "fflate";
 
 export const OFFICE_LIMITS = { entries: 2000, totalBytes: 100 * 1024 * 1024, partBytes: 30 * 1024 * 1024, rows: 1000, columns: 100 };
 
@@ -15,43 +15,91 @@ export type DocBlock = DocParagraph | { type: "table"; rows: DocCell[][] };
 export type DocumentData = { blocks: DocBlock[]; images: { type: string; bytes: Uint8Array }[] };
 
 type Zip = { read: (name: string) => Promise<Uint8Array | null> };
+type ZipEntry = { name: string; flags: number; method: number; packed: number; size: number; offset: number };
 
 const MB = 1024 * 1024;
+/** Compressed bytes inflated per step; one step of a maximally compressed stream yields about 16 MB. */
+const INFLATE_STEP = 16 * 1024;
 const notOffice = (label: string) => new OfficeFileError(`This isn't a readable ${label} file. It may be password-protected, damaged or in an older format.`);
 
-function unzipAsync(data: Uint8Array, filter: (file: UnzipFileInfo) => boolean) {
-  return new Promise<Unzipped>((resolve, reject) => {
-    try { unzip(data, { filter }, (error, files) => error ? reject(error) : resolve(files)); } catch (error) { reject(error); }
-  });
+/** The central directory, which is authoritative for names and sizes. ZIP64 is refused: Office files under 100 MB never need it. */
+function zipEntries(data: Uint8Array, label: string): ZipEntry[] {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const floor = Math.max(0, data.length - 22 - 0xffff);
+  let end = data.length - 22;
+  while (end >= floor && view.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < floor) throw notOffice(label);
+  const count = view.getUint16(end + 10, true);
+  if (count > OFFICE_LIMITS.entries) throw new OfficeFileError(`This file has more than ${OFFICE_LIMITS.entries.toLocaleString("en-US")} parts, so it isn't previewed.`);
+  const entries: ZipEntry[] = [];
+  for (let at = view.getUint32(end + 16, true), i = 0; i < count; i++) {
+    if (at + 46 > data.length || view.getUint32(at, true) !== 0x02014b50) throw notOffice(label);
+    const flags = view.getUint16(at + 8, true), nameLength = view.getUint16(at + 28, true);
+    if (at + 46 + nameLength > data.length) throw notOffice(label);
+    const entry = { name: new TextDecoder(flags & 0x800 ? "utf-8" : "latin1").decode(data.subarray(at + 46, at + 46 + nameLength)), flags, method: view.getUint16(at + 10, true), packed: view.getUint32(at + 20, true), size: view.getUint32(at + 24, true), offset: view.getUint32(at + 42, true) };
+    if (entry.packed === 0xffffffff || entry.size === 0xffffffff || entry.offset === 0xffffffff) throw notOffice(label);
+    entries.push(entry);
+    at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+  }
+  return entries;
 }
 
-/** Sizes come from the central directory; fflate inflates into a buffer of the declared size, so they also bound memory. */
-async function openZip(data: Uint8Array, label: string): Promise<Zip> {
-  if (data.byteLength > OFFICE_LIMITS.totalBytes) throw new OfficeFileError(`This file is larger than ${OFFICE_LIMITS.totalBytes / MB} MB, so it isn't previewed.`);
-  const names = new Map<string, string>();
-  let total = 0;
+/**
+ * Inflates one part into a buffer of its declared size. The output is checked after every small step, so a part that
+ * declares a few bytes but expands a thousandfold is refused within one step instead of tying up the page while it inflates.
+ */
+function inflateEntry(data: Uint8Array, entry: ZipEntry, label: string): Uint8Array {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const at = entry.offset;
+  if (entry.flags & 1 || at + 30 > data.length || view.getUint32(at, true) !== 0x04034b50) throw notOffice(label);
+  const start = at + 30 + view.getUint16(at + 26, true) + view.getUint16(at + 28, true);
+  if (start + entry.packed > data.length) throw notOffice(label);
+  const packed = data.subarray(start, start + entry.packed);
+  if (entry.method === 0) {
+    if (entry.packed !== entry.size) throw notOffice(label);
+    return packed.slice();
+  }
+  if (entry.method !== 8) throw notOffice(label);
+  const out = new Uint8Array(entry.size);
+  let length = 0;
+  const inflater = new Inflate((chunk) => {
+    if (length + chunk.length > out.length) throw new OfficeFileError("A part of this file unpacks to more than its declared size, so it isn't previewed.");
+    out.set(chunk, length);
+    length += chunk.length;
+  });
   try {
-    await unzipAsync(data, (file) => {
-      if (names.size >= OFFICE_LIMITS.entries) throw new OfficeFileError(`This file has more than ${OFFICE_LIMITS.entries.toLocaleString("en-US")} parts, so it isn't previewed.`);
-      if (file.name.includes("\\")) throw new OfficeFileError("This file has a part name with a backslash, so it isn't previewed.");
-      const key = file.name.toLowerCase();
-      if (names.has(key)) throw new OfficeFileError("This file has two parts with the same name, so it isn't previewed.");
-      const size = Math.max(file.size, file.originalSize);
-      if (size > OFFICE_LIMITS.partBytes) throw new OfficeFileError(`A part of this file is larger than ${OFFICE_LIMITS.partBytes / MB} MB, so it isn't previewed.`);
-      total += size;
-      if (total > OFFICE_LIMITS.totalBytes) throw new OfficeFileError(`This file unpacks to more than ${OFFICE_LIMITS.totalBytes / MB} MB, so it isn't previewed.`);
-      names.set(key, file.name);
-      return false;
-    });
+    let offset = 0;
+    do {
+      inflater.push(packed.subarray(offset, offset + INFLATE_STEP), offset + INFLATE_STEP >= packed.length);
+      offset += INFLATE_STEP;
+    } while (offset < packed.length);
   } catch (error) {
     throw error instanceof OfficeFileError ? error : notOffice(label);
+  }
+  if (length !== out.length) throw notOffice(label);
+  return out;
+}
+
+/** Declared sizes bound memory: each part inflates into a buffer of its declared size and is refused if it runs past it. */
+async function openZip(data: Uint8Array, label: string): Promise<Zip> {
+  if (data.byteLength > OFFICE_LIMITS.totalBytes) throw new OfficeFileError(`This file is larger than ${OFFICE_LIMITS.totalBytes / MB} MB, so it isn't previewed.`);
+  const names = new Map<string, ZipEntry>();
+  let total = 0;
+  for (const entry of zipEntries(data, label)) {
+    if (entry.name.includes("\\")) throw new OfficeFileError("This file has a part name with a backslash, so it isn't previewed.");
+    const key = entry.name.toLowerCase();
+    if (names.has(key)) throw new OfficeFileError("This file has two parts with the same name, so it isn't previewed.");
+    const size = Math.max(entry.packed, entry.size);
+    if (size > OFFICE_LIMITS.partBytes) throw new OfficeFileError(`A part of this file is larger than ${OFFICE_LIMITS.partBytes / MB} MB, so it isn't previewed.`);
+    total += size;
+    if (total > OFFICE_LIMITS.totalBytes) throw new OfficeFileError(`This file unpacks to more than ${OFFICE_LIMITS.totalBytes / MB} MB, so it isn't previewed.`);
+    names.set(key, entry);
   }
   if (!names.has("[content_types].xml")) throw notOffice(label);
   return {
     read: async (name) => {
-      const actual = names.get(name.toLowerCase());
-      if (!actual) return null;
-      try { return (await unzipAsync(data, (file) => file.name === actual))[actual] ?? null; } catch { throw notOffice(label); }
+      const entry = names.get(name.toLowerCase());
+      return entry ? inflateEntry(data, entry, label) : null;
     },
   };
 }

@@ -203,6 +203,8 @@ test("refuses zip bombs, duplicate and backslash names, OLE and other non-zip by
   await refused(patchCentral(xlsx({ sheet1, extra: { "xl/dupe-b.xml": "<b/>", "xl/dupe-a.xml": "<a/>" } }), (entry) => { if (entry.name === "xl/dupe-b.xml") entry.setName("xl/dupe-a.xml"); }), /same name/);
   await refused(xlsx({ sheet1, extra: { "xl/DUPE.xml": "<a/>", "xl/dupe.xml": "<b/>" } }), /same name/);
   await refused(xlsx({ sheet1, extra: { "xl\\evil.xml": "<a/>" } }), /backslash/);
+  // A part that declares a few bytes but inflates far past them stops at its declared size instead of inflating the rest.
+  await refused(patchCentral(xlsx({ sheet1: sheet1 + " ".repeat(8 * 1024 * 1024) }), (entry) => { if (entry.name === "xl/worksheets/sheet1.xml") entry.setSize(sheet1.length); }), /unpacks to more than its declared size/);
   const notOffice = /isn't a readable \.xlsx file. It may be password-protected/;
   await refused(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, ...new Uint8Array(4096)]), notOffice);
   await refused(strToU8("name,value\nA,1\n"), notOffice);
