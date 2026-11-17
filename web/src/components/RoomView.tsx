@@ -472,7 +472,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
 
   const submit = async () => {
     const trimmed = text.trim();
-    if ((!trimmed && attachments.ready.length === 0) || sending || attachments.busy) return;
+    if ((!trimmed && attachments.ready.length === 0) || sending || resetting || attachments.busy) return;
     const names = members.map((member) => member.name);
     // The server's explicit list wins and ignores "@all" as a slug, so it expands to every member.
     // `@all` and `@everyone` both mean every member, as on the server.
@@ -500,7 +500,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
 
   /** Start over: the same threads, a fresh session each, and no messages left to read. */
   const startOver = async () => {
-    if (resetting) return;
+    if (resetting || sending) return;
     setResetting(true);
     setError("");
     try {
