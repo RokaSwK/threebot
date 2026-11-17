@@ -318,7 +318,8 @@ export function createBotTools({ vault, findBotByThread, listTabs, typeIntoTab, 
     }
   }
 
-  return { callTool, handleRpc };
+  /** `ready` settles once tokenDir has been emptied and re-created; await it before removing tokenDir's parent. */
+  return { callTool, handleRpc, ready };
 }
 export type BotTools = ReturnType<typeof createBotTools>;
 

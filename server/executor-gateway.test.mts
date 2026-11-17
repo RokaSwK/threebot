@@ -41,12 +41,12 @@ async function fakeExecutor(t: TestContext) {
   return { origin, state };
 }
 
-async function gateway(t: TestContext, executorEnv: Record<string, string> = {}) {
+async function gateway(t: TestContext, executorEnv: Record<string, string> = {}, botFields: Record<string, Record<string, unknown>> = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'executor-gateway-'));
   const botsRoot = path.join(root, 'bots');
   for (const slug of ['alpha', 'beta']) {
     const dir = path.join(botsRoot, slug); await mkdir(path.join(dir, '.bot'), { recursive: true }); await mkdir(path.join(dir, '.codex'), { recursive: true });
-    await writeFile(path.join(dir, '.bot/bot.json'), JSON.stringify({ name: slug, mainThreadId: `thread-${slug}`, projectId: `project-${slug}`, primary: slug === 'alpha', createdAt: '2026-01-01T00:00:00Z' }));
+    await writeFile(path.join(dir, '.bot/bot.json'), JSON.stringify({ name: slug, mainThreadId: `thread-${slug}`, projectId: `project-${slug}`, primary: slug === 'alpha', createdAt: '2026-01-01T00:00:00Z', ...(botFields[slug] ?? {}) }));
     await writeFile(path.join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { executor: { url: 'https://old-backup.invalid/mcp', headers: { Authorization: 'Bearer stale-backup-token' } }, retained: { command: 'never-executed' } } }));
     await writeFile(path.join(dir, '.codex/config.toml'), '[mcp_servers.executor]\nurl="https://old-backup.invalid/mcp"\n');
   }
@@ -167,4 +167,47 @@ for (const hasCredential of [true, false]) test(`every Bot gets the selected Clo
     }
     assert.doesNotMatch(instructions, /fake-gateway-executor-token|fake-backup-token/);
   }
+});
+
+test('each Bot gets its own Executor approval mode in every managed harness config', async (t) => {
+  const app = await gateway(t, { EXECUTOR_BACKEND: 'cloud', EXECUTOR_CLOUD_ORG: 'workspace', EXECUTOR_CLOUD_TOKEN: TOKEN }, {
+    alpha: { executorApproval: 'automatic' },
+    beta: { executorApproval: 'ask' },
+  });
+  type ManagedConfig = { mcp: { mcpServers: Record<string, { url?: string }> }; toml: string; pi: { mcpServers: Record<string, { url?: string }> } };
+  const read = async (slug: string): Promise<ManagedConfig> => {
+    const directory = path.join(app.botsRoot, slug);
+    return {
+      mcp: JSON.parse(await readFile(path.join(directory, '.mcp.json'), 'utf8')),
+      toml: await readFile(path.join(directory, '.codex/config.toml'), 'utf8'),
+      pi: JSON.parse(await readFile(path.join(directory, '.pi/mcp.json'), 'utf8')),
+    };
+  };
+  const urls = {
+    automatic: 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=automatic',
+    model: 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=model',
+  };
+  const deadline = Date.now() + 3000;
+  let files: Record<string, ManagedConfig> | undefined;
+  while (Date.now() < deadline) {
+    try {
+      const [alpha, beta] = await Promise.all([read('alpha'), read('beta')]);
+      if (alpha.mcp.mcpServers.executor?.url === urls.automatic && beta.mcp.mcpServers.executor?.url === urls.model) {
+        files = { alpha, beta };
+        break;
+      }
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!files) throw new Error('both Bot managed configurations should be generated with their own mode');
+  const alpha: ManagedConfig = files.alpha;
+  const beta: ManagedConfig = files.beta;
+  assert.equal(alpha.mcp.mcpServers.executor.url, urls.automatic);
+  assert.equal(alpha.pi.mcpServers.executor.url, urls.automatic);
+  assert.ok(alpha.toml.includes(urls.automatic), "alpha's Codex config carries its own mode");
+  assert.ok(!alpha.toml.includes(urls.model), "alpha's Codex config does not carry the other mode");
+  assert.equal(beta.mcp.mcpServers.executor.url, urls.model);
+  assert.equal(beta.pi.mcpServers.executor.url, urls.model);
+  assert.ok(beta.toml.includes(urls.model), "beta's Codex config carries its own mode");
+  assert.ok(!beta.toml.includes(urls.automatic), "beta's Codex config does not carry the other mode");
 });

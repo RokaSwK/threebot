@@ -96,3 +96,28 @@ func TestReplaceTreeSwapsContents(t *testing.T) {
 		t.Fatalf("rollback copy should be cleaned up: %v", err)
 	}
 }
+
+func TestPrepareInstallsBundledNodeAsFile(t *testing.T) {
+	root, installed, home := t.TempDir(), t.TempDir(), t.TempDir()
+	for name, content := range map[string]string{"app/server/cli.mjs": "// fixture", "app/VERSION": "1.2.3", "runtime/node.exe": "bundled node"} {
+		file := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil { t.Fatal(err) }
+		if err := os.WriteFile(file, []byte(content), 0644); err != nil { t.Fatal(err) }
+	}
+	_, node, err := prepare(root, installed, home)
+	if err != nil { t.Fatal(err) }
+	data, err := os.ReadFile(node)
+	if err != nil { t.Fatal(err) }
+	if string(data) != "bundled node" { t.Fatalf("wrong Node payload: %q", data) }
+}
+
+func TestEnsureTokenRunsCmdShimWithSpaces(t *testing.T) {
+	home, bin := t.TempDir(), filepath.Join(t.TempDir(), "T3 Code bin")
+	if err := os.MkdirAll(bin, 0755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(bin, "t3.cmd"), []byte("@echo off\r\necho fixture-token\r\n"), 0644); err != nil { t.Fatal(err) }
+	t.Setenv("PATH", bin)
+	ensureToken(home)
+	data, err := os.ReadFile(filepath.Join(home, "t3-token"))
+	if err != nil { t.Fatal(err) }
+	if strings.TrimSpace(string(data)) != "fixture-token" { t.Fatalf("wrong token: %q", data) }
+}

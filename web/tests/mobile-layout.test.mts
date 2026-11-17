@@ -113,7 +113,7 @@ let root, host;
 const bot = { slug: "example", name: "Example", mainThreadId: "main", color: "teal", shape: "sphere", projectId: null, workspaceRoot: "/example" };
 beforeEach(() => {
   viewport(390, 844, "coarse"); localStorage.clear(); history.replaceState(null, "", "/");
-  t3.stream = () => ({ cancel() {}, done: Promise.resolve() });
+  t3.stream = () => ({ cancel() {}, done: Promise.resolve(), live: () => false });
   t3.call = async (method) => {
     if (method === "preview.list") return { sessions: [] };
     if (method === "projects.listEntries") return { entries: [], truncated: false };
@@ -196,6 +196,17 @@ for (const tab of ["details", "library", "computer"]) test(`Details ${tab} profi
     viewport(width, height, input); const style = stylesForViewport();
     assert.equal(getComputedStyle(profile).display === "none", mobile && tab !== "details"); style.remove();
   }
+});
+
+test("mobile Details lists Memory beside Instructions", async () => {
+  useApp.setState({ detailsTab: "details", detailsOpen: true });
+  await act(async () => root.render(h(Details, { bot, threadId: "main" })));
+  const labels = [...host.querySelectorAll(".profile-actions button")].map((button) => button.textContent ?? "");
+  assert.ok(labels.some((label) => label.includes("Instructions")));
+  assert.ok(labels.some((label) => label.includes("Memory")));
+  const memory = [...host.querySelectorAll(".profile-actions button")].find((button) => button.textContent?.includes("Memory"));
+  await act(async () => memory!.click());
+  assert.equal(useApp.getState().detailsTab, "memory");
 });
 
 test("coarse landscape retains content scrolling and bounded Settings/dialog declarations", () => {

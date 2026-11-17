@@ -1,14 +1,17 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { ArrowUp, ChevronLeft, Square, Users, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, RefreshCw, Square, Users, X } from "lucide-react";
 import { Avatar, GroupAvatar } from "./Avatar";
 import { BotLink } from "./BotMention";
 import { ApprovalCard, QuestionCard, SecretCard } from "./Cards";
 import { MentionMenu } from "./MentionMenu";
 import { RichMarkdown } from "./RichMarkdown";
 import { RoomMembers } from "./RoomMembers";
-import { IconButton, Spinner } from "./ui";
+import { IconButton, Pill, Spinner } from "./ui";
+import { ChatAttachmentList, PendingAttachments } from "./ChatAttachments";
+import { ComposerActions } from "./ComposerActions";
+import { usePendingAttachments } from "../lib/pendingAttachments";
 import { UserMessageText } from "./UserMessageText";
-import { ensureRoom, loadRoom, sendRoomMessage, stopRoom, stopRoomPoll, useApp, watchThread } from "../store";
+import { ensureRoom, loadRoom, resetRoom, sendRoomMessage, stopRoom, stopRoomPoll, toast, useApp, watchThread } from "../store";
 import { activeMentionQuery, mentionEdit, mentionSuggestions, type MentionBot } from "../lib/mentionMenu";
 import { replaceText } from "../lib/chatBehavior";
 import { botTextColor } from "../lib/character";
@@ -61,7 +64,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
   // The same subscription Chat uses: watchThread feeds threadData for every member thread.
   const threadKey = historyMembers.flatMap((member) => (member.threadId ? [member.threadId] : [])).join("|");
   useEffect(() => {
-    const unsubs = (threadKey ? threadKey.split("|") : []).map((threadId) => watchThread(threadId));
+    const unsubs = (threadKey ? threadKey.split("|") : []).map((threadId) => watchThread(threadId, false));
     return () => { for (const unsubscribe of unsubs) unsubscribe(); };
   }, [threadKey]);
 
@@ -275,10 +278,16 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
 
           {timeline.map((row) => row.kind === "user" ? (
             <div key={row.id} className="fade-up mt-3 flex flex-col items-end">
-              <div data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap" style={{ background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}>
-                <UserMessageText text={row.turn.text} muted />
-              </div>
+              {!!row.turn.attachments?.length && <ChatAttachmentList attachments={row.turn.attachments} align="end" />}
+              {row.turn.text.trim() !== "" && (
+                <div data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap" style={{ background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}>
+                  <UserMessageText text={row.turn.text} muted />
+                </div>
+              )}
               {row.turn.status === "queued" && <p className="chat-model-switch">Queued · the room is answering first</p>}
+              {row.turn.status !== "queued" && row.turn.status !== "running" && row.turn.attachments?.length && row.turn.attachments.every((attachment) => attachment.id.startsWith("pending-")) && (
+                <p className="pt-1 text-[11px] text-faint">No Bot received these files.</p>
+              )}
             </div>
           ) : row.kind === "event" ? (
             <p key={row.id} role="status" className={`room-event ${row.tone === "danger" ? "room-event-danger" : ""}`}>{row.text}</p>
@@ -370,11 +379,17 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
   onStop: () => void;
 }) {
   const mobile = useMobileChat();
-  const [text, setText] = useState(() => readRoomDraft(roomId));
+  const initialDraft = useMemo(() => readRoomDraft(roomId), [roomId]);
+  const [text, setText] = useState(initialDraft.text);
+  const attachments = usePendingAttachments(initialDraft.attachments);
   const [mention, setMention] = useState<{ start: number; query: string; index: number } | null>(null);
   const [focused, setFocused] = useState(false);
   const [sending, setSending] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
+  const plus = useRef<HTMLButtonElement>(null);
+  const resetGroup = useRef<HTMLDivElement>(null);
   const dismissed = useRef<string | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
@@ -398,8 +413,21 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
     });
   }, [text, members, mentionPolicy]);
 
-  // The draft belongs to the room, not to this mount: going back or reloading keeps it.
-  useEffect(() => { writeRoomDraft(roomId, text); }, [roomId, text]);
+  // The draft belongs to the room, not to this mount: going back or reloading keeps it, files included.
+  useEffect(() => {
+    const uploading = attachments.items
+      .filter((item) => item.state === "uploading")
+      .map(({ attachment }) => ({ type: attachment.type, id: attachment.id, name: attachment.name, mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes }));
+    writeRoomDraft(roomId, { text, attachments: attachments.ready.map(({ type, id, name, mimeType, sizeBytes }) => ({ type, id, name, mimeType, sizeBytes })), uploading });
+  }, [roomId, text, attachments.items, attachments.ready]);
+
+  // A draft that came back from disk may contain files whose upload died with the page. They
+  // cannot be resumed, so the composer says so instead of dropping them silently.
+  useEffect(() => {
+    const interrupted = initialDraft.uploading.length;
+    if (interrupted === 0) return;
+    toast(interrupted === 1 ? "1 file didn't finish uploading. Attach it again." : `${interrupted} files didn't finish uploading. Attach them again.`);
+  }, [initialDraft]);
 
   const removeMention = (name: string) => {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -444,7 +472,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    if ((!trimmed && attachments.ready.length === 0) || sending || resetting || attachments.busy) return;
     const names = members.map((member) => member.name);
     // The server's explicit list wins and ignores "@all" as a slug, so it expands to every member.
     // `@all` and `@everyone` both mean every member, as on the server.
@@ -456,8 +484,9 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
     setSending(true);
     setError("");
     try {
-      await sendRoomMessage(roomId, trimmed, mentions);
+      await sendRoomMessage(roomId, trimmed, mentions, null, attachments.ready);
       setText("");
+      attachments.clear();
       clearRoomDraft(roomId);
       setMention(null);
       dismissed.current = null;
@@ -468,6 +497,35 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
       setSending(false);
     }
   };
+
+  /** Start over: the same threads, a fresh session each, and no messages left to read. */
+  const startOver = async () => {
+    if (resetting || sending) return;
+    setResetting(true);
+    setError("");
+    try {
+      await resetRoom(roomId);
+      // What was written but not sent is not part of the conversation being cleared.
+      setMention(null);
+      setConfirmReset(false);
+      toast("Room restarted with fresh sessions");
+      requestAnimationFrame(() => ta.current?.focus({ preventScroll: true }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't start the room over");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const cancelReset = () => {
+    setConfirmReset(false);
+    plus.current?.focus({ preventScroll: true });
+  };
+
+  // Opening the question takes focus out of the menu that asked it; the calm answer gets it.
+  useEffect(() => {
+    if (confirmReset) resetGroup.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [confirmReset]);
 
   return (
     <div className="chat-composer shrink-0 px-5 pb-5">
@@ -512,7 +570,22 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
               )}
             </div>
           )}
+          {confirmReset && (
+            <div ref={resetGroup} role="group" aria-label="Start over" className="flex flex-wrap items-center gap-2 px-3 pt-3 text-[12.5px]">
+              <span className="mr-auto text-muted">Clear this room's messages and start every Bot a fresh session?</span>
+              <Pill variant="ghost" disabled={resetting} onClick={cancelReset}>Cancel</Pill>
+              <Pill variant="danger" disabled={resetting} onClick={() => void startOver()}>{resetting && <Spinner />} Start over</Pill>
+            </div>
+          )}
+          <PendingAttachments items={attachments.items} onRemove={attachments.remove} />
           <div className="composer-controls flex items-end gap-1.5 p-1.5">
+            <ComposerActions
+              mobile={mobile}
+              onFiles={attachments.addFiles}
+              triggerRef={plus}
+              resetKey={roomId}
+              actions={[{ key: "start-over", label: "Start over", icon: RefreshCw, onSelect: () => setConfirmReset(true) }]}
+            />
             <textarea
               ref={ta}
               value={text}
@@ -565,8 +638,8 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
                 {stopping ? <Spinner /> : <Square size={13} fill="currentColor" />}
               </IconButton>
             )}
-            {(text.trim().length > 0 || sending) && (
-              <IconButton onClick={() => void submit()} disabled={sending || !text.trim()} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send" aria-label="Send">
+            {(text.trim().length > 0 || attachments.items.length > 0 || sending) && (
+              <IconButton onClick={() => void submit()} disabled={sending || resetting || attachments.busy || (!text.trim() && attachments.ready.length === 0)} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send" aria-label="Send">
                 {sending ? <Spinner /> : <ArrowUp size={17} />}
               </IconButton>
             )}

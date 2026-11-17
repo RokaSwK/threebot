@@ -13,7 +13,7 @@ import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
-import { botStatus, conversationStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
+import { botStatus, botThreadStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
 import { sharedObjects } from "../lib/objectAvatars";
 import { useAvatarDrawing } from "./useAvatarDrawing";
 import { ComputerScreen, useBotTabs } from "./Computer";
@@ -21,6 +21,7 @@ import type { Bot, ModelSelection, ScheduledTask } from "../lib/types";
 
 import { chatDraft } from "../lib/chatDrafts";
 import { enablePushNotifications } from "../lib/push";
+import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
 import "./routines.css";
 import { changeRoutineEnabled, changeRoutineFreshSession, copyWebhookUrl, displayTimezone, removeRoutine, routineDate, routineHistory, scheduleText, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
@@ -44,6 +45,8 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   const width = useApp((s) => s.detailsWidth);
   const archived = useApp((s) => s.bots[bot.slug]?.mainThreadId !== bot.mainThreadId);
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
+  // Beta → "Settle Bot threads in T3 Code" settles every quiet Bot, so on the main thread settled just means idle.
+  const mainSettledByBeta = useApp((s) => s.settings?.beta?.settleBotThreads === true) && threadId === bot.mainThreadId;
   const [showRoutines, setShowRoutines] = useState(false);
   const tab = useApp((s) => s.detailsTab);
   const [picker, setPicker] = useState(false);
@@ -106,7 +109,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
                 {identity.name}
               </button>
             )}
-            {threadId && threads[threadId] && <p className="mt-1 text-[12px] text-muted">{subagentStatus(conversationStatus(threadId))}{threads[threadId]?.settledOverride === "settled" ? " · Settled" : ""}</p>}
+            {threadId && threads[threadId] && <p className="mt-1 text-[12px] text-muted">{subagentStatus(botThreadStatus(bot, threadId))}{!mainSettledByBeta && threads[threadId]?.settledOverride === "settled" ? " · Settled" : ""}</p>}
             {editing === "label" ? (
               <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && commit()} placeholder="Add a label" className="mt-1 w-full bg-transparent text-center text-[13px] text-muted outline-none" />
             ) : (
@@ -147,11 +150,14 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             {!showRoutines && <div className="profile-actions mb-6 hidden overflow-hidden rounded-[20px] bg-card px-4">
               <ProfileAction icon={<Clock size={20} />} label="Routines" detail={`${tasks.filter((t) => t.enabled).length} on`} onClick={() => setShowRoutines(true)} />
               <ProfileAction icon={<FileText size={20} />} label="Instructions" onClick={() => useApp.setState({ detailsTab: "instructions" })} />
+              <ProfileAction icon={<Brain size={20} />} label="Memory" onClick={() => useApp.setState({ detailsTab: "memory" })} />
               <ProfileAction icon={<LibraryIcon size={20} />} label="Library" onClick={() => useApp.setState({ detailsTab: "library" })} />
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
+            {!showRoutines && !archived && <ConnectedAppsSection bot={bot} />}
             {!showRoutines && !archived && threadId === bot.mainThreadId && <CodingWorkSection bot={bot} />}
+            {!showRoutines && !archived && <BotUsageLine bot={bot} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
             {threadId && threadId !== bot.mainThreadId && bot.mainThreadId && <Pill variant="soft" className="mb-4" onClick={() => bot.mainThreadId && selectThread(bot, bot.mainThreadId)}>Back to {bot.name}</Pill>}
@@ -167,6 +173,37 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
       {picker && <AvatarDialog key={bot.slug} bot={bot} onClose={() => setPicker(false)} />}
     </aside>
   );
+}
+
+/** Executor's own approval, not a T3 permission mode: it decides whether app writes wait for the Bot. */
+function ConnectedAppsSection({ bot }: { bot: Bot }) {
+  const executorUrl = useApp((s) => s.executorUrl);
+  const [busy, setBusy] = useState(false);
+  if (!executorUrl) return null;
+  const automatic = bot.executorApproval === "automatic";
+  const titleId = `connected-apps-title-${bot.slug}`;
+  const noteId = `${titleId}-note`;
+  const change = async (on: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try { await updateBot(bot.slug, { executorApproval: on ? "automatic" : "ask" }); }
+    catch (error) { toast(error instanceof Error ? error.message : "Couldn't change app approval"); }
+    finally { setBusy(false); }
+  };
+  return <div className="details-connected-apps"><Section title="Connected apps">
+    <div className="rounded-2xl bg-card px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div id={titleId} className="text-[17px]">Automatic app approval</div>
+          <p id={noteId} className="mt-1 text-[12px] leading-relaxed text-muted">Applies to new sessions. T3 permissions still decide what this Bot may run.</p>
+        </div>
+        <Switch checked={automatic} onChange={(on) => void change(on)} labelledBy={titleId} describedBy={noteId} busy={busy} disabled={busy} />
+      </div>
+      <p className={`mt-3 text-[13px] leading-relaxed ${automatic ? "text-attention" : "text-muted"}`}>{automatic
+        ? `Executor approves every connected app write for ${bot.name}, without asking. All apps, not one tool.`
+        : `Executor asks before writing to an app. ${bot.name} relays the request to you; one it doesn't relay expires after 15 minutes.`}</p>
+    </div>
+  </Section></div>;
 }
 
 /** Which model answers here. Lives with the Bot's other settings rather than in the writing row. */
@@ -190,6 +227,24 @@ function CodingWorkSection({ bot }: { bot: Bot }) {
     <CodingWorkRows value={bot.codingWork ?? null} machines={machines} inherit={inherit}
       onChange={(codingWork) => void updateBot(bot.slug, { codingWork })} />
   </div></Section></div>;
+}
+
+/** This Bot's token use this week; the line opens Settings → Usage. */
+function BotUsageLine({ bot }: { bot: Bot }) {
+  const [total, setTotal] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    readBotUsage(7).then((data) => {
+      if (live) setTotal(data.rows.filter((row) => row.bot === bot.slug).reduce((sum, row) => sum + totalIn(row) + row.output, 0));
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [bot.slug]);
+  if (total === null) return null;
+  return <div className="details-usage mb-5"><Section title="Usage">
+    <button onClick={() => { useApp.setState({ settingsPane: "usage" }); openDialog("settings"); }} className="flex min-h-11 w-full items-center rounded-2xl bg-card px-3.5 text-left text-[13px] text-muted enabled:hover:text-fg">
+      {formatTokens(total)} tokens this week
+    </button>
+  </Section></div>;
 }
 
 function AvatarDialog({ bot, onClose }: { bot: Bot; onClose: () => void }) {

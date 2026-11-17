@@ -1,12 +1,13 @@
 import clsx from "clsx";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ButtonHTMLAttributes, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import "../mobile-settings.css";
 
-export function IconButton({ className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+export function IconButton({ className, children, ref, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { ref?: Ref<HTMLButtonElement> }) {
   return (
     <button
+      ref={ref}
       type="button"
       {...rest}
       className={clsx(
@@ -50,13 +51,16 @@ export function Pill({ variant = "primary", className, children, ...rest }: Butt
   );
 }
 
-export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
+export function Switch({ checked, onChange, label, labelledBy, describedBy, busy, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; labelledBy?: string; describedBy?: string; busy?: boolean; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-label={labelledBy ? undefined : label}
+      aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
+      aria-busy={busy || undefined}
       disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
-  createRooms, DEFAULT_SETTINGS, MAX_TURNS, RoomsError, normalizeSettings, validateMembers, type RoomTurn,
+  createRooms, DEFAULT_SETTINGS, MAX_ATTACHMENTS, MAX_ATTACHMENTS_BYTES, MAX_TURNS, RoomsError, normalizeSettings, validateAttachments, validateMembers, type RoomTurn,
 } from "./rooms.mts";
 
 const bots = [{ slug: "alpha", name: "Alpha" }, { slug: "beta", name: "Beta" }, { slug: "gamma", name: "Gamma" }];
@@ -161,5 +161,41 @@ test("a rejected update leaves the room as it was", async () => {
   assert.equal(stored.name, "Design");
   assert.deepEqual(stored.members.map((member) => member.slug), ["alpha", "beta", "gamma"]);
   assert.equal(stored.pinned, true);
+  await done();
+});
+
+const fileAttachment = { type: "file" as const, id: "pending-abc", name: "informe.pdf", mimeType: "application/pdf", sizeBytes: 2_048 };
+
+test("attachments are checked at the room's boundary", () => {
+  assert.deepEqual(validateAttachments(undefined), []);
+  assert.deepEqual(validateAttachments([fileAttachment]), [fileAttachment]);
+  const image = { type: "image" as const, id: "pending-img", name: "shot.png", mimeType: "image/png", sizeBytes: 1_024 };
+  assert.deepEqual(validateAttachments([image, fileAttachment]).map((attachment) => attachment.type), ["image", "file"]);
+  const rejects = (value: unknown, why: RegExp) => assert.throws(() => validateAttachments(value), (error: unknown) => error instanceof RoomsError && why.test(error.message));
+  rejects({}, /list/);
+  rejects([{ ...fileAttachment, type: "audio" }], /neither an image nor a file/);
+  rejects([{ ...fileAttachment, id: "" }], /needs an id/);
+  rejects([{ ...fileAttachment, name: "" }], /needs a name/);
+  rejects([{ ...fileAttachment, mimeType: "" }], /needs a mime type/);
+  rejects([{ ...fileAttachment, sizeBytes: 1.5 }], /size/);
+  rejects([{ ...image, mimeType: "application/pdf" }], /image mime type/);
+  rejects(Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, index) => ({ ...fileAttachment, id: `pending-${index}` })), /at most/);
+  rejects([{ ...fileAttachment, sizeBytes: MAX_ATTACHMENTS_BYTES + 1 }], /larger/);
+});
+
+test("a turn keeps the files it was sent with", async () => {
+  const { file, done } = await dir();
+  const rooms = createRooms({ file });
+  const room = await rooms.create({ name: "Files", members: validateMembers(["alpha", "beta"], bots) });
+  const turn: RoomTurn = {
+    id: "turn-files", at: "2026-01-01T00:00:00.000Z", text: "", mentions: ["alpha"], replyTo: null, status: "queued", runs: [],
+    attachments: [fileAttachment],
+  };
+  await rooms.appendTurn(room.id, turn);
+  assert.deepEqual((await rooms.get(room.id))!.turns[0].attachments, [fileAttachment]);
+  await rooms.patchTurn(room.id, turn.id, { attachments: [{ ...fileAttachment, id: "thread-alpha-pending-abc" }] });
+  assert.equal((await rooms.get(room.id))!.turns[0].attachments![0].id, "thread-alpha-pending-abc");
+  const raw = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(raw.rooms[0].turns[0].attachments[0].name, "informe.pdf", "only metadata reaches rooms.json");
   await done();
 });

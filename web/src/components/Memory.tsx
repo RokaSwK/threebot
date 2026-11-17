@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, RefreshCw, Sparkles } from "lucide-react";
 import { Pill, Spinner } from "./ui";
 import { RichMarkdown } from "./RichMarkdown";
-import { selectThread, setDetailsOpen, toast } from "../store";
+import { selectThread, setDetailsOpen, toast, useApp } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
-import { memoryApi, type MemoryFile, type MemoryFiles, type MemoryScope } from "../lib/memory";
+import { memoryApi, type MemoryFile, type MemoryFiles, type MemoryScope, type TidyFrequency } from "../lib/memory";
+import { findTidyTask, tidyScheduleText, tidyState } from "../lib/memoryTidy";
 import type { Bot } from "../lib/types";
 
 // While no one is editing, the tab picks up the Bot's own edits on this beat.
@@ -45,9 +46,24 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const tidy = () => {
     if (!bot.mainThreadId) { toast("This Bot has no main conversation yet."); return; }
     const draft = chatDraft(bot, bot.mainThreadId);
-    draft.setText([draft.getSnapshot().text, "Tidy your memory file: merge duplicates, group related lines under headings, and remove anything stale or contradictory. Tell me what you changed."].filter(Boolean).join("\n\n"));
+    draft.setText([draft.getSnapshot().text, files?.tidyPrompt || "Tidy your memory file: merge duplicates, group related lines under headings, and remove anything stale or contradictory. Tell me what you changed."].filter(Boolean).join("\n\n"));
     selectThread(bot, bot.mainThreadId);
     setDetailsOpen(false);
+  };
+
+  const tasks = useApp((s) => s.tasks);
+  const routine = useMemo(() => findTidyTask(bot, tasks), [bot, tasks]);
+  const frequency = tidyState(routine);
+  const [tidyBusy, setTidyBusy] = useState<TidyFrequency | null>(null);
+  const changeTidy = async (next: TidyFrequency) => {
+    if (tidyBusy) return;
+    setTidyBusy(next);
+    try {
+      await memoryApi.tidy(bot.slug, next);
+      toast(next === "off" ? "Automatic tidy off" : next === "weekly" ? "Tidying every Monday at 03:30" : "Tidying every night at 03:30");
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Couldn't change the tidy schedule");
+    } finally { setTidyBusy(null); }
   };
 
   if (!files && !error) return <div className="grid h-32 place-items-center text-muted"><Spinner /></div>;
@@ -87,7 +103,29 @@ export function MemoryTab({ bot }: { bot: Bot }) {
         botName={bot.name}
       />
 
-      <Pill variant="soft" className="mt-1" onClick={tidy}><Sparkles size={13} /> Ask {bot.name} to tidy</Pill>
+      <div className="memory-tidy mt-1 rounded-xl border border-line bg-card p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px]">Tidy now</div>
+            <div className="text-[12px] text-muted">Ask {bot.name} to clean up the files above.</div>
+          </div>
+          <Pill variant="soft" onClick={tidy}><Sparkles size={13} aria-hidden="true" /> Ask {bot.name} to tidy</Pill>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px]">Tidy automatically</div>
+            <div className="text-[12px] text-muted">{tidyScheduleText(frequency)}{frequency !== "off" && frequency !== "custom" && " · in its own conversation"}</div>
+          </div>
+          <div role="radiogroup" aria-label="Tidy frequency" className="flex items-center gap-1.5">
+            {(["off", "weekly", "nightly"] as const).map((value) => (
+              <Pill key={value} role="radio" aria-checked={frequency === value} variant={frequency === value ? "primary" : "soft"} disabled={Boolean(tidyBusy) || !bot.mainThreadId} onClick={() => void changeTidy(value)} title={!bot.mainThreadId ? "This Bot has no main conversation yet" : undefined}>
+                {value === "off" ? "Off" : value === "weekly" ? "Weekly" : "Nightly"}
+              </Pill>
+            ))}
+          </div>
+        </div>
+        {routine?.threadId && <button type="button" aria-label={`View tidy runs for ${bot.name}`} className="mt-2 text-[12px] text-fg underline underline-offset-2" onClick={() => { selectThread(bot, routine.threadId!); setDetailsOpen(false); }}>View runs</button>}
+      </div>
     </div>
   );
 }

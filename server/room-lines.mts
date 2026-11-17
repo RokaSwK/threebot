@@ -60,6 +60,9 @@ export type ReplyItem = {
   type?: string;
   status?: string;
   text?: unknown;
+  messageId?: string;
+  /** A user message's files, already claimed by the thread that received them. */
+  attachments?: unknown[];
   completedAt?: string | null;
   updatedAt?: string | null;
 };

@@ -69,12 +69,13 @@ const bundle = await buildOnce({
 export { createElement, act, StrictMode } from 'react'; export { createRoot } from 'react-dom/client';
 export * from ${JSON.stringify(src + "lib/runtimeApi.ts")};
 export { buildEntries } from ${JSON.stringify(src + "lib/transcript.ts")};
+export { findTidyTask, tidyState } from ${JSON.stringify(src + "lib/memoryTidy.ts")};
 export { Chat } from ${JSON.stringify(src + "components/Chat.tsx")};
 export { QueuedWork } from ${JSON.stringify(src + "components/QueuedWork.tsx")};
 export { PlanMessage } from ${JSON.stringify(src + "components/PlanMessage.tsx")};
 export { GoalCard } from ${JSON.stringify(src + "components/GoalCard.tsx")};
 export { TaskChanges, PR_DONE_LINGER_MS } from ${JSON.stringify(src + "components/TaskChanges.tsx")};
-export { supplementSubagents } from ${JSON.stringify(src + "lib/threadFamily.ts")};
+export { supplementSubagents, loadedRunFloor } from ${JSON.stringify(src + "lib/threadFamily.ts")};
 export { SubagentRow } from ${JSON.stringify(src + "components/ThreadFamily.tsx")};
 export { useApp } from ${JSON.stringify(src + "store.ts")}; export { t3 } from ${JSON.stringify(src + "lib/t3.ts")};`
           : undefined,
@@ -107,6 +108,7 @@ const {
   runtimeWork,
   readWorkDiff,
   supplementSubagents,
+  loadedRunFloor,
   QueuedWork,
   PlanMessage,
   GoalCard,
@@ -116,6 +118,8 @@ const {
   useApp,
   t3,
   buildEntries,
+  findTidyTask,
+  tidyState,
 } = await import(pathToFileURL(filename).href);
 after(async () => {
   for (const c of channels) {
@@ -665,6 +669,28 @@ test("projection-only child tasks appear once and keep their real ID", () => {
   assert.equal(supplementSubagents(items, [agent], "work").length, 1);
 });
 
+test("a partly loaded thread adds only child tasks from the runs it holds rows for", () => {
+  const row = { id: "row", type: "assistant_message", runId: "run:thread:t:ordinal:214", ordinal: 1 };
+  const runs = { "run:thread:t:ordinal:214": { ordinal: 214 } };
+  assert.equal(loadedRunFloor([row], runs, false), null, "a complete thread has no floor");
+  const floor = loadedRunFloor([row], runs, true);
+  assert.equal(floor, 214);
+  const old = { id: "old", runId: "run:thread:t:ordinal:198", status: "failed", updatedAt: "2026-01-01" };
+  const recent = { id: "recent", runId: "run:thread:t:ordinal:216", status: "running", updatedAt: "2026-01-02" };
+  const items = supplementSubagents([row], [old, recent], "t", floor);
+  assert.deepEqual(items.map((item) => item.subagentId ?? item.id), ["row", "recent"]);
+});
+
+test("a child task without a row sits where it started, not at the end of the chat", () => {
+  const row = (id, ordinal, startedAt) => ({ id, type: "assistant_message", runId: "run:thread:t:ordinal:5", ordinal, startedAt });
+  const rows = [row("a", 10, "2026-01-01T10:00:00Z"), row("b", 20, "2026-01-01T11:00:00Z"), row("c", 30, "2026-01-01T12:00:00Z")];
+  const agent = { id: "task", runId: "run:thread:t:ordinal:5", status: "completed", startedAt: "2026-01-01T11:30:00Z", updatedAt: "2026-01-01T11:40:00Z" };
+  const placed = supplementSubagents(rows, [agent], "t").find((item) => item.subagentId === "task");
+  assert.ok(placed.ordinal > 20 && placed.ordinal < 30, "between the rows around its start");
+  const early = { ...agent, id: "early", startedAt: "2026-01-01T09:00:00Z" };
+  assert.equal(supplementSubagents(rows, [early], "t", 5).some((item) => item.subagentId === "early"), false, "a partly loaded thread leaves out tasks from before its oldest row");
+});
+
 test("ambiguous Queue payload keeps both IDs and dispatch mode across reconstruction", () => {
   const first = messageCommand(
     "reload-test",
@@ -814,4 +840,18 @@ test('proposed plan text is visible without an extra View plan step',async()=>{
  await render(PlanMessage,{plan:decodePlan({id:'proposal',kind:'proposed_plan',markdown:'## A useful proposal\n\nKeep every detail.',status:'proposed'})});
  assert.match(host.textContent,/A useful proposal/);assert.match(host.textContent,/Keep every detail/);
  assert.equal(host.querySelector('details'),null);assert.equal(host.querySelector('section'),null);
+});
+
+test("a tidy routine reads as a preset and its report is a transcript line", () => {
+  const bot = { slug: "tester", name: "Tester", projectId: "project-1", mainThreadId: "thread-main" };
+  const task = { id: "task-1", title: "Tidy memory", enabled: true, projectId: "project-1", threadId: "thread-routine", schedule: { type: "fixed_time", timeOfDay: "03:30" }, runCount: 1, lastRunAt: "2026-11-16T10:09:10.000Z", lastRunStatus: "succeeded" };
+  assert.equal(tidyState(task), "nightly");
+  assert.equal(tidyState({ ...task, schedule: { ...task.schedule, weekdays: [1] } }), "weekly");
+  assert.equal(tidyState({ ...task, enabled: false }), "off");
+  assert.equal(findTidyTask(bot, [task])?.id, "task-1");
+  const report = { id: "task-1", at: task.lastRunAt, title: "Tidy memory", summary: "Nothing changed.", threadId: "thread-routine", failed: false };
+  const entries = buildEntries([{ id: "m1", type: "user_message", text: "hello", messageId: "m1", startedAt: "2026-11-16T10:10:00.000Z", ordinal: 1 }], { bot, botsByThread: new Map(), tasks: [], requests: {}, routineReports: [report] });
+  const kinds = entries.map((entry) => entry.kind);
+  assert.ok(kinds.includes("routine-report"));
+  assert.ok(kinds.indexOf("routine-report") < kinds.indexOf("user"));
 });

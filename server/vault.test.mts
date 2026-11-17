@@ -16,7 +16,13 @@ async function tempVault() {
   const dir = await mkdtemp(path.join(tmpdir(), "bot-vault-"));
   const file = path.join(dir, "vault.enc");
   const keyFile = path.join(dir, ".vault-key");
-  return { dir, file, keyFile, vault: createVault({ file, keyFile }), cleanup: () => rm(dir, { recursive: true, force: true }) };
+  // Tool sets from fakeDeps re-create tokenDir inside dir in the background; cleanup waits for them.
+  const pending: Promise<unknown>[] = [];
+  const cleanup = async () => {
+    await Promise.all(pending);
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  };
+  return { dir, file, keyFile, vault: createVault({ file, keyFile }), pending, cleanup };
 }
 
 test("vault encrypts at rest and round-trips", async () => {
@@ -147,6 +153,7 @@ function fakeDeps(t: TempVault, tabs: BrowserTab[]) {
     secretsDir: path.join(t.dir, "t3-secrets"),
     tokenDir: path.join(t.dir, "bot-secrets"),
   });
+  t.pending.push(tools.ready);
   return { tools, typed };
 }
 

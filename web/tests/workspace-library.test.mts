@@ -79,13 +79,13 @@ for (const [name, kind] of [['parity-note.txt', 'text'], ['parity-silence.wav', 
   else assert.ok(document.querySelector('audio').controls);
 });
 
-test('workspace asset signing keeps linked environment scope and raw thread identity for text and audio', async () => {
+test('workspace asset signing keeps linked environment scope and raw thread identity for text, audio and Office files', async () => {
   mock.method(loaded.T3Client.prototype, 'connect', () => {});
   const remote = loaded.environmentT3('fixture-remote');
   const signed = [];
   mock.method(remote, 'call', async (tag, payload) => { signed.push({ tag, payload }); return { relativeUrl: '/api/assets/fixture?token=a%2Bb%2F' }; });
   const threadId = loaded.threadKey({ environmentId: 'fixture-remote', threadId: 'same-id' });
-  for (const [name, disposition] of [['notes.txt', 'attachment'], ['audio.wav', undefined]]) {
+  for (const [name, disposition] of [['notes.txt', 'attachment'], ['audio.wav', undefined], ['budget.xlsx', 'attachment'], ['memo.docx', 'attachment']]) {
     const url = await loaded.workspaceAssetUrl({ _tag: 'workspace-file', threadId, path: 'library/' + name });
     assert.equal(url, '/t3/environments/fixture-remote/api/assets/fixture?token=a%2Bb%2F');
     assert.deepEqual(signed.at(-1), { tag: 'assets.createUrl', payload: { resource: { _tag: 'media-file', threadId: 'same-id', path: 'library/' + name, ...(disposition ? { disposition } : {}) } } });
@@ -119,7 +119,7 @@ beforeEach(() => {
   rpc = async (tag) => tag === 'assets.createUrl' ? { relativeUrl: '/assets/signed?token=fixture' } : { entries: [], truncated: false };
   fetchResponse = () => new Response('<html><body>Report</body></html>', { status: 200 });
   mock.method(t3, 'call', async (tag, payload) => { calls.push({ tag, payload }); return rpc(tag, payload); });
-  mock.method(t3, 'stream', () => ({ cancel() {}, done: Promise.resolve() }));
+  mock.method(t3, 'stream', () => ({ cancel() {}, done: Promise.resolve(), live: () => false }));
   mock.method(globalThis, 'fetch', async (url) => { fetches.push(url); return fetchResponse(); });
   localStorage.clear();
   useApp.setState({ bots: { example: bot }, historicalBots: {}, threads: {}, tasks: [], selected: 'example', selectedThreadId: null, exchangeBotSlug: null, detailsOpen: false, settings: null, threadData: { main: { loaded: true, items: {}, runs: {}, requests: {} } } });
@@ -168,6 +168,21 @@ test('actual Markdown renders validated workspace links as actions, preserves ex
   assert.equal(document.querySelector('a[href*="../other"]'), null);
   assert.ok(document.querySelector('.bot-mention'));
   assert.equal(calls.length, 0, 'rendering a link does not access a file');
+});
+
+test('a workspace link alone in its paragraph becomes a file card; links in sentences stay inline', async () => {
+  let opened;
+  await mount(h(WorkspaceFileContext, { value: { ...workspace, openFile: (path) => { opened = path; } } }, h(MessageContent, { text: `[Quarterly](${rootPath}/library/report.pdf)\n\nBefore [Quarterly](${rootPath}/library/report.pdf) after` })));
+  const card = document.querySelector('button[aria-label="Open Quarterly"]');
+  assert.ok(card, 'the solo link paragraph renders the file card');
+  assert.match(card.textContent, /Quarterly/);
+  assert.match(card.textContent, /PDF document/);
+  await click(card);
+  assert.equal(opened, 'library/report.pdf');
+  const inline = [...document.querySelectorAll('button')].find((element) => element.textContent === 'Quarterly' && !element.querySelector('[data-accent]'));
+  assert.ok(inline, 'the same link inside a sentence stays an inline action');
+  await click(inline);
+  assert.equal(opened, 'library/report.pdf');
 });
 
 test('actual signed viewer reports HTTP failure, retries with a fresh URL, and previews the real resource', async () => {
@@ -229,7 +244,7 @@ test('opening and closing a workspace report retains the actual chat scroller, c
   assert.equal(composer.value, 'Keep this draft');
   scroller.scrollTop = 137;
   await act(async () => scroller.dispatchEvent(new Event('scroll')));
-  await click(button('Report'));
+  await click(document.querySelector('button[aria-label="Open Report"]'));
   assert.ok(document.querySelector('iframe'));
   await click(document.querySelector('[aria-label="Close"]'));
   assert.equal(document.querySelector('[role="dialog"]'), null);
@@ -237,7 +252,7 @@ test('opening and closing a workspace report retains the actual chat scroller, c
   assert.equal(scroller.scrollTop, 137);
   assert.equal(document.querySelector('textarea'), composer);
   assert.equal(composer.value, 'Keep this draft');
-  assert.ok(button('Report'));
+  assert.ok(document.querySelector('button[aria-label="Open Report"]'));
 });
 
 test('workspace Markdown images request the owner resource and show retry on decode failure', async () => {
@@ -266,12 +281,12 @@ test('Markdown file contents use the signed response and resolve links relative 
   fetchResponse = () => new Response('[Nested report](report.html)', { status: 200 });
   useApp.setState({ threadData: { main: { loaded: true, items: { message: message('[Index](library/index.md)') }, runs: {}, requests: {} } } });
   await mount(h(Chat, { bot }));
-  await click(button('Index'));
-  assert.ok(button('Nested report'));
+  await click(document.querySelector('button[aria-label="Open Index"]'));
+  assert.ok(document.querySelector('button[aria-label="Open Nested report"]'));
   fetchResponse = () => new Response('<html>Nested report</html>', { status: 200 });
-  await click(button('Nested report'));
+  await click(document.querySelector('button[aria-label="Open Nested report"]'));
   assert.ok(document.querySelector('iframe'));
-  assert.deepEqual(calls.filter((call) => call.tag === 'assets.createUrl').map((call) => call.payload.resource.path), ['library/index.md', 'library/report.html']);
+  assert.deepEqual([...new Set(calls.filter((call) => call.tag === 'assets.createUrl').map((call) => call.payload.resource.path))], ['library/index.md', 'library/report.html']);
   assert.equal(calls.some((call) => call.tag === 'projects.readFile'), false);
 });
 

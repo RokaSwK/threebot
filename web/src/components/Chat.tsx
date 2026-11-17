@@ -1,19 +1,23 @@
-import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentPropsWithoutRef } from "react";
 import clsx from "clsx";
-import { defaultUrlTransform } from "react-markdown";
-import { ArrowDown, ArrowUp, AudioLines, Camera, ChevronLeft, Eraser, Globe, FileText, Folder, Image, MessageCircle, Mic, Monitor, PanelRight, Plus, Square, X } from "lucide-react";
+import { defaultUrlTransform, type ExtraProps } from "react-markdown";
+import { ArrowDown, ArrowUp, AudioLines, ChevronLeft, Eraser, Globe, MessageCircle, Mic, Monitor, PanelRight, Square, X } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { botTextColor, bubbleColors } from "../lib/character";
 import { BotMention, BotEvent } from "./BotMention";
 import { BotExchange } from "./BotExchange";
-import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
+import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
+import { fileGlyphKind, fileTypeLabel, messageFileLinks, soloFileLinkParagraph, soloMarkdownLink, aboutFilePrompt } from "../lib/fileCards";
+import { FileCard as DocumentCard } from "./FileCard";
+import { MessageFileStack } from "./MessageFileStack";
 import { RichMarkdown } from "./RichMarkdown";
 import { BoardItemChip } from "./Projects";
 import { parseItemLink } from "../lib/projects";
 import { ChatMessageActions } from "./ChatMessageActions";
-import { ChatAttachmentList } from "./ChatAttachments";
+import { ChatAttachmentList, PendingAttachments } from "./ChatAttachments";
+import { ComposerActions, type ComposerAction } from "./ComposerActions";
 import { MessageImages } from "./ImageViewer";
 import { ExecutorConnectCard } from "./ExecutorConnectCard";
 import { useVoiceSettings, VoiceDock, voiceChatSupported } from "./VoiceDock";
@@ -24,17 +28,18 @@ import { startLiveDictation, type LiveDictation } from "../lib/cloudLive";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
-import { canStartFresh, openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
+import { canStartFresh, openDialog, botStatus, conversationStatus, loadOlderMessages, loadThreadMeta, selectThread, sendMessage, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
 import { threadKey, threadTarget } from "../lib/t3";
 import { MachineBadge } from "./MachineBadge";
-import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
+import { loadedRunFloor, runOrdinal, supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
+import { findTidyTask, readTidyReport, type TidyReport } from "../lib/memoryTidy";
 import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
 import type { Bot } from "../lib/types";
-import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles, takeAttachmentFiles } from "../lib/chatBehavior";
+import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles } from "../lib/chatBehavior";
 import { chatDraft } from "../lib/chatDrafts";
 import { parseReply, replyLabel, withReply } from "../lib/reply";
 import { activeWork, messageCommand, useRuntimeWork, useWorkCommand } from "../lib/runtimeApi";
@@ -61,9 +66,15 @@ const ConversationWork = memo(function ConversationWork({ threadId, readOnly }: 
   </>;
 });
 
-const ArtifactPlan = memo(function ArtifactPlan({ threadId, plan }: { threadId: string; plan: Parameters<typeof PlanMessage>[0]["plan"] }) {
+const ArtifactPlan = memo(function ArtifactPlan({ threadId, plan }: { threadId: string; plan: Parameters<typeof PlanMessage>[0]["plan"] & { runId?: string } }) {
   const inTranscript = useApp(s => Object.values(s.threadData[threadId]?.items ?? {}).some(item => (item.type === "todo_list" || item.type === "proposed_plan") && item.planId === plan.id));
-  return inTranscript ? null : <PlanMessage plan={plan} />;
+  // A plan from a run older than the loaded rows belongs to history not shown yet.
+  const beforeLoaded = useApp(s => {
+    const data = s.threadData[threadId];
+    const floor = data ? loadedRunFloor(Object.values(data.items), data.runs, data.hasMoreHistory === true) : null;
+    return floor !== null && (runOrdinal(plan.runId, data?.runs) ?? Infinity) < floor;
+  });
+  return inTranscript || beforeLoaded ? null : <PlanMessage plan={plan} />;
 });
 
 function StopAllButton({ threadId }: { threadId: string }) {
@@ -81,6 +92,14 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
   const isChild = !!threadId && threadId !== bot.mainThreadId;
   const tasks = useApp((s) => s.tasks);
+  const tidyTask = useMemo(() => findTidyTask(bot, tasks), [bot, tasks]);
+  const [tidyReport, setTidyReport] = useState<TidyReport | null>(null);
+  useEffect(() => {
+    if (threadId !== bot.mainThreadId || !tidyTask) { setTidyReport(null); return; }
+    let live = true;
+    readTidyReport(tidyTask).then((report) => { if (live) setTidyReport(report); }).catch(() => { if (live) setTidyReport(null); });
+    return () => { live = false; };
+  }, [bot.mainThreadId, threadId, tidyTask?.id, tidyTask?.threadId, tidyTask?.lastRunAt, tidyTask?.lastRunStatus, tidyTask?.runCount]);
   const detailsOpen = useApp((s) => s.detailsOpen);
   const exchangeBotSlug = useApp((s) => s.exchangeBotSlug);
   const exchangeBot = useApp((s) => exchangeBotSlug ? s.bots[exchangeBotSlug] ?? s.historicalBots[exchangeBotSlug] : undefined);
@@ -101,7 +120,10 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
     return () => document.removeEventListener("visibilitychange", refresh);
   }, [threadId]);
 
-  const items = useMemo(() => supplementSubagents(Object.values(data?.items ?? {}), Object.values(data?.subagents ?? {}), threadId ?? ""), [data?.items, data?.subagents, threadId]);
+  const items = useMemo(() => {
+    const loaded = Object.values(data?.items ?? {});
+    return supplementSubagents(loaded, Object.values(data?.subagents ?? {}), threadId ?? "", loadedRunFloor(loaded, data?.runs ?? {}, data?.hasMoreHistory === true));
+  }, [data?.items, data?.subagents, data?.runs, data?.hasMoreHistory, threadId]);
   const providers = useApp((s) => s.providers);
   const sideChat = useApp((s) => s.sideChat);
   const runs = useMemo(() => Object.values(data?.runs ?? {}), [data?.runs]);
@@ -110,7 +132,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
     const model = provider?.models.find((m) => m.slug === selection.model);
     return model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
   }), [runs, providers]);
-  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches]);
+  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches, routineReports: tidyReport ? [tidyReport] : [] }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches, tidyReport]);
   const activeRun = runs.filter(run => isActiveRun(run) && run.status !== "queued").sort((a, b) => b.ordinal - a.ordinal)[0];
   const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest;
   const [tick, setTick] = useState(0);
@@ -124,7 +146,22 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const status = isChild && threadId ? conversationStatus(threadId) : botStatus(bot);
 
   const { scroller, showJump, onScrollCapture, onUserScrollIntent, visibleEntries, hiddenCount, loadEarlier } = useChatScroll({ threadKey: threadId ?? `bot:${bot.slug}`, loaded: data?.loaded === true, entries });
+  // Older rows of a bounded thread come from T3 page by page; reveal them once they've rendered as hidden entries.
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [revealOlder, setRevealOlder] = useState(false);
+  useEffect(() => { if (revealOlder && hiddenCount > 0) { setRevealOlder(false); loadEarlier(); } }, [revealOlder, hiddenCount, loadEarlier]);
+  const showEarlier = () => {
+    if (hiddenCount > 0) return loadEarlier();
+    if (!threadId || olderLoading) return;
+    setOlderLoading(true);
+    void loadOlderMessages(threadId).then((added) => setRevealOlder(added)).finally(() => setOlderLoading(false));
+  };
   const workspace = useMemo(() => ({ workspaceRoot: bot.workspaceRoot, threadId, openFile: setOpenFile }), [bot.workspaceRoot, threadId]);
+  // Ask in the conversation on screen (a side chat or child thread, not always the main one); a failed send must not vanish with the closed viewer.
+  const askAboutFile = useCallback((fileName: string, text: string, path: string | null = null) => {
+    if (!threadId) return;
+    void sendMessage(bot.slug, aboutFilePrompt(fileName, path, text), [], threadId).catch((error: unknown) => toast(`Couldn't send your message: ${error instanceof Error ? error.message : String(error)}`));
+  }, [bot.slug, threadId]);
 
   const greeting = data?.loaded && !entries.some((e) => e.kind === "user" || e.kind === "bot");
   const reply = (text: string) => chatDraft(bot, threadId).setReply(text);
@@ -178,10 +215,10 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {greeting && !embedded && (
             <BotBubble text={`Hey${settings?.userName ? ` ${settings.userName}` : ""}, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?`} />
           )}
-          {hiddenCount > 0 && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover" onClick={loadEarlier}>Load earlier messages</button>}
+          {(hiddenCount > 0 || data?.hasMoreHistory) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
-              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} />
+              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />
             </div>
           ))}
           {threadId && <ConversationWork threadId={threadId} readOnly={archived} />}
@@ -217,7 +254,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
         const problem = await requestMicrophone();
         if (problem) toast(problem); else setVoiceChat(true);
       }} />}
-      {openFile && <FileViewer bot={bot} threadId={threadId} path={openFile} onOpenFile={setOpenFile} onClose={() => setOpenFile(null)} />}
+      {openFile && <FileViewer bot={bot} threadId={threadId} path={openFile} onOpenFile={setOpenFile} onClose={() => setOpenFile(null)} onAsk={archived ? undefined : askAboutFile} />}
       </div>
       {exchangeBot && !embedded && <BotExchange bot={bot} other={exchangeBot} />}
       {!embedded && threadId && sideChat?.parentThreadId === threadId && <SideChatSheet bot={bot} parentThreadId={threadId} threadId={sideChat.threadId}><Chat key={sideChat.threadId} bot={bot} threadId={sideChat.threadId} embedded /></SideChatSheet>}
@@ -233,13 +270,15 @@ function duration(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; accent: string }) {
+function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, onAsk }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; accent: string; onAsk?: (fileName: string, text: string) => void }) {
   const tight = prev && prev.kind === entry.kind && (entry.kind === "bot" || entry.kind === "user");
   switch (entry.kind) {
     case "date":
       return <DateSep label={entry.label} />;
     case "event":
       return <EventLine entry={entry} />;
+    case "routine-report":
+      return <RoutineReportLine entry={entry} bot={bot} />;
     case "automated":
       return <AutomatedCard entry={entry} />;
     case "model-switch":
@@ -253,7 +292,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
         <MessageImages>
         <ChatMessageActions text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} side="user" className={clsx("fade-up flex flex-col items-end", tight ? "mt-1" : "mt-3")}>
           {entry.replyTo && <ReplyChip quote={entry.replyTo} />}
-          {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} />}
+          {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} onAsk={onAsk} />}
           {entry.text && (
             <div
               data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap"
@@ -278,7 +317,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
       return (
         <MessageImages>
           <div className={tight ? "mt-1" : "mt-3"}>
-            {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" />}
+            {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" onAsk={onAsk} />}
             {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} />}
           </div>
         </MessageImages>
@@ -306,17 +345,23 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent }: 
 
 export function BotBubble({ text, threadId, itemId, runId, onReply }: { text: string; threadId?: string; itemId?: string; runId?: string | null; onReply?: (text: string) => void }) {
   // Agents often write several short paragraphs; they read best as stacked bubbles.
-  const parts = splitBubbles(text);
+  const workspace = useContext(WorkspaceFileContext);
+  // A bubble that is only a file link is drawn by the file stack below, with its card, player or thumbnail.
+  const parts = splitBubbles(text).filter((part) => !workspace || !soloMarkdownLink(part, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)));
+  const stackPaths = useMemo(() => workspace ? new Set(messageFileLinks(text, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)).map((link) => link.path)) : null, [text, workspace]);
   return (
     <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} side="bot">
       <MessageImages>
+        <FileStackContext.Provider value={stackPaths}>
         <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
           {parts.map((p, i) => (
             <div key={i} className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
               <MessageContent text={p} />
             </div>
           ))}
+          <MessageFileStack text={text} />
         </div>
+        </FileStackContext.Provider>
       </MessageImages>
     </ChatMessageActions>
   );
@@ -328,8 +373,23 @@ const MessageContent = memo(function MessageContent({ text }: { text: string }) 
   // Bot polling replaces objects even when names have not changed. Markdown
   // parsing depends on those names, not on labels, run status or timestamps.
   const referencesKey = JSON.stringify(Object.values(bots).map((b) => ({ slug: b.slug, name: b.name })));
-  return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
+  return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, p: MessageParagraph, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
 });
+
+/** Inside a Bot message: the files its stack draws under the text. */
+const FileStackContext = createContext<ReadonlySet<string> | null>(null);
+
+/** A paragraph holding nothing but a workspace-file link renders as the file card, or nothing when the stack below draws that file. */
+function MessageParagraph({ node, children }: ComponentPropsWithoutRef<"p"> & ExtraProps) {
+  const workspace = useContext(WorkspaceFileContext);
+  const stackPaths = useContext(FileStackContext);
+  const solo = workspace && node ? soloFileLinkParagraph(node, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)) : null;
+  if (!solo || !workspace) return <p>{children}</p>;
+  // Only links the stack found are left to it; a reference-style link, say, keeps its card here.
+  if (stackPaths?.has(solo.path)) return null;
+  const name = solo.text.trim() || solo.path.split("/").at(-1) || solo.path;
+  return <DocumentCard name={name} detail={fileTypeLabel(solo.path)} kind={fileGlyphKind(solo.path)} workspacePath={solo.path} onOpen={() => workspace.openFile(solo.path)} />;
+}
 
 /** Links to the user's Executor (sign-in links Bots post) render as Connect cards. */
 function MessageLink({ href, children }: { href?: string; children?: React.ReactNode }) {
@@ -377,8 +437,8 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
 }
 
 
-function AttachmentList({ attachments, align }: { attachments: unknown[]; align?: "start" | "end" }) {
-  return <ChatAttachmentList attachments={attachments} align={align} />;
+function AttachmentList({ attachments, align, onAsk }: { attachments: unknown[]; align?: "start" | "end"; onAsk?: (fileName: string, text: string) => void }) {
+  return <ChatAttachmentList attachments={attachments} align={align} onAsk={onAsk} />;
 }
 
 /** What the agent is doing right now, shown under its name. Quiet states show nothing. */
@@ -397,76 +457,6 @@ function useMobileChat() {
     return () => media.removeEventListener("change", update);
   }, []);
   return mobile;
-}
-
-function AttachmentPicker({ mobile, open, onToggle, onClose, onFiles, onSideChat, onStartFresh }: {
-  mobile: boolean;
-  open: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-  onFiles: (files: File[]) => void;
-  onSideChat?: () => void;
-  onStartFresh?: () => void;
-}) {
-  const libraryInput = useRef<HTMLInputElement>(null);
-  const cameraInput = useRef<HTMLInputElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const selectionOwners = useRef(new WeakMap<HTMLInputElement, typeof onFiles>());
-  const choose = (input: HTMLInputElement | null) => {
-    if (input) selectionOwners.current.set(input, onFiles);
-    onClose();
-    // Stay in this explicit user gesture; never ask for camera access on mount.
-    input?.click();
-  };
-  const selected = (input: HTMLInputElement) => {
-    const files = takeAttachmentFiles(input);
-    const receive = selectionOwners.current.get(input) ?? onFiles;
-    selectionOwners.current.delete(input);
-    if (files.length) receive(files);
-  };
-  useEffect(() => {
-    if (!open) return;
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
-  }, [open, onClose]);
-  return (
-    <div className="relative shrink-0">
-      <IconButton onClick={onToggle} className="size-9 bg-hover" aria-label="Composer actions" aria-haspopup="menu" aria-expanded={open}>
-        <Plus size={18} />
-      </IconButton>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={onClose} />
-          <div role="menu" aria-label="Attachments" className="chat-attachment-menu pop-in absolute bottom-11 left-0 z-50 w-[200px] max-w-[calc(100vw-3rem)] rounded-xl border border-line bg-elevated p-1 shadow-[var(--shadow-pop)]">
-            <button role="menuitem" onClick={() => choose(fileInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <Folder size={14} /> {mobile ? "Choose File" : "Attach files"}
-            </button>
-            {mobile && <>
-              <button role="menuitem" onClick={() => choose(cameraInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-                <Camera size={14} /> Take Photo
-              </button>
-              <button role="menuitem" onClick={() => choose(libraryInput.current)} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-                <Image size={14} /> Photo or Video
-              </button>
-            </>}
-            {onSideChat && <button role="menuitem" onClick={() => { onClose(); onSideChat(); }} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <MessageCircle size={14} /> Side chat
-            </button>}
-            {onStartFresh && <button role="menuitem" onClick={() => { onClose(); onStartFresh(); }} className="flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] hover:bg-hover">
-              <Eraser size={14} /> Start fresh
-            </button>}
-          </div>
-        </>
-      )}
-      {/* Keep the inputs mounted while the menu closes so picker results still arrive. */}
-      {mobile && <>
-        <input ref={libraryInput} aria-label="Photo library" type="file" accept="image/*,video/*" multiple hidden onChange={(e) => selected(e.currentTarget)} />
-        <input ref={cameraInput} aria-label="Take photo" type="file" accept="image/*" capture="environment" hidden onChange={(e) => selected(e.currentTarget)} />
-      </>}
-      <input ref={fileInput} aria-label="Files" type="file" multiple hidden onChange={(e) => selected(e.currentTarget)} />
-    </div>
-  );
 }
 
 function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
@@ -496,13 +486,17 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
   const side = embedded ? null : parseSideCommand(text);
   const freshOn = useApp((s) => !embedded && canStartFresh(threadId, s));
   const startFresh = () => { setFresh(true); ta.current?.focus({ preventScroll: true }); };
+  // The screen's own lines in the composer's menu; the files belong to the shared component.
+  const composerActions: ComposerAction[] = [
+    ...(sideChatsOn ? [{ key: "side-chat", label: "Side chat", icon: MessageCircle, onSelect: () => void startSideChat(bot, threadId!) }] : []),
+    ...(freshOn && !fresh ? [{ key: "start-fresh", label: "Start fresh", icon: Eraser, onSelect: startFresh }] : []),
+  ];
   const clearCommand = () => {
     if (!freshOn) return toast(embedded ? "Side chats can't start fresh" : "Starting fresh needs a newer T3 Code");
     setText("");
     startFresh();
   };
   const submit = () => !atts.length && isClearCommand(text) ? clearCommand() : side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
-  const [popover, setPopover] = useState<"attachments" | null>(null);
   const [listening, setListening] = useState(false);
   useReportLocalActivity(threadId, listening ? "listening" : atts.some((item) => item.state === "uploading") ? "uploading" : sending ? "sending" : null);
   const settings = useVoiceSettings();
@@ -550,7 +544,6 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
   }, [setText]);
   useEffect(() => {
     focus.onEntry(ta.current);
-    setPopover(null);
   }, [draft, focus]);
   const replying = !!replyTo;
   useEffect(() => {
@@ -751,33 +744,11 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
               </div>
             </div>
           ))}
-          {atts.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3">
-              {atts.map(({ attachment: a, state }) => (
-                <div key={a.id} className="chat-pending-attachment group relative">
-                  {a.previewUrl ? (
-                    <img src={a.previewUrl} alt="" className={clsx("size-14 rounded-xl object-cover", state === "uploading" && "opacity-50")} />
-                  ) : (
-                    <div className="flex h-14 items-center gap-2 rounded-xl bg-card px-3 text-[12.5px]">
-                      <FileText size={14} /> <span className="max-w-[140px] truncate">{a.name}</span>
-                    </div>
-                  )}
-                  {state === "uploading" && (
-                    <span className="absolute inset-0 grid place-items-center">
-                      <Spinner />
-                    </span>
-                  )}
-                  <button onClick={() => draft.removeAttachment(a.id)} className="composer-remove-attachment absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-pill text-pill-fg" aria-label="Remove" title={`Remove ${a.name}`}>
-                    <X size={11} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <PendingAttachments items={atts} onRemove={draft.removeAttachment} />
           {fresh && freshOn && <div className="composer-reply composer-fresh" role="status"><span>Your next message starts a fresh session. {bot.name} won't see earlier messages, only its memory and files.</span><button type="button" aria-label="Keep the current session" title="Keep the current session" onClick={() => setFresh(false)}><X size={16} aria-hidden="true" /></button></div>}
           {replyTo && <div className="composer-reply"><span title={replyTo}>{replyLabel(replyTo)}</span><button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}><X size={16} aria-hidden="true" /></button></div>}
           <div className="composer-controls flex items-end gap-1.5 p-1.5" data-expanded={replying}>
-            <AttachmentPicker mobile={mobile} open={popover === "attachments"} onToggle={() => setPopover((v) => v === "attachments" ? null : "attachments")} onClose={() => setPopover(null)} onFiles={addFiles} onSideChat={sideChatsOn ? () => void startSideChat(bot, threadId!) : undefined} onStartFresh={freshOn && !fresh ? startFresh : undefined} />
+            <ComposerActions mobile={mobile} onFiles={addFiles} actions={composerActions} resetKey={`${bot.slug}:${threadId ?? ""}`} />
             <textarea
               ref={ta}
               readOnly={mobile}
@@ -886,9 +857,10 @@ function ComposerRunAction({ threadId, working, hasDraft, inVoiceChat, onVoiceCh
 }
 
 // ---------- file viewer ----------
-function FileViewer({ bot, threadId, path, onClose, onOpenFile }: { bot: Bot; threadId: string | null; path: string; onClose: () => void; onOpenFile: (path: string) => void }) {
+function FileViewer({ bot, threadId, path, onClose, onOpenFile, onAsk }: { bot: Bot; threadId: string | null; path: string; onClose: () => void; onOpenFile: (path: string) => void; onAsk?: (fileName: string, text: string, path: string | null) => void }) {
   const validated = workspaceFilePath(path);
+  const ask = validated && onAsk ? (text: string) => onAsk(validated.split("/").at(-1) ?? validated, text, validated) : undefined;
   return <WorkspaceFileContext value={{ workspaceRoot: bot.workspaceRoot, threadId, fromPath: validated ?? undefined, openFile: onOpenFile }}>
-    <WorkspaceResourceViewer key={path} resource={threadId && validated ? { _tag: "workspace-file", threadId, path: validated } : null} title={validated ?? "File unavailable"} onClose={onClose} renderText={(content) => /\.md$/i.test(path) ? <MessageContent text={content} /> : <pre className="whitespace-pre-wrap">{content}</pre>} />
+    <WorkspaceResourceViewer key={path} resource={threadId && validated ? { _tag: "workspace-file", threadId, path: validated } : null} title={validated ?? "File unavailable"} onClose={onClose} onAsk={ask} renderText={(content) => /\.md$/i.test(path) ? <MessageContent text={content} /> : <pre className="whitespace-pre-wrap">{content}</pre>} />
   </WorkspaceFileContext>;
 }

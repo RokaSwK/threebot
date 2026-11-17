@@ -6,7 +6,7 @@ import { Avatar } from "./Avatar";
 import { SubagentRow } from "./ThreadFamily";
 import { sameTaskBot } from "../lib/threadFamily";
 import { Pill, Spinner } from "./ui";
-import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, useApp } from "../store";
+import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, selectThread, useApp } from "../store";
 import type { Entry } from "../lib/transcript";
 import type { Bot } from "../lib/types";
 import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretLink, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
@@ -36,6 +36,18 @@ export function EventLine({ entry }: { entry: Extract<Entry, { kind: "event" }> 
       <span>{entry.text}</span>
       {entry.bot ? <Avatar shape={entry.bot.shape} color={entry.bot.color} picture={entry.bot.avatarImage} size={14} /> : entry.icon && entry.icon !== "send" && <span className="opacity-80">{EVENT_ICON[entry.icon]}</span>}
       {entry.strong && <span className="text-fg">{entry.strong}</span>}
+    </div>
+  );
+}
+
+/** A routine's report, derived from T3's run; it is not a model turn and never wakes the Bot. */
+export function RoutineReportLine({ entry, bot }: { entry: Extract<Entry, { kind: "routine-report" }>; bot: Bot }) {
+  return (
+    <div className="fade-up flex flex-wrap items-center justify-center gap-2 py-2 text-[13px] text-muted">
+      <Sparkles size={13} className="opacity-80" aria-hidden="true" />
+      <span className="text-fg">{entry.title}</span>
+      <span className={entry.failed ? "text-danger" : "text-fg"}>{entry.summary}</span>
+      <button type="button" aria-label={`View the ${entry.title} conversation`} className="underline underline-offset-2 hover:text-fg" onClick={() => selectThread(bot, entry.threadId)}>View</button>
     </div>
   );
 }

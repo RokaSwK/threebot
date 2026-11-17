@@ -13,6 +13,8 @@ export interface Bot {
   environmentId: string;
   /** Where its memory/ and library/ are: the folder itself, or `<folder>/.bot` for an adopted Bot. */
   dataDir: string;
+  /** How Executor answers app approval prompts for this Bot; absent keeps the configured URL's default. */
+  executorApproval?: 'ask' | 'automatic';
   // Whatever else the Bot or the app keeps in bot.json (model, brief, avatarImage, ...).
   [key: string]: unknown;
 }

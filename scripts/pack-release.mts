@@ -30,6 +30,8 @@ const serverPkg = JSON.parse(readFileSync(path.join(stage, "server", "package.js
 writeFileSync(path.join(stage, "server", "package.json"), JSON.stringify({ ...serverPkg, version }, null, 2) + "\n");
 cpSync(path.join(root, "web", "dist"), path.join(stage, "web", "dist"), { recursive: true });
 
+cpSync(path.join(root, "install.ps1"), path.join(out, "install.ps1"));
+
 const archive = `${name}.tar.gz`;
 // COPYFILE_DISABLE keeps macOS from adding ._ metadata files.
 const tar = spawnSync("tar", ["-czf", path.join(out, archive), "-C", path.join(out, ".stage"), name], { stdio: "inherit", env: { ...process.env, COPYFILE_DISABLE: "1" } });

@@ -168,7 +168,7 @@ export async function startWindowsGateway(spec: ServiceSpec): Promise<void> {
 export async function stopWindowsGateway(spec: ServiceSpec, exec: typeof run = run): Promise<void> {
   let pid = NaN;
   try { pid = Number((await fs.readFile(windowsPidPath(spec), "utf8")).trim()); } catch { /* never started */ }
-  if (Number.isFinite(pid) && pid > 0) await exec("taskkill", ["/PID", String(pid), "/F", "/T"]).catch(() => {});
+  if (Number.isFinite(pid) && pid > 0) await exec("taskkill", ["/PID", String(pid), "/F"]).catch(() => {});
   await fs.rm(windowsPidPath(spec), { force: true });
 }
 

@@ -5,9 +5,9 @@
 import { randomUUID } from "node:crypto";
 import { addressedMembers, clip, formatRoomLine, isPass, pickReply, type ReplyItem, type RoomLine } from "./room-lines.mts";
 import { launchRoomThread, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
-import type { Room, RoomMember, RoomRun, RoomTurn, RoomsStore } from "./rooms.mts";
+import { validateAttachments, type Room, type RoomAttachment, type RoomMember, type RoomRun, type RoomTurn, type RoomsStore } from "./rooms.mts";
 
-export type RoomMessage = { text: string; mentions?: string[]; replyTo?: string | null };
+export type RoomMessage = { text: string; mentions?: string[]; replyTo?: string | null; attachments?: RoomAttachment[] };
 
 export type EngineRpc = RoomRpc & { dispatch(command: object): Promise<unknown> };
 
@@ -102,8 +102,12 @@ export function promptFor({ room, member, message, lines, nameOf = nameOfSlug }:
   const quote = message.replyTo ? "[replying to a message from the room]" : "";
   // The message being answered is always there in full, even when it waited in the queue behind a
   // turn the member already answered.
-  const asked = message.text.trim() ? `The user's message:\n${message.text.trim()}` : "";
-  return [header, intro, about, mode, body, quote, asked, `It's your turn, ${nameOf(member.slug)}.`]
+  const files = message.attachments ?? [];
+  const attached = files.length > 0 ? `The user attached: ${files.map((file) => `${file.name} (${file.type === "image" ? "image" : "file"})`).join(", ")}.` : "";
+  const asked = message.text.trim()
+    ? `The user's message:\n${message.text.trim()}`
+    : files.length > 0 ? "The user sent these files without a message." : "";
+  return [header, intro, about, mode, body, quote, attached, asked, `It's your turn, ${nameOf(member.slug)}.`]
     .filter((part) => part !== "")
     .join("\n\n");
 }
@@ -130,6 +134,15 @@ export function crossMentions(replies: { slug: string; text: string }[], room: R
   return [...next.values()];
 }
 
+/** The files T3 reports on the user message it stored, after claiming a copy for that thread. */
+function claimedAttachments(value: unknown): RoomAttachment[] {
+  try {
+    return validateAttachments(value);
+  } catch {
+    return [];
+  }
+}
+
 export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () => {}, pollMs = 1_000, nowMs = () => Date.now() }: EngineDeps) {
   /** One entry per room with a turn in flight. */
   const active = new Map<string, ActiveTurn>();
@@ -145,9 +158,15 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
    * a message the user sends directly in a member's thread stays out of the room.
    */
   async function readHistory(room: Room): Promise<RoomLine[]> {
+    // A file named in the history is a fact of the conversation: the members addressed then got a
+    // copy, and a member addressed later only learns that it exists. The name is not a handle.
     const history: RoomLine[] = room.turns
-      .filter((turn) => turn.text.trim() !== "")
-      .map((turn) => ({ at: turn.at, author: { kind: "user" as const }, text: clip(turn.text.trim(), 1_200) }));
+      .filter((turn) => turn.text.trim() !== "" || (turn.attachments?.length ?? 0) > 0)
+      .map((turn) => {
+        const files = turn.attachments?.map((attachment) => attachment.name) ?? [];
+        const marker = files.length > 0 ? `[attached: ${files.join(", ")}]` : "";
+        return { at: turn.at, author: { kind: "user" as const }, text: [marker, clip(turn.text.trim(), 1_200)].filter(Boolean).join(" ") };
+      });
     const knownRuns = new Set(room.turns.flatMap((turn) => turn.runs.flatMap((run) => (run.runId ? [run.runId] : []))));
     const people = [...room.members, ...room.formerMembers];
     const seenThreads = new Set<string>();
@@ -201,11 +220,12 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     messageId: string,
     deadline: number,
     aborted: () => boolean,
-    hooks: { onRun?: (runId: string) => void; onWaiting?: () => void } = {},
+    hooks: { onRun?: (runId: string) => void; onWaiting?: () => void; onSent?: (attachments: unknown[]) => void } = {},
   ): Promise<{ status: string; runId: string | null; reply: { id: string; text: string; at: string | null } | null }> {
     let runId: string | null = null;
     let announced = false;
     let waiting = false;
+    let sentSeen = false;
     for (;;) {
       if (aborted()) return { status: "stopped", runId, reply: null };
       const projection = (await rpc.call("orchestration.getThreadProjection", { threadId }).catch(() => null)) as Projection;
@@ -219,6 +239,9 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         waiting = true;
         hooks.onWaiting?.();
       }
+      const sent = (projection?.turnItems ?? []).find((item) => item.type === "user_message" && item.messageId === messageId);
+      // T3 stores the message with its claimed copies before the run finishes; report them at once.
+      if (!sentSeen && sent) { sentSeen = true; hooks.onSent?.(sent.attachments ?? []); }
       if (run && TERMINAL.has(run.status)) {
         const reply = pickReply(projection?.turnItems ?? [], run.id);
         return { status: run.status, runId: run.id, reply: reply ? { ...reply, text: reply.text.trim() } : null };
@@ -257,6 +280,13 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     const parts: RoomRun[] = [];
     /** What this turn has said so far, in order: the roundtable's shared floor. */
     const spoken: { slug: string; text: string }[] = [];
+    /**
+     * The files each member's thread already claimed in this turn. A second dispatch to the same
+     * member (a roundtable wave) resends those ids: T3 keeps them as they are, so the file is not
+     * copied twice. Everyone else gets the pending uploads from the message.
+     */
+    const claimed = new Map<string, RoomAttachment[]>();
+    let claimedByRoom = false;
     let said = 0;
     let wave = 0;
 
@@ -275,16 +305,25 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         // and later ones are still waiting in the queue.
         const before = history.filter((line) => line.author.kind !== "user" || line.at < turn.at);
         if (state.abort) throw new StoppedError();
+        const files = claimed.get(member.slug) ?? message.attachments ?? [];
         await rpc.dispatch({
           type: "message.dispatch",
           threadId: member.threadId,
           messageId,
           text: promptFor({ room, member, message, lines: [...linesFor(room, member, before), ...floor], nameOf }),
-          attachments: [],
+          attachments: files,
+          // Start over: the member's next message opens a new provider session. T3 refuses this
+          // while the last session still runs background work; the failed part says so below.
+          ...(member.fresh === true ? { freshContext: true } : {}),
           createdBy: "agent",
           creationSource: "server",
           dispatchMode: { type: "queue_after_active" },
         });
+        // Accepted: the flag is spent, so a later message continues this new session.
+        if (member.fresh === true) {
+          member.fresh = false;
+          void rooms.setMember(room.id, member.slug, { fresh: false }).catch(() => {});
+        }
         // Stop may have run while this message was on its way; it could not stop a run that did not exist yet.
         if (state.abort) {
           await rpc.dispatch({ type: "thread.stop", threadId: member.threadId, stopDelegatedTasks: true }).catch(() => {});
@@ -295,6 +334,15 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         const memberDeadline = Math.min(turnDeadline, nowMs() + memberTimeoutMs);
         const result = await waitForRun(member.threadId, messageId, memberDeadline, () => state.abort || active.get(roomId)?.turnId !== turn.id, {
           onRun: (runId) => { void rooms.setTurnRun(roomId, turn.id, member.slug, runId).catch(() => {}); },
+          onSent: (attachments) => {
+            // T3 claimed a copy for this thread; keep it, which is what the room shows.
+            const received = claimedAttachments(attachments);
+            if (received.length === 0) return;
+            claimed.set(member.slug, received);
+            if (claimedByRoom) return;
+            claimedByRoom = true;
+            void rooms.patchTurn(roomId, turn.id, { attachments: received }).catch(() => {});
+          },
           onWaiting: () => {
             if (!room.settings.notifications) return;
             void Promise.resolve(notify?.({
@@ -446,7 +494,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
       const room = await rooms.get(roomId);
       if (!room) throw new Error("no such room");
       const clean = { ...message, text: String(message.text ?? "").trim() };
-      if (!clean.text && !message.mentions?.length) throw new Error("a room message needs text");
+      const files = message.attachments ?? [];
+      if (!clean.text && !message.mentions?.length && files.length === 0) throw new Error("a room message needs text or a file");
       const turn: RoomTurn = {
         id: randomUUID(),
         at: new Date().toISOString(),
@@ -455,6 +504,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         replyTo: clean.replyTo ?? null,
         status: "queued",
         runs: [],
+        ...(files.length > 0 ? { attachments: files } : {}),
       };
       // Reserve before the first write: two sends in the same tick must not both start a turn.
       const busy = active.has(roomId);

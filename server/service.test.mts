@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { launchdPlist, serviceSpec, stableNode, systemdUnit } from "./service.mts";
+import { launchdPlist, serviceSpec, stableNode, stopWindowsGateway, systemdUnit } from "./service.mts";
 
 const spec = serviceSpec({ node: "/usr/bin/node", cli: "/home/me/.threebot/runtime/current/server/cli.mjs", home: "/home/me/.threebot", pathEnv: "/opt/bin:/usr/bin" });
 
@@ -35,4 +35,14 @@ test("the service uses the PATH entry for node, not the versioned folder it poin
   symlinkSync(path.join(cellar, "node"), path.join(dir, "bin", "node"));
   assert.equal(stableNode(path.join(cellar, "node"), `/nowhere${path.delimiter}${path.join(dir, "bin")}`), path.join(dir, "bin", "node"));
   assert.equal(stableNode(path.join(cellar, "node"), "/nowhere"), path.join(cellar, "node"));
+});
+
+
+test("Windows restart stops only the gateway, preserving its updater child", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "tb-stop-"));
+  const service = serviceSpec({ node: process.execPath, cli: path.join(home, "cli.mjs"), home });
+  writeFileSync(path.join(home, "gateway.pid"), "12345");
+  const calls: { command: string; args: string[] }[] = [];
+  await stopWindowsGateway(service, async (command, args) => { calls.push({ command, args }); return ""; });
+  assert.deepEqual(calls, [{ command: "taskkill", args: ["/PID", "12345", "/F"] }]);
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -640,7 +640,7 @@ test('Library fixture supplies real signed resources and rejects missing files a
     const bots = (await fixture.request('/api/bots')).body.bots;
     const bot = bots.find((bot: Json) => bot.slug === 'beta');
     const listing = await bounded(rpc.call('projects.listEntries', { cwd: bot.workspaceRoot, directoryPath: 'library' }));
-    assert.deepEqual(listing.entries.map((entry: Json) => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/bars.svg', 'library/notes.txt', 'library/report.pdf', 'library/audio.wav']);
+    assert.deepEqual(listing.entries.map((entry: Json) => entry.path), ['library/counter.html', 'library/sample.csv', 'library/photo.svg', 'library/bars.svg', 'library/notes.txt', 'library/report.pdf', 'library/budget.xlsx', 'library/memo.docx', 'library/audio.wav']);
     const signed = await bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: bot.mainThreadId, path: 'library/counter.html' } }));
     const response = await fetch(fixture.url + '/t3' + signed.relativeUrl);
     assert.equal(response.status, 200);
@@ -666,6 +666,17 @@ test('Library fixture supplies real signed resources and rejects missing files a
     const pdfResponse = await fetch(fixture.url + '/t3' + pdf.relativeUrl);
     assert.equal(pdfResponse.headers.get('content-type'), 'application/pdf');
     assert.match(Buffer.from(await pdfResponse.arrayBuffer()).toString('latin1'), /^%PDF-1\.4[\s\S]*\/Count 2[\s\S]*%%EOF\n$/);
+    // The Office samples: T3 only signs them for download, which is the route the viewer reads them through.
+    for (const [name, mime, part] of [['budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'xl/workbook.xml'], ['memo.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'word/document.xml']]) {
+      const resource = { threadId: bot.mainThreadId, path: 'library/' + name };
+      await assert.rejects(bounded(rpc.call('assets.createUrl', { resource: { ...resource, _tag: 'workspace-file' } })), /Only browser documents and images/);
+      const office = await bounded(rpc.call('assets.createUrl', { resource: { ...resource, _tag: 'media-file', disposition: 'attachment' } }));
+      const opened = await fetch(fixture.url + '/t3' + office.relativeUrl);
+      assert.equal(opened.headers.get('content-type'), mime);
+      const bytes = Buffer.from(await opened.arrayBuffer());
+      assert.equal(bytes.toString('latin1', 0, 4), 'PK\x03\x04');
+      for (const entry of ['[Content_Types].xml', '_rels/.rels', part]) assert.ok(bytes.includes(entry), entry);
+    }
     // The chat image sample: a Bot-posted workspace image the image viewer opens.
     const bars = await bounded(rpc.call('assets.createUrl', { resource: { _tag: 'workspace-file', threadId: bot.mainThreadId, path: 'library/bars.svg' } }));
     assert.equal((await fetch(fixture.url + '/t3' + bars.relativeUrl)).headers.get('content-type'), 'image/svg+xml');
@@ -834,6 +845,38 @@ test('usage stats count Bot token usage per model from T3 provider turns (latest
       'fixture-idle': { turns: 1, inputTokens: 500, cachedInputTokens: 0, cacheCreationTokens: 0, outputTokens: 50 },
     });
     assert.doesNotMatch(JSON.stringify(preview), /Alpha|Beta|Gamma|Generic|thread-|project-|\/bots\//);
+  } finally { await fixture.close(); }
+});
+
+test('Settings › Usage routes count Bot turns into a 0600 ledger of numbers, and never send transcript paths (latest-t3)', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'latest-t3' });
+  try {
+    // Both routes take GET only and only 7 or 30 days. (The login gate in front of every /api route is
+    // covered where a password is set; this fixture runs the open dev setup.)
+    for (const route of ['/api/usage/bots?days=7', '/api/usage/accounts?days=7']) assert.equal((await fixture.request(route, 'POST', {})).status, 405, `${route} POST`);
+    assert.equal((await fixture.request('/api/usage/bots?days=9')).status, 400);
+    assert.equal((await fetch(fixture.url + '/api/usage/bots?days=7')).headers.get('cache-control'), 'no-store');
+    const bots = await fixture.request('/api/usage/bots?days=7');
+    assert.equal(bots.status, 200);
+    assert.equal(bots.body.days.length, 7);
+    const byBot = (slug: string) => bots.body.rows.filter((row: Json) => row.bot === slug);
+    // Alpha's main thread (two turns) and its child (one) count for Alpha; Beta's turn uses its run's model.
+    assert.deepEqual(byBot('alpha').map((row: Json) => [row.model, row.turns, row.input, row.cached, row.cacheWrite, row.output]), [['fixture-opus', 3, 3400, 11500, 500, 1040]]);
+    assert.deepEqual(byBot('beta').map((row: Json) => [row.model, row.turns, row.output]), [['fixture-idle', 1, 50]]);
+    // Read again: the same turns replace their entries rather than counting twice.
+    assert.deepEqual((await fixture.request('/api/usage/bots?days=30')).body.rows.filter((row: Json) => row.bot === 'alpha').map((row: Json) => row.turns), [3]);
+    const ledgerFile = path.join(fixture.root, 'bots', '.botapp', 'usage', 'ledger.json');
+    const ledger = await readFile(ledgerFile, 'utf8');
+    if (process.platform !== 'win32') assert.equal((await stat(ledgerFile)).mode & 0o777, 0o600);
+    assert.deepEqual(Object.keys(JSON.parse(ledger)).sort(), ['entries', 'since', 'version']);
+    assert.doesNotMatch(ledger, /Generic|Alpha|Beta|prompt|text|\/bots\//, 'counts only, no messages or paths');
+    const accounts = await fixture.request('/api/usage/accounts?days=30');
+    assert.equal(accounts.status, 200);
+    assert.deepEqual(accounts.body.accounts.map((a: Json) => [a.account, a.input + a.cached + a.cacheWrite + a.output, a.unpricedRecords]), [['Claude', 1360000, 0], ['Claude (work)', 328000, 2], ['codex', 6000, 0]]);
+    assert.doesNotMatch(JSON.stringify(accounts.body), /sourcePath|projects|sessions|fixture-user|elsewhere/);
+    const asked = (await fixture.request('/t3/fixture/interactions')).body.calls.filter((call: Json) => call.tag === 'server.getUsageSummary');
+    assert.equal(asked.length, 1);
+    assert.match(asked[0].sinceDay, /^\d{4}-\d{2}-\d{2}$/);
   } finally { await fixture.close(); }
 });
 
@@ -1061,6 +1104,7 @@ test('a helper Bot written by another Bot gets its standing instructions before 
 
 test('a room launches one idle thread per member in its own project, with the Bot\'s own runtime mode', { timeout: 60000 }, async () => {
   const fixture = await createFixture({ scenario: 'rooms' });
+  let rpc: T3Client | undefined;
   try {
     const created = await fixture.request('/api/rooms', 'POST', { name: 'Design review', members: ['alpha', 'beta'], settings: { runtimeMode: 'full-access' } });
     assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -1078,11 +1122,33 @@ test('a room launches one idle thread per member in its own project, with the Bo
     }
     assert.equal(turn.status, 'done', 'the addressed Bot answered');
     assert.deepEqual(turn.runs.map((run: Json) => [run.slug, run.status]), [['beta', 'replied']], 'only the Bot that was named answers');
+    // Start over keeps the threads and the next message to each member opens a fresh session.
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const reset = await fixture.request(`/api/rooms/${room.id}/reset`, 'POST', {});
+    assert.equal(reset.status, 200, JSON.stringify(reset.body));
+    assert.deepEqual(reset.body.room.turns, []);
+    assert.deepEqual(reset.body.room.members.map((member: Json) => member.threadId), room.members.map((member: Json) => member.threadId), 'the threads stay');
+    const upload = await bounded(rpc.call('attachments.createUploadUrl', { type: 'file', name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5 })) as Json;
+    const file = { type: 'file', id: upload.attachmentId, name: 'notes.txt', mimeType: 'text/plain', sizeBytes: 5 };
+    const filesOnly = await fixture.request(`/api/rooms/${room.id}/messages`, 'POST', { text: '', mentions: ['beta'], attachments: [file] });
+    assert.equal(filesOnly.status, 202, JSON.stringify(filesOnly.body));
+    let sentItem: Json = null;
+    for (let i = 0; i < 100 && !sentItem; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const projection = await bounded(rpc.call('orchestration.getThreadProjection', { threadId: room.members[1].threadId })) as Json;
+      sentItem = projection.turnItems.filter((item: Json) => item.type === 'user_message').at(-1);
+      if (sentItem?.text?.includes('what do you think')) sentItem = null;
+    }
+    assert.ok(sentItem, 'the file reached the addressed Bot');
+    assert.equal(sentItem.freshContext, true, 'the first message after Start over opens a fresh session');
+    assert.deepEqual(sentItem.attachments.map((attachment: Json) => attachment.name), ['notes.txt']);
+    assert.match(sentItem.text, /The user sent these files without a message/);
     const removed = await fixture.request(`/api/rooms/${room.id}`, 'DELETE', {});
     assert.equal(removed.status, 200);
     assert.deepEqual((await fixture.request('/api/rooms')).body.rooms, []);
     assert.deepEqual(removed.body.threads, { deleted: 2, failed: [] }, 'deleting a room deletes its member threads');
-  } finally { await fixture.close(); }
+  } finally { rpc?.close(); await fixture.close(); }
 });
 
 test('the gateway turns T3 auto-settle off for Bot main threads soon after it starts', { timeout: 30000 }, async () => {
@@ -1098,5 +1164,27 @@ test('the gateway turns T3 auto-settle off for Bot main threads soon after it st
     let done = false;
     for (let i = 0; i < 100 && !done; i += 1) { await new Promise((resolve) => setTimeout(resolve, 200)); done = await kept(); }
     assert.ok(done, 'every Bot main thread has auto-settle off');
+  } finally { rpc?.close(); await fixture.close(); }
+});
+
+test('with Beta → Settle Bot threads on, the gateway settles quiet Bot threads in T3 and leaves the user\'s own alone', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ scenario: 'adopt' });
+  let rpc: T3Client | undefined;
+  try {
+    rpc = new T3Client({ baseUrl: fixture.url + '/t3', token: 'fixture-only' });
+    await bounded(rpc.connect());
+    const bots = (await fixture.request('/api/bots')).body.bots as Json[];
+    const ids = bots.map((bot) => bot.mainThreadId).filter(Boolean) as string[];
+    assert.ok(ids.length >= 3);
+    const state = async (threadId: string) => (await bounded(rpc!.call('orchestration.getThreadProjection', { threadId }))).thread.settledOverride;
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    assert.deepEqual(await Promise.all(ids.map(state)), ids.map(() => null), 'off by default: nothing is settled');
+    const saved = await fixture.request('/api/settings', 'PUT', { beta: { projects: false, settleBotThreads: true } });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.beta.settleBotThreads, true);
+    let done = false;
+    for (let i = 0; i < 50 && !done; i += 1) { await new Promise((resolve) => setTimeout(resolve, 200)); done = (await Promise.all(ids.map(state))).every((s) => s === 'settled'); }
+    assert.ok(done, `every Bot main thread is settled: ${JSON.stringify(await Promise.all(ids.map(state)))}\n${fixture.logs.slice(-3000)}`);
+    assert.equal(await state('thread-app-1'), null, "a thread in the user's own project stays active");
   } finally { rpc?.close(); await fixture.close(); }
 });

@@ -8,7 +8,8 @@ type Pending = {
   stream?: boolean;
 };
 
-export type StreamHandle = { cancel: () => void; done: Promise<void> };
+/** live: the request reached the current socket and is still streaming, so a reconnect hook need not open it again. */
+export type StreamHandle = { cancel: () => void; done: Promise<void>; live: () => boolean };
 
 export class T3RpcError extends Error {
   constructor(message: string, public cause?: unknown) {
@@ -25,6 +26,10 @@ export class T3Client {
   private queue: string[] = [];
   private pingTimer: number | undefined;
   private reconnectDelay = 500;
+  private reconnectTimer: number | undefined;
+  private socketId = 0;
+  private sentOn = new Map<string, number>();
+  private pongWait: number | undefined;
   private listeners = new Set<Listener>();
   private reconnectHooks = new Set<() => void>();
   state: "connecting" | "open" | "closed" = "closed";
@@ -56,8 +61,9 @@ export class T3Client {
     this.ws = ws;
     ws.onopen = () => {
       this.reconnectDelay = 500;
+      this.socketId++;
       this.setState("open");
-      for (const m of this.queue.splice(0)) ws.send(m);
+      for (const m of this.queue.splice(0)) this.send(ws, m);
       window.clearInterval(this.pingTimer);
       this.pingTimer = window.setInterval(() => this.raw({ _tag: "Ping" }), 15_000);
       for (const h of this.reconnectHooks) h();
@@ -74,9 +80,41 @@ export class T3Client {
         this.pending.delete(id);
       }
       this.setState("closed");
-      window.setTimeout(() => this.connect(), this.reconnectDelay);
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 10_000);
+      window.clearTimeout(this.pongWait);
+      this.pongWait = undefined;
+      this.reconnectTimer = window.setTimeout(() => this.connect(), this.reconnectDelay);
+      this.reconnectDelay = Math.min(Math.max(this.reconnectDelay * 2, 500), 10_000);
     };
+  }
+
+  /**
+   * After the page was hidden or offline, the socket may be dead while still reading OPEN, and a
+   * pending retry may be seconds away. Reconnect now, or close the socket if a ping gets no pong.
+   */
+  checkAlive(timeoutMs = 8000) {
+    if (this.environmentId && this.state === "closed" && !this.checking) return this.connect();
+    // Still closing: its onclose clears the old requests and reconnects; replacing it now would let that wipe the new socket's.
+    if (this.ws?.readyState === WebSocket.CLOSING) { this.reconnectDelay = 0; return; }
+    if (!this.ws || this.ws.readyState > WebSocket.OPEN) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectDelay = 500;
+      return this.connect();
+    }
+    if (this.ws.readyState !== WebSocket.OPEN || this.pongWait !== undefined) return;
+    const ws = this.ws;
+    const timer: number = window.setTimeout(() => {
+      if (this.pongWait !== timer) return;
+      this.pongWait = undefined;
+      if (this.ws === ws) ws.close();
+    }, timeoutMs);
+    this.pongWait = timer;
+    this.raw({ _tag: "Ping" });
+  }
+
+  private send(ws: WebSocket, text: string) {
+    ws.send(text);
+    const id = /^\{"_tag":"Request","id":"([^"]+)"/.exec(text)?.[1];
+    if (id && this.pending.get(id)?.stream) this.sentOn.set(id, this.socketId);
   }
 
   onState(fn: Listener) {
@@ -97,14 +135,14 @@ export class T3Client {
 
   private raw(msg: unknown) {
     const text = JSON.stringify(msg);
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(text);
+    if (this.ws?.readyState === WebSocket.OPEN) this.send(this.ws, text);
     else this.queue.push(text);
   }
 
   private onMessage(raw: string) {
     const data = JSON.parse(raw);
     for (const msg of Array.isArray(data) ? data : [data]) {
-      if (msg._tag === "Pong") continue;
+      if (msg._tag === "Pong") { window.clearTimeout(this.pongWait); this.pongWait = undefined; continue; }
       if (msg._tag === "Defect") {
         console.error("[t3 defect]", msg.defect);
         continue;
@@ -158,11 +196,24 @@ export class T3Client {
       this.pending.set(id, { resolve: () => resolve(), reject, onChunk: onItem, stream: true });
     });
     done.catch((e) => console.warn(`stream ${tag} ended`, e));
-    this.raw({ _tag: "Request", id, tag, payload, headers: [] });
+    const request = JSON.stringify({ _tag: "Request", id, tag, payload, headers: [] });
+    if (this.ws?.readyState === WebSocket.OPEN) this.send(this.ws, request);
+    else this.queue.push(request);
+    void done.finally(() => this.sentOn.delete(id)).catch(() => {});
     return {
       done,
+      live: () => this.pending.has(id) && this.sentOn.get(id) === this.socketId,
       cancel: () => {
-        if (this.pending.has(id)) this.raw({ _tag: "Interrupt", requestId: id });
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        // Never sent: drop it, so the server doesn't build a snapshot nobody reads.
+        if (this.queue.includes(request)) {
+          this.queue = this.queue.filter((queued) => queued !== request);
+          this.pending.delete(id);
+          pending.resolve(undefined);
+          return;
+        }
+        this.raw({ _tag: "Interrupt", requestId: id });
       },
     };
   }
@@ -230,6 +281,10 @@ export function environmentT3(environmentId?: string): T3Client {
   let client = environments.get(environmentId);
   if (!client) { client = new T3Client(environmentId); environments.set(environmentId, client); client.connect(); }
   return client;
+}
+/** Every open transport: the local one and each linked machine's. */
+export function allT3Clients(): T3Client[] {
+  return [t3, ...environments.values()];
 }
 export type ThreadTarget = { threadId: string; environmentId?: string };
 export function threadKey({ threadId, environmentId }: ThreadTarget) {

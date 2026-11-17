@@ -3,6 +3,7 @@ import http from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
+import { crc32, deflateRawSync } from 'node:zlib';
 import { ACTIVITY_SAMPLES, AVATAR_PROVIDERS, AVATAR_SAMPLES, LANDING_SAMPLES, fixtureReleases, landingData, seedActivity, seedAvatars, seedInteractions, seedLatestT3, validateScenario, FIXTURE_SPEECH_MAX_BODY } from './fixture-scenarios.mts';
 import type { FixtureInteractions, FixtureItem, FixtureModel, FixtureProject, FixtureRequest, FixtureRun, FixtureSample, FixtureThread } from './fixture-scenarios.mts';
 const require = createRequire(new URL('../server/package.json', import.meta.url));
@@ -42,6 +43,48 @@ export const SAMPLE_PDF = (() => {
   body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return Buffer.from(body, 'latin1');
 })();
+/** A minimal deflated zip, enough for the Office viewer's parser. */
+function sampleZip(files: [string, string][]) {
+  const locals: Buffer[] = [], central: Buffer[] = [];
+  let offset = 0;
+  for (const [name, text] of files) {
+    const nameBytes = Buffer.from(name), data = Buffer.from(text), packed = deflateRawSync(data), checksum = crc32(data);
+    const local = Buffer.alloc(30), entry = Buffer.alloc(46);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x0800, 6); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(checksum, 14); local.writeUInt32LE(packed.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 4); entry.writeUInt16LE(20, 6); entry.writeUInt16LE(0x0800, 8); entry.writeUInt16LE(8, 10);
+    entry.writeUInt32LE(checksum, 16); entry.writeUInt32LE(packed.length, 20); entry.writeUInt32LE(data.length, 24); entry.writeUInt16LE(nameBytes.length, 28); entry.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, packed); central.push(entry, nameBytes);
+    offset += 30 + nameBytes.length + packed.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+const OFFICE_XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const officeTypes = (main: string, type: string) => `${OFFICE_XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/${main}" ContentType="application/vnd.openxmlformats-officedocument.${type}"/></Types>`;
+const officeRels = (rels: [string, string][]) => `${OFFICE_XML}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels.map(([type, target], i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`).join('')}</Relationships>`;
+export const SAMPLE_XLSX = sampleZip([
+  ['[Content_Types].xml', officeTypes('xl/workbook.xml', 'spreadsheetml.sheet.main+xml')],
+  ['_rels/.rels', officeRels([['officeDocument', 'xl/workbook.xml']])],
+  ['xl/workbook.xml', `${OFFICE_XML}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Budget" sheetId="1" r:id="rId1"/><sheet name="Notes" sheetId="2" r:id="rId2"/></sheets></workbook>`],
+  ['xl/_rels/workbook.xml.rels', officeRels([['worksheet', 'worksheets/sheet1.xml'], ['worksheet', 'worksheets/sheet2.xml'], ['styles', 'styles.xml']])],
+  ['xl/styles.xml', `${OFFICE_XML}<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/></cellXfs></styleSheet>`],
+  ['xl/worksheets/sheet1.xml', `${OFFICE_XML}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${[['Item', 'Amount', 'Due'], ['Sample rent', 1200, 46023], ['Sample groceries', 340.5, 46030], ['Total', null, null]].map((row, r) => `<row r="${r + 1}">${row.map((value, c) => {
+    const ref = `${'ABC'[c]}${r + 1}`;
+    if (r === 3 && c === 1) return `<c r="${ref}"><f>SUM(B2:B3)</f><v>1540.5</v></c>`;
+    return value === null ? '' : typeof value === 'string' ? `<c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c>` : `<c r="${ref}"${c === 2 ? ' s="1"' : ''}><v>${value}</v></c>`;
+  }).join('')}</row>`).join('')}</sheetData></worksheet>`],
+  ['xl/worksheets/sheet2.xml', `${OFFICE_XML}<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Disposable fixture data only.</t></is></c></row></sheetData></worksheet>`],
+]);
+export const SAMPLE_DOCX = sampleZip([
+  ['[Content_Types].xml', officeTypes('word/document.xml', 'wordprocessingml.document.main+xml')],
+  ['_rels/.rels', officeRels([['officeDocument', 'word/document.xml']])],
+  ['word/document.xml', `${OFFICE_XML}<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${[
+    ['Title', 'Sample memo'], ['', 'Generic text for checking the document viewer. No user data.'], ['Heading1', 'Next steps'],
+    ['list', 'Review the sample budget'], ['list', 'Share the sample memo'], ['', 'Örnek Türkçe satır: ılık, şişe, İğne.'],
+  ].map(([style, text]) => `<w:p>${style === 'list' ? '<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' : style ? `<w:pPr><w:pStyle w:val="${style}"/></w:pPr>` : ''}<w:r><w:t>${text}</w:t></w:r></w:p>`).join('')}<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Sample Bot</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>`],
+]);
 export const samplesFor = (scenario: string): FixtureSample[] => scenario === 'landing' ? LANDING_SAMPLES : scenario === 'avatars' ? AVATAR_SAMPLES : scenario === 'activity' ? ACTIVITY_SAMPLES : SAMPLES;
 
 /** A machine the fake T3 links (T3's peer links), with threads reached only through its forwarded tools. */
@@ -96,6 +139,8 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     ['library/bars.svg', { mimeType: 'image/svg+xml', bytes: SAMPLE_BARS }],
     ['library/notes.txt', { mimeType: 'text/plain', bytes: SAMPLE_TEXT }],
     ['library/report.pdf', { mimeType: 'application/pdf', bytes: SAMPLE_PDF }],
+    ['library/budget.xlsx', { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', bytes: SAMPLE_XLSX }],
+    ['library/memo.docx', { mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', bytes: SAMPLE_DOCX }],
     ['library/audio.wav', { mimeType: 'audio/wav', bytes: (() => { const data=Buffer.alloc(44+1600);data.write('RIFF');data.writeUInt32LE(data.length-8,4);data.write('WAVEfmt ',8);data.writeUInt32LE(16,16);data.writeUInt16LE(1,20);data.writeUInt16LE(1,22);data.writeUInt32LE(8000,24);data.writeUInt32LE(16000,28);data.writeUInt16LE(2,32);data.writeUInt16LE(16,34);data.write('data',36);data.writeUInt32LE(1600,40);return data; })() }],
   ] : []);
   const items = new Map<string, FixtureItem[]>(threads.map((thread) => [thread.id, [
@@ -181,6 +226,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
     title: task.title, prompt: task.title, childThreadId: null, createdAt: STAMP, updatedAt: STAMP, startedAt: STAMP, completedAt: null,
     remoteChild: { environmentId: link.environmentId, threadId: task.threadId, label: link.label, title: task.title },
   })));
+  const serverConfig = () => ({ providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }], ...(latest ? { usageLimits: latest.usageLimits } : {}) }, ...(avatars ? AVATAR_PROVIDERS : [])], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ?? avatars ? { environment: { capabilities: (latest ?? avatars)!.capabilities, ...(latest ? { serverVersion: latest.serverVersion } : {}) } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
   const projection = (threadId: string) => ({ ...(remoteTasks(threadId).length ? { subagents: remoteTasks(threadId) } : {}), thread: threads.find((thread) => thread.id === threadId), turnItems: items.get(threadId) ?? [], messages: (items.get(threadId) ?? []).filter((item) => item.type === 'user_message').map((item) => ({ id: item.messageId ?? item.id, threadId, role: 'user', text: item.text, attachments: item.attachments ?? [], createdBy: item.createdBy, creationSource: item.creationSource })), runs: runs.get(threadId) ?? [], runtimeRequests: interactions?.requests.get(threadId) ?? [], ...(latest?.usage.get(threadId) ?? {}) });
   const chunk = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Chunk', requestId: id, values: [value] }));
   const exit = (ws: FixtureSocket, id: string, value: unknown) => ws.send(JSON.stringify({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }));
@@ -272,7 +318,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
         const result = latest.transcribe(Buffer.concat(chunks));
         return json(res, result.status, result.body);
       }
-      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId, platform: { os: 'fixture', arch: 'fixture', machine: links ? 'server' : 'laptop' }, ...(links ? { capabilities: { peerLinks: true } } : {}) });
+      if (url.pathname === '/.well-known/t3/environment') return json(res, 200, { label: 'Disposable local fixture (fake T3)', serverVersion: 'fixture', environmentId, platform: { os: 'fixture', arch: 'fixture', machine: links ? 'server' : 'laptop' }, ...(links ? { capabilities: { peerLinks: true } } : scenario === 'rooms' ? { capabilities: { freshContext: true } } : {}) });
       // T3's token exchange for a one-time pairing code; only the fixture's own code works.
       if (url.pathname === '/oauth/token' && req.method === 'POST') {
         const form = new URLSearchParams(await readText(req));
@@ -367,7 +413,9 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
           return chunk(ws, id, { kind: 'snapshot', projection: projection(payload.threadId) });
         }
         if (tag === 'peerLinks.list' && links) return exit(ws, id, { links: links.map(({ threads: _threads, tasks: _tasks, ...link }) => ({ ...link, access: 'full-access', linkedAt: STAMP, expiresAt: '2099-01-01T00:00:00.000Z', lastReachedAt: STAMP, lastError: null })) });
-        if (tag === 'server.getConfig') return exit(ws, id, { providers: [landing ? { instanceId: 'fixture', driver: 'fixture', displayName: 'Claude Code', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Opus 5.5', isDefault: true }] } : { instanceId: 'fixture', driver: 'fixture', displayName: 'Fixture provider (no inference)', enabled: true, status: 'ready', models: [{ slug: MODEL.model, name: 'Fixture idle model', isDefault: true }] }, ...(avatars ? AVATAR_PROVIDERS : [])], shellOlderSettled: true, threadFind: true, threadResumeCompletionMarker: true, ...(latest ?? avatars ? { environment: { capabilities: (latest ?? avatars)!.capabilities, ...(latest ? { serverVersion: latest.serverVersion } : {}) } } : {}), settings: { providerModelPreferences: {}, snoozePresets: [{ kind: "after", minutes: 60 }, { kind: "after", minutes: 180 }, { kind: "at", day: "tomorrow", time: "09:00" }] } });
+        if (tag === 'server.getConfig') return exit(ws, id, serverConfig());
+        // Settings › Usage watches provider limits: a snapshot, then pushes T3 never sends here.
+        if (tag === 'subscribeServerConfig') { subs.set(id, { tag }); return chunk(ws, id, { type: 'snapshot', config: serverConfig() }); }
         if (tag === 'orchestration.getThreadFamily') return exit(ws, id, { threads: threads.filter((thread) => thread.lineage.rootThreadId === threads.find((t) => t.id === payload.threadId)?.lineage.rootThreadId) });
         if (tag === 'orchestration.getArchivedShellSnapshot') return exit(ws, id, { snapshotSequence: sequence, projects, threads: threads.filter((t) => t.archivedAt) });
         if (tag === 'orchestration.getOlderSettledThreads') return exit(ws, id, { snapshotSequence: sequence, threads: threads.filter((t) => t.settledAt && !t.archivedAt && (t.settledAt < payload.before.settledAt || (t.settledAt === payload.before.settledAt && t.id > (payload.before.threadId ?? '\uffff')))).sort((a,b) => b.settledAt!.localeCompare(a.settledAt!) || a.id.localeCompare(b.id)).slice(0, payload.limit), counts: [] });
