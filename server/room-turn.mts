@@ -63,9 +63,10 @@ export function speakersFor(room: Room, message: RoomMessage, nameOf: (slug: str
 
 /** Lines the member has not seen: the room history after its last turn, newest 24. */
 export function linesFor(room: Room, member: RoomMember, history: RoomLine[] = []): string[] {
-  const since = member.lastTurnAt ? Date.parse(member.lastTurnAt) : 0;
+  const parsed = member.lastTurnAt ? Date.parse(member.lastTurnAt) : 0;
+  const since = Number.isFinite(parsed) ? parsed : 0;
   return history
-    .filter((line) => !member.lastTurnAt || (Date.parse(line.at) || 0) > since)
+    .filter((line) => !member.lastTurnAt || !Number.isFinite(parsed) || (Date.parse(line.at) || 0) > since)
     .slice(-24)
     .map(formatRoomLine);
 }
