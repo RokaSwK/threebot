@@ -33,7 +33,9 @@ export function usePendingAttachments(initial: Attachment[] = []) {
   };
 
   useEffect(() => () => {
-    for (const item of current.current) release(item.attachment);
+    const pending = current.current;
+    current.current = [];
+    for (const item of pending) release(item.attachment);
   }, []);
 
   const addFiles = async (files: FileList | File[]) => {

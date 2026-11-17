@@ -256,12 +256,19 @@ test("the draft keeps its text and its uploaded files across a remount", async (
   assert.equal(pending().length, 1, "the file survives without its blob preview");
 });
 
-test("unmounting releases blob preview URLs of pending attachments", async () => {
+test("unmounting releases ready and uploading attachment previews", async () => {
   const revoked: string[] = [];
+  let created = 0;
+  URL.createObjectURL = () => `blob:unmount-${++created}`;
   URL.revokeObjectURL = (url) => { revoked.push(url); };
   await mount();
-  await choose("shot.png");
-  assert.equal(pending().length, 1);
+  await choose("ready.png");
+  await finishUpload();
+  await choose("uploading.png");
+  assert.equal(pending().length, 2);
+  assert.deepEqual(revoked, ["blob:unmount-1"]);
   await runtime.act(async () => root.unmount());
-  assert.ok(revoked.some((url) => url.startsWith("blob:")), "object URL revoked on unmount");
+  assert.deepEqual(revoked, ["blob:unmount-1", "blob:unmount-2", "blob:unmount-3"]);
+  await finishUpload(1);
+  assert.deepEqual(revoked, ["blob:unmount-1", "blob:unmount-2", "blob:unmount-3", "blob:unmount-4"]);
 });
