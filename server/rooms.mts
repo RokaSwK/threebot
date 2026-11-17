@@ -84,6 +84,9 @@ export type RoomTurnStatus = "queued" | "running" | "done" | "stopped" | "interr
 export type RoomRun = {
   slug: string;
   runId: string | null;
+  /** The wake-up run that produced the published answer. */
+  replyRunId?: string;
+  delegationTimedOut?: boolean;
   /** The member passed `memberTimeoutMin`; its reply may still arrive, but it opens no wave. */
   late?: boolean;
   /** How this member's part of the turn ended; absent while the turn runs. */

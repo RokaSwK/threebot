@@ -472,7 +472,7 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
               const answered = run;
               // "...delegate..." scripts the shape the room has to follow: the run ends with a child
               // still out and a wake-up run, a moment later, carries the real answer.
-              const delegated = /delegate/i.test(payload.text);
+              const delegated = /The user.s message:\n[^\n]*delegate/i.test(payload.text);
               setTimeout(() => {
                 if (answered.status !== 'running') return;
                 const done = new Date().toISOString();

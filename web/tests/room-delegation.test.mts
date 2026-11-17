@@ -63,7 +63,7 @@ const agent = (status: string) => ({
 
 const members = [member("alpha", "thread-a"), member("beta", "thread-b")];
 const runs = { "run-1": run("run-1", "completed", "2026-01-01T00:00:05.000Z"), "run-2": run("run-2", "completed", "2026-01-01T00:00:31.000Z") };
-const turns = [turn([{ slug: "alpha", runId: "run-1", at: "2026-01-01T00:00:05.000Z", status: "replied", late: false }])];
+const turns = [turn([{ slug: "alpha", runId: "run-1", replyRunId: "run-2", at: "2026-01-01T00:00:05.000Z", status: "replied", late: false }])];
 const settledThread = {
   "thread-a": {
     items: {
@@ -86,7 +86,7 @@ test("roomLines withholds the progress note while the member is still working", 
     },
   };
   // The room has not closed this member's part yet: no status on the turn's run.
-  const openTurns = [turn([{ slug: "alpha", runId: "run-1", at: "2026-01-01T00:00:05.000Z" }])];
+  const openTurns = [{ ...turn([{ slug: "alpha", runId: "run-1", at: "2026-01-01T00:00:05.000Z" }]), status: "running" }];
   assert.deepEqual(roomLines(members, openTurns, threadData), []);
 });
 
@@ -111,7 +111,7 @@ test("roomLines reads the line through the wake-up run once the child finished",
   assert.equal(lines[0].text, "Informe final");
   assert.equal(lines[0].runId, "run-1", "the room's run id, not the wake-up run");
   assert.equal(lines[0].pass, false);
-  // A wake-up that only passes keeps the member's own words, so the room has a line.
+  // A wake-up that passes never promotes the acknowledgement.
   const passing = {
     "thread-a": {
       items: { ack: assistant("ack", "run-1", "En marcha"), child: child("completed", "2026-01-01T00:00:29.000Z"), note: notification("run-2"), report: assistant("report", "run-2", "(pass)") },
@@ -119,7 +119,7 @@ test("roomLines reads the line through the wake-up run once the child finished",
       subagents: { "sub-a": agent("completed") },
     },
   };
-  assert.equal(roomLines(members, turns, passing)[0].text, "En marcha");
+  assert.equal(roomLines(members, turns, passing)[0].text, "(pass)");
 });
 
 test("delegatedRows keeps the tasks with their harness and model, after the line", () => {
@@ -137,16 +137,18 @@ test("delegatedRows keeps the tasks with their harness and model, after the line
   assert.deepEqual(delegatedRows(members, turns, plain), []);
 });
 
-test("delegatedRows finds the tasks when the room recorded the wake-up run", () => {
-  // A Bot that delegated in the background: the engine registers the run that produced the line,
-  // which is the wake-up run, and the `subagent` rows live on the run that delegated.
-  const wakeTurns = [turn([{ slug: "alpha", runId: "run-2", at: "2026-01-01T00:00:31.000Z", status: "replied", late: false }])];
-  const rows = delegatedRows(members, wakeTurns, settledThread);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].runId, "run-2", "the card keeps the room's run id");
-  assert.equal(rows[0].tasks.length, 1);
-  assert.equal(rows[0].tasks[0].title, "Assessment A");
-  assert.equal(rows[0].at, "2026-01-01T00:00:31.000Z");
-  // The line is the same report either way.
-  assert.equal(roomLines(members, wakeTurns, settledThread)[0].text, "Informe final");
+test("a timed-out room part displays only a settled late report", () => {
+  const timedOut = [turn([{ slug: "alpha", runId: "run-1", status: "timeout", late: true }])];
+  const projection = settledThread["thread-a"];
+  const pending = {
+    "thread-a": {
+      ...projection,
+      items: { ack: projection.items.ack, child: child("running", null) },
+    },
+  };
+  assert.deepEqual(roomLines(members, timedOut, pending), []);
+  const lines = roomLines(members, timedOut, settledThread);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].text, "Informe final");
+  assert.equal(lines[0].late, true);
 });

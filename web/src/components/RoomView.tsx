@@ -70,20 +70,15 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
   }, [threadKey]);
 
   /** Runs the room actually recorded; a message sent directly in a member's thread stays out. */
-  const knownRuns = useMemo(
-    () => new Set((room?.turns ?? []).flatMap((turn) => (turn.runs ?? []).flatMap((run) => (run.runId ? [run.runId] : [])))),
-    [room?.turns],
-  );
 
   const replies = useMemo<Reply[]>(() => roomLines(historyMembers, room?.turns ?? [], threadData), [historyMembers, room?.turns, threadData]);
-
-  // A member can stop mid-turn to ask for approval, a question or a secret. Those cards live in its
-  // thread; the room shows the pending ones inline so the user never has to leave the room to
-  // unblock a member. Resolved cards stay out: the member's reply is the room line.
+  const delegated = useMemo(() => delegatedRows(historyMembers, room?.turns ?? [], threadData), [historyMembers, room?.turns, threadData]);
+  const knownRuns = useMemo(
+    () => new Set([...(room?.turns ?? []).flatMap((turn) => turn.runs.flatMap((run) => run.runId ? [run.runId] : [])),
+      ...delegated.flatMap((row) => row.chain.runIds)]),
+    [room?.turns, delegated],
+  );
   const cards = useMemo(() => roomCards(room, threadData, bots, knownRuns), [room, threadData, bots, knownRuns]);
-
-  /** Members whose runs delegated work: the card after their line, and why they are still working. */
-  const delegated = useMemo<DelegatedRow[]>(() => delegatedRows(historyMembers, room?.turns ?? [], threadData), [historyMembers, room?.turns, threadData]);
 
   const nameOf = useMemo(() => {
     const names = new Map(historyMembers.map((member) => [member.slug, member.name]));
@@ -100,31 +95,28 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
       for (const run of failedRuns) {
         rows.push({
           kind: "event",
-          id: `event:${turn.id}:failed:${run.slug}`,
+          id: `event:${turn.id}:failed:${run.runId ?? run.slug}`,
           at: run.at ?? turn.at,
           text: `${nameOf(run.slug)} couldn't answer${run.error ? ` — ${run.error}` : ""}`,
           tone: "danger",
         });
       }
       for (const run of (turn.runs ?? []).filter((candidate) => candidate.status === "timeout")) {
-        // A member past its limit with children still out is working, not missing: say so.
-        const chain = run.runId ? delegated.find((row) => row.runId === run.runId)?.chain ?? null : null;
-        const working = !!chain && chain.children.length > 0 && !chain.settled;
         rows.push({
           kind: "event",
-          id: `event:${turn.id}:late:${run.slug}`,
+          id: `event:${turn.id}:late:${run.runId ?? run.slug}`,
           at: run.at ?? turn.at,
-          text: working && chain
-            ? `${nameOf(run.slug)} is still working — ${chain.children.length} delegated ${chain.children.length === 1 ? "task" : "tasks"}`
+          text: run.delegationTimedOut
+            ? `${nameOf(run.slug)} timed out waiting for delegated work`
             : `${nameOf(run.slug)} didn't answer in time`,
         });
       }
-      if (turn.status === "failed" && failedRuns.length === 0) {
+      if (turn.status === "failed" && !turn.runs.some((run) => run.status === "failed" || run.status === "timeout")) {
         rows.push({ kind: "event", id: `event:${turn.id}:failed`, at: turn.at, text: "The room failed", tone: "danger" });
       }
     }
     return rows;
-  }, [room?.turns, nameOf, delegated]);
+  }, [room?.turns, nameOf]);
 
   const timeline = useMemo<TimelineRow[]>(() => {
     const rows: TimelineRow[] = [

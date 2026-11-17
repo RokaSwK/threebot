@@ -20,7 +20,7 @@ function fakeRuntime() {
   const launches: any[] = [];
   const runs = new Map<string, { messageId: string; runId: string; status: string; text: string }>();
   /** Runs that arrive after the dispatched one: the wake-ups a delegated child's completion starts. */
-  const extraRuns = new Map<string, { id: string; status: string; userMessageId: string }[]>();
+  const extraRuns = new Map<string, { id: string; status: string; userMessageId: string; ordinal: number }[]>();
   /** Every completed reply per thread, oldest first: the room reads them as history. */
   const items = new Map<string, any[]>();
   let counter = 0;
@@ -99,7 +99,7 @@ function fakeRuntime() {
           { id: `note-${wakeRunId}`, runId: wakeRunId, type: "notification", status: "completed", source: { kind: "delegated_task", childThreadId }, completedAt },
           { id: `item-${wakeRunId}`, runId: wakeRunId, type: "assistant_message", status: "completed", text, completedAt },
         ]));
-      extraRuns.set(threadId, [...(extraRuns.get(threadId) ?? []), { id: wakeRunId, status: "completed", userMessageId: `wake-message-${wakes}` }]);
+      extraRuns.set(threadId, [...(extraRuns.get(threadId) ?? []), { id: wakeRunId, status: "completed", userMessageId: `wake-message-${wakes}`, ordinal: wakes + 1 }]);
     },
     fail(threadId: string) {
       const run = runs.get(threadId);
@@ -307,17 +307,21 @@ test("a member that delegated is answered when its children finish, not when its
   await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
   // The run ends while its child is still out: a progress note, not the answer.
   runtime.delegate("thread-alpha", "child-a", "Assessment A");
+  runtime.delegate("thread-alpha", "child-b", "Assessment B");
   runtime.complete("thread-alpha", "En marcha, les aviso");
   await new Promise((resolve) => setTimeout(resolve, 40));
   const midway = (await rooms.get(room.id))!;
   assert.equal(midway.turns[0].status, "running", "the room keeps the turn open while the child runs");
   // The child finishes and T3 wakes the thread with the real answer.
+  runtime.wake("thread-alpha", "Primer resultado", "child-b");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await rooms.get(room.id))!.turns[0].status, "running");
   runtime.wake("thread-alpha", "Informe final del mapa", "child-a");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to close");
   const stored = (await rooms.get(room.id))!;
-  assert.deepEqual(stored.turns[0].runs.map(({ slug, runId, status }) => ({ slug, runId, status })), [{ slug: "alpha", runId: "wake-1", status: "replied" }], "the line is the run the child woke");
+  assert.deepEqual(stored.turns[0].runs.map(({ slug, runId, replyRunId, status }) => ({ slug, runId, replyRunId, status })), [{ slug: "alpha", runId: "run-1", replyRunId: "wake-2", status: "replied" }], "the line is the run the child woke");
   const projection = await runtime.call("orchestration.getThreadProjection", { threadId: "thread-alpha" });
-  const line = (projection.turnItems ?? []).filter((item: any) => item.runId === "wake-1" && item.type === "assistant_message").at(-1);
+  const line = (projection.turnItems ?? []).filter((item: any) => item.runId === "wake-2" && item.type === "assistant_message").at(-1);
   assert.equal(line.text, "Informe final del mapa");
   await done();
 });
@@ -363,8 +367,8 @@ test("a member that delegated: the progress note never becomes the room line", a
   runtime.wake("thread-alpha", "(pass)", "child-a");
   await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "the turn to close");
   const stored = (await rooms.get(room.id))!;
-  assert.equal(stored.turns[0].runs[0].runId, "run-1", "a wake-up that only passes keeps the member's own words");
-  assert.equal(stored.turns[0].runs[0].status, "replied");
+  assert.equal(stored.turns[0].runs[0].runId, "run-1", "the dispatch run stays the room part identity");
+  assert.equal(stored.turns[0].runs[0].status, "passed");
   await done();
 });
 
