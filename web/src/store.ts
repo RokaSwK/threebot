@@ -19,6 +19,9 @@ export type ThreadData = {
   requests: Record<string, RuntimeRequest>;
   subagents: Record<string, Subagent>;
   loaded: boolean;
+  /** Bounded snapshots hold only recent rows; older ones load page by page from this cursor. */
+  historyCursor?: string | null;
+  hasMoreHistory?: boolean;
 };
 
 export type MainBotIntent = { kind: "replace" } | { kind: "hide"; slug: string } | { kind: "delete"; slug: string };
@@ -432,7 +435,7 @@ export function requestNotificationPermission() {
 }
 
 // ---------- thread subscriptions ----------
-const threadSubs = new Map<string, { handle: StreamHandle; refs: number }>();
+const threadSubs = new Map<string, { handle: StreamHandle; refs: number; bounded: boolean }>();
 const environmentReconnects = new Set<string>();
 
 function emptyThread(): ThreadData {
@@ -448,10 +451,20 @@ function scopedShell(thread: ThreadShell, environmentId?: string): ThreadShell {
   const key = (id: string) => threadKey({ threadId: id, environmentId });
   return { ...thread, id: key(thread.id), environmentId, lineage: { ...thread.lineage, parentThreadId: thread.lineage.parentThreadId ? key(thread.lineage.parentThreadId) : null, rootThreadId: key(thread.lineage.rootThreadId) } };
 }
-function openThreadStream(threadId: string): StreamHandle {
+/** The last stream sequence seen per thread, so reopening resumes from it instead of taking a new snapshot. */
+const threadSequences = new Map<string, number>();
+/** Threads whose received rows are their whole history (a full snapshot, or every older page loaded). */
+const completeThreads = new Set<string>();
+/** Bumped on every snapshot, so a history page requested against an older snapshot is dropped. */
+const snapshotGenerations = new Map<string, number>();
+
+/** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
+function openThreadStream(threadId: string, bounded = true): StreamHandle {
   const target = threadTarget(threadId);
   if (target.environmentId) familyThreadIds.add(threadId);
-  return threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
+  // acceptBoundedSnapshot: a long thread opens with its recent rows only (older T3 ignores it and sends everything).
+  const afterSequence = bounded || completeThreads.has(threadId) ? threadSequences.get(threadId) : undefined;
+  return threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
     if (it.kind === "snapshot") {
       const p = it.projection;
       if (p.thread) p.thread = scopedShell(p.thread, target.environmentId);
@@ -459,17 +472,25 @@ function openThreadStream(threadId: string): StreamHandle {
       const items: Record<string, TurnItem> = {};
       for (const v of p.visibleTurnItems ?? []) items[v.item.id] = v.item;
       if (!p.visibleTurnItems?.length) for (const i of p.turnItems ?? []) items[i.id] = i;
+      // Run controls read interrupt requests, which T3 may keep only in turnItems.
+      else for (const i of p.turnItems ?? []) if (i.type === "run_interrupt_request" && !items[i.id]) items[i.id] = i;
       patchThread(threadId, () => ({
         items,
         runs: Object.fromEntries((p.runs ?? []).map((r: Run) => [r.id, r])),
         requests: Object.fromEntries((p.runtimeRequests ?? []).map((r: RuntimeRequest) => [r.id, r])),
         subagents: Object.fromEntries((p.subagents ?? []).map((agent: Subagent) => [agent.id, agent])),
         loaded: true,
+        historyCursor: it.hasMoreHistory ? it.historyCursor ?? null : null,
+        hasMoreHistory: it.hasMoreHistory === true && typeof it.historyCursor === "string",
       }));
+      if (typeof it.snapshotSequence === "number") threadSequences.set(threadId, it.snapshotSequence);
+      snapshotGenerations.set(threadId, (snapshotGenerations.get(threadId) ?? 0) + 1);
+      if (it.hasMoreHistory === true) completeThreads.delete(threadId); else completeThreads.add(threadId);
       if (p.subagents?.length) void loadThreadFamily(threadId);
     } else if (it.kind === "synchronized") {
       patchThread(threadId, (d) => ({ ...d, loaded: true }));
     } else if (it.kind === "event") {
+      if (typeof it.sequence === "number" && it.sequence > (threadSequences.get(threadId) ?? -1)) threadSequences.set(threadId, it.sequence);
       const ev = it.event;
       if (ev.type === "turn-item.updated") patchThread(threadId, (d) => ({ ...d, items: { ...d.items, [ev.payload.id]: ev.payload } }));
       else if (ev.type === "run.created" || ev.type === "run.updated") patchThread(threadId, (d) => ({ ...d, runs: { ...d.runs, [ev.payload.id]: ev.payload } }));
@@ -484,7 +505,30 @@ function openThreadStream(threadId: string): StreamHandle {
   });
 }
 
-export function watchThread(threadId: string) {
+const olderLoads = new Set<string>();
+/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
+export async function loadOlderMessages(threadId: string): Promise<boolean> {
+  const data = get().threadData[threadId];
+  if (!data?.hasMoreHistory || !data.historyCursor || olderLoads.has(threadId)) return false;
+  olderLoads.add(threadId);
+  const generation = snapshotGenerations.get(threadId);
+  try {
+    const target = threadTarget(threadId);
+    const page = await environmentHttp<{ items?: { item: TurnItem }[]; nextCursor?: string | null; hasMoreHistory?: boolean }>(target.environmentId, `/api/orchestration/threads/${encodeURIComponent(target.threadId)}/history?cursor=${encodeURIComponent(data.historyCursor)}`);
+    if (snapshotGenerations.get(threadId) !== generation) return false;
+    const older = Object.fromEntries((page.items ?? []).map(({ item }) => [item.id, item]));
+    if (page.hasMoreHistory !== true) completeThreads.add(threadId);
+    patchThread(threadId, (d) => ({ ...d, items: { ...older, ...d.items }, historyCursor: page.nextCursor ?? null, hasMoreHistory: page.hasMoreHistory === true && typeof page.nextCursor === "string" }));
+    return Object.keys(older).length > 0;
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "Couldn't load earlier messages");
+    return false;
+  } finally {
+    olderLoads.delete(threadId);
+  }
+}
+
+export function watchThread(threadId: string, bounded = true) {
   const existing = threadSubs.get(threadId);
   if (existing) existing.refs++;
   else {
@@ -493,11 +537,11 @@ export function watchThread(threadId: string) {
       environmentReconnects.add(environmentId);
       threadClient(threadId).onReconnect(() => {
         for (const [key, sub] of threadSubs) if (threadTarget(key).environmentId === environmentId && !sub.handle.live()) {
-          sub.handle.cancel(); sub.handle = subscribedThread(key);
+          sub.handle.cancel(); sub.handle = subscribedThread(key, sub.bounded);
         }
       });
     }
-    threadSubs.set(threadId, { handle: subscribedThread(threadId), refs: 1 });
+    threadSubs.set(threadId, { handle: subscribedThread(threadId, bounded), refs: 1, bounded });
   }
   return () => {
     const sub = threadSubs.get(threadId);
@@ -509,8 +553,8 @@ export function watchThread(threadId: string) {
   };
 }
 
-function subscribedThread(threadId: string) {
-  const handle = openThreadStream(threadId);
+function subscribedThread(threadId: string, bounded: boolean) {
+  const handle = openThreadStream(threadId, bounded);
   void handle.done.catch((error: unknown) => {
     patchThread(threadId, (data) => ({ ...data, loaded: true }));
     toast(error instanceof Error ? error.message : "Couldn't read this conversation");
@@ -522,7 +566,7 @@ function resubscribeThreads() {
   for (const [threadId, sub] of threadSubs) {
     if (threadTarget(threadId).environmentId || sub.handle.live()) continue;
     sub.handle.cancel();
-    sub.handle = subscribedThread(threadId);
+    sub.handle = subscribedThread(threadId, sub.bounded);
   }
 }
 
@@ -1387,6 +1431,11 @@ export async function navigateSearchHit(bot: Bot, hit: { threadId: string; messa
   }
   if (!entryId) { toast("Opened the conversation; this server did not identify the matching entry"); return; }
   const id = entryId;
+  // A bounded thread may not hold the match yet: page older rows in until it does or history ends.
+  for (let wait = 0; wait < 100 && !get().threadData[hit.threadId]?.loaded; wait++) await new Promise((resolve) => setTimeout(resolve, 100));
+  for (let page = 0; page < 50 && current() && !get().threadData[hit.threadId]?.items[id] && get().threadData[hit.threadId]?.hasMoreHistory; page++) {
+    if (!(await loadOlderMessages(hit.threadId))) break;
+  }
   const observer = new MutationObserver(reveal);
   const timer = setTimeout(() => { observer.disconnect(); toast("Opened the conversation; the matching entry could not be displayed"); }, 10000);
   function reveal() {

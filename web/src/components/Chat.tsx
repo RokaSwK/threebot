@@ -28,10 +28,10 @@ import { startLiveDictation, type LiveDictation } from "../lib/cloudLive";
 import { isExecutorUrl } from "../lib/executor";
 import { IconButton, Spinner } from "./ui";
 import { ActivityAvatar, useReportLocalActivity } from "./ActivityAvatar";
-import { canStartFresh, openDialog, botStatus, conversationStatus, loadThreadMeta, selectThread, sendMessage, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
+import { canStartFresh, openDialog, botStatus, conversationStatus, loadOlderMessages, loadThreadMeta, selectThread, sendMessage, setDetailsOpen, startSideChat, toast, useApp, useProjectsOn, watchThread } from "../store";
 import { threadKey, threadTarget } from "../lib/t3";
 import { MachineBadge } from "./MachineBadge";
-import { supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
+import { loadedRunFloor, runOrdinal, supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
 import { findTidyTask, readTidyReport, type TidyReport } from "../lib/memoryTidy";
@@ -66,9 +66,15 @@ const ConversationWork = memo(function ConversationWork({ threadId, readOnly }: 
   </>;
 });
 
-const ArtifactPlan = memo(function ArtifactPlan({ threadId, plan }: { threadId: string; plan: Parameters<typeof PlanMessage>[0]["plan"] }) {
+const ArtifactPlan = memo(function ArtifactPlan({ threadId, plan }: { threadId: string; plan: Parameters<typeof PlanMessage>[0]["plan"] & { runId?: string } }) {
   const inTranscript = useApp(s => Object.values(s.threadData[threadId]?.items ?? {}).some(item => (item.type === "todo_list" || item.type === "proposed_plan") && item.planId === plan.id));
-  return inTranscript ? null : <PlanMessage plan={plan} />;
+  // A plan from a run older than the loaded rows belongs to history not shown yet.
+  const beforeLoaded = useApp(s => {
+    const data = s.threadData[threadId];
+    const floor = data ? loadedRunFloor(Object.values(data.items), data.runs, data.hasMoreHistory === true) : null;
+    return floor !== null && (runOrdinal(plan.runId, data?.runs) ?? Infinity) < floor;
+  });
+  return inTranscript || beforeLoaded ? null : <PlanMessage plan={plan} />;
 });
 
 function StopAllButton({ threadId }: { threadId: string }) {
@@ -114,7 +120,10 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
     return () => document.removeEventListener("visibilitychange", refresh);
   }, [threadId]);
 
-  const items = useMemo(() => supplementSubagents(Object.values(data?.items ?? {}), Object.values(data?.subagents ?? {}), threadId ?? ""), [data?.items, data?.subagents, threadId]);
+  const items = useMemo(() => {
+    const loaded = Object.values(data?.items ?? {});
+    return supplementSubagents(loaded, Object.values(data?.subagents ?? {}), threadId ?? "", loadedRunFloor(loaded, data?.runs ?? {}, data?.hasMoreHistory === true));
+  }, [data?.items, data?.subagents, data?.runs, data?.hasMoreHistory, threadId]);
   const providers = useApp((s) => s.providers);
   const sideChat = useApp((s) => s.sideChat);
   const runs = useMemo(() => Object.values(data?.runs ?? {}), [data?.runs]);
@@ -137,6 +146,16 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const status = isChild && threadId ? conversationStatus(threadId) : botStatus(bot);
 
   const { scroller, showJump, onScrollCapture, onUserScrollIntent, visibleEntries, hiddenCount, loadEarlier } = useChatScroll({ threadKey: threadId ?? `bot:${bot.slug}`, loaded: data?.loaded === true, entries });
+  // Older rows of a bounded thread come from T3 page by page; reveal them once they've rendered as hidden entries.
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [revealOlder, setRevealOlder] = useState(false);
+  useEffect(() => { if (revealOlder && hiddenCount > 0) { setRevealOlder(false); loadEarlier(); } }, [revealOlder, hiddenCount, loadEarlier]);
+  const showEarlier = () => {
+    if (hiddenCount > 0) return loadEarlier();
+    if (!threadId || olderLoading) return;
+    setOlderLoading(true);
+    void loadOlderMessages(threadId).then((added) => setRevealOlder(added)).finally(() => setOlderLoading(false));
+  };
   const workspace = useMemo(() => ({ workspaceRoot: bot.workspaceRoot, threadId, openFile: setOpenFile }), [bot.workspaceRoot, threadId]);
   // Ask in the conversation on screen (a side chat or child thread, not always the main one); a failed send must not vanish with the closed viewer.
   const askAboutFile = useCallback((fileName: string, text: string, path: string | null = null) => {
@@ -196,7 +215,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {greeting && !embedded && (
             <BotBubble text={`Hey${settings?.userName ? ` ${settings.userName}` : ""}, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?`} />
           )}
-          {hiddenCount > 0 && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover" onClick={loadEarlier}>Load earlier messages</button>}
+          {(hiddenCount > 0 || data?.hasMoreHistory) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
               <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />

@@ -12,12 +12,12 @@ const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins:
   load: id => id === '\0thread-state' ? `export * from ${JSON.stringify(src + 'store.ts')}; export { t3 } from ${JSON.stringify(src + 'lib/t3.ts')}; export { api } from ${JSON.stringify(src + 'lib/api.ts')};` : undefined,
 }], ssr: { noExternal: true }, build: { ssr: 'virtual:thread-state', write: false } });
 const entry = entryChunk(bundle);
-const { boot, useApp, t3, api, loadThreadFamily, watchThread, conversationStatus, botStatus, botThreadStatus } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
-const streams = new Map(); let reconnect;
+const { boot, useApp, t3, api, loadThreadFamily, loadOlderMessages, watchThread, conversationStatus, botStatus, botThreadStatus } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
+const streams = new Map(); const payloads = new Map(); let reconnect;
 t3.onState = () => () => {};
 t3.onReconnect = fn => { reconnect = fn; return () => {}; };
 t3.connect = () => {};
-t3.stream = (tag, payload, receive) => { streams.set(tag, receive); return { cancel() {}, done: new Promise(() => {}) }; };
+t3.stream = (tag, payload, receive) => { streams.set(tag, receive); payloads.set(tag, payload); return { cancel() {}, done: new Promise(() => {}), live: () => false }; };
 t3.call = async tag => tag === 'server.getConfig' ? { providers: [] } : { threads: [] };
 api.session = async () => ({ authenticated: true }); api.config = async () => ({}); api.settings = async () => ({}); api.bots = async () => []; api.botIdentities = async () => [];
 globalThis.fetch = async () => Response.json([]);
@@ -91,4 +91,48 @@ test('with Beta → Settle Bot threads on, Details reads a settled main thread a
   assert.equal(botThreadStatus({ mainThreadId: 'other' }, 'root'), 'completed');
   useApp.setState({ settings: null as never });
   assert.equal(botThreadStatus({ mainThreadId: 'root' }, 'root'), 'completed');
+});
+
+test('a long thread opens bounded, resumes from its last sequence, and loads older rows by cursor', async () => {
+  useApp.setState({ threads: { root } });
+  let stop = watchThread('root');
+  assert.equal(payloads.get('orchestration.subscribeThread').acceptBoundedSnapshot, true);
+  assert.equal(payloads.get('orchestration.subscribeThread').afterSequence, undefined, 'a first open takes a snapshot');
+  const item = (id, text) => ({ id, type: 'assistant_message', text });
+  streams.get('orchestration.subscribeThread')({ kind: 'snapshot', snapshotSequence: 10, historyCursor: 'c1', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [{ item: item('new', 'recent') }], runs: [], subagents: [] } });
+  assert.deepEqual([useApp.getState().threadData.root.hasMoreHistory, useApp.getState().threadData.root.historyCursor], [true, 'c1']);
+  streams.get('orchestration.subscribeThread')({ kind: 'event', sequence: 12, event: { type: 'turn-item.updated', payload: item('newer', 'live') } });
+  stop();
+  stop = watchThread('root');
+  assert.equal(payloads.get('orchestration.subscribeThread').afterSequence, 12, 'reopening replays events after the last one seen');
+  const requested = [];
+  globalThis.fetch = async (url) => { requested.push(String(url)); return Response.json({ items: [{ item: item('old', 'older') }], nextCursor: null, hasMoreHistory: false }); };
+  assert.equal(await loadOlderMessages('root'), true);
+  assert.match(requested[0], /\/t3\/api\/orchestration\/threads\/root\/history\?cursor=c1$/);
+  const data = useApp.getState().threadData.root;
+  assert.deepEqual(Object.keys(data.items).sort(), ['new', 'newer', 'old']);
+  assert.equal(data.hasMoreHistory, false);
+  assert.equal(await loadOlderMessages('root'), false, 'nothing more to load');
+  globalThis.fetch = async () => Response.json([]);
+  stop();
+});
+
+test('rooms read whole histories, and a history page from an older snapshot is dropped', async () => {
+  useApp.setState({ threads: { root } });
+  const stop = watchThread('room-member', false);
+  assert.equal(payloads.get('orchestration.subscribeThread').acceptBoundedSnapshot, undefined);
+  stop();
+  const stopRoot = watchThread('root');
+  const receive = streams.get('orchestration.subscribeThread');
+  receive({ kind: 'snapshot', snapshotSequence: 20, historyCursor: 'c2', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [{ item: { id: 'x', type: 'assistant_message', text: 'x' } }], turnItems: [{ id: 'stop', type: 'run_interrupt_request' }], runs: [], subagents: [] } });
+  assert.ok(useApp.getState().threadData.root.items.stop, 'interrupt requests kept only in turnItems survive');
+  let answer;
+  globalThis.fetch = () => new Promise<Response>((resolve) => { answer = resolve; });
+  const pending = loadOlderMessages('root');
+  receive({ kind: 'snapshot', snapshotSequence: 30, historyCursor: 'c3', hasMoreHistory: true, projection: { thread: root, visibleTurnItems: [], runs: [], subagents: [] } });
+  answer(Response.json({ items: [{ item: { id: 'stale', type: 'assistant_message', text: 's' } }], nextCursor: null, hasMoreHistory: false }));
+  assert.equal(await pending, false);
+  assert.equal(useApp.getState().threadData.root.historyCursor, 'c3', 'the newer snapshot keeps its cursor');
+  globalThis.fetch = async () => Response.json([]);
+  stopRoot();
 });
