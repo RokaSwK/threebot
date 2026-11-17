@@ -1,6 +1,5 @@
 import { isRecord, providerRecords } from "./providerData";
 import { apiRequest } from "./api";
-import { t3 } from "./t3";
 
 export type UsageWindow = { id: string; label: string; percent: number; resetsAt: string | null };
 export type ProviderUsage = { id: string; name: string; kind: string; windows: UsageWindow[]; checkedAt: string | null; unavailable: boolean; resetCredits: number | null; externalUrl: string | null };
@@ -32,30 +31,10 @@ export const peakUsage = (providers: ProviderUsage[]) => {
   return percents.length ? Math.round(Math.max(...percents)) : null;
 };
 
-export type UsageCost = { provider: string; cost: number; tokens: number; unpricedRecords: number };
-export function parseUsageSummary(value: unknown): UsageCost[] {
-  if (!isRecord(value) || typeof value.contractVersion !== "number" || !Array.isArray(value.buckets)) throw new Error("This server's usage summary format is unsupported.");
-  const totals = new Map<string, UsageCost>();
-  for (const bucket of value.buckets) {
-    if (!isRecord(bucket) || typeof bucket.provider !== "string" || typeof bucket.costUsd !== "number" || !Number.isFinite(bucket.costUsd) || !isRecord(bucket.totals)) continue;
-    const tokens = [bucket.totals.uncachedInputTokens, bucket.totals.cachedInputTokens, bucket.totals.cacheCreationTokens, bucket.totals.outputTokens];
-    if (!tokens.every((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0)) continue;
-    const current = totals.get(bucket.provider) ?? { provider: bucket.provider, cost: 0, tokens: 0, unpricedRecords: 0 };
-    current.cost += bucket.costUsd; current.tokens += tokens.reduce((sum, n) => sum + n, 0); current.unpricedRecords += typeof bucket.unpricedRecords === "number" ? bucket.unpricedRecords : 0;
-    totals.set(bucket.provider, current);
-  }
-  return [...totals.values()];
-}
-export function usageRange(now = new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {
-  const day = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
-  return { sinceDay: day(new Date(now.getTime() - 6 * 86400000)), untilDay: day(now), timeZone };
-}
-export const readUsageSummary = (range: ReturnType<typeof usageRange>) => t3.call<unknown>("server.getUsageSummary", range).then(parseUsageSummary);
-
 /** One aggregated ledger row, as the gateway's /api/usage/bots returns it. */
 export type UsageRow = { day: string; bot: string; source: "you" | "routine" | "bot"; model: string; input: number; cached: number; cacheWrite: number; output: number; turns: number };
 export type BotUsage = { since: string; until: string; timeZone: string; ledgerSince: string; days: string[]; rows: UsageRow[] };
-export type UsageAccount = { account: string; input: number; cached: number; cacheWrite: number; output: number; costUsd: number };
+export type UsageAccount = { account: string; input: number; cached: number; cacheWrite: number; output: number; costUsd: number; unpricedRecords: number };
 export type UsageAccounts = { since: string; until: string; timeZone: string; accounts: UsageAccount[] };
 export const readBotUsage = (days: 7 | 30) => apiRequest<BotUsage>(`/api/usage/bots?days=${days}`);
 export const readUsageAccounts = (days: 7 | 30) => apiRequest<UsageAccounts>(`/api/usage/accounts?days=${days}`);

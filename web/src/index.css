@@ -568,6 +568,13 @@ button {
 .usage-tip .usage-sq { width: 8px; height: 8px; margin-top: 0; }
 .usage-empty { color: var(--fg-muted); font-size: 13.5px; }
 .usage-accounts { color: var(--fg-muted); font-size: 12.5px; margin: 16px 0 0; border-top: 1px solid var(--border); padding-top: 12px; }
+.usage-notes { margin: 10px 2px 0; color: var(--fg-muted); font-size: 12.5px; line-height: 18px; }
+.usage-notes p { margin: 2px 0; display: flex; flex-wrap: wrap; gap: 0 6px; }
+.usage-notes p > * + *::before { content: "·"; display: inline-block; margin-right: 6px; color: var(--fg-faint); text-decoration: none; }
+.usage-notes a { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
+.usage-acct { display: grid; grid-template-columns: minmax(0, 1fr) auto 72px; gap: 12px; align-items: baseline; padding: 6px 0; }
+.usage-acct .usage-vals { text-align: right; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.usage-acct + .usage-acct { border-top: 1px solid var(--border); }
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) { .usage-legend { grid-template-columns: minmax(0, 1fr); } .usage-prov { grid-template-columns: 26px minmax(0, 1fr) 44px; } .usage-prov .usage-bar { grid-column: 2 / 4; grid-row: 2; } }
 .skills-search { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 24px; background: var(--bg-card); color: var(--fg-muted); margin-bottom: 14px; }
 .skills-search input { min-width: 0; flex: 1; outline: none; background: transparent; font-size: 14px; }

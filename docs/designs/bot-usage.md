@@ -37,10 +37,15 @@ the page.
   - Totals cover the time since the ledger started; the page says so until
     it has 7 days.
 - **Account totals:** T3's `server.getUsageSummary` counts every transcript on
-  the machine per provider and model. The page shows it as one line ("Bots:
-  30M of 410M tokens on this account this week") so Bot use can be compared
-  with all use. Transcript paths are mapped to provider names on the server
-  and never sent to the browser.
+  the machine per provider and model. It replaces the page's earlier
+  "Estimated token cost" section, which asked T3 from the browser: the page
+  now has one "All use on this computer" card with tokens and T3's estimated
+  cost per account, and a line comparing Bot use with all use ("Bots used 30M
+  of 410M tokens"). Transcript paths are mapped to account names on the
+  server and never sent to the browser.
+- **Limits details:** providers without limits, reset credits, the provider's
+  "Manage usage" link and when the limits were last checked stay under the
+  limit cards, as before.
 
 ## API
 
@@ -66,8 +71,7 @@ The browser groups rows by Bot, source or model.
 
 ## Not in v1
 
-- Cost per Bot (T3 prices per provider and model, not per thread). The
-  estimated total cost appears in the total's tooltip when T3 allows it.
+- Cost per Bot (T3 prices per provider and model, not per thread).
 - History before the ledger started.
 - A project filter in T3's usage summary (would remove the ledger; a T3
   change).

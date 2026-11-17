@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { watchProviderData } from "../lib/providerData";
-import { parseProviderUsage, peakUsage, resetsIn, limitGroups, groupUsage, totalIn, formatTokens, readBotUsage, readUsageAccounts, type BotUsage, type UsageAccounts, type ProviderUsage, type UsageLimitCard, type UsageSeries } from "../lib/usageApi";
+import { parseProviderUsage, peakUsage, resetsIn, limitGroups, groupUsage, totalIn, formatTokens, readBotUsage, readUsageAccounts, type BotUsage, type UsageAccount, type UsageAccounts, type ProviderUsage, type UsageLimitCard, type UsageSeries } from "../lib/usageApi";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Pill, Spinner } from "./ui";
 import { useApp } from "../store";
@@ -42,11 +42,45 @@ function LimitCard({ card }: { card: UsageLimitCard }) {
       const warn = row.percent >= 80;
       return <div className="usage-prov" key={`${row.provider}:${index}`}>
         <div className="usage-tile" aria-hidden="true"><ProviderInstanceIcon driver={row.kind} displayName={row.provider} iconClassName="size-4" /></div>
-        <div className="usage-who"><div className="usage-name">{row.provider}</div>{row.resetsAt && <div className="usage-reset">{resetsIn(row.resetsAt)}</div>}</div>
+        <div className="usage-who"><div className="usage-name" title={row.provider}>{row.provider}</div>{row.resetsAt && <div className="usage-reset">{resetsIn(row.resetsAt)}</div>}</div>
         <div className={`usage-bar${warn ? " usage-bar-warn" : ""}`} role="meter" aria-label={`${row.provider} ${card.title}`} aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.min(100, Math.max(1, percent))}%` }} /></div>
         <div className="usage-pct">{percent}%</div>
       </div>;
     })}
+  </section>;
+}
+
+/** What the cards can't show: providers without limits, reset credits, where to manage usage, and how fresh the limits are. */
+function LimitNotes({ providers }: { providers: ProviderUsage[] }) {
+  const notes = providers.filter((p) => !p.windows.length || p.resetCredits !== null || p.externalUrl);
+  const checked = providers.map((p) => p.checkedAt).filter((at): at is string => !!at && Number.isFinite(Date.parse(at))).sort()[0];
+  if (!notes.length && !checked) return null;
+  return <div className="usage-notes">
+    {notes.map((p) => <p key={p.id}>
+      <span>{p.name}</span>
+      {!p.windows.length && <span>{p.unavailable ? "doesn't report usage limits" : "no usage windows reported"}</span>}
+      {p.resetCredits !== null && <span>{p.resetCredits} reset credit{p.resetCredits === 1 ? "" : "s"} available</span>}
+      {p.externalUrl && <a href={p.externalUrl} target="_blank" rel="noreferrer">Manage usage ↗</a>}
+    </p>)}
+    {checked && <p>Updated {new Date(checked).toLocaleString()}</p>}
+  </div>;
+}
+
+/** T3's totals for every transcript on the computer, per account, so Bot use can be read against all use. */
+function AccountTotals({ accounts, botTokens }: { accounts: UsageAccounts; botTokens: number }) {
+  const tokens = (a: UsageAccount) => a.input + a.cached + a.cacheWrite + a.output;
+  const rows = [...accounts.accounts].sort((a, b) => tokens(b) - tokens(a));
+  const all = rows.reduce((sum, a) => sum + tokens(a), 0);
+  const unpriced = rows.reduce((sum, a) => sum + a.unpricedRecords, 0);
+  return <section className="usage-card">
+    {!rows.length ? <p className="usage-empty">No usage records in this period.</p> : <>
+      {rows.map((a) => <div className="usage-acct" key={a.account}>
+        <span className="usage-name">{a.account}</span>
+        <span className="usage-vals">{formatTokens(tokens(a))} tokens</span>
+        <span className="usage-vals">≈ ${a.costUsd.toFixed(2)}</span>
+      </div>)}
+      <p className="usage-accounts">Bots used {formatTokens(botTokens)} of {formatTokens(all)} tokens. Cost is T3's estimate{unpriced ? `; ${unpriced} record${unpriced === 1 ? " has" : "s have"} no price` : ""}. Limits and cost are measured separately.</p>
+    </>}
   </section>;
 }
 
@@ -68,7 +102,8 @@ function UsageChart({ series, days }: { series: UsageSeries[]; days: string[] })
   const max = Math.max(step, Math.ceil(peak / step) * step);
   const x = (i: number) => L + ((W - L - R) * (i + 0.5)) / days.length;
   const y = (v: number) => H - B - (v / max) * (H - B - T);
-  const every = days.length > 10 ? 5 : 1;
+  // A day label is about 50px wide: label every day when they fit, else every few (Nov 11, Nov 16, …).
+  const every = Math.max(1, Math.ceil((days.length * 54) / Math.max(1, W - L - R)));
   return <div className="usage-chart" ref={box} onMouseLeave={() => setHover(null)}>
     <svg role="img" aria-label="Tokens per day" viewBox={`0 0 ${W} ${H}`}>
       {Array.from({ length: Math.floor(max / step) + 1 }, (_, i) => i * step).map((v) => <g key={v}>
@@ -82,7 +117,8 @@ function UsageChart({ series, days }: { series: UsageSeries[]; days: string[] })
       </g>)}
       {days.map((day, i) => <rect key={day} data-day={day} x={L + ((W - L - R) * i) / days.length} y={0} width={(W - L - R) / days.length} height={H - B} fill="transparent" onMouseEnter={() => setHover(i)} />)}
     </svg>
-    {hover !== null && <div className="usage-tip" style={{ left: `${((hover + 0.5) / days.length) * 100}%`, top: 4 }}>
+    {/* Centred on its day; in the first and last third it sits against that side of the chart so a phone doesn't clip it. */}
+    {hover !== null && <div className="usage-tip" style={hover < days.length / 3 ? { left: 0, top: 4, transform: "none" } : hover >= (days.length * 2) / 3 ? { right: 0, top: 4, transform: "none" } : { left: `${((hover + 0.5) / days.length) * 100}%`, top: 4 }}>
       <b>{fmtDay(days[hover])}</b>
       {series.map((s, k) => <div className="usage-tiprow" key={s.key}>
         <span><i className="usage-sq" style={{ background: seriesColor(s, k) }} />{s.name}</span>
@@ -101,6 +137,7 @@ export function UsagePanel() {
   const [usage, setUsage] = useState<BotUsage | null>(null);
   const [usageError, setUsageError] = useState("");
   const [accounts, setAccounts] = useState<UsageAccounts | null>(null);
+  const [accountsError, setAccountsError] = useState(false);
   const bots = useApp((s) => s.bots);
   const cards = useMemo(() => providers ? limitGroups(providers) : [], [providers]);
   const names = useMemo(() => {
@@ -113,14 +150,12 @@ export function UsagePanel() {
   const allIn = series.reduce((sum, s) => sum + s.totalIn, 0), allOut = series.reduce((sum, s) => sum + s.totalOut, 0);
   const allTokens = usage?.rows.reduce((sum, row) => sum + totalIn(row) + row.output, 0) ?? 0;
   const allCached = usage?.rows.reduce((sum, row) => sum + row.cached, 0) ?? 0;
-  const cost = accounts?.accounts.reduce((sum, account) => sum + account.costUsd, 0) ?? null;
-  const accountTokens = accounts?.accounts.reduce((sum, account) => sum + account.input + account.cached + account.cacheWrite + account.output, 0) ?? null;
   useEffect(() => watchProviderData((value) => { try { setProviders(parseProviderUsage(value)); setError(""); } catch { setError("Couldn't read provider limits."); } }, () => setError("Couldn't load provider limits.")), [attempt]);
   useEffect(() => {
-    let live = true; setUsageError(""); setUsage(null);
+    let live = true; setUsageError(""); setUsage(null); setAccounts(null); setAccountsError(false);
     const days = range === "7" ? 7 : 30;
     readBotUsage(days).then((value) => { if (live) setUsage(value); }).catch(() => { if (live) setUsageError("Couldn't load Bot usage."); });
-    readUsageAccounts(days).then((value) => { if (live) setAccounts(value); }).catch(() => { if (live) setAccounts(null); });
+    readUsageAccounts(days).then((value) => { if (live) setAccounts(value); }).catch(() => { if (live) setAccountsError(true); });
     return () => { live = false; };
   }, [range, attempt]);
   const retry = () => setAttempt((n) => n + 1);
@@ -130,6 +165,7 @@ export function UsagePanel() {
     {!providers && !error && <Spinner />}
     <div className="usage-cards">{cards.map((card) => <LimitCard key={card.title} card={card} />)}</div>
     {providers?.length === 0 && <p>No provider limits reported.</p>}
+    {providers && <LimitNotes providers={providers} />}
 
     <p className="usage-label">Bot usage</p>
     <section className="usage-card">
@@ -139,7 +175,7 @@ export function UsagePanel() {
         : <>
           <div className="usage-top">
             <div>
-              <div className="usage-big" title={cost === null ? undefined : `≈ $${cost.toFixed(2)} estimated, all use on this Mac`}>{formatTokens(allIn + allOut)} tokens</div>
+              <div className="usage-big">{formatTokens(allIn + allOut)} tokens</div>
               <div className="usage-sub">{formatTokens(allIn)} in · {formatTokens(allOut)} out · {allTokens ? Math.round((allCached / allTokens) * 100) : 0}% from cache · {fmtDay(usage.since)} – {fmtDay(usage.until)}</div>
               {usage.ledgerSince.slice(0, 10) > usage.since && <div className="usage-sub">Counting since {fmtDay(usage.ledgerSince.slice(0, 10))}</div>}
             </div>
@@ -157,8 +193,11 @@ export function UsagePanel() {
             </div>)}
           </div>
           <UsageChart series={series} days={days} />
-          {accountTokens !== null && <p className="usage-accounts">Bots: {formatTokens(allIn + allOut)} of {formatTokens(accountTokens)} tokens on {accounts!.accounts.length} {accounts!.accounts.length === 1 ? "account" : "accounts"} in this period</p>}
         </>}
     </section>
+
+    <p className="usage-label">All use on this computer</p>
+    {accountsError ? <p role="status" className="usage-empty">Totals for all use aren't available on this connection.</p>
+      : !accounts ? <Spinner /> : <AccountTotals accounts={accounts} botTokens={allIn + allOut} />}
   </div>;
 }
