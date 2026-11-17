@@ -1181,7 +1181,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: s
   // The bundle is text, and nothing between Tailscale and the browser compresses it.
   const compressible = isCompressible(ext, stat.size);
   const encoding = pickEncoding(req.headers["accept-encoding"], compressible);
-  const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache, ...(compressible ? { vary: "Accept-Encoding" } : {}) };
+  const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache, vary: "Accept-Encoding" };
   if (encoding === "unacceptable") {
     res.writeHead(406, { vary: "Accept-Encoding", "cache-control": "no-store" });
     return res.end();

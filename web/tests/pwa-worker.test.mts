@@ -248,7 +248,7 @@ test("a dropped connection retries the file instead of abandoning the update", a
 test("an interrupted install resumes without downloading verified files again", async () => {
   serve(app);
   const caches = cacheStorage();
-  const key = "bot-shell-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
+  const key = "bot-shell2-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
   const first = app.manifest.entries[0];
   const cache = await caches.open(key);
   const second = app.manifest.entries[1];
@@ -297,7 +297,7 @@ test("content revisions migrate only this app's caches on activation, leaving ol
   assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));
   await next.lifecycle("activate");
   assert.deepEqual(Buffer.from(await (await next.request("/", { navigate: true })).arrayBuffer()), update.files.get("index.html"));
-  assert.equal((await caches.keys()).includes(oldKey), false);
+  assert.equal((await caches.keys()).includes(oldKey), true);
   assert.ok((await caches.keys()).includes("unrelated-app-cache"));
   assert.ok((await caches.keys()).includes("bot-shell-%2Fnested%2Fbot%2F-retained"));
 });

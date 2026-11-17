@@ -114,7 +114,7 @@ describe("static responses are compressed for clients that ask", () => {
     const png = await request(gateway.port, "/assets/logo.png", { "accept-encoding": "br, gzip" });
     assert.equal(png.headers["content-encoding"], undefined, "a PNG is already compressed");
     assert.equal(Number(png.headers["content-length"]), gateway.png.length);
-    assert.equal(png.headers["vary"], undefined, "nothing varies for a type that never compresses");
+    assert.equal(png.headers["vary"], "Accept-Encoding", "an identity refusal can still change the response");
     const tiny = await request(gateway.port, "/assets/tiny.js", { "accept-encoding": "br, gzip" });
     assert.equal(tiny.headers["content-encoding"], undefined, "below the floor the overhead wins");
   });
