@@ -235,3 +235,11 @@ test("Windows transcript paths match the home and provider folders regardless of
   assert.equal(providerForSourcePath("\\\\Host\\Share\\USER\\.Codex\\ARCHIVED_SESSIONS\\abc", "\\\\host\\share\\user"), "Codex");
   assert.equal(providerForSourcePath("C:\\Users\\other\\.codex\\sessions\\abc", winHome), null);
 });
+
+test("usage buckets for the same Windows profile casing share an account", () => {
+  const rows = accountsFromBuckets([
+    { sourcePath: "C:\\Users\\u\\.CLAUDE-Work\\Projects\\a", totals: { outputTokens: 3 } },
+    { sourcePath: "c:\\users\\U\\.claude-work\\projects\\b", totals: { outputTokens: 7 } },
+  ], "C:\\Users\\u");
+  assert.deepEqual(rows.map(({ account, output }) => ({ account, output })), [{ account: "Claude (Work)", output: 10 }]);
+});
