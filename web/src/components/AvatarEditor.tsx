@@ -21,6 +21,9 @@ export type DrawControls = {
   retry: () => void;
   discard: () => void;
   use: (definition: AvatarDefinition) => Promise<void>;
+  /** The model that draws, by name, and a way to change it in Settings. */
+  model?: string | null;
+  changeModel?: () => void;
 };
 
 type PickerProps = {
@@ -133,6 +136,7 @@ function DrawPanel({ draw, chosen, color, disabled, onClose }: { draw: DrawContr
     <input aria-label="Describe the new object" autoFocus value={description} disabled={disabled} maxLength={200} onChange={e => setDescription(e.target.value)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }} placeholder="Describe it, like a fox with a scarf" />
     <Pill variant="ghost" disabled={disabled} onClick={onClose}>Cancel</Pill>
     <Pill type="submit" disabled={disabled || !description.trim()}>Draw it</Pill>
+    {draw.model && <p className="avatar-draw-model">Drawn with {draw.model}{draw.changeModel && <> · <button type="button" disabled={disabled} onClick={draw.changeModel}>Change</button></>}</p>}
   </form>;
   const quoted = drawing.description ? `“${drawing.description}”` : "your object";
   const done = options.filter((option) => option.status === "ready").length;
