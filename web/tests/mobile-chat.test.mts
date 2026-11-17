@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const chatPath = fileURLToPath(new URL("../src/components/Chat.tsx", import.meta.url));
 const behaviorPath = fileURLToPath(new URL("../src/lib/chatBehavior.ts", import.meta.url));
 const storePath = fileURLToPath(new URL("../src/store.ts", import.meta.url));
+const workspacePath = fileURLToPath(new URL("../src/components/WorkspaceResource.tsx", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
@@ -20,6 +21,7 @@ const bundle = await buildOnce({
       export { Composer, AttachmentPicker, BotBubble, AttachmentList } from ${JSON.stringify(chatPath)};
       export * from ${JSON.stringify(behaviorPath)};
       export { useApp } from ${JSON.stringify(storePath)};
+      export { WorkspaceFileContext } from ${JSON.stringify(workspacePath)};
       export { createElement } from "react";
       export { renderToStaticMarkup } from "react-dom/server";
     ` : undefined,
@@ -50,7 +52,7 @@ try {
 }
 const {
   composerFocusBehavior, MOBILE_CHAT_QUERY, splitBubbles, takeAttachmentFiles,
-  Composer, AttachmentPicker, BotBubble, AttachmentList, useApp,
+  Composer, AttachmentPicker, BotBubble, AttachmentList, useApp, WorkspaceFileContext,
   createElement: h, renderToStaticMarkup: render,
 } = loaded;
 
@@ -260,4 +262,21 @@ test("display math and both code fence styles survive bubble grouping verbatim",
     assert.match(markup, /<pre><code[^>]*>first line\n\nsecond line\n<\/code><\/pre>/);
     assert.deepEqual(splitBubbles(`Before.\n\n${fence}mermaid\ngraph TD\n\nA --> B`), [`Before.\n\n${fence}mermaid\ngraph TD\n\nA --> B`], "streaming fences stay together before their closing fence arrives");
   }
+});
+
+test("a Bot message's file stack draws each linked file once and leaves no linked file unreachable", () => {
+  useApp.setState({ bots: {} });
+  const workspace = { workspaceRoot: "/home/user/bot", threadId: "thread-1", openFile() {} };
+  const bubble = (text: string) => render(h(WorkspaceFileContext, { value: workspace }, h(BotBubble, { text })));
+  // A reference-style link is not one the stack collects, so its own paragraph keeps the card (five paragraphs stay one bubble).
+  const reference = bubble("One.\n\nTwo.\n\nThree.\n\n[Budget][budget]\n\n[budget]: library/budget.xlsx");
+  assert.equal((reference.match(/aria-label="Open Budget"/g) ?? []).length, 1);
+  // An inline image already shows in the bubble; the stack does not add a second tile for it.
+  const inline = bubble("The chart:\n\n![Bars](library/bars.svg)\n\n[report.pdf](library/report.pdf)");
+  assert.doesNotMatch(inline, /aria-label="Open Bars"/);
+  assert.equal((inline.match(/aria-label="Open report\.pdf"/g) ?? []).length, 1);
+  // Five images on their own lines: three tiles, the last of which opens the rest of the row.
+  const media = bubble(Array.from({ length: 5 }, (_, i) => `[shot-${i}.png](library/shot-${i}.png)`).join("\n\n"));
+  assert.equal((media.match(/aria-label="Open shot-\d\.png"/g) ?? []).length, 2);
+  assert.match(media, /aria-label="Show 3 more files"/);
 });
