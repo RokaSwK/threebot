@@ -212,24 +212,25 @@ test("the Library and file viewer open images in the same viewer, and StrictMode
 });
 
 test("useFileSize clears size on path change and probe failure", async () => {
-  let probeResult: number | null = 1024;
-  globalThis.fetch = ((_url: string) => Promise.resolve(new Response(null, {
-    status: probeResult === null ? 404 : 200,
-    headers: probeResult === null ? {} : { "Content-Length": String(probeResult) },
-  }))) as typeof fetch;
-
-  function Sizer({ path, url }: { path?: string; url: string | null }) {
-    const size = useFileSize(path, url);
-    return h("div", { "data-size": size === null ? "none" : String(size) });
+  const probe = mock.method(globalThis, "fetch", async (url: string) =>
+    url === "/t3/assets/f1"
+      ? new Response(null, { headers: { "Content-Length": "1024" } })
+      : new Response(null, { status: 404 }));
+  function Sizer({ path, url }: { path: string; url: string | null }) {
+    return h("div", { "data-size": useFileSize(path, url) ?? "none" });
   }
 
-  const workspace = { workspaceRoot: "/root", threadId: "thread-1", openFile() {} };
-  await render(h(WorkspaceFileContext, { value: workspace }, h(Sizer, { path: "file1.pdf", url: "/t3/assets/f1" })));
-  await flush();
-  const el = document.querySelector("[data-size]");
-  assert.equal(el?.getAttribute("data-size"), "1024");
-
-  probeResult = null;
-  await render(h(WorkspaceFileContext, { value: workspace }, h(Sizer, { path: "file2.pdf", url: null })));
-  assert.equal(el?.getAttribute("data-size"), "none", "size resets immediately when url resets");
+  const context = { ...workspace, threadId: "size-thread" };
+  const show = (path: string, url: string | null) =>
+    render(h(WorkspaceFileContext, { value: context }, h(Sizer, { path, url })));
+  const size = () => host.querySelector("[data-size]")?.getAttribute("data-size");
+  await show("file1.pdf", "/t3/assets/f1");
+  assert.equal(size(), "1024");
+  await show("file2.pdf", "/t3/assets/f2");
+  assert.equal(size(), "none", "a failed probe clears the previous file's size");
+  assert.equal(probe.mock.callCount(), 3, "HEAD and the fallback range request ran");
+  await show("file1.pdf", "/t3/assets/f1");
+  assert.equal(size(), "1024");
+  await show("file2.pdf", null);
+  assert.equal(size(), "none", "clears the size while the new URL is unavailable");
 });
