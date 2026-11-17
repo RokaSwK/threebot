@@ -15,7 +15,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Piece | What it does |
 |---|---|
 | `web/` | React 19 + Vite + Tailwind v4 single-page app. Sidebar, chat, details pane, settings, dialogs. Talks only to the gateway. |
-| `server/` (gateway) | Node, no database. Serves `web/dist`. Password login (cookie). Proxies `/t3/ws` to T3's `/ws` (adds the bearer, handles the ticket) and `/t3/api/*` to T3's HTTP API. Reads and writes bot metadata files on disk. Runs as user `t3`. |
+| `server/` (gateway) | Node, no database. Serves `web/dist`, brotli or gzip when the client asks for it. Password login (cookie). Proxies `/t3/ws` to T3's `/ws` (adds the bearer, handles the ticket) and `/t3/api/*` to T3's HTTP API. Reads and writes bot metadata files on disk. Runs as user `t3`. |
 | T3 Code | Agent runtime. Projects, threads, runs, approvals, questions, subagents, scheduled tasks, secrets, headless browser, models. |
 | Executor | Connected apps (OAuth, credentials, tool policies). Agents reach it over MCP. Runs as its own container. |
 
