@@ -175,15 +175,17 @@ export function createUsageLedger({ file, now = Date.now }: { file: string; now?
  */
 export function providerForSourcePath(sourcePath: unknown, home: string = homedir()): string | null {
   if (typeof sourcePath !== "string") return null;
-  const normHome = home.replace(/\\/g, "/").replace(/\/+$/, "");
-  const normPath = sourcePath.replace(/\\/g, "/");
-  const win = process.platform === "win32" || /^[a-zA-Z]:\//.test(normHome);
-  const matchesHome = normHome && (
-    normPath.startsWith(`${normHome}/`) ||
-    (win && normPath.toLowerCase().startsWith(`${normHome.toLowerCase()}/`))
-  );
-  const p = matchesHome ? `~${normPath.slice(normHome.length)}` : normPath;
-  const named = /^~\/\.claude-([^/]{1,64})\/projects(?:\/|$)/.exec(p);
+  const win = process.platform === "win32" || /^(?:[a-z]:[/\\]|[/\\]{2}[^/\\])/i.test(home);
+  const separators = (value: string) => win ? value.replace(/\\/g, "/") : value;
+  const root = separators(home).replace(/\/+$/, "");
+  const source = separators(sourcePath);
+  const matchesHome = root && (win
+    ? source.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+    : source.startsWith(`${root}/`));
+  const relative = matchesHome ? `~${source.slice(root.length)}` : source;
+  const p = win ? relative.toLowerCase() : relative;
+  const namedRoot = /^~\/\.claude-([^/]{1,64})\/projects(?:\/|$)/;
+  const named = (win ? new RegExp(namedRoot.source, "i") : namedRoot).exec(relative);
   if (named) return `Claude (${named[1]})`;
   if (/^~\/\.claude\/projects(?:\/|$)/.test(p)) return "Claude";
   if (/^~\/\.codex\/(?:archived_)?sessions(?:\/|$)/.test(p)) return "Codex";
