@@ -768,13 +768,15 @@ test("a refused fresh session keeps the flag for the next try", async () => {
   await done();
 });
 
-test("linesFor handles malformed or non-finite lastTurnAt without silencing history", () => {
-  const room = { turns: [] } as any;
-  const history = [
-    { at: "2026-11-16T12:00:00Z", author: { kind: "user" as const }, text: "hello" },
-  ];
-  const valid = linesFor(room, { slug: "alpha", lastTurnAt: "2026-11-16T11:00:00Z" } as any, history);
-  assert.equal(valid.length, 1);
-  const invalid = linesFor(room, { slug: "alpha", lastTurnAt: "not-a-valid-date" } as any, history);
-  assert.equal(invalid.length, 1, "invalid lastTurnAt falls back and does not silence history");
+test("a malformed last-turn timestamp keeps room history", async () => {
+  const { room, done } = await roomWith();
+  try {
+    const [member] = room.members;
+    const history = [{ at: "2026-11-16T12:00:00Z", author: { kind: "user" as const }, text: "hello" }];
+    assert.deepEqual(linesFor(room, { ...member, lastTurnAt: "invalid" }, history), linesFor(room, member, history));
+    assert.equal(linesFor(room, member, history).length, 1);
+    assert.deepEqual(linesFor(room, { ...member, lastTurnAt: "2026-11-16T12:00:00Z" }, history), []);
+  } finally {
+    await done();
+  }
 });
