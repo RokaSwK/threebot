@@ -142,7 +142,8 @@ function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeTh
   </div>;
   return <Modal backdropClassName="workspace-page-backdrop" backdropStyle={{ left: sidebarWidth }} title={<span className="workspace-file-chip" title={title}>{title}</span>} onClose={onClose} headerActions={headerActions} className={`workspace-resource-sheet workspace-page-sheet ${resolvedFileKind === "html" || /\.csv$/i.test(title) ? "workspace-document-sheet" : ""}`}>
     <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="scroll-thin min-h-0 flex-1 overflow-auto">
+      {/* Room under the floating composer, so the end of a file (and a sheet's row note) can scroll clear of it. */}
+      <div className={`scroll-thin min-h-0 flex-1 overflow-auto ${onAsk ? "pb-20" : ""}`}>
       {state.kind === "loading" && <p role="status" className="p-6 text-center text-[14px] text-muted">Loading file…</p>}
       {state.kind === "error" && <div role="alert" className="p-6 text-center text-[14px] text-muted"><p>Couldn't open this file. It may be unavailable or access may have expired.</p><button className="mt-3 rounded-full bg-active px-4 py-2 text-fg" onClick={() => setAttempt((value) => value + 1)}>Retry</button></div>}
       {state.kind === "ready" && <>

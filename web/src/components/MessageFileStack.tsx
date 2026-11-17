@@ -75,7 +75,8 @@ function AudioFileCard({ link }: { link: MessageFileLink }) {
   );
 }
 
-function MediaTile({ file, overlay }: { file: MessageFileLink; overlay: number | null }) {
+/** `onExpand` turns the last tile, under its "+N", into the way to the rest of the row. */
+function MediaTile({ file, overlay, onExpand }: { file: MessageFileLink; overlay: number | null; onExpand?: () => void }) {
   const workspace = useContext(WorkspaceFileContext);
   const name = linkName(file);
   const image = mediaFileKind(file.path) === "image";
@@ -87,7 +88,7 @@ function MediaTile({ file, overlay }: { file: MessageFileLink; overlay: number |
   const { ref, open, viewer } = useOpenImage(viewerImage);
   return (
     <>
-      <button type="button" ref={ref} onClick={() => (image ? open() : workspace?.openFile(file.path))} aria-label={`Open ${name}`} title={name}
+      <button type="button" ref={ref} onClick={() => (onExpand ? onExpand() : image ? open() : workspace?.openFile(file.path))} aria-label={onExpand ? `Show ${overlay} more files` : `Open ${name}`} title={onExpand ? undefined : name}
         className={`relative h-[102px] overflow-hidden rounded-[12px] bg-card ${image ? "w-[204px]" : "w-[136px]"}`}>
         {image
           ? url && <img src={url} alt={name} draggable={false} className="h-full w-full object-cover" />
@@ -107,12 +108,14 @@ function MediaTile({ file, overlay }: { file: MessageFileLink; overlay: number |
 }
 
 function MediaRow({ files }: { files: MessageFileLink[] }) {
-  const { visible, overlay } = mediaRowTiles(files.length);
+  const [expanded, setExpanded] = useState(false);
+  const { visible, overlay } = expanded ? { visible: files.length, overlay: null } : mediaRowTiles(files.length);
   return (
-    <div className="-mt-2 flex w-full max-w-full gap-1.5">
-      {files.slice(0, visible).map((file, index) => (
-        <MediaTile key={file.path} file={file} overlay={overlay !== null && index === visible - 1 ? overlay : null} />
-      ))}
+    <div className={`-mt-2 flex w-full max-w-full gap-1.5 ${expanded ? "flex-wrap" : ""}`}>
+      {files.slice(0, visible).map((file, index) => {
+        const more = overlay !== null && index === visible - 1;
+        return <MediaTile key={file.path} file={file} overlay={more ? overlay : null} onExpand={more ? () => setExpanded(true) : undefined} />;
+      })}
     </div>
   );
 }

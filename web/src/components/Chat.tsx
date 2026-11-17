@@ -9,7 +9,7 @@ import { BotExchange } from "./BotExchange";
 import { ApprovalCard, AutomatedCard, DateSep, ErrorLine, EventLine, FileCard, PageCard, QuestionCard, RoutineReportLine, SecretCard, SubagentCard, ToolImage, useBotsByThread } from "./Cards";
 import { WorkspaceFileContext, WorkspaceMessageImage, WorkspaceResourceViewer } from "./WorkspaceResource";
 import { workspaceFilePath, workspaceLinkPath } from "../lib/workspaceLinks";
-import { fileGlyphKind, fileTypeLabel, soloFileLinkParagraph, soloMarkdownLink, aboutFilePrompt } from "../lib/fileCards";
+import { fileGlyphKind, fileTypeLabel, messageFileLinks, soloFileLinkParagraph, soloMarkdownLink, aboutFilePrompt } from "../lib/fileCards";
 import { FileCard as DocumentCard } from "./FileCard";
 import { MessageFileStack } from "./MessageFileStack";
 import { RichMarkdown } from "./RichMarkdown";
@@ -328,10 +328,11 @@ export function BotBubble({ text, threadId, itemId, runId, onReply }: { text: st
   const workspace = useContext(WorkspaceFileContext);
   // A bubble that is only a file link is drawn by the file stack below, with its card, player or thumbnail.
   const parts = splitBubbles(text).filter((part) => !workspace || !soloMarkdownLink(part, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)));
+  const stackPaths = useMemo(() => workspace ? new Set(messageFileLinks(text, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)).map((link) => link.path)) : null, [text, workspace]);
   return (
     <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} side="bot">
       <MessageImages>
-        <FileStackContext.Provider value={!!workspace}>
+        <FileStackContext.Provider value={stackPaths}>
         <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
           {parts.map((p, i) => (
             <div key={i} className="md bubble fade-up rounded-[18px] bg-bubble-bot px-3.5 py-[7px] text-[14px] leading-[22px] break-words">
@@ -355,16 +356,17 @@ const MessageContent = memo(function MessageContent({ text }: { text: string }) 
   return useMemo(() => <RichMarkdown bots={Object.values(bots).map((b) => ({ slug: b.slug, name: b.name }))} components={{ a: MessageLink, p: MessageParagraph, img: WorkspaceMessageImage }} urlTransform={(url) => parseThreadLink(url) || url.startsWith("bot:") || (workspace && workspaceLinkPath(url, workspace.workspaceRoot, workspace.fromPath)) ? url : defaultUrlTransform(url)}>{text}</RichMarkdown>, [text, referencesKey, workspace]);
 });
 
-/** Set inside a Bot message whose file stack draws every linked file under the text. */
-const FileStackContext = createContext(false);
+/** Inside a Bot message: the files its stack draws under the text. */
+const FileStackContext = createContext<ReadonlySet<string> | null>(null);
 
-/** A paragraph holding nothing but a workspace-file link renders as the file card, or nothing when the stack below draws it. */
+/** A paragraph holding nothing but a workspace-file link renders as the file card, or nothing when the stack below draws that file. */
 function MessageParagraph({ node, children }: ComponentPropsWithoutRef<"p"> & ExtraProps) {
   const workspace = useContext(WorkspaceFileContext);
-  const inStack = useContext(FileStackContext);
+  const stackPaths = useContext(FileStackContext);
   const solo = workspace && node ? soloFileLinkParagraph(node, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)) : null;
   if (!solo || !workspace) return <p>{children}</p>;
-  if (inStack) return null;
+  // Only links the stack found are left to it; a reference-style link, say, keeps its card here.
+  if (stackPaths?.has(solo.path)) return null;
   const name = solo.text.trim() || solo.path.split("/").at(-1) || solo.path;
   return <DocumentCard name={name} detail={fileTypeLabel(solo.path)} kind={fileGlyphKind(solo.path)} workspacePath={solo.path} onOpen={() => workspace.openFile(solo.path)} />;
 }

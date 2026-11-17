@@ -112,7 +112,8 @@ export function mediaDuration(seconds: number): string {
 
 export type MessageFileLink = { href: string; path: string; text: string };
 
-const MARKDOWN_LINK = /\[([^\]]*)\]\(([^()\s]+)(?:\s+"[^"]*")?\)/g;
+// Not `![alt](path)`: an inline image already shows in the message.
+const MARKDOWN_LINK = /(?<!!)\[([^\]]*)\]\(([^()\s]+)(?:\s+"[^"]*")?\)/g;
 
 function outsideCode(text: string): string {
   let fence = "";
