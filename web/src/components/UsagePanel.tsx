@@ -171,19 +171,20 @@ export function UsagePanel() {
     <section className="usage-card">
       {usageError ? <p role="alert">{usageError} <Pill variant="soft" onClick={retry}>Retry</Pill></p>
         : !usage ? <Spinner />
-        : !usage.rows.length ? <p className="usage-empty">No Bot turns in this period yet.</p>
         : <>
           <div className="usage-top">
-            <div>
+            {/* The switches stay when a period is empty, so 30 days is one tap away from an empty week. */}
+            {!usage.rows.length ? <p className="usage-empty">No Bot turns in this period yet.</p> : <div>
               <div className="usage-big">{formatTokens(allIn + allOut)} tokens</div>
               <div className="usage-sub">{formatTokens(allIn)} in · {formatTokens(allOut)} out · {allTokens ? Math.round((allCached / allTokens) * 100) : 0}% from cache · {fmtDay(usage.since)} – {fmtDay(usage.until)}</div>
               {usage.ledgerSince.slice(0, 10) > usage.since && <div className="usage-sub">Counting since {fmtDay(usage.ledgerSince.slice(0, 10))}</div>}
-            </div>
+            </div>}
             <div className="usage-segs">
               <Segmented label="Group by" value={by} options={[["source", "By source"], ["bot", "By Bot"], ["model", "By model"]]} onChange={(value) => setBy(value as typeof by)} />
               <Segmented label="Period" value={range} options={[["7", "7 days"], ["30", "30 days"]]} onChange={(value) => setRange(value as "7" | "30")} />
             </div>
           </div>
+          {usage.rows.length > 0 && <>
           <div className="usage-stack">{series.map((s, i) => <i key={s.key} style={{ flex: s.totalIn + s.totalOut, background: seriesColor(s, i) }} />)}</div>
           <div className="usage-legend">
             {series.map((s, i) => <div key={s.key}>
@@ -193,6 +194,7 @@ export function UsagePanel() {
             </div>)}
           </div>
           <UsageChart series={series} days={days} />
+          </>}
         </>}
     </section>
 

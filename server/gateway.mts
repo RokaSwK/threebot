@@ -353,10 +353,12 @@ async function refreshUsageLedger() {
   if (usagePassRunning) return;
   usagePassRunning = true;
   try {
+    // The whole pass, discovery included, gets 60 s: no read may run past it.
+    const started = Date.now();
+    const deadline = started + 60_000;
     const [bots, threads] = await Promise.all([listBots(), shellThreads(false).catch(() => null)]);
     if (threads) {
-      const since = usageScannedAt || Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const started = Date.now();
+      const since = usageScannedAt || started - 7 * 24 * 60 * 60 * 1000;
       const recent = threads.filter((thread) => (Date.parse(thread.updatedAt ?? "") || started) > since);
       const slugOfProject = new Map(bots.map((bot) => [bot.projectId, bot.slug]).filter(([projectId]) => projectId) as [string, string][]);
       const slugOfMain = new Map(bots.map((bot) => [bot.mainThreadId, bot.slug]).filter(([mainThreadId]) => mainThreadId) as [string, string][]);
@@ -365,14 +367,17 @@ async function refreshUsageLedger() {
       const entries: UsageEntry[] = [];
       // One pass reads at most 200 threads, oldest first, and gives up on the clock, like the usage-stats collector.
       // Threads it doesn't read (failed, over the cap or the clock) hold the watermark back, so the next pass reads them.
-      const deadline = started + 60_000;
       const stamp = (thread: { updatedAt?: string | null }) => Date.parse(thread.updatedAt ?? "") || started;
       const candidates = botThreads(recent, bots).sort((a, b) => stamp(a) - stamp(b));
       const results: { updatedAt: number; read: boolean }[] = [];
       for (const [index, thread] of candidates.entries()) {
         const updatedAt = stamp(thread);
-        if (index >= 200 || Date.now() > deadline) { results.push({ updatedAt, read: false }); continue; }
-        const projection = await withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("orchestration.getThreadProjection", { threadId: thread.id }), 15000, "T3 timed out")).catch(() => null);
+        const left = deadline - Date.now();
+        if (index >= 200 || left <= 0) { results.push({ updatedAt, read: false }); continue; }
+        const read = withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("orchestration.getThreadProjection", { threadId: thread.id }), 15000, "T3 timed out"));
+        const projection = await withTimeout(read, left, "usage pass out of time").catch(() => null);
+        // A read the pass's clock cut short isn't the thread's failure: it is simply read next pass.
+        if (!projection && Date.now() >= deadline) { results.push({ updatedAt, read: false }); continue; }
         if (!projection) {
           const failures = (usageReadFailures.get(thread.id) ?? 0) + 1;
           usageReadFailures.set(thread.id, failures);
