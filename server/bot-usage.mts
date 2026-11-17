@@ -175,8 +175,14 @@ export function createUsageLedger({ file, now = Date.now }: { file: string; now?
  */
 export function providerForSourcePath(sourcePath: unknown, home: string = homedir()): string | null {
   if (typeof sourcePath !== "string") return null;
-  const root = home.replace(/\/+$/, "");
-  const p = root && sourcePath.startsWith(`${root}/`) ? `~${sourcePath.slice(root.length)}` : sourcePath;
+  const normHome = home.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normPath = sourcePath.replace(/\\/g, "/");
+  const win = process.platform === "win32" || /^[a-zA-Z]:\//.test(normHome);
+  const matchesHome = normHome && (
+    normPath.startsWith(`${normHome}/`) ||
+    (win && normPath.toLowerCase().startsWith(`${normHome.toLowerCase()}/`))
+  );
+  const p = matchesHome ? `~${normPath.slice(normHome.length)}` : normPath;
   const named = /^~\/\.claude-([^/]{1,64})\/projects(?:\/|$)/.exec(p);
   if (named) return `Claude (${named[1]})`;
   if (/^~\/\.claude\/projects(?:\/|$)/.test(p)) return "Claude";

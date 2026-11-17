@@ -193,6 +193,14 @@ test("transcript roots map to provider labels, never to a path", () => {
     const label = providerForSourcePath(path, home)!;
     assert.ok(label && !label.includes("/") && !label.includes(home), `${label} is a label, not a path`);
   }
+
+  // Windows paths with backslashes and drive letter casing
+  const winHome = "C:\\Users\\u";
+  assert.equal(providerForSourcePath("C:\\Users\\u\\.claude\\projects\\abc", winHome), "Claude");
+  assert.equal(providerForSourcePath("C:\\Users\\u\\.claude-work\\projects\\abc", winHome), "Claude (work)");
+  assert.equal(providerForSourcePath("c:\\users\\u\\.codex\\sessions\\abc", winHome), "Codex");
+  assert.equal(providerForSourcePath("C:/Users/u/.grok/sessions/abc", winHome), "Grok");
+
   const window = usageDays(7, "UTC", NOW);
   assert.deepEqual([window.since, window.until, window.days.length], ["2026-11-10", "2026-11-16", 7]);
 });
