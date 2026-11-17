@@ -31,7 +31,7 @@ const bundle = await buildOnce({
     name: "room-composer-test",
     resolveId: (id) => id.endsWith("virtual:room-composer") ? "\0room-composer" : undefined,
     load: (id) => id === "\0room-composer" ? `
-      export { createElement, act } from "react";
+      export { createElement, act, StrictMode } from "react";
       export { createRoot } from "react-dom/client";
       export { RoomComposer } from ${JSON.stringify(roomView)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
@@ -251,9 +251,13 @@ test("the draft keeps its text and its uploaded files across a remount", async (
   await runtime.act(async () => root.unmount());
   host.replaceChildren();
   root = runtime.createRoot(host);
-  await mount();
+  await runtime.act(async () => root.render(runtime.createElement(
+    runtime.StrictMode, null, runtime.createElement(runtime.RoomComposer, props),
+  )));
   assert.equal(textarea().value, "Pendiente");
   assert.equal(pending().length, 1, "the file survives without its blob preview");
+  await click(pending()[0].querySelector('button[aria-label^="Remove"]'));
+  assert.equal(pending().length, 0, "the restored attachment can be removed after StrictMode replay");
 });
 
 test("unmounting releases ready and uploading attachment previews", async () => {
