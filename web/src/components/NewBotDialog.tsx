@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronRight, FolderGit2, Pencil } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { AvatarEditorDialog, AvatarPicker, type AvatarDraft } from "./AvatarEditor";
 import { Modal, Pill, Spinner } from "./ui";
 import { createBot, defaultModel, deleteBot, openDialog, releaseBot, toast, updateBot, useApp } from "../store";
 import { DEFAULT_AVATAR } from "../lib/character";
+import { sharedObjects } from "../lib/objectAvatars";
+import type { Bot } from "../lib/types";
+import { useAvatarDrawing } from "./useAvatarDrawing";
 import { composeBotInstructions, BOT_INSTRUCTIONS_MAX } from "../lib/botInstructions";
 
 export { AvatarPicker } from "./AvatarEditor";
@@ -127,10 +130,18 @@ export function RenameBotDialog({ slug }: { slug: string }) {
         <p className="edit-bot-label text-muted">Appearance</p>
         <button type="button" className="edit-bot-appearance flex w-full items-center justify-between rounded-2xl bg-card p-4 text-left" onClick={() => setPicker(true)}>Avatar<ChevronRight size={20} className="text-muted" /></button>
       </div>
-      {picker && <AvatarEditorDialog initial={avatar} onSave={async draft => { setAvatar(draft); }} onClose={() => setPicker(false)} />}
+      {picker && <BotAvatarEditor bot={bot} initial={avatar} onSave={async draft => { setAvatar(draft); }} onClose={() => setPicker(false)} />}
       <div className="edit-bot-footer flex justify-end gap-2 p-3"><Pill variant="soft" onClick={close}>Cancel</Pill></div>
     </Modal>
   );
+}
+
+/** An existing Bot's avatar editor, as in its details: with the objects other Bots drew and "Draw a new object". */
+function BotAvatarEditor({ bot, initial, onSave, onClose }: { bot: Bot; initial: AvatarDraft; onSave: (draft: AvatarDraft) => Promise<void>; onClose: () => void }) {
+  const bots = useApp((s) => s.bots);
+  const shared = useMemo(() => sharedObjects(Object.values(bots)), [bots]);
+  const draw = useAvatarDrawing(bot);
+  return <AvatarEditorDialog initial={initial} onSave={onSave} onClose={onClose} shared={shared} draw={draw} />;
 }
 
 export function DeleteBotDialog({ slug }: { slug: string }) {
