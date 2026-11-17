@@ -28,6 +28,16 @@ async function retrying(entry: PrecacheEntry, attempts = 3): Promise<Response> {
   }
 }
 
+/** Whether these bytes are the ones this build names: the page by what it loads, everything else by hash. */
+async function matches(entry: PrecacheEntry, response: Response): Promise<boolean> {
+  if (entry.markers) {
+    const html = await response.clone().text();
+    return entry.markers.length > 0 && entry.markers.every((marker) => html.includes(marker));
+  }
+  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("") === entry.sha256;
+}
+
 async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
   const request = new Request(new URL(entry.url, self.location.origin), {
     credentials: "same-origin", cache: "reload", redirect: "error",
@@ -36,21 +46,38 @@ async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
   if (!response.ok || response.redirected || response.type !== "basic" || response.url !== request.url) {
     throw new Error("PWA static asset unavailable.");
   }
-  if (entry.markers) {
-    const html = await response.clone().text();
-    if (!entry.markers.length || !entry.markers.every((marker) => html.includes(marker))) throw new Error("PWA page is not this build.");
-    return response;
-  }
-  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
-  const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  if (sha256 !== entry.sha256) throw new Error("PWA static asset revision changed.");
+  if (!(await matches(entry, response))) throw new Error(entry.markers ? "PWA page is not this build." : "PWA static asset revision changed.");
   return response;
+}
+
+/**
+ * The previous revision's cache may already hold this file: it kept its name, and the name is the
+ * content hash, so an unchanged chunk is copied instead of downloaded again. The copy is still
+ * checked — a half-written or evicted cache must never put old bytes into a new shell. `ignoreVary`
+ * because the gateway marks the bundle `Vary: Accept-Encoding` and this worker always stores the
+ * encoding the browser picked.
+ */
+async function reused(entry: PrecacheEntry, url: URL, previous: readonly Cache[]): Promise<Response | null> {
+  if (entry.markers) return null; // the page is rebuilt every time, and it is a kilobyte
+  for (const cache of previous) {
+    const hit = await cache.match(url.href, { ignoreVary: true });
+    if (!hit) continue;
+    try {
+      if (await matches(entry, hit)) return hit;
+    } catch { /* an unreadable copy is a miss */ }
+  }
+  return null;
 }
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(SHELL);
     try {
+      // A file that kept its name kept its bytes, so an update costs what changed instead of the
+      // whole shell. The previous revision's cache is still readable: activate deletes it later.
+      const previous = await Promise.all((await caches.keys())
+        .filter((key) => key !== SHELL && key.startsWith(CACHE_PREFIX))
+        .map((key) => caches.open(key)));
       // Bound installation traffic even when syntax/diagram engines emit many
       // lazy chunks. No page-controlled fetches are needed to prime this cache.
       let next = 0;
@@ -59,7 +86,9 @@ self.addEventListener("install", (event) => {
           const entry = BUILD.entries[next++];
           const url = new URL(entry.url, self.location.origin);
           // This cache belongs to one revision, so an interrupted install can resume.
-          if (!(await cache.match(url))) await cache.put(url, await retrying(entry));
+          if (await cache.match(url.href, { ignoreVary: true })) continue;
+          const kept = await reused(entry, url, previous);
+          await cache.put(url.href, kept ?? await retrying(entry));
         }
       }));
       const failed = results.find((result) => result.status === "rejected");
