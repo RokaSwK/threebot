@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { drawingDescription, drawingOf, drawingsOf, drawingPending, type Drawing, type DrawingOption } from "../lib/avatarDrawing";
+import { getDisplayModelName } from "../lib/modelTraits";
 import type { Bot } from "../lib/types";
-import { discardAvatarDrawing, readDrawingOption, startAvatarDrawing, useApp } from "../store";
+import { avatarDrawingModel, discardAvatarDrawing, openDialog, readDrawingOption, startAvatarDrawing, useApp } from "../store";
 
 /** The Bot's background drawing as the avatar editor shows it, and what the editor can do with it. */
 export function useAvatarDrawing(bot: Bot) {
   const threads = useApp((s) => s.threads);
+  // The model the next drawing runs on, by name, for the draw form's "Drawn with" line.
+  const model = useApp((s) => {
+    const selection = avatarDrawingModel(bot, s);
+    const provider = s.providers.find((p) => p.instanceId === selection?.instanceId);
+    const found = provider?.models.find((m) => m.slug === selection?.model);
+    return found ? getDisplayModelName(found) : selection?.model ?? null;
+  });
   const options = useMemo(() => drawingOf(threads, bot), [threads, bot]);
   const [starting, setStarting] = useState<string | null>(null);
   const [error, setError] = useState<{ description: string; message: string } | null>(null);
@@ -45,5 +53,6 @@ export function useAvatarDrawing(bot: Bot) {
     setError(null);
     if (options.length) await discardAvatarDrawing(drawingsOf(useApp.getState().threads, bot)).catch((cause: unknown) => setError({ description: drawingDescription(options[0]), message: cause instanceof Error ? cause.message : "Couldn't discard the drawing" }));
   };
-  return { drawing, start, retry: () => void start(drawing?.description ?? ""), discard };
+  const changeModel = () => { useApp.setState({ settingsPane: "models" }); openDialog("settings"); };
+  return { drawing, start, retry: () => void start(drawing?.description ?? ""), discard, model, changeModel };
 }

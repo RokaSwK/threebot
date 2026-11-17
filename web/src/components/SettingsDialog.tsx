@@ -66,7 +66,7 @@ export function SettingsDialog() {
   };
   return (
     <SettingsSave.Provider value={save}>
-      <Modal onClose={() => openDialog(null)} title={pane === "overview" ? <span className="sr-only">Settings</span> : pane === "vault" ? "Vault" : pane === "usage" ? "Usage" : pane === "appearance" ? "Appearance" : pane === "account" ? "Account" : pane === "timezone" ? "Time Zone" : PANES.find((p) => p.id === pane)?.label ?? "Settings"} onBack={pane !== "overview" ? () => navigatePane("overview") : undefined} className={`settings-modal h-[min(640px,88vh)] w-[min(880px,94vw)] ${pane === "appearance" ? "settings-appearance" : ""}`}>
+      <Modal onClose={() => openDialog(null)} title={pane === "overview" ? <span className="sr-only">Settings</span> : pane === "vault" ? "Vault" : pane === "usage" ? "Usage" : pane === "appearance" ? "Appearance" : pane === "account" ? "Account" : pane === "timezone" ? "Time Zone" : pane === "models" ? "Models" : PANES.find((p) => p.id === pane)?.label ?? "Settings"} onBack={pane !== "overview" ? () => navigatePane("overview") : undefined} className={`settings-modal h-[min(640px,88vh)] w-[min(880px,94vw)] ${pane === "appearance" ? "settings-appearance" : ""}`}>
         <div className="relative flex h-full min-h-0 flex-col sm:flex-row">
           <nav aria-label="Settings categories" className="settings-nav scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 pr-12 sm:block sm:w-[200px] sm:overflow-visible sm:border-r sm:border-b-0 sm:p-3">
             {PANES.map((p) => (
@@ -86,6 +86,7 @@ export function SettingsDialog() {
                 {pane === "general" && <General s={settings} />}
                 {pane === "account" && <General s={settings} accountOnly />}
                 {pane === "timezone" && <TimeZoneSettings s={settings} />}
+                {pane === "models" && <Group><ModelRows s={settings} /></Group>}
                 {pane === "computer" && <Computer />}
                 {pane === "bots" && <BotsPane />}
                 {pane === "machines" && <MachinesPane save={save} />}
@@ -133,6 +134,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <SettingsHomeLink title="Permissions" description={`${s.autoReview !== false ? "Auto-review on" : "Auto-review off"} · ${rules} rules`} onClick={() => pane("permissions")} />
       <Row title="Set Time Zone Automatically" desc="Use this device’s time zone in Bot settings."><Switch checked={!s.timezone} onChange={(auto) => save({ timezone: auto ? "" : timezone })} label="Set Time Zone Automatically" /></Row>
       <SettingsHomeLink title="Time Zone" detail={timezone} disabled={!s.timezone} onClick={() => pane("timezone")} />
+      <SettingsHomeLink title="Models" description="Default, backup and avatar drawing models" onClick={() => pane("models")} />
       <SettingsHomeLink title="Bots" description="Make a Bot from one of your projects" onClick={() => pane("bots")} />
       <SettingsHomeLink title="Bot Computer" onClick={() => pane("computer")} />
       <SettingsHomeLink title="Machines" description="Your linked computers and where coding work runs" onClick={() => pane("machines")} />
@@ -190,11 +192,7 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
         <Row title="Timezone" desc="Display preference. T3 routines use the server’s time zone.">
           <Select label="Timezone" value={s.timezone || ""} onChange={(v) => save({ timezone: v })} options={[["", "Computer default"], ...tzs.map((z): [string, string] => [z, z])]} />
         </Row>
-        <Row title="Default model" desc="Used for new Bots. Each Bot can switch in its details.">
-          <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
-        </Row>
-        <BackupModelRow />
-        <AvatarDrawingModelRow s={s} />
+        <ModelRows s={s} />
       </Group>}
       {!accountOnly && <Group title="Voice">
         <Row title="Voice language" desc="Used for dictation and voice calls.">
@@ -204,6 +202,18 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
       </Group>}
     </>
   );
+}
+
+/** In General on desktop, and on their own as Models from the Settings overview (the only way in on a phone). */
+function ModelRows({ s }: { s: Settings }) {
+  const save = useContext(SettingsSave);
+  return <>
+    <Row title="Default model" desc="Used for new Bots. Each Bot can switch in its details.">
+      <ModelPicker value={s.defaultModel ?? defaultModel()} onChange={(m) => save({ defaultModel: m })} />
+    </Row>
+    <BackupModelRow />
+    <AvatarDrawingModelRow s={s} />
+  </>;
 }
 
 const MODEL_LABELS: Record<string, string> = {
@@ -277,7 +287,8 @@ function AvatarDrawingModelRow({ s }: { s: Settings }) {
   const providers = useApp((state) => state.providers);
   const chosen = s.avatarDrawingModel ?? null;
   const automatic = fastDrawingModel(providers);
-  return <Row title="Avatar drawing model" desc={chosen ? "Draws new avatar objects." : automatic ? "Draws new avatar objects. Automatic picks a fast model: GPT-6 Luna (Fast), else Claude Haiku." : "Draws new avatar objects. No fast model is available, so each Bot draws with its own model."}>
+  const what = "Draws the avatars you describe in a Bot's avatar editor, under Drawn by your Bots.";
+  return <Row title="Avatar drawing model" desc={chosen ? `${what} Automatic picks a fast model instead.` : automatic ? `${what} Automatic picks a fast model: GPT-6 Luna (Fast), else Claude Haiku.` : `${what} No fast model is available, so each Bot draws with its own model.`}>
     <div className="flex items-center gap-2">
       <ModelPicker value={chosen ?? automatic} onChange={(selection) => save({ avatarDrawingModel: selection })} />
       {chosen && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => save({ avatarDrawingModel: null })}>Automatic</button>}
