@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel {
   constructor() {
@@ -39,7 +40,7 @@ globalThis.ResizeObserver = class {
   observe() {}
   disconnect() {}
 } as unknown as typeof ResizeObserver;
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
   logLevel: "silent",
@@ -51,12 +52,12 @@ const bundle = await buildOnce({
       resolveId: (id) =>
         id.endsWith("virtual:package2-tests") ? "\0package2-tests" : undefined,
       transform: (code, id) => {
-        if (id === src + "components/ThreadFamily.tsx")
+        if (isModule(id, src + "components/ThreadFamily.tsx"))
           return code.replace(
             "  const update = useApp",
             "  globalThis.package2ChildRenders = (globalThis.package2ChildRenders ?? 0) + 1;\n  const update = useApp",
           );
-        if (id === src + "components/PlanMessage.tsx")
+        if (isModule(id, src + "components/PlanMessage.tsx"))
           return code.replace(
             "  const text =",
             "  globalThis.package2PlanRenders = (globalThis.package2PlanRenders ?? 0) + 1;\n  const text =",
@@ -68,6 +69,7 @@ const bundle = await buildOnce({
 export { createElement, act, StrictMode } from 'react'; export { createRoot } from 'react-dom/client';
 export * from ${JSON.stringify(src + "lib/runtimeApi.ts")};
 export { buildEntries } from ${JSON.stringify(src + "lib/transcript.ts")};
+export { findTidyTask, tidyState } from ${JSON.stringify(src + "lib/memoryTidy.ts")};
 export { Chat } from ${JSON.stringify(src + "components/Chat.tsx")};
 export { QueuedWork } from ${JSON.stringify(src + "components/QueuedWork.tsx")};
 export { PlanMessage } from ${JSON.stringify(src + "components/PlanMessage.tsx")};
@@ -115,6 +117,8 @@ const {
   useApp,
   t3,
   buildEntries,
+  findTidyTask,
+  tidyState,
 } = await import(pathToFileURL(filename).href);
 after(async () => {
   for (const c of channels) {
@@ -813,4 +817,18 @@ test('proposed plan text is visible without an extra View plan step',async()=>{
  await render(PlanMessage,{plan:decodePlan({id:'proposal',kind:'proposed_plan',markdown:'## A useful proposal\n\nKeep every detail.',status:'proposed'})});
  assert.match(host.textContent,/A useful proposal/);assert.match(host.textContent,/Keep every detail/);
  assert.equal(host.querySelector('details'),null);assert.equal(host.querySelector('section'),null);
+});
+
+test("a tidy routine reads as a preset and its report is a transcript line", () => {
+  const bot = { slug: "tester", name: "Tester", projectId: "project-1", mainThreadId: "thread-main" };
+  const task = { id: "task-1", title: "Tidy memory", enabled: true, projectId: "project-1", threadId: "thread-routine", schedule: { type: "fixed_time", timeOfDay: "03:30" }, runCount: 1, lastRunAt: "2026-11-16T10:09:10.000Z", lastRunStatus: "succeeded" };
+  assert.equal(tidyState(task), "nightly");
+  assert.equal(tidyState({ ...task, schedule: { ...task.schedule, weekdays: [1] } }), "weekly");
+  assert.equal(tidyState({ ...task, enabled: false }), "off");
+  assert.equal(findTidyTask(bot, [task])?.id, "task-1");
+  const report = { id: "task-1", at: task.lastRunAt, title: "Tidy memory", summary: "Nothing changed.", threadId: "thread-routine", failed: false };
+  const entries = buildEntries([{ id: "m1", type: "user_message", text: "hello", messageId: "m1", startedAt: "2026-11-16T10:10:00.000Z", ordinal: 1 }], { bot, botsByThread: new Map(), tasks: [], requests: {}, routineReports: [report] });
+  const kinds = entries.map((entry) => entry.kind);
+  assert.ok(kinds.includes("routine-report"));
+  assert.ok(kinds.indexOf("routine-report") < kinds.indexOf("user"));
 });

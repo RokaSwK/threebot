@@ -149,10 +149,12 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
             {!showRoutines && <div className="profile-actions mb-6 hidden overflow-hidden rounded-[20px] bg-card px-4">
               <ProfileAction icon={<Clock size={20} />} label="Routines" detail={`${tasks.filter((t) => t.enabled).length} on`} onClick={() => setShowRoutines(true)} />
               <ProfileAction icon={<FileText size={20} />} label="Instructions" onClick={() => useApp.setState({ detailsTab: "instructions" })} />
+              <ProfileAction icon={<Brain size={20} />} label="Memory" onClick={() => useApp.setState({ detailsTab: "memory" })} />
               <ProfileAction icon={<LibraryIcon size={20} />} label="Library" onClick={() => useApp.setState({ detailsTab: "library" })} />
               <ProfileAction icon={<Monitor size={20} />} label="Computer" detail={botStatus(bot) === "working" ? "Working" : "Idle"} onClick={() => useApp.setState({ detailsTab: "computer" })} />
             </div>}
             {!showRoutines && !archived && <ModelSection bot={bot} threadId={threadId} />}
+            {!showRoutines && !archived && <ConnectedAppsSection bot={bot} />}
             {!showRoutines && !archived && threadId === bot.mainThreadId && <CodingWorkSection bot={bot} />}
             {!showRoutines && threadId && <ThreadFamily bot={bot} threadId={threadId} />}
             {!showRoutines && threadId && <SideChatList parentThreadId={threadId} />}
@@ -169,6 +171,37 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
       {picker && <AvatarDialog key={bot.slug} bot={bot} onClose={() => setPicker(false)} />}
     </aside>
   );
+}
+
+/** Executor's own approval, not a T3 permission mode: it decides whether app writes wait for the Bot. */
+function ConnectedAppsSection({ bot }: { bot: Bot }) {
+  const executorUrl = useApp((s) => s.executorUrl);
+  const [busy, setBusy] = useState(false);
+  if (!executorUrl) return null;
+  const automatic = bot.executorApproval === "automatic";
+  const titleId = `connected-apps-title-${bot.slug}`;
+  const noteId = `${titleId}-note`;
+  const change = async (on: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try { await updateBot(bot.slug, { executorApproval: on ? "automatic" : "ask" }); }
+    catch (error) { toast(error instanceof Error ? error.message : "Couldn't change app approval"); }
+    finally { setBusy(false); }
+  };
+  return <div className="details-connected-apps"><Section title="Connected apps">
+    <div className="rounded-2xl bg-card px-3.5 py-3">
+      <div className="flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div id={titleId} className="text-[17px]">Automatic app approval</div>
+          <p id={noteId} className="mt-1 text-[12px] leading-relaxed text-muted">Applies to new sessions. T3 permissions still decide what this Bot may run.</p>
+        </div>
+        <Switch checked={automatic} onChange={(on) => void change(on)} labelledBy={titleId} describedBy={noteId} busy={busy} disabled={busy} />
+      </div>
+      <p className={`mt-3 text-[13px] leading-relaxed ${automatic ? "text-attention" : "text-muted"}`}>{automatic
+        ? `Executor approves every connected app write for ${bot.name}, without asking. All apps, not one tool.`
+        : `Executor asks before writing to an app. ${bot.name} relays the request to you; one it doesn't relay expires after 15 minutes.`}</p>
+    </div>
+  </Section></div>;
 }
 
 /** Which model answers here. Lives with the Bot's other settings rather than in the writing row. */

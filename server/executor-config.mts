@@ -72,10 +72,19 @@ export function executorConfiguration(env: Environment = process.env): ExecutorC
   return { active: active as ExecutorBackend, profile: active === 'cloud' ? cloud : selfHosted, profiles: { cloud, 'self-hosted': selfHosted } };
 }
 
-export function executorMcpDefinition(profile: ExecutorProfile | null | undefined) {
+/** How Executor answers its own approval prompts on one MCP connection. */
+export type ExecutorElicitationMode = 'model' | 'automatic';
+
+export function executorMcpDefinition(profile: ExecutorProfile | null | undefined, { elicitationMode }: { elicitationMode?: ExecutorElicitationMode } = {}) {
   const value = executorCredential(profile);
   if (!profile || !value) return null;
-  return { type: 'http', url: profile.mcpUrl, headers: {
+  let url = profile.mcpUrl;
+  if (elicitationMode) {
+    const parsed = new URL(url);
+    parsed.searchParams.set('elicitation_mode', elicitationMode);
+    url = parsed.href.replace(/\/$/, '');
+  }
+  return { type: 'http', url, headers: {
     Authorization: `Bearer ${value}`,
     ...(profile.kind === 'cloud' ? { 'X-Executor-Organization': profile.organization } : {}),
   } };
@@ -89,7 +98,7 @@ export function executorCredential(profile: ExecutorProfile | null | undefined):
   try {
     descriptor = openSync(profile.credential.path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || (stat.mode & 0o077) || stat.size > 16_384) throw new Error();
+    if (!stat.isFile() || (process.platform !== "win32" && (stat.mode & 0o077)) || stat.size > 16_384) throw new Error();
     const value = readFileSync(descriptor, 'utf8').trim();
     if (!value) throw new Error();
     return value;

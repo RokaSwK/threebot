@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildOnce, domWindow, entryChunk } from "./support.mts";
 import { Window } from "happy-dom";
+import { fileURLToPath } from "node:url";
 
 const directory = await mkdtemp(join(tmpdir(), "bot-clipboard-"));
-const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: new URL("../src/lib/t3.ts", import.meta.url).pathname, write: false } });
+const bundle = await buildOnce({ configFile: false, logLevel: "silent", build: { ssr: fileURLToPath(new URL("../src/lib/t3.ts", import.meta.url)), write: false } });
 const entry = entryChunk(bundle);
 assert.ok(entry);
 const filename = join(directory, "clipboard.mjs");

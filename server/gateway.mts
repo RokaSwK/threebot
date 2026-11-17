@@ -5,13 +5,14 @@ import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerRespon
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { promises as fs, existsSync, readFileSync } from "node:fs";
+import { promises as fs, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import { renderAgentsMd, mergeManaged, type TemplateSettings } from "./bot-template.mts";
 import { memorySignature, readMemoryFiles, readSnapshot, saveMemoryFile, writeTextAtomic, type MemorySnapshot } from "./memory.mts";
+import { memoryTidyPrompt, setMemoryTidy, type MemoryTidyFrequency } from "./memory-tidy.mts";
 import { ADOPTED_INSTRUCTIONS, instructionTextError, readAdoptedInstructions, readInstructions, sanitizeInstructions, saveInstructions, type InstructionsTarget } from "./instructions.mts";
 import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
@@ -91,7 +92,11 @@ const cfg: {
 const executorConfig = executorConfiguration();
 // Bots reach their own tool server (the Vault) here, from this machine only.
 cfg.botMcpUrl = (process.env.BOT_MCP_URL ?? `http://127.0.0.1:${cfg.port}/mcp/bot`).replace(/\/$/, "");
-const token = (process.env.T3_TOKEN ?? readIfExists(process.env.T3_TOKEN_FILE ?? path.join(here, ".t3-token")) ?? "").trim();
+// Where the T3 token lives: what the settings say, else the CLI's copy in the data folder, else a
+// token dropped beside the server (how installer releases ship it).
+const tokenPath = process.env.T3_TOKEN_FILE
+  ?? (existsSync(path.join(dataRoot, "t3-token")) ? path.join(dataRoot, "t3-token") : path.join(here, ".t3-token"));
+const token = (process.env.T3_TOKEN ?? readIfExists(tokenPath) ?? "").trim();
 if (!token) {
   console.error("No T3 token: set T3_TOKEN or T3_TOKEN_FILE");
   process.exit(1);
@@ -474,11 +479,15 @@ async function untrustInCodex(dir: string) {
   await fs.writeFile(codexGlobalConfig, existing.replace(`\n${lines}`, "").replace(lines, ""), { mode: 0o600 });
 }
 
-async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot) {
+async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot, executorApproval?: Bot['executorApproval']) {
   // Every Bot gets its own tool server (the Vault and Projects); Executor when it's configured.
   const botToken = tokenForBot(botMcpToken, slug);
   const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
-  try { const definition = executorMcpDefinition(executorConfig.profile); if (definition) servers.executor = definition; }
+  try {
+    const elicitationMode = executorApproval === 'automatic' ? 'automatic' : executorApproval === 'ask' ? 'model' : undefined;
+    const definition = executorMcpDefinition(executorConfig.profile, { elicitationMode });
+    if (definition) servers.executor = definition;
+  }
   catch { console.error('Executor credential unavailable; managed Executor MCP is disabled.'); }
   if (adoption) return writeAdoptedMcpConfig(adoption, servers);
   const mcpPath = path.join(dir, ".mcp.json");
@@ -574,7 +583,7 @@ async function writeAgentsMdInner(bot: Bot, settings: TemplateSettings, snapshot
   const adoption = bot.adopted ? (await readAdopted(cfg.botsRoot)).find((entry) => entry.slug === bot.slug) : undefined;
   if (bot.adopted && !adoption) return;
   const dir = bot.workspaceRoot;
-  const executorReady = await writeMcpConfig(dir, bot.slug, adoption);
+  const executorReady = await writeMcpConfig(dir, bot.slug, adoption, bot.executorApproval);
   // Executor is only ready with a profile; skippedApps is only set on a Cloud profile.
   const executor = executorReady ? { kind: executorConfig.profile!.kind, publicUrl: executorConfig.profile!.publicUrl,
     organization: executorConfig.profile!.organization, skippedApps: (executorConfig.profile as ExecutorProfile & { skippedApps?: string[] }).skippedApps ?? [] } : null;
@@ -1061,8 +1070,9 @@ async function proxyT3(req: IncomingMessage, res: ServerResponse, t3Path: string
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
 async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string) {
   const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
+  const safePosix = safe.replace(/\\/g, "/");
   // The public landing page is the one route outside the single-page app.
-  let file = path.join(cfg.staticDir, /^\/welcome\/?$/.test(safe) ? "welcome/index.html" : safe);
+  let file = path.join(cfg.staticDir, /^\/welcome\/?$/.test(safePosix) ? "welcome/index.html" : safe);
   if (!file.startsWith(cfg.staticDir)) return send(res, 403, "forbidden");
   let stat = await fs.stat(file).catch(() => null);
   if (!stat || stat.isDirectory()) { file = path.join(cfg.staticDir, "index.html"); stat = await fs.stat(file).catch(() => null); }
@@ -1327,7 +1337,25 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/memory" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
       if (!bot) return send(res, 404, { error: "Bot not found" });
-      return send(res, 200, await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined }), { "cache-control": "no-store" });
+      const files = await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined });
+      return send(res, 200, { ...files, tidyPrompt: memoryTidyPrompt(bot) }, { "cache-control": "no-store" });
+    }
+    if (p === "/api/memory/tidy" && req.method === "POST") {
+      requireJson(req);
+      const body = await readBody(req, 4096);
+      const bot = await getBot(String(body?.slug ?? ""));
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      const frequency = body?.frequency;
+      if (frequency !== "off" && frequency !== "weekly" && frequency !== "nightly") return send(res, 400, { error: "frequency must be off, weekly or nightly" });
+      if (bot.environmentId !== "local") return send(res, 409, { error: "Memory tidy is only available for Bots on this machine." });
+      if (!bot.projectId || !bot.mainThreadId) return send(res, 409, { error: "This Bot needs a main conversation first." });
+      const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
+      const projection = await withTimeout(client.call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15_000, "T3 timed out");
+      const modelSelection = projection?.thread?.modelSelection ?? bot.model;
+      if (!modelSelection) return send(res, 409, { error: "Pick a model for this Bot first." });
+      const result = await setMemoryTidy({ client, bot, frequency: frequency as MemoryTidyFrequency, modelSelection });
+      if (result.task && result.task.id !== bot.memoryTidyRoutineId) await saveBot(bot.slug, { memoryTidyRoutineId: result.task.id });
+      return send(res, 200, { frequency, task: result.task }, { "cache-control": "no-store" });
     }
     if (p === "/api/instructions" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
@@ -1662,6 +1690,11 @@ if (selfUpdating) startUpdateChecks(() => checkUpdates().then(autoUpdate.conside
 telemetry.start();
 server.listen(cfg.port, cfg.host, () => {
   console.log(`bot gateway on http://${cfg.host}:${cfg.port} → T3 ${cfg.t3Url}, bots in ${cfg.botsRoot}`);
+  // Windows restarts the gateway by PID: it has no service manager to ask. A read-only home only
+  // costs that restart, so a failed write stays quiet.
+  if (process.platform === "win32") {
+    try { writeFileSync(path.join(dataRoot, "gateway.pid"), String(process.pid)); } catch { /* best effort */ }
+  }
 });
 // A room turn that was running when the gateway stopped does not resume.
 void roomEngine.recover().catch((err) => console.error("[rooms]", (err as Error).message));

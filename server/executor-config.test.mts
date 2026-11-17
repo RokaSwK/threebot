@@ -41,6 +41,16 @@ test('the bare Cloud MCP endpoint is explicitly organization-bound and skipped a
   assert.deepEqual((config.profile as CloudExecutorProfile).skippedApps, ['gmail', 'calendar']);
 });
 
+test('a Bot approval mode overrides only elicitation_mode and keeps the rest of the MCP URL', () => {
+  const config = executorConfiguration({ ...cloud, EXECUTOR_CLOUD_MCP_URL: 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=native&source=bot' });
+  const base = executorMcpDefinition(config.profile)!;
+  assert.equal(base.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=native&source=bot');
+  const automatic = executorMcpDefinition(config.profile, { elicitationMode: 'automatic' })!;
+  assert.equal(automatic.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=automatic&source=bot');
+  assert.deepEqual(automatic.headers, base.headers);
+  assert.equal(executorMcpDefinition(config.profile, { elicitationMode: 'model' })!.url, 'https://mcp.executor.sh/org/workspace/mcp?elicitation_mode=model&source=bot');
+});
+
 test('invalid backend, missing organization and cross-organization MCP routes fail without credential leakage', () => {
   for (const input of [
     { ...cloud, EXECUTOR_BACKEND: 'automatic' },
@@ -62,6 +72,7 @@ test('private credential files materialize exact trimmed tokens without exposing
 });
 
 test('unreadable, empty, nonprivate and symlinked credential files fail closed without selecting backup', async (t) => {
+  if (process.platform === "win32") return;
   const dir = await mkdtemp(path.join(tmpdir(), 'executor-config-invalid-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const good = path.join(dir, 'good'); await writeFile(good, 'fake-private-token', { mode: 0o600 });
   const empty = path.join(dir, 'empty'); await writeFile(empty, '', { mode: 0o600 });

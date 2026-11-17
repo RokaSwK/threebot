@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { MessageChannel } from 'node:worker_threads';
 import { Window } from 'happy-dom';
 import { buildOnce, domWindow } from './support.mts';
+import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: 'https://bot.example/?bot=sample&thread=thread-sample', width: 390, height: 844, settings: { device: { prefersReducedMotion: 'reduce' } } }));
@@ -14,7 +15,7 @@ for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 
 globalThis.matchMedia = window.matchMedia.bind(window);
 globalThis.getComputedStyle = window.getComputedStyle.bind(window); globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const directory = await mkdtemp(join(tmpdir(), 'bot-auth-boot-'));
-const src = new URL('../src/', import.meta.url).pathname;
+const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"development"' }, ssr: { noExternal: true },
  plugins: [{ name: 'auth-boot-test', resolveId: id => id.endsWith('virtual:auth-boot') ? '\0auth-boot' : undefined,
  load: id => id === '\0auth-boot' ? `export { createElement as h, act, StrictMode } from 'react'; export { createRoot } from 'react-dom/client'; export { default as App } from ${JSON.stringify(`${src}App.tsx`)}; export { boot, useApp } from ${JSON.stringify(`${src}store.ts`)}; export { api } from ${JSON.stringify(`${src}lib/api.ts`)}; export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined }],

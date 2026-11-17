@@ -21,6 +21,14 @@ export async function buildOnce(config: InlineConfig): Promise<BuildOutput> {
 export type TestWindow = Window & typeof globalThis & { happyDOM: HappyWindow["happyDOM"] };
 export const domWindow = (window: HappyWindow): TestWindow => window as unknown as TestWindow;
 
+/**
+ * Whether a plugin's module id is the file at `expected`. Vite reports ids with the platform's
+ * separators, so Windows gives `C:\app\web\src\x.tsx` where Linux gives `/app/web/src/x.tsx`.
+ */
+export function isModule(id: string, expected: string): boolean {
+  return id === expected || id.replaceAll("\\", "/") === expected.replaceAll("\\", "/");
+}
+
 /** The entry chunk of an SSR test bundle: the module the test imports. */
 export function entryChunk(bundle: BuildOutput) {
   const entry = bundle.output.find((output) => output.type === "chunk" && output.isEntry);

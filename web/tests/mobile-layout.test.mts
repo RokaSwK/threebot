@@ -7,7 +7,8 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import postcss, { type Declaration, type Rule } from "postcss";
-import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // DOM lifecycle and CSS conditions/declarations only: happy-dom does not prove
 // browser geometry, scrolling, safe areas, or software keyboard behavior.
@@ -59,7 +60,7 @@ function viewport(width, height, nextPointer) {
     }
   }
 }
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{
@@ -73,7 +74,7 @@ const bundle = await buildOnce({
       export { Details } from ${JSON.stringify(`${src}components/Details.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined,
-    transform: (code, id) => id === `${src}App.tsx` ? { code: `${code}\nexport { Shell, useNarrow };`, map: null } : undefined,
+    transform: (code, id) => isModule(id, `${src}App.tsx`) ? { code: `${code}\nexport { Shell, useNarrow };`, map: null } : undefined,
   }],
   ssr: { noExternal: true }, build: { ssr: "virtual:mobile-layout", write: false },
 });
@@ -195,6 +196,17 @@ for (const tab of ["details", "library", "computer"]) test(`Details ${tab} profi
     viewport(width, height, input); const style = stylesForViewport();
     assert.equal(getComputedStyle(profile).display === "none", mobile && tab !== "details"); style.remove();
   }
+});
+
+test("mobile Details lists Memory beside Instructions", async () => {
+  useApp.setState({ detailsTab: "details", detailsOpen: true });
+  await act(async () => root.render(h(Details, { bot, threadId: "main" })));
+  const labels = [...host.querySelectorAll(".profile-actions button")].map((button) => button.textContent ?? "");
+  assert.ok(labels.some((label) => label.includes("Instructions")));
+  assert.ok(labels.some((label) => label.includes("Memory")));
+  const memory = [...host.querySelectorAll(".profile-actions button")].find((button) => button.textContent?.includes("Memory"));
+  await act(async () => memory!.click());
+  assert.equal(useApp.getState().detailsTab, "memory");
 });
 
 test("coarse landscape retains content scrolling and bounded Settings/dialog declarations", () => {

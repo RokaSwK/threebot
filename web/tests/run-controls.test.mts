@@ -7,6 +7,7 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import { MessageChannel } from "node:worker_threads";
 import { Window } from "happy-dom";
 import { buildOnce, domWindow, entryChunk } from "./support.mts";
+import { fileURLToPath } from "node:url";
 
 // Child approvals and Force stop, with the real store and React DOM; only the T3 transport is mocked.
 const channels = [];
@@ -15,7 +16,7 @@ const window = domWindow(new Window({ url: "http://run-controls.test" }));
 for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "IntersectionObserver"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.getComputedStyle = (element) => window.getComputedStyle(element);
-const src = new URL("../src/", import.meta.url).pathname;
+const src = fileURLToPath(new URL("../src/", import.meta.url));
 const bundle = await buildOnce({
   configFile: false, logLevel: "silent", define: { "process.env.NODE_ENV": '"development"' },
   plugins: [{ name: "run-controls-test-entry", resolveId: (id) => id.endsWith("virtual:run-controls") ? "\0run-controls" : undefined,

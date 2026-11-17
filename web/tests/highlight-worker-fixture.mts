@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 /** What the client posts to its worker (HighlightRequest in src/lib/highlightCode.shared.ts). */
 type HighlightRequest = { id: number; source: string; language: string };
@@ -66,7 +67,7 @@ export async function loadWorkerHighlighter() {
       },
     }] },
     build: {
-      lib: { entry: new URL("../src/lib/highlightCode.ts", import.meta.url).pathname, formats: ["es"] },
+      lib: { entry: fileURLToPath(new URL("../src/lib/highlightCode.ts", import.meta.url)), formats: ["es"] },
       write: false, rolldownOptions: { output: { entryFileNames: "entry.mjs", chunkFileNames: "[name]-[hash].mjs" } },
     },
   });

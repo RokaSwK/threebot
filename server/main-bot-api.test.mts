@@ -6,6 +6,7 @@ import net from 'node:net';
 import type { Readable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { Bot } from './main-bot.mts';
 
@@ -30,7 +31,7 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
   let processHandle = null as ChildProcessByStdio<null, Readable, Readable> | null;
   try {
     const start = async () => {
-      processHandle = spawn(process.execPath, [new URL('./gateway.mts', import.meta.url).pathname], {
+      processHandle = spawn(process.execPath, [fileURLToPath(new URL('./gateway.mts', import.meta.url))], {
         env: {
           PATH: process.env.PATH, HOME: root, CODEX_HOME: path.join(root, 'codex'),
           HOST: '127.0.0.1', PORT: String(port), BOTS_ROOT: botsRoot, T3_URL: 'http://127.0.0.1:1',
@@ -136,6 +137,7 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.equal(memoryFiles.status, 200);
     assert.equal(memoryFiles.body.bot.text, '# Alpha memory\n\n- [preference] Prefers short answers.\n');
     assert.equal(memoryFiles.body.bot.path, 'memory/MEMORY.md');
+    assert.match(memoryFiles.body.tidyPrompt, /snapshot budget/u);
     const saved = await request('/api/memory', 'PUT', { slug: 'alpha', scope: 'bot', text: '# Alpha memory\n\n- Prefers long answers.\n', expectedRevision: memoryFiles.body.bot.revision });
     assert.deepEqual([saved.status, saved.body.ok], [200, true]);
     assert.equal(await readFile(path.join(botsRoot, 'alpha/memory/MEMORY.md'), 'utf8'), '# Alpha memory\n\n- Prefers long answers.\n');

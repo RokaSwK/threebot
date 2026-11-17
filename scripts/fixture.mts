@@ -96,8 +96,11 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
 /** The real path of this machine's git, for the adopt scenario; the test process runs it too. */
 function findGit() {
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    const candidate = path.join(dir, 'git');
-    if (existsSync(candidate)) return realpathSync(candidate);
+    // Windows ships git as git.exe; every other platform calls it git.
+    for (const name of process.platform === 'win32' ? ['git.exe', 'git'] : ['git']) {
+      const candidate = path.join(dir, name);
+      if (existsSync(candidate)) return realpathSync(candidate);
+    }
   }
   throw new Error('The adopt scenario needs git on PATH.');
 }
