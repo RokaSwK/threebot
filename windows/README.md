@@ -63,6 +63,10 @@ required: two `.syso` files with `.rsrc` sections cannot be linked into one exe.
 
 The window is Edge or Chrome in app mode (`--app=http://127.0.0.1:3780/`), which
 gives a frameless window, its own taskbar entry and Threebot's favicon. It uses
-the user's normal browser profile: a fresh profile makes Edge open a sign-in and
-sync dialog on first launch. Without Edge or Chrome the default browser opens
-the URL instead.
+an isolated profile in `%USERPROFILE%\.threebot\browser` to prevent grouping under
+Edge's main browser process or inheriting its taskbar icon. First-run dialogs and
+sync prompts are suppressed via `--disable-fre` and `--disable-features`. The window
+is stamped with Threebot's `AppUserModelID` (`Threebot`) and icon (`threebot.ico`)
+via Win32 shell property stores so Windows pins and groups the active window directly
+under Threebot's taskbar icon. Without Edge or Chrome the default browser opens the
+URL instead.
