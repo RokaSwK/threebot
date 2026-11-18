@@ -13,7 +13,8 @@ Set-Location $PSScriptRoot
 
 $goBin = Join-Path $env:USERPROFILE "go\bin"
 $version = (Get-Content (Join-Path $PSScriptRoot "..\..\package.json") -Raw | ConvertFrom-Json).version
-$parts = @($version.Split('.') + @('0', '0', '0'))[0..3] | ForEach-Object { [int]$_ }
+# Windows version resources are four numbers: drop a prerelease suffix (0.2.0-rc.1 -> 0.2.0.0).
+$parts = @(($version -split '[-+]')[0].Split('.') + @('0', '0', '0'))[0..3] | ForEach-Object { [int]$_ }
 
 $ico = Join-Path $PSScriptRoot "threebot.ico"
 if (-not (Test-Path $ico) -or (Get-Item $IconPng).LastWriteTime -gt (Get-Item $ico).LastWriteTime) {
@@ -25,7 +26,7 @@ if (-not (Test-Path $ico) -or (Get-Item $IconPng).LastWriteTime -gt (Get-Item $i
 $vi = Join-Path $goBin "goversioninfo.exe"
 if (-not (Test-Path $vi)) {
   Write-Host "installing goversioninfo (icon + version resource compiler)"
-  go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+  go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.7.0
   if ($LASTEXITCODE -ne 0) { throw "go install goversioninfo failed with exit code $LASTEXITCODE" }
 }
 

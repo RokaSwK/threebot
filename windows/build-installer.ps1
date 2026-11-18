@@ -37,20 +37,9 @@ if (-not $iscc) {
   }
 }
 
-if (-not $iscc) {
-  if (Get-Command choco -ErrorAction SilentlyContinue) {
-    Write-Host "Inno Setup not found. Installing via Chocolatey..."
-    choco install innosetup -y --no-progress
-    $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-  } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
-    Write-Host "Inno Setup not found. Installing via winget..."
-    winget install --id JR.InnoSetup -e --accept-source-agreements --accept-package-agreements --silent
-    $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-  }
-}
-
+# A build script doesn't install software on its own: CI installs a pinned Inno Setup first.
 if (-not $iscc -or -not (Test-Path $iscc)) {
-  throw "Inno Setup compiler (ISCC.exe) not found. Please install Inno Setup 6 (https://jrsoftware.org/isdl.php) or run 'choco install innosetup'."
+  throw "Inno Setup compiler (ISCC.exe) not found. Install Inno Setup 6 (https://jrsoftware.org/isdl.php or 'choco install innosetup')."
 }
 
 Write-Host "Compiling installer using $iscc..."

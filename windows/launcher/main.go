@@ -160,8 +160,9 @@ func prepare(root, installDir, home string) (appDir, nodeExe string, err error) 
 	}
 	// Keep Threebot.exe beside its app, so updates leave one shortcut to fix, not two.
 	self, _ := os.Executable()
-	if self != "" {
-		_ = copyFile(self, filepath.Join(installDir, "Threebot.exe"))
+	// The installer puts the bundle in installDir itself: never copy the running exe onto itself.
+	if packed := filepath.Join(installDir, "Threebot.exe"); self != "" && !strings.EqualFold(filepath.Clean(self), filepath.Clean(packed)) {
+		_ = copyFile(self, packed)
 	}
 	return installedApp, installedNode, nil
 }

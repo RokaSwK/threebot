@@ -5,7 +5,7 @@ on:
 permissions:
   contents: write
 jobs:
-  release-linux:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -31,39 +31,40 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS release/install.ps1 --title "Threebot ${GITHUB_REF_NAME#v}" --generate-notes $prerelease
 
+  # The Windows installer and portable bundle, attached to the release the job above published. It
+  # runs after that job, so a Windows failure never holds back the tarball and SHA256SUMS.
   release-windows:
-    needs: release-linux
+    needs: release
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: |
             web/package-lock.json
             server/package-lock.json
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: windows/launcher/go.mod
           cache: false
       - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
-      - name: Install dependencies & build web
+        run: choco install innosetup --version=6.7.1 -y --no-progress
+      - name: Install dependencies and build the web app
         run: |
           npm ci --prefix web
           npm run build --prefix web
           npm ci --prefix server
-      - name: Build Windows bundle and installer
-        run: |
-          powershell -ExecutionPolicy Bypass -File windows/build-installer.ps1
-      - name: Upload Windows assets to release
+      - name: Build the Windows bundle and installer
+        run: powershell -ExecutionPolicy Bypass -File windows/build-installer.ps1
+      - name: Upload the Windows assets to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
-          $assets = @(
-            "dist\windows\Threebot-$version-win64.zip",
-            "dist\windows\Threebot-Setup-$version.exe"
-          )
-          gh release upload "$env:GITHUB_REF_NAME" @assets --clobber
+          $assets = @("dist\windows\Threebot-$version-win64.zip", "dist\windows\Threebot-Setup-$version.exe")
+          $sums = foreach ($asset in $assets) { "$((Get-FileHash $asset -Algorithm SHA256).Hash.ToLower())  $(Split-Path -Leaf $asset)" }
+          [System.IO.File]::WriteAllText("$PWD\dist\windows\SHA256SUMS-windows", (($sums -join "`n") + "`n"))
+          gh release upload "$env:GITHUB_REF_NAME" @assets "dist\windows\SHA256SUMS-windows" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }

@@ -10,7 +10,8 @@ Threebot for Windows is distributed in two ways:
 Download and run `Threebot-Setup-<version>.exe`.
 - **Zero UAC Elevation**: Installs per-user without administrative rights.
 - **Automated / Silent Install**: Run with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` for unattended setups (e.g., winget / chocolatey).
-- **Shortcut & Branding**: Automatically registers Start Menu, Desktop (optional), and Startup shortcuts with `AppUserModelID = Threebot` and `threebot.ico`.
+- **Shortcut & Branding**: Automatically registers Start Menu, Desktop (optional), and Startup shortcuts with `threebot.ico`; the Start Menu and Desktop ones carry `AppUserModelID = Threebot`.
+- **Upgrades and uninstall**: The installer stops the running gateway first (through `gateway.pid`), so an upgrade replaces its files and a silent upgrade starts it again in the background. It shares its folder with the portable bundle, so either one upgrades the other.
 
 ## Using the Portable Bundle
 
