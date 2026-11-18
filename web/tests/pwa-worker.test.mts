@@ -90,7 +90,15 @@ function cacheStorage() {
       const data = stores.get(name);
       return {
         async put(request, response) {
-          data.set(key(request), { request: request instanceof Request ? request.clone() : new Request(key(request)), response: response.clone() });
+          // Cache.put consumes the body and stores bytes, so repeated matches
+          // get independent streams even when the response came from this cache.
+          const body = await response.arrayBuffer();
+          data.set(key(request), {
+            request: request instanceof Request ? request.clone() : new Request(key(request)),
+            body,
+            status: response.status,
+            headers: new Headers(response.headers),
+          });
         },
         async match(request, options: CacheQueryOptions = {}) {
           const stored = data.get(key(request));
@@ -99,10 +107,10 @@ function cacheStorage() {
           // Cache API Query Cache matches every response Vary field against the
           // stored request, unless explicitly disabled. URL-only maps hide this.
           if (!options.ignoreVary) {
-            const vary = stored.response.headers.get("vary")?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
+            const vary = stored.headers.get("vary")?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
             if (vary.some((name) => name === "*" || query.headers.get(name) !== stored.request.headers.get(name))) return undefined;
           }
-          return stored.response.clone();
+          return new Response(stored.body.slice(0), { status: stored.status, headers: stored.headers });
         },
       };
     },
