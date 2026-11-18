@@ -70,7 +70,8 @@ export type ReplyItem = {
   childThreadId?: string | null;
   title?: string | null;
   /** `notification` rows: what woke the run, e.g. a delegated task finishing. */
-  source?: { kind?: string | null; childThreadId?: string | null } | null;
+  source?: { kind?: string | null; childThreadId?: string | null; taskIds?: string[] } | null;
+  outcome?: string;
 };
 
 /**
@@ -92,11 +93,18 @@ export function pickReply(items: ReplyItem[], runId: string | null | undefined):
 }
 
 
-export const ROOM_RUN_OVER = new Set(["completed", "failed", "cancelled", "interrupted"]);
-const CHILD_OVER = new Set([...ROOM_RUN_OVER, "rolled_back"]);
+export const ROOM_RUN_OVER = new Set(["completed", "failed", "cancelled", "interrupted", "rolled_back"]);
 const DELEGATION_GRACE_MS = 15_000;
 
-export type ChainRun = { id: string; status?: string | null; completedAt?: string | null; ordinal?: number };
+export type ChainRun = { id: string; status?: string | null; completedAt?: string | null; ordinal?: number; userMessageId?: string };
+export type ChainTask = {
+  id: string;
+  status: string;
+  completedAt?: string | null;
+  updatedAt?: string | null;
+  completionDelivery?: { state: string } | null;
+};
+
 export type DelegatedChild = {
   childThreadId: string;
   subagentId: string | null;
@@ -112,14 +120,25 @@ type ChainState = {
 };
 
 /** Follow only wake-up runs attributed to children of this dispatch. The set bounds the walk. */
-export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, now = Date.now()) {
+export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, now = Date.now(), tasks: ChainTask[] = []) {
   const runsById = new Map(runs.map((run) => [run.id, run]));
-  const wakesByChild = new Map<string, string>();
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+  const wakesByChild = new Map<string, ReplyItem[]>();
   const childrenByRun = new Map<string, ReplyItem[]>();
   for (const item of items) {
     if (!item.runId) continue;
-    if (item.type === "notification" && item.source?.kind === "delegated_task" && item.source.childThreadId) {
-      wakesByChild.set(item.source.childThreadId, item.runId);
+    if (item.type === "notification" && item.source?.kind === "delegated_task") {
+      const messageId = runsById.get(item.runId)?.userMessageId;
+      // T3 steers some notifications into an existing run. Its answer belongs to
+      // the message that started the run. T3's projection uses the message-derived row id.
+      if (messageId && item.id !== `turn-item:message:${encodeURIComponent(messageId)}` && item.messageId !== messageId) continue;
+      const keys = (item.source.taskIds ?? []).map((id) => `task:${id}`);
+      if (item.source.childThreadId) keys.push(`thread:${item.source.childThreadId}`);
+      for (const key of keys) {
+        const notifications = wakesByChild.get(key) ?? [];
+        notifications.push(item);
+        wakesByChild.set(key, notifications);
+      }
     } else if (item.type === "subagent") {
       const siblings = childrenByRun.get(item.runId) ?? [];
       siblings.push(item);
@@ -129,6 +148,8 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
 
   const seen = new Set([root]);
   const children: DelegatedChild[] = [];
+  const completionRuns = new Set<string>();
+  let completedAt = 0;
   const dispatchedAsync = new Set<string>();
   let pending = false;
   let missingWake = false;
@@ -136,22 +157,39 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
   for (const runId of seen) {
     const run = runsById.get(runId);
     const parentEnd = Date.parse(run?.completedAt ?? "");
+    completedAt = Math.max(completedAt, parentEnd || 0);
     for (const item of childrenByRun.get(runId) ?? []) {
       const childThreadId = item.childThreadId ?? "";
-      const status = item.status ?? "running";
-      children.push({ childThreadId, subagentId: item.subagentId ?? null, title: item.title ?? null, status, completedAt: item.completedAt ?? null });
-      const wake = wakesByChild.get(childThreadId);
-      const childEnd = Date.parse(item.completedAt ?? "");
-      if (wake && wake !== runId) {
+      const task = item.subagentId ? tasksById.get(item.subagentId) : undefined;
+      const status = task?.status ?? item.status ?? "running";
+      const childCompletedAt = task?.completedAt ?? item.completedAt ?? null;
+      children.push({ childThreadId, subagentId: item.subagentId ?? null, title: item.title ?? null, status, completedAt: childCompletedAt });
+      const childEnd = Date.parse(childCompletedAt ?? "");
+      const delivery = task?.completionDelivery?.state;
+      const awaitingDelivery = delivery === "pending" || delivery === "claimed";
+      completedAt = Math.max(completedAt, childEnd || 0);
+      const notifications = (item.subagentId && wakesByChild.get(`task:${item.subagentId}`))
+        || wakesByChild.get(`thread:${childThreadId}`) || [];
+      let delivered = false;
+      for (const notification of notifications) {
+        const wakeId = notification.runId;
+        if (!wakeId || wakeId === runId) continue;
+        seen.add(wakeId);
+        if (notification.outcome === "updated") continue;
+        if (ROOM_RUN_OVER.has(status)) {
+          completionRuns.add(wakeId);
+          delivered = true;
+        }
+      }
+      if (delivered) {
         dispatchedAsync.add(runId);
-        seen.add(wake);
-      } else if (!CHILD_OVER.has(status)) {
+      } else if (!ROOM_RUN_OVER.has(status)) {
         dispatchedAsync.add(runId);
         pending = true;
-      } else if (!(childEnd <= parentEnd)) {
+      } else if (awaitingDelivery || !(childEnd <= parentEnd)) {
         dispatchedAsync.add(runId);
         missingWake = true;
-        lastUndelivered = Math.max(lastUndelivered, childEnd || Date.parse(item.updatedAt ?? "") || 0);
+        lastUndelivered = Math.max(lastUndelivered, childEnd || Date.parse(task?.updatedAt ?? item.updatedAt ?? "") || 0);
       }
     }
   }
@@ -163,27 +201,28 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
   const chain: ChainState = { runIds, children, settled, stalled };
   // A run that sent out background work may have ended with an acknowledgement.
   // Use the last wake-up after the chain settles, including a deliberate pass.
-  const answerRun = runIds.slice(1).sort((a, b) =>
+  const answerRun = [...completionRuns].sort((a, b) =>
     (runsById.get(a)?.ordinal ?? 0) - (runsById.get(b)?.ordinal ?? 0)
     || (Date.parse(runsById.get(a)?.completedAt ?? "") || 0) - (Date.parse(runsById.get(b)?.completedAt ?? "") || 0)
   ).at(-1) ?? root;
   const answerStatus = runsById.get(answerRun)?.status;
   const reply = settled && !dispatchedAsync.has(answerRun) && (answerStatus === "completed" || (!answerStatus && children.length === 0))
     ? pickReply(items, answerRun) : null;
-  return { chain, reply: reply ? { ...reply, runId: answerRun } : null };
+  return { chain, answerStatus, completedAt, reply: reply ? { ...reply, runId: answerRun } : null };
 }
 
 /** Read the answer the room published, or a settled answer that arrived after its deadline. */
 export function recordedRoomReply(
   items: ReplyItem[], runs: ChainRun[],
-  part: { runId: string | null; replyRunId?: string; status?: string },
-  turnStatus: string,
+  part: { runId: string | null; replyRunId?: string; status?: string; delegationTimedOut?: boolean },
+  turnStatus: string, tasks?: ChainTask[],
 ) {
   if (!part.runId) return null;
   if (part.status === "replied" || part.status === "passed") return pickReply(items, part.replyRunId ?? part.runId);
   if (part.status === "timeout" && runs.some((run) => run.id === part.runId && run.status === "completed")) {
-    return chainReply(items, runs, part.runId).reply;
+    const { reply, chain } = chainReply(items, runs, part.runId, undefined, tasks);
+    return part.delegationTimedOut && chain.children.length === 0 ? null : reply;
   }
-  if (!part.status && turnStatus === "done") return pickReply(items, part.runId);
+  if (!part.status && turnStatus === "done") return chainReply(items, runs, part.runId, undefined, tasks).reply;
   return null;
 }

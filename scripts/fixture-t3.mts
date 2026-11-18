@@ -486,11 +486,11 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
                   publish();
                   setTimeout(() => {
                     const wakeAt = new Date().toISOString();
-                    const wakeRun = { id: `fixture-wake-${threadRuns.length + 1}-${thread.id}`, userMessageId: `fixture-wake-message-${thread.id}`, ordinal: threadRuns.length + 1, status: 'completed', requestedAt: wakeAt, startedAt: wakeAt, completedAt: wakeAt, modelSelection: MODEL };
+                    const wakeRun = { id: `fixture-wake-${threadRuns.length + 1}-${thread.id}`, userMessageId: `fixture-wake-message-${threadRuns.length + 1}-${thread.id}`, ordinal: threadRuns.length + 1, status: 'completed', requestedAt: wakeAt, startedAt: wakeAt, completedAt: wakeAt, modelSelection: MODEL };
                     threadRuns.push(wakeRun);
                     const child = entries.find((entry) => entry.childThreadId === childThreadId);
                     if (child) Object.assign(child, { status: 'completed', completedAt: wakeAt, updatedAt: wakeAt });
-                    entries.push(item(thread.id, entries.length + 1, 'notification', { runId: wakeRun.id, status: 'completed', completedAt: wakeAt, updatedAt: wakeAt, source: { kind: 'delegated_task', childThreadId }, outcome: 'completed', summary: 'Delegated task "Scripted child check" finished' }));
+                    entries.push(item(thread.id, entries.length + 1, 'notification', { id: `turn-item:message:${encodeURIComponent(wakeRun.userMessageId)}`, runId: wakeRun.id, status: 'completed', completedAt: wakeAt, updatedAt: wakeAt, source: { kind: 'delegated_task', childThreadId }, outcome: 'completed', summary: 'Delegated task "Scripted child check" finished' }));
                     entries.push(item(thread.id, entries.length + 1, 'assistant_message', { text: `${name} finished the check. Final scripted report.`, runId: wakeRun.id, startedAt: wakeAt, completedAt: wakeAt, updatedAt: wakeAt }));
                     Object.assign(thread, { updatedAt: wakeAt });
                     publish();

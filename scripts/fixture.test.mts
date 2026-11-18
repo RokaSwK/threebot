@@ -1164,7 +1164,7 @@ test('a room follows a member run that delegated, and the line is the run its ch
       await new Promise((resolve) => setTimeout(resolve, 100));
       turn = (await fixture.request(`/api/rooms/${room.id}`)).body.room.turns[0];
     }
-    assert.equal(turn.status, 'done', 'the turn closes after the wake-up run');
+    assert.equal(turn.status, 'done', `the turn closes after the wake-up run, got ${JSON.stringify(turn)}\n${fixture.logs}`);
     assert.match(turn.runs[0].replyRunId, /fixture-wake-/, 'the line is the run the delegated child woke, not the progress note');
     assert.equal(turn.runs[0].status, 'replied');
   } finally { await fixture.close(); }

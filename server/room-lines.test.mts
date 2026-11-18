@@ -105,3 +105,40 @@ test("a child the member waited on in the same run needs no wake-up", () => {
   const runs = [{ id: "run-1", status: "completed", completedAt: "2026-01-01T00:00:25Z" }];
   assert.equal(chainReply(items, runs, "run-1").reply?.id, "ack");
 });
+
+test("a batched completion matches remote children by task ID", () => {
+  const [ack, child] = delegatedItems("completed");
+  const items = [
+    ack,
+    { ...child, childThreadId: null },
+    { ...child, id: "other", childThreadId: null, subagentId: "remote-b" },
+    { id: "turn-item:message:child%3Awake", type: "notification", runId: "wake", outcome: "completed", source: { kind: "delegated_task", taskIds: ["sub-a", "remote-b"] } },
+    { ...ack, id: "report", runId: "wake", text: "Both results" },
+  ];
+  const runs = [{ id: "run-1", status: "completed" }, { id: "wake", userMessageId: "child:wake", status: "completed" }];
+  assert.equal(chainReply(items, runs, "run-1").reply?.text, "Both results");
+});
+
+test("a question exposes its wake run without answering, and a steered completion owns no reply", () => {
+  const [ack, child] = delegatedItems();
+  const notice = { id: "turn-item:message:question", type: "notification", runId: "wake", outcome: "updated", source: { kind: "delegated_task", taskIds: ["sub-a"] } };
+  const interim = { ...ack, runId: "wake", text: "Waiting for an answer" };
+  const runs = [{ id: "run-1", status: "completed" }, { id: "wake", userMessageId: "question", status: "completed" }];
+  const awaiting = chainReply([ack, child, notice, interim], runs, "run-1");
+  assert.deepEqual(awaiting.chain.runIds, ["run-1", "wake"]);
+  assert.equal(awaiting.reply, null);
+  const completed = { ...child, status: "completed", completedAt: "2026-01-01T00:00:20Z" };
+  const steered = { ...notice, id: "turn-item:message:completion", outcome: "completed" };
+  const unaffiliated = chainReply([ack, completed, steered, interim], runs, "run-1");
+  assert.deepEqual(unaffiliated.chain.runIds, ["run-1"]);
+  assert.equal(unaffiliated.reply, null);
+});
+
+test("a task marked pending delivery is not an inline answer even if it finished before its dispatch", () => {
+  const items = delegatedItems("completed");
+  const runs = [{ id: "run-1", status: "completed", completedAt: "2026-01-01T00:00:25Z" }];
+  const tasks = [{ id: "sub-a", status: "completed", completionDelivery: { state: "pending" } }];
+  const { reply, chain } = chainReply(items, runs, "run-1", Date.parse("2026-01-01T00:00:26Z"), tasks);
+  assert.equal(chain.settled, false);
+  assert.equal(reply, null);
+});

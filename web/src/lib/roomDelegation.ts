@@ -65,7 +65,7 @@ export function roomLines(members: MemberView[], turns: RoomTurn[], threadData: 
       if (!data) continue;
       const items = Object.values(data.items);
       const runs = Object.values(data.runs ?? {});
-      const line = recordedRoomReply(items, runs, run, turn.status);
+      const line = recordedRoomReply(items, runs, run, turn.status, Object.values(data.subagents ?? {}));
       if (!line) continue;
       const text = line.text.trim();
       if (text === "") continue;
@@ -98,11 +98,11 @@ export function delegatedRows(members: MemberView[], turns: RoomTurn[], threadDa
       if (!data) continue;
       const items = Object.values(data.items);
       const runs = Object.values(data.runs ?? {});
-      const { chain } = chainReply(items, runs, run.runId);
+      const { chain } = chainReply(items, runs, run.runId, undefined, Object.values(data.subagents ?? {}));
       if (chain.children.length === 0) continue;
       const tasks = tasksOf(data, chain);
       const lastDone = tasks.reduce((newest, task) => Math.max(newest, Date.parse(task.completedAt ?? "") || 0), 0);
-      const lineAt = recordedRoomReply(items, runs, run, turn.status)?.at;
+      const lineAt = recordedRoomReply(items, runs, run, turn.status, Object.values(data.subagents ?? {}))?.at;
       rows.push({
         id: `delegated:${run.runId}`,
         at: lineAt ?? new Date(lastDone || Date.parse(turn.at) || 0).toISOString(),

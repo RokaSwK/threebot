@@ -3,7 +3,7 @@
 // and store what the room needs (status, run ids, last reply time). Bot replies are never copied
 // into rooms.json: they stay in their threads.
 import { randomUUID } from "node:crypto";
-import { addressedMembers, chainReply, clip, formatRoomLine, isPass, recordedRoomReply, ROOM_RUN_OVER, type ChainRun, type ReplyItem, type RoomLine } from "./room-lines.mts";
+import { addressedMembers, chainReply, clip, formatRoomLine, isPass, recordedRoomReply, ROOM_RUN_OVER, type ChainRun, type ChainTask, type ReplyItem, type RoomLine } from "./room-lines.mts";
 import { launchRoomThread, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
 import { validateAttachments, type Room, type RoomAttachment, type RoomMember, type RoomRun, type RoomTurn, type RoomsStore } from "./rooms.mts";
 
@@ -27,6 +27,7 @@ export type EngineDeps = {
 type Projection = {
   runs?: (ChainRun & { status: string; userMessageId?: string })[] | null;
   turnItems?: ReplyItem[] | null;
+  subagents?: ChainTask[] | null;
 } | null;
 
 type QueuedMessage = { turnId: string; message: RoomMessage };
@@ -179,7 +180,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
       // arrives after the turn closed is still what the other members see next time.
       const registered = room.turns.flatMap((turn) => turn.runs.filter((run) => run.slug === member.slug).map((run) => ({ run, status: turn.status })));
       for (const { run, status } of registered) {
-        const reply = recordedRoomReply(items, runs, run, status);
+        const reply = recordedRoomReply(items, runs, run, status, projection?.subagents ?? []);
         if (!reply) continue;
         const text = reply.text.trim();
         if (text === "" || isPass(text)) continue;
@@ -227,6 +228,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     for (;;) {
       if (aborted()) return { status: "stopped", runId, reply: null, delegated };
       const projection = (await rpc.call("orchestration.getThreadProjection", { threadId }).catch(() => null)) as Projection;
+      if (aborted()) return { status: "stopped", runId, reply: null, delegated };
+      const now = nowMs();
       const runs = projection?.runs ?? [];
       const items = projection?.turnItems ?? [];
       const run = runs.find((candidate) => candidate.userMessageId === messageId) ?? null;
@@ -234,7 +237,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         runId = run.id;
         hooks.onRun?.(run.id);
       }
-      const resolved = run && ROOM_RUN_OVER.has(run.status) ? chainReply(items, runs, run.id, nowMs()) : null;
+      const resolved = run && ROOM_RUN_OVER.has(run.status) ? chainReply(items, runs, run.id, now, projection?.subagents ?? []) : null;
       const activeRuns = resolved?.chain.runIds ?? (run ? [run.id] : []);
       if (!waiting && runs.some((candidate) => candidate.status === "waiting" && activeRuns.includes(candidate.id))) {
         waiting = true;
@@ -244,15 +247,15 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
       // T3 stores the message with its claimed copies before the run finishes; report them at once.
       if (!sentSeen && sent) { sentSeen = true; hooks.onSent?.(sent.attachments ?? []); }
       if (run && resolved) {
-        const { chain, reply } = resolved;
+        const { chain, reply, answerStatus, completedAt } = resolved;
         delegated = chain.children.length;
-        if (chain.settled) {
-          return { status: run.status, runId: run.id, reply: reply ? { ...reply, text: reply.text.trim() } : null, delegated };
+        if (chain.settled && (completedAt || Date.parse(reply?.at ?? "") || now) <= deadline) {
+          return { status: answerStatus ?? run.status, runId: run.id, reply: reply ? { ...reply, text: reply.text.trim() } : null, delegated };
         }
         if (chain.stalled) break;
       }
-      if (nowMs() >= deadline || pollMs <= 0) break;
-      await sleep(pollMs);
+      if (now >= deadline || pollMs <= 0) break;
+      await sleep(Math.min(pollMs, deadline - now));
     }
     return { status: "timeout", runId, reply: null, delegated };
   }
@@ -338,7 +341,10 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         // seconds the first four left from one shared deadline.
         const memberDeadline = Math.min(turnDeadline, nowMs() + memberTimeoutMs);
         const result = await waitForRun(member.threadId, messageId, memberDeadline, () => state.abort || active.get(roomId)?.turnId !== turn.id, {
-          onRun: (runId) => { void rooms.setTurnRun(roomId, turn.id, member.slug, runId).catch(() => {}); },
+          onRun: (runId) => {
+            part.runId = runId;
+            void rooms.setTurnRun(roomId, turn.id, { slug: member.slug, runId }).catch(() => {});
+          },
           onSent: (attachments) => {
             // T3 claimed a copy for this thread; keep it, which is what the room shows.
             const received = claimedAttachments(attachments);
@@ -361,10 +367,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         part.runId = result.runId;
         if (result.reply && result.reply.runId !== result.runId) part.replyRunId = result.reply.runId;
         if (result.status === "timeout" && result.delegated > 0) part.delegationTimedOut = true;
-        if (result.status === "timeout" && result.runId) {
-          part.late = true;
-          await rooms.markRunLate(roomId, turn.id, member.slug, result.runId).catch(() => {});
-        }
+        if (result.status === "timeout" && result.runId) part.late = true;
         const replied = result.reply && !isPass(result.reply.text) ? result.reply.text : null;
         if (replied) {
           said += 1;
@@ -386,6 +389,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         }
         log(`[rooms] ${room.name}: ${candidate.slug} failed: ${(err as Error).message}`);
         Object.assign(part, { status: "failed", error: clip((err as Error).message, 200), at: at() });
+      } finally {
+        await rooms.setTurnRun(roomId, turn.id, part);
       }
     };
 

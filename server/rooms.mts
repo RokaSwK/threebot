@@ -458,31 +458,16 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
         return clone(room);
       });
     },
-    /** Records the run a member got, as soon as the engine knows it: the room shows who is answering. */
-    async setTurnRun(id: string, turnId: string, slug: string, runId: string | null): Promise<void> {
+    /** Record the dispatch run as it starts, then persist its outcome as soon as it settles. */
+    async setTurnRun(id: string, turnId: string, part: RoomRun): Promise<void> {
       return serialize(async (state) => {
         const room = state.rooms.find((candidate) => candidate.id === id);
         const turn = room?.turns.find((candidate) => candidate.id === turnId);
         if (!turn) return;
-        // A member can speak more than once in a roundtable: one entry per run.
-        if (turn.runs.some((candidate) => candidate.slug === slug && candidate.runId === runId)) return;
-        turn.runs.push({ slug, runId });
-        await save(state);
-      });
-    },
-    /** The member passed its timeout: its reply is late and must not open a wave. */
-    async markRunLate(id: string, turnId: string, slug: string, runId: string | null): Promise<void> {
-      return serialize(async (state) => {
-        const room = state.rooms.find((candidate) => candidate.id === id);
-        const turn = room?.turns.find((candidate) => candidate.id === turnId);
-        if (!turn) return;
-        const entry = turn.runs.find((candidate) => candidate.slug === slug && candidate.runId === runId);
-        if (!entry) {
-          turn.runs.push({ slug, runId, late: true });
-        } else {
-          if (entry.late) return;
-          entry.late = true;
-        }
+        // Roundtables can dispatch the same member more than once.
+        const entry = turn.runs.find((candidate) => candidate.slug === part.slug && candidate.runId === part.runId);
+        if (entry) Object.assign(entry, part);
+        else turn.runs.push({ ...part });
         await save(state);
       });
     },

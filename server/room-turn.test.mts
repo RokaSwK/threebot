@@ -20,7 +20,7 @@ function fakeRuntime() {
   const launches: any[] = [];
   const runs = new Map<string, { messageId: string; runId: string; status: string; text: string }>();
   /** Runs that arrive after the dispatched one: the wake-ups a delegated child's completion starts. */
-  const extraRuns = new Map<string, { id: string; status: string; userMessageId: string; ordinal: number }[]>();
+  const extraRuns = new Map<string, { id: string; status: string; userMessageId: string; ordinal: number; completedAt: string }[]>();
   /** Every completed reply per thread, oldest first: the room reads them as history. */
   const items = new Map<string, any[]>();
   let counter = 0;
@@ -89,17 +89,17 @@ function fakeRuntime() {
       }]);
     },
     /** The child finishes and wakes its parent: a notification row plus the run behind it. */
-    wake(threadId: string, text: string, childThreadId: string, completedAt = "2026-01-01T00:00:30.000Z") {
+    wake(threadId: string, text: string, childThreadId: string, completedAt = "2026-01-01T00:00:30.000Z", status = "completed") {
       wakes += 1;
       const wakeRunId = `wake-${wakes}`;
       const entries = items.get(threadId) ?? [];
       items.set(threadId, entries.map((item) => item.childThreadId === childThreadId
         ? { ...item, status: "completed", completedAt }
         : item).concat([
-          { id: `note-${wakeRunId}`, runId: wakeRunId, type: "notification", status: "completed", source: { kind: "delegated_task", childThreadId }, completedAt },
+          { id: `turn-item:message:wake-message-${wakes}`, runId: wakeRunId, type: "notification", status: "completed", source: { kind: "delegated_task", childThreadId }, completedAt },
           { id: `item-${wakeRunId}`, runId: wakeRunId, type: "assistant_message", status: "completed", text, completedAt },
         ]));
-      extraRuns.set(threadId, [...(extraRuns.get(threadId) ?? []), { id: wakeRunId, status: "completed", userMessageId: `wake-message-${wakes}`, ordinal: wakes + 1 }]);
+      extraRuns.set(threadId, [...(extraRuns.get(threadId) ?? []), { id: wakeRunId, status, userMessageId: `wake-message-${wakes}`, ordinal: wakes + 1, completedAt }]);
     },
     fail(threadId: string) {
       const run = runs.get(threadId);
@@ -323,6 +323,42 @@ test("a member that delegated is answered when its children finish, not when its
   const projection = await runtime.call("orchestration.getThreadProjection", { threadId: "thread-alpha" });
   const line = (projection.turnItems ?? []).filter((item: any) => item.runId === "wake-2" && item.type === "assistant_message").at(-1);
   assert.equal(line.text, "Informe final del mapa");
+  await done();
+});
+
+test("a panel shows a settled delegated answer while the other member is still running", async () => {
+  const { room, file, done } = await roomWith({ mode: "panel" });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1 });
+  await engine.send(room.id, { text: "@all review" });
+  await waitFor(() => runtime.dispatched.length === 2, "both dispatches");
+  runtime.delegate("thread-alpha", "child-a");
+  runtime.complete("thread-alpha", "Working");
+  runtime.wake("thread-alpha", "Final report", "child-a");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].runs.some((run) => run.slug === "alpha" && run.status === "replied"), "alpha answer before beta");
+  assert.equal((await rooms.get(room.id))!.turns[0].status, "running");
+  runtime.complete("thread-beta", "Done");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status === "done", "panel completion");
+  await done();
+});
+
+for (const failure of [false, true]) test(failure ? "a failed wake-up fails the room part" : "a wake-up after the deadline cannot open another roundtable wave", async () => {
+  const { room, file, done } = await roomWith({ mode: "roundtable", memberTimeoutMin: 1, allowCrossMentions: true });
+  const runtime = fakeRuntime();
+  const rooms = createRooms({ file });
+  let now = Date.parse("2026-01-01T00:00:00Z");
+  const engine = createRoomEngine({ rooms, rpc: runtime, bots: async () => bots, defaults: async () => ({}), pollMs: 1, nowMs: () => now });
+  await engine.send(room.id, { text: "@Alpha review" });
+  await waitFor(async () => !!(await rooms.get(room.id))!.turns[0].runs[0]?.runId, "the dispatched run");
+  runtime.delegate("thread-alpha", "child-a");
+  runtime.complete("thread-alpha", "Working");
+  now = Date.parse(failure ? "2026-01-01T00:00:31Z" : "2026-01-01T00:01:02Z");
+  runtime.wake("thread-alpha", "@Beta report", "child-a", new Date(now - 1000).toISOString(), failure ? "failed" : "completed");
+  await waitFor(async () => (await rooms.get(room.id))!.turns[0].status !== "running", "the room part to close");
+  const [part] = (await rooms.get(room.id))!.turns[0].runs;
+  assert.equal(part.status, failure ? "failed" : "timeout");
+  assert.equal(runtime.dispatched.length, 1);
   await done();
 });
 
