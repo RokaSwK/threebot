@@ -113,7 +113,7 @@ async function listReleases({ env = process.env, fetchImpl = fetch, etag, cached
     }
     throw new Error(`Couldn't list releases (HTTP ${res.status})`);
   }
-  const newEtag = getHeader(res.headers, "etag") || etag || null;
+  const newEtag = getHeader(res.headers, "etag"); // a list without one can't be revalidated
   const list = await res.json();
   const releases = Array.isArray(list) ? (list as GitHubRelease[]).filter((r) => r && typeof r.tag_name === "string" && !r.draft) : [];
   return { releases, etag: newEtag };
@@ -341,7 +341,7 @@ export function createUpdateChecker({
 } = {}) {
   const channel = channelFor(version);
   let value: UpdateStatus = { latest: null, current: null, updateAvailable: false, error: null, checkedAt: null };
-  let nextAt = 0, failures = 0, inflight: Promise<UpdateStatus> | null = null;
+  let nextAt = 0, failures = 0, inflight: Promise<UpdateStatus> | null = null, inflightForced = false;
   let lastEtag: string | null = null, cachedReleases: GitHubRelease[] = [];
 
   const intervalWithJitter = (baseMs: number) => {
@@ -373,7 +373,14 @@ export function createUpdateChecker({
   };
   return async function check({ force = false }: { force?: boolean } = {}): Promise<UpdateStatus> {
     if (!force && now() < nextAt) return value;
-    return inflight ??= refresh(force).finally(() => { inflight = null; });
+    if (inflight && (inflightForced || !force)) return inflight;
+    // A forced check doesn't take a conditional check's (possibly 304) answer: it runs after it.
+    const run: Promise<UpdateStatus> = (inflight ?? Promise.resolve()).then(() => refresh(force)).finally(() => {
+      if (inflight === run) { inflight = null; inflightForced = false; }
+    });
+    inflight = run;
+    inflightForced = force;
+    return run;
   };
 }
 

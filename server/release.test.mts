@@ -278,3 +278,31 @@ test("createUpdateChecker applies jitter within the jitterRatio bounds", async (
   await maxCheck();
   assert.equal(maxCalls, 2);
 });
+
+test("a forced check waits out a background conditional check instead of taking its 304", async () => {
+  const sent: (string | undefined)[] = [];
+  let release304: () => void = () => {};
+  const mockFetch: FetchJson = async (_url, init) => {
+    const conditional = (init?.headers as Record<string, string>)["if-none-match"];
+    sent.push(conditional);
+    if (sent.length === 1) return { ok: true, status: 200, headers: { etag: '"v1"' }, json: async () => [release("v0.2.0")] };
+    if (conditional) {
+      await new Promise<void>((resolve) => { release304 = resolve; });
+      return { ok: false, status: 304, headers: {} };
+    }
+    return { ok: true, status: 200, headers: { etag: '"v2"' }, json: async () => [release("v0.3.0")] };
+  };
+  let t = 0;
+  const check = createUpdateChecker({ env: {}, version: "0.1.0", fetchImpl: mockFetch, now: () => t });
+  await check();
+  t = 16 * 60 * 1000;
+  const background = check();
+  const forced = check({ force: true });
+  const forcedToo = check({ force: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release304();
+  assert.equal((await background).latest?.version, "0.2.0");
+  assert.equal((await forced).latest?.version, "0.3.0");
+  assert.equal(await forcedToo, await forced);
+  assert.deepEqual(sent, [undefined, '"v1"', undefined]);
+});
