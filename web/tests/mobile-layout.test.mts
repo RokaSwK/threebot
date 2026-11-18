@@ -209,6 +209,27 @@ test("mobile Details lists Memory beside Instructions", async () => {
   assert.equal(useApp.getState().detailsTab, "memory");
 });
 
+test("mobile Details has accessible Back button with 44px target and non-cyclic Library style", async () => {
+  useApp.setState({ detailsTab: "library", detailsOpen: true });
+  await act(async () => root.render(h(Details, { bot, threadId: "main" })));
+  const back = host.querySelector(".details-back");
+  assert.ok(back);
+  assert.equal(back.getAttribute("aria-label"), "Back");
+  viewport(390, 844, "coarse");
+  const style = stylesForViewport();
+  assert.equal(getComputedStyle(back).width, "44px");
+  assert.equal(getComputedStyle(back).height, "44px");
+  style.remove();
+
+  const indexSheet = sheets.find(({ name }) => name === "index.css");
+  assert.ok(indexSheet);
+  const libRule = indexSheet.css.nodes.find((rule): rule is Rule => rule.type === "rule" && rule.selector === ".dark .bot-details:has(.library-view)");
+  assert.ok(libRule, "library-view rule exists in dark mode");
+  assert.equal(libRule.nodes.some((d): d is Declaration => d.type === "decl" && d.prop === "--bg-details" && d.value.includes("var(--bg-details)")), false);
+  assert.equal(libRule.nodes.some((d): d is Declaration => d.type === "decl" && d.prop === "--bg-elevated" && d.value.includes("var(--bg-elevated)")), false);
+  assert.equal(libRule.nodes.find((d): d is Declaration => d.type === "decl" && d.prop === "--bg-card")?.value, "var(--bg-elevated)");
+});
+
 test("coarse landscape retains content scrolling and bounded Settings/dialog declarations", () => {
   viewport(844, 390, "coarse"); stylesForViewport();
   host.innerHTML = '<section class="chat-view"><div class="chat-scroller"></div><div class="md"><pre><code>wide code</code></pre><table><tbody><tr><td>wide table</td></tr></tbody></table></div></section><div class="bot-modal-backdrop"><div data-bot-modal class="settings-modal"><div class="dialog-body"></div></div></div>';
