@@ -5,7 +5,22 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { activate, compareVersions, createUpdateChecker, expectedSum, findRelease, installRelease, installedRuntime, prune, readLink, rollback, runtimePaths, startUpdateChecks, type FetchBytes } from "./release.mts";
+import {
+  activate,
+  compareVersions,
+  createUpdateChecker,
+  expectedSum,
+  findRelease,
+  installRelease,
+  installedRuntime,
+  prune,
+  readLink,
+  rollback,
+  runtimePaths,
+  startUpdateChecks,
+  type FetchBytes,
+  type FetchJson,
+} from "./release.mts";
 
 // A Buffer stands in for the ArrayBuffer a real response gives: download() copies either with Buffer.from.
 const json = (value: unknown) => ({ ok: true, status: 200, json: async () => value, arrayBuffer: async () => Buffer.from(JSON.stringify(value)) as unknown as ArrayBuffer });
@@ -160,4 +175,134 @@ test("the update check also carries the running release's notes, whole, for what
   assert.deepEqual(status.current, { version: "0.1.6", url: "https://example.test/v0.1.6", notes: "notes v0.1.6", publishedAt: null });
   const dev = await createUpdateChecker({ env: {}, version: "0.1.8", fetchImpl: list })();
   assert.equal(dev.current, null);
+});
+
+test("createUpdateChecker passes ETag and reuses cache on HTTP 304 Not Modified", async () => {
+  let calls = 0;
+  let receivedHeaders: Record<string, string> | undefined;
+  const mockFetch: FetchJson = async (_url, init) => {
+    calls++;
+    receivedHeaders = (init?.headers as Record<string, string>) || {};
+    if (calls === 1) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { etag: '"v1-etag"' },
+        json: async () => [release("v0.2.0")],
+      };
+    }
+    if (receivedHeaders["if-none-match"] === '"v1-etag"') {
+      return {
+        ok: false,
+        status: 304,
+        headers: { etag: '"v1-etag"' },
+      } as any;
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { etag: '"v2-etag"' },
+      json: async () => [release("v0.3.0")],
+    };
+  };
+
+  let t = 0;
+  const check = createUpdateChecker({ env: {}, version: "0.1.0", fetchImpl: mockFetch, now: () => t });
+  const first = await check();
+  assert.equal(first.updateAvailable, true);
+  assert.equal(first.latest?.version, "0.2.0");
+  assert.equal(calls, 1);
+  assert.equal(receivedHeaders!["if-none-match"], undefined);
+
+  t = 16 * 60 * 1000; // the next scheduled check
+  const second = await check();
+  assert.equal(second.updateAvailable, true);
+  assert.equal(second.latest?.version, "0.2.0");
+  assert.equal(second.error, null);
+  assert.equal(calls, 2);
+  assert.equal(receivedHeaders!["if-none-match"], '"v1-etag"');
+
+  // "Check now" bypasses the cache: no If-None-Match, so GitHub sends the whole, newer list.
+  const forced = await check({ force: true });
+  assert.equal(calls, 3);
+  assert.equal(receivedHeaders!["if-none-match"], undefined);
+  assert.equal(forced.latest?.version, "0.3.0");
+});
+
+test("createUpdateChecker reports rate limit reset time on HTTP 403 with x-ratelimit-reset", async () => {
+  const resetEpoch = Math.floor(Date.now() / 1000) + 3600;
+  const mockFetch: FetchJson = async () => ({
+    ok: false,
+    status: 403,
+    headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(resetEpoch) },
+  });
+  const check = createUpdateChecker({ env: {}, fetchImpl: mockFetch });
+  const status = await check();
+  assert.match(status.error!, /rate limit exceeded/i);
+  assert.match(status.error!, /resets at/i);
+
+  // A 403 with requests left is some other refusal, not the rate limit.
+  const forbidden = await createUpdateChecker({ env: {}, fetchImpl: async () => ({ ok: false, status: 403, headers: { "x-ratelimit-remaining": "42" } }) })();
+  assert.equal(forbidden.error, "Couldn't list releases (HTTP 403)");
+});
+
+test("createUpdateChecker applies jitter within the jitterRatio bounds", async () => {
+  let t = 0;
+  const minute = 60 * 1000;
+  let minCalls = 0;
+  const minCheck = createUpdateChecker({
+    env: {}, version: "0.1.0", now: () => t,
+    ttlMs: 15 * minute, jitterRatio: 0.15, random: () => 0,
+    fetchImpl: async () => { minCalls++; return json([release("v0.1.2")]); },
+  });
+  await minCheck();
+  t = 764 * 1000;
+  await minCheck();
+  assert.equal(minCalls, 1);
+  t = 766 * 1000;
+  await minCheck();
+  assert.equal(minCalls, 2);
+
+  let maxCalls = 0;
+  t = 0;
+  const maxCheck = createUpdateChecker({
+    env: {}, version: "0.1.0", now: () => t,
+    ttlMs: 15 * minute, jitterRatio: 0.15, random: () => 1,
+    fetchImpl: async () => { maxCalls++; return json([release("v0.1.2")]); },
+  });
+  await maxCheck();
+  t = 1034 * 1000;
+  await maxCheck();
+  assert.equal(maxCalls, 1);
+  t = 1036 * 1000;
+  await maxCheck();
+  assert.equal(maxCalls, 2);
+});
+
+test("a forced check waits out a background conditional check instead of taking its 304", async () => {
+  const sent: (string | undefined)[] = [];
+  let release304: () => void = () => {};
+  const mockFetch: FetchJson = async (_url, init) => {
+    const conditional = (init?.headers as Record<string, string>)["if-none-match"];
+    sent.push(conditional);
+    if (sent.length === 1) return { ok: true, status: 200, headers: { etag: '"v1"' }, json: async () => [release("v0.2.0")] };
+    if (conditional) {
+      await new Promise<void>((resolve) => { release304 = resolve; });
+      return { ok: false, status: 304, headers: {} };
+    }
+    return { ok: true, status: 200, headers: { etag: '"v2"' }, json: async () => [release("v0.3.0")] };
+  };
+  let t = 0;
+  const check = createUpdateChecker({ env: {}, version: "0.1.0", fetchImpl: mockFetch, now: () => t });
+  await check();
+  t = 16 * 60 * 1000;
+  const background = check();
+  const forced = check({ force: true });
+  const forcedToo = check({ force: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  release304();
+  assert.equal((await background).latest?.version, "0.2.0");
+  assert.equal((await forced).latest?.version, "0.3.0");
+  assert.equal(await forcedToo, await forced);
+  assert.deepEqual(sent, [undefined, '"v1"', undefined]);
 });

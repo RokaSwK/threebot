@@ -13,7 +13,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export const REPO = "RokaSwK/threebot";
 
 export type Channel = "stable" | "preview";
-type Reply<Body> = ({ ok: true; status: number } & Body) | { ok: false; status: number };
+type HeaderRecord = Headers | Record<string, string | undefined> | undefined;
+type Reply<Body> = ({ ok: true; status: number; headers?: HeaderRecord } & Body) | { ok: false; status: number; headers?: HeaderRecord };
 /** The parts of `fetch` this file uses, so a mirror or a test can stand in for it. */
 export type FetchJson = (url: string, init?: RequestInit) => Promise<Reply<{ json(): Promise<unknown> }>>;
 export type FetchBytes = (url: string, init?: RequestInit) => Promise<Reply<{ arrayBuffer(): Promise<ArrayBuffer> }>>;
@@ -73,13 +74,49 @@ export function compareVersions(a: string, b: string): number {
 
 export const assetName = (version: string) => `threebot-${version}.tar.gz`;
 
-/** GitHub's newest releases, drafts left out. THREEBOT_RELEASES_URL points at a GitHub-API-shaped list (for mirrors and tests). */
-async function listReleases({ env = process.env, fetchImpl = fetch }: { env?: NodeJS.ProcessEnv; fetchImpl?: FetchJson } = {}): Promise<GitHubRelease[]> {
+function getHeader(headers: HeaderRecord, name: string): string | null {
+  if (!headers) return null;
+  if (typeof (headers as Headers).get === "function") return (headers as Headers).get(name);
+  const lower = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers as Record<string, string | undefined>)) {
+    if (k.toLowerCase() === lower && typeof v === "string") return v;
+  }
+  return null;
+}
+
+interface ListReleasesOptions {
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: FetchJson;
+  etag?: string | null;
+  cached?: GitHubRelease[];
+}
+
+interface ListReleasesResult {
+  releases: GitHubRelease[];
+  etag: string | null;
+}
+
+/** GitHub's newest releases, drafts left out. Supports Conditional Requests via If-None-Match ETag to avoid rate limits. */
+async function listReleases({ env = process.env, fetchImpl = fetch, etag, cached }: ListReleasesOptions = {}): Promise<ListReleasesResult> {
   const api = env.THREEBOT_RELEASES_URL || `https://api.github.com/repos/${REPO}/releases?per_page=30`;
-  const res = await fetchImpl(api, { headers: { accept: "application/vnd.github+json", "user-agent": "threebot-updater" } });
-  if (!res.ok) throw new Error(`Couldn't list releases (HTTP ${res.status})`);
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "threebot-updater" };
+  if (etag) headers["if-none-match"] = etag;
+  const res = await fetchImpl(api, { headers });
+  if (res.status === 304) {
+    return { releases: cached ?? [], etag: etag ?? null };
+  }
+  if (!res.ok) {
+    // GitHub answers an exhausted rate limit with 403 (and remaining 0) or 429; other 403s are not that.
+    if (res.status === 429 || (res.status === 403 && getHeader(res.headers, "x-ratelimit-remaining") === "0")) {
+      const reset = Number(getHeader(res.headers, "x-ratelimit-reset"));
+      throw new Error(reset > 0 ? `GitHub API rate limit exceeded (resets at ${new Date(reset * 1000).toISOString()})` : `GitHub API rate limit exceeded (HTTP ${res.status})`);
+    }
+    throw new Error(`Couldn't list releases (HTTP ${res.status})`);
+  }
+  const newEtag = getHeader(res.headers, "etag"); // a list without one can't be revalidated
   const list = await res.json();
-  return Array.isArray(list) ? (list as GitHubRelease[]).filter((r) => r && typeof r.tag_name === "string" && !r.draft) : [];
+  const releases = Array.isArray(list) ? (list as GitHubRelease[]).filter((r) => r && typeof r.tag_name === "string" && !r.draft) : [];
+  return { releases, etag: newEtag };
 }
 
 const releaseUrl = (r: GitHubRelease) => r.html_url ?? `https://github.com/${REPO}/releases/tag/v${r.tag_name.replace(/^v/, "")}`;
@@ -101,7 +138,8 @@ function pickRelease(all: GitHubRelease[], { version, channel = "stable", env = 
 
 /** The release to install: the newest stable one, or an exact version. */
 export async function findRelease({ version, channel = "stable", env = process.env, fetchImpl = fetch }: { version?: string; channel?: Channel; env?: NodeJS.ProcessEnv; fetchImpl?: FetchJson } = {}): Promise<Release | null> {
-  return pickRelease(await listReleases({ env, fetchImpl }), { version, channel, env });
+  const { releases } = await listReleases({ env, fetchImpl });
+  return pickRelease(releases, { version, channel, env });
 }
 
 export function expectedSum(sumsText: string, name: string): string | null {
@@ -277,30 +315,72 @@ export interface UpdateStatus {
   error: string | null;
   checkedAt: string | null;
 }
-export function createUpdateChecker({ env = process.env, fetchImpl = fetch, ttlMs = 15 * 60 * 1000, maxBackoffMs = 2 * 60 * 60 * 1000, version = currentVersion(), now = Date.now }: { env?: NodeJS.ProcessEnv; fetchImpl?: FetchJson; ttlMs?: number; maxBackoffMs?: number; version?: string; now?: () => number } = {}) {
+/** How often the gateway looks for a release. With an ETag an unchanged list costs no rate limit. */
+export const DEFAULT_UPDATE_INTERVAL_MS = 15 * 60 * 1000;
+/** ±15% on each wait, so gateways started together don't keep asking GitHub at the same moment. */
+export const DEFAULT_UPDATE_JITTER_RATIO = 0.15;
+
+export function createUpdateChecker({
+  env = process.env,
+  fetchImpl = fetch,
+  ttlMs = DEFAULT_UPDATE_INTERVAL_MS,
+  maxBackoffMs = 2 * 60 * 60 * 1000,
+  version = currentVersion(),
+  now = Date.now,
+  jitterRatio = 0,
+  random = Math.random,
+}: {
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: FetchJson;
+  ttlMs?: number;
+  maxBackoffMs?: number;
+  version?: string;
+  now?: () => number;
+  jitterRatio?: number;
+  random?: () => number;
+} = {}) {
   const channel = channelFor(version);
   let value: UpdateStatus = { latest: null, current: null, updateAvailable: false, error: null, checkedAt: null };
-  let nextAt = 0, failures = 0, inflight: Promise<UpdateStatus> | null = null;
-  const refresh = async (): Promise<UpdateStatus> => {
+  let nextAt = 0, failures = 0, inflight: Promise<UpdateStatus> | null = null, inflightForced = false;
+  let lastEtag: string | null = null, cachedReleases: GitHubRelease[] = [];
+
+  const intervalWithJitter = (baseMs: number) => {
+    if (jitterRatio <= 0) return baseMs;
+    const factor = 1 + (random() * 2 - 1) * jitterRatio;
+    return Math.round(baseMs * factor);
+  };
+
+  // A forced check ("Check now") asks for the whole list: no If-None-Match, so nothing cached answers it.
+  const refresh = async (force: boolean): Promise<UpdateStatus> => {
     const at = now();
     try {
-      const all = await listReleases({ env, fetchImpl });
+      const { releases: all, etag } = await listReleases({ env, fetchImpl, etag: force ? null : lastEtag, cached: cachedReleases });
+      lastEtag = etag;
+      cachedReleases = all;
       const latest = pickRelease(all, { channel, env });
       // The running release needs no download links, only its notes.
       const mine = all.find((r) => r.tag_name.replace(/^v/, "") === version);
       const current = mine ? releaseInfo({ version, url: releaseUrl(mine), notes: mine.body ?? "", publishedAt: mine.published_at ?? null }) : null;
       value = { latest: latest && releaseInfo(latest), current, updateAvailable: Boolean(latest && compareVersions(latest.version, version) > 0), error: null, checkedAt: new Date(at).toISOString() };
       failures = 0;
-      nextAt = at + ttlMs;
+      nextAt = at + intervalWithJitter(ttlMs);
     } catch (error) {
       value = { ...value, error: error instanceof Error ? error.message : String(error), checkedAt: new Date(at).toISOString() };
-      nextAt = at + Math.min(ttlMs * 2 ** failures++, maxBackoffMs);
+      const backoff = Math.min(ttlMs * 2 ** failures++, maxBackoffMs);
+      nextAt = at + intervalWithJitter(backoff);
     }
     return value;
   };
   return async function check({ force = false }: { force?: boolean } = {}): Promise<UpdateStatus> {
     if (!force && now() < nextAt) return value;
-    return inflight ??= refresh().finally(() => { inflight = null; });
+    if (inflight && (inflightForced || !force)) return inflight;
+    // A forced check doesn't take a conditional check's (possibly 304) answer: it runs after it.
+    const run: Promise<UpdateStatus> = (inflight ?? Promise.resolve()).then(() => refresh(force)).finally(() => {
+      if (inflight === run) { inflight = null; inflightForced = false; }
+    });
+    inflight = run;
+    inflightForced = force;
+    return run;
   };
 }
 
