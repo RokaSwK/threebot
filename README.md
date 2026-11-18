@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/RokaSwK/threebot/main/install.sh | 
 threebot up
 ```
 
-On Windows, download the portable bundle from [releases](https://github.com/RokaSwK/threebot/releases), unzip it and double-click `Threebot.exe`. It installs itself into `%LOCALAPPDATA%\Programs\Threebot`, adds Start Menu and Startup shortcuts, starts the gateway and opens the app; Node and the icon are in the folder already. Or use PowerShell:
+On Windows, download `Threebot-Setup-<version>.exe` from [releases](https://github.com/RokaSwK/threebot/releases) for a one-click install with no admin prompt, or the portable bundle (`Threebot-<version>-win64.zip`): unzip it and double-click `Threebot.exe`. Both install into `%LOCALAPPDATA%\Programs\Threebot`, add Start Menu and Startup shortcuts, start the gateway and open the app; Node and the icon come with them. Or use PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex

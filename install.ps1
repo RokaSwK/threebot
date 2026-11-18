@@ -1,4 +1,5 @@
 # Install Threebot on Windows:  irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex
+# (Or download Threebot-Setup-<version>.exe from the releases for a one-click install.)
 # Downloads a release, checks its SHA-256, installs it in %THREEBOT_HOME%\runtime\versions.
 $ErrorActionPreference = "Stop"
 $Repo = "RokaSwK/threebot"

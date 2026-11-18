@@ -7,8 +7,8 @@ jobs:
   launcher:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: windows/launcher/go.mod
           cache: false
@@ -16,3 +16,32 @@ jobs:
         working-directory: windows/launcher
       - run: go vet ./...
         working-directory: windows/launcher
+      - name: Build launcher executable
+        run: powershell -ExecutionPolicy Bypass -File windows/launcher/build.ps1
+  # The release builds the installer only on a tag; build it here too, so a broken bundle or
+  # installer.iss shows up on the pull request instead of at release time.
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          # This node.exe ships inside the bundle and the installer: pin it.
+          node-version: 24.22.3
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            server/package-lock.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: 1.27.4 # the same Go the release builds Threebot.exe with
+          cache: false
+      - name: Install Inno Setup
+        run: choco install innosetup --version=6.7.1 -y --no-progress
+      - name: Install dependencies and build the web app
+        run: |
+          npm ci --prefix web
+          npm run build --prefix web
+          npm ci --prefix server
+      - name: Build the Windows bundle and installer
+        run: powershell -ExecutionPolicy Bypass -File windows/build-installer.ps1
