@@ -51,6 +51,13 @@ test("pickReply reads the last completed assistant message of that run", () => {
   assert.deepEqual(pickReply(items, "run-1"), { id: "a2", text: "second", at: "2026-01-01T00:00:02.000Z" });
   assert.equal(pickReply(items, "run-9"), null);
   assert.equal(pickReply(items, null), null);
+
+  // Ordinal order wins over array position
+  const outOfOrder = [
+    { id: "late", runId: "run-1", type: "assistant_message", status: "completed", text: "later ordinal", ordinal: 5 },
+    { id: "early", runId: "run-1", type: "assistant_message", status: "completed", text: "earlier ordinal", ordinal: 2 },
+  ];
+  assert.equal(pickReply(outOfOrder, "run-1")?.text, "later ordinal");
 });
 
 test("formatRoomLine names the author and marks a quote", () => {
