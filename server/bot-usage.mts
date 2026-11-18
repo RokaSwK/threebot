@@ -205,9 +205,8 @@ export function accountsFromBuckets(buckets: unknown, home: string = homedir()):
     if (!bucket || typeof bucket !== "object") continue;
     const b = bucket as { sourcePath?: unknown; provider?: unknown; costUsd?: unknown; unpricedRecords?: unknown; totals?: { uncachedInputTokens?: unknown; cachedInputTokens?: unknown; cacheCreationTokens?: unknown; outputTokens?: unknown } | null };
     const t = b.totals ?? {};
-    const pathLabel = providerForSourcePath(b.sourcePath, home);
-    const account = pathLabel ?? (typeof b.provider === "string" && b.provider.trim() ? b.provider.trim().slice(0, 60) : "Unknown");
-    const key = pathLabel && windowsHome(home) ? pathLabel.toLowerCase() : account;
+    const account = providerForSourcePath(b.sourcePath, home) ?? (typeof b.provider === "string" && b.provider.trim() ? b.provider.trim().slice(0, 60) : "Unknown");
+    const key = windowsHome(home) ? account.toLowerCase() : account;
     const row = totals.get(key) ?? { account, input: 0, cached: 0, cacheWrite: 0, output: 0, costUsd: 0, unpricedRecords: 0 };
     row.input += num(t.uncachedInputTokens); row.cached += num(t.cachedInputTokens); row.cacheWrite += num(t.cacheCreationTokens); row.output += num(t.outputTokens); row.costUsd += num(b.costUsd);
     row.unpricedRecords += Number.isSafeInteger(b.unpricedRecords) ? num(b.unpricedRecords) : 0;
