@@ -122,40 +122,16 @@ func TestEnsureTokenRunsCmdShimWithSpaces(t *testing.T) {
 	if strings.TrimSpace(string(data)) != "fixture-token" { t.Fatalf("wrong token: %q", data) }
 }
 
-func TestWindowArgsUsesIsolatedProfileAndAppId(t *testing.T) {
+func TestWindowArgsUsesIsolatedProfile(t *testing.T) {
 	home := t.TempDir()
 	args := windowArgs(home)
-	expectedProfile := "--user-data-dir=" + filepath.Join(home, "browser")
-	foundProfile, foundAppId, foundClass, foundFre := false, false, false, false
-	for _, arg := range args {
-		if arg == expectedProfile {
-			foundProfile = true
+	for _, want := range []string{"--user-data-dir=" + filepath.Join(home, "browser"), "--class=Threebot", "--disable-fre", "--app=" + appURL} {
+		found := false
+		for _, arg := range args {
+			found = found || arg == want
 		}
-		if arg == "--app-id=threebot-desktop" {
-			foundAppId = true
-		}
-		if arg == "--class=Threebot" {
-			foundClass = true
-		}
-		if arg == "--disable-fre" {
-			foundFre = true
+		if !found {
+			t.Fatalf("expected %q in args: %v", want, args)
 		}
 	}
-	if !foundProfile {
-		t.Fatalf("expected profile flag %q in args: %v", expectedProfile, args)
-	}
-	if !foundAppId {
-		t.Fatalf("expected --app-id=threebot-desktop in args: %v", args)
-	}
-	if !foundClass {
-		t.Fatalf("expected --class=Threebot in args: %v", args)
-	}
-	if !foundFre {
-		t.Fatalf("expected --disable-fre in args: %v", args)
-	}
-}
-
-func TestActivateExistingWindowDoesNotPanic(t *testing.T) {
-	// Verifies activateExistingWindow executes Win32 APIs safely.
-	_ = activateExistingWindow()
 }

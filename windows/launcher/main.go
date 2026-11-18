@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -383,8 +384,10 @@ func installShortcuts(installDir, root string) {
 			icon = self
 		}
 	}
-	writeShortcut(filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Threebot.lnk"),
-		self, "", installDir, icon, appName)
+	startMenu := filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Threebot.lnk")
+	writeShortcut(startMenu, self, "", installDir, icon, appName)
+	// The window carries an explicit AppUserModelID, so the shortcut that opens it must carry the same one.
+	_ = setShortcutAppUserModelID(startMenu, appName)
 	writeShortcut(filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Threebot.lnk"),
 		self, "--background", installDir, icon, appName+" gateway")
 }
@@ -517,7 +520,16 @@ var (
 	procShowWindow                              = user32.NewProc("ShowWindow")
 	procSHGetPropertyStoreForWindow             = shell32.NewProc("SHGetPropertyStoreForWindow")
 	procSetCurrentProcessExplicitAppUserModelID = shell32.NewProc("SetCurrentProcessExplicitAppUserModelID")
+	procSHGetPropertyStoreFromParsingName       = shell32.NewProc("SHGetPropertyStoreFromParsingName")
+	ole32                                       = syscall.NewLazyDLL("ole32.dll")
+	procCoInitializeEx                          = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize                          = ole32.NewProc("CoUninitialize")
 )
+
+var iidIPropertyStore = syscall.GUID{
+	Data1: 0x886D8EEB, Data2: 0x8CF2, Data3: 0x4446,
+	Data4: [8]byte{0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99},
+}
 
 // webviewWindowClass is the Win32 class go-webview2 registers for its window. Matching on class and
 // title together keeps an Explorer window of a folder named "Threebot" from passing as the app.
@@ -556,15 +568,38 @@ type iPropertyStore struct {
 // setAppUserModelID stamps PKEY_AppUserModel_ID on a window, so the taskbar groups it under the
 // pinned Threebot shortcut instead of under the browser that drew it.
 func setAppUserModelID(hwnd uintptr, appID string) error {
-	iid := syscall.GUID{ // IID_IPropertyStore
-		Data1: 0x886D8EEB, Data2: 0x8CF2, Data3: 0x4446,
-		Data4: [8]byte{0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99},
-	}
 	var store *iPropertyStore
-	r1, _, _ := procSHGetPropertyStoreForWindow.Call(hwnd, uintptr(unsafe.Pointer(&iid)), uintptr(unsafe.Pointer(&store)))
+	r1, _, _ := procSHGetPropertyStoreForWindow.Call(hwnd, uintptr(unsafe.Pointer(&iidIPropertyStore)), uintptr(unsafe.Pointer(&store)))
 	if r1 != 0 || store == nil {
 		return fmt.Errorf("SHGetPropertyStoreForWindow failed: hr=0x%x", r1)
 	}
+	return writeAppUserModelID(store, appID)
+}
+
+// setShortcutAppUserModelID stamps the same ID on a saved .lnk (WScript.Shell can't), so the Start
+// Menu entry, a taskbar pin made from it and the window it opens share one taskbar button.
+func setShortcutAppUserModelID(lnk, appID string) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	const coinitApartmentThreaded = 0x2
+	if hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded); hr == 0 || hr == 1 { // S_OK, S_FALSE
+		defer procCoUninitialize.Call()
+	}
+	path, err := syscall.UTF16PtrFromString(lnk)
+	if err != nil {
+		return err
+	}
+	const gpsReadWrite = 0x2
+	var store *iPropertyStore
+	r1, _, _ := procSHGetPropertyStoreFromParsingName.Call(uintptr(unsafe.Pointer(path)), 0, gpsReadWrite, uintptr(unsafe.Pointer(&iidIPropertyStore)), uintptr(unsafe.Pointer(&store)))
+	if r1 != 0 || store == nil {
+		return fmt.Errorf("SHGetPropertyStoreFromParsingName failed: hr=0x%x", r1)
+	}
+	return writeAppUserModelID(store, appID)
+}
+
+// writeAppUserModelID sets PKEY_AppUserModel_ID on a property store, commits it and releases it.
+func writeAppUserModelID(store *iPropertyStore, appID string) error {
 	defer syscall.SyscallN(store.lpVtbl.Release, uintptr(unsafe.Pointer(store)))
 
 	pkey := propertyKey{
@@ -661,7 +696,6 @@ func windowArgs(home string) []string {
 		"--app=" + appURL,
 		"--user-data-dir=" + browserDir,
 		"--class=" + appName,
-		"--app-id=threebot-desktop",
 		"--window-size=1360,900",
 		"--no-first-run",
 		"--no-default-browser-check",
