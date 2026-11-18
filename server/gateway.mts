@@ -48,7 +48,18 @@ import { avatarColorPatch } from "./avatar-color.mts";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
-import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks, startUpdater, updateLogger } from "./release.mts";
+import {
+  DEFAULT_UPDATE_INTERVAL_MS,
+  DEFAULT_UPDATE_JITTER_RATIO,
+  channelFor,
+  createUpdateChecker,
+  currentVersion,
+  installedRuntime,
+  runtimePaths,
+  startUpdateChecks,
+  startUpdater,
+  updateLogger,
+} from "./release.mts";
 import { botThreadOwner, botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
@@ -225,7 +236,11 @@ const originPolicy = { allowed: allowedOrigins(), allowLoopback: !verifyAccess }
 const exposure = exposureConfig();
 const envTailnet = exposure.tailnetPort > 0;
 const version = currentVersion();
-const checkUpdates = createUpdateChecker({ version });
+const checkUpdates = createUpdateChecker({
+  version,
+  ttlMs: DEFAULT_UPDATE_INTERVAL_MS,
+  jitterRatio: DEFAULT_UPDATE_JITTER_RATIO,
+});
 const selfUpdating = installedRuntime() && process.env.THREEBOT_SERVICE === "1";
 let tailnetServer: http.Server | null = null;
 // Open WebSockets outlive the cookie or listener that let them in, so access changes close them.
