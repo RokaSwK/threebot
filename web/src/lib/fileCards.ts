@@ -118,9 +118,9 @@ const MARKDOWN_LINK = /(?<!!)\[([^\]]*)\]\(([^()\s]+)(?:\s+"[^"]*")?\)/g;
 function outsideCode(text: string): string {
   let fence: { char: string; length: number; maxIndent: number } | null = null;
   return text.split("\n").map((line) => {
-    const marker = /^( *)(`{3,}|~{3,})/.exec(line);
+    const marker = /^([ \t]*)(`{3,}|~{3,})/.exec(line);
     if (marker) {
-      const indent = marker[1].length;
+      const indent = marker[1].replaceAll("\t", "    ").length;
       const char = marker[2][0];
       const length = marker[2].length;
       if (!fence) { fence = { char, length, maxIndent: Math.max(3, indent) }; return ""; }
