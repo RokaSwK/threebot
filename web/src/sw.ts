@@ -150,15 +150,27 @@ self.addEventListener("push", (event) => {
   // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
   // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
   // back a push about the Bot or room this device has open (lib/push.ts reports that). The tag is the one
-  // the page's own notification uses, so the two replace each other instead of stacking.
-  let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
+  // the page's own notification uses, so the two replace each other instead of stacking. The worker
+  // is a classic script with no imports, so the option guards are repeated from lib/notification.ts.
+  let payload: {
+    title?: unknown; body?: unknown; tag?: unknown; url?: unknown;
+    icon?: unknown; badge?: unknown; timestamp?: unknown;
+  } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
-  event.waitUntil(self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+  const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
+  // The worker's DOM lib predates `timestamp`; the browser supports it.
+  const options: NotificationOptions & { timestamp?: number } = {
     body: typeof payload.body === "string" ? payload.body : "Finished",
-    tag: typeof payload.tag === "string" ? payload.tag : "threebot",
-    icon: "/icon-192.png",
+    tag,
+    icon: typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png",
     data: { url: typeof payload.url === "string" ? payload.url : "./" },
-  }));
+  };
+  if (typeof payload.badge === "string" && payload.badge) options.badge = payload.badge;
+  if (typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)) options.timestamp = payload.timestamp;
+  event.waitUntil(self.registration.showNotification(
+    typeof payload.title === "string" && payload.title ? payload.title : "Threebot",
+    options,
+  ));
 });
 
 self.addEventListener("pushsubscriptionchange", (event) => {
@@ -181,6 +193,11 @@ self.addEventListener("notificationclick", (event) => {
     const open = windows.find((client) => client.url.startsWith(SCOPE.href));
     if (!open) return self.clients.openWindow(target);
     await open.focus();
-    return open.navigate(target);
+    try {
+      await open.navigate(target);
+    } catch {
+      // A window the worker no longer controls cannot be navigated; open a new one instead.
+      return self.clients.openWindow(target);
+    }
   })());
 });

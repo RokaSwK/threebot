@@ -1,12 +1,13 @@
 // Web Push for the installed PWA: VAPID keys and browser subscriptions live in one JSON file,
 // and the gateway watches T3's thread shell for finished or waiting Bots. A push only says which
 // Bot and a short preview; the actual conversation stays in T3.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { generateVAPIDKeys, sendNotification, WebPushError } from "web-push";
 import type { Bot } from "./main-bot.mts";
 import type { T3Client } from "./t3rpc.mts";
+import { botAvatarUrl, botBadgeUrl } from "./bot-icons.mts";
 
 const MAX_SUBSCRIPTIONS = 20;
 const MAX_ENDPOINT = 2_048;
@@ -37,6 +38,13 @@ export type PushPayload = {
   bot?: string;
   /** The room this push is about. A room push is held back on the device looking at that room. */
   room?: string;
+  /** The Bot's picture or drawn avatar, served by the gateway. */
+  icon?: string;
+  /** Android's monochrome status-bar icon; absent for a Bot with a photo. */
+  badge?: string;
+  /** When the event happened, for clients that show it. */
+  timestamp?: number;
+  kind?: "finished" | "waiting";
 };
 
 // What a presence report may name: a Bot reference as the page keeps it (a slug, or
@@ -58,7 +66,7 @@ function viewKey(bot: unknown, room: unknown): string | null | undefined {
 }
 
 type VapidDetails = { subject: string; publicKey: string; privateKey: string };
-type Sender = (subscription: PushSubscription, payload: string, options?: { TTL?: number; urgency?: string; vapidDetails?: VapidDetails }) => Promise<unknown>;
+type Sender = (subscription: PushSubscription, payload: string, options?: { TTL?: number; urgency?: string; vapidDetails?: VapidDetails; topic?: string }) => Promise<unknown>;
 
 function record(value: unknown): PushSubscriptionRecord | null {
   if (!value || typeof value !== "object") return null;
@@ -93,6 +101,15 @@ export function usableSubject(value: unknown): string | null {
   }
   if (!host.includes(".") || host === "localhost" || host.endsWith(".local") || host.endsWith(".localhost") || /^[\d.]+$/u.test(host) || host.includes(":")) return null;
   return /^mailto:/iu.test(text) ? text : new URL(text).origin;
+}
+
+/**
+ * RFC 8030 Topic: while a device is offline, its push service keeps only the latest message with
+ * this topic, so it wakes up with one notice instead of a burst. The notification tag is the same
+ * identifier; a value that does not fit the 32-character base64url limit is hashed.
+ */
+export function pushTopic(tag: string): string {
+  return /^[A-Za-z0-9_-]{1,32}$/.test(tag) ? tag : createHash("sha256").update(tag).digest("base64url").slice(0, 32);
 }
 
 /** VAPID keys and push subscriptions. The private key never leaves this file or the server. */
@@ -148,6 +165,11 @@ export function createPushStore({
       return (await load()).vapid.publicKey;
     },
 
+    /** How many browsers/devices have a subscription. */
+    async devices(): Promise<number> {
+      return (await load()).subscriptions.length;
+    },
+
     async subscribe(value: unknown, origin?: unknown): Promise<{ ok: true; subscriptions: number } | { ok: false; message: string }> {
       const item = record(value);
       if (!item) return { ok: false, message: "The push subscription is invalid." };
@@ -194,7 +216,7 @@ export function createPushStore({
       return { ok: true, watching: true };
     },
 
-    async send(payload: PushPayload): Promise<{ sent: number; removed: number; watching: number }> {
+    async send(payload: PushPayload, options?: { endpoint?: string }): Promise<{ sent: number; removed: number; watching: number }> {
       const current = await load();
       if (!current.subscriptions.length) return { sent: 0, removed: 0, watching: 0 };
       // The app's own address when nothing is configured: Apple refuses a localhost contact.
@@ -207,6 +229,11 @@ export function createPushStore({
       // A push is about one thing: a room, or a Bot. With neither there is nothing to hold back.
       const target = payload.room ? `room:${payload.room}` : payload.bot ? `bot:${payload.bot}` : null;
       for (const subscription of current.subscriptions) {
+        // The Settings test names the device that asked; every other subscription stays untouched.
+        if (options?.endpoint && subscription.endpoint !== options.endpoint) {
+          keep.push(subscription);
+          continue;
+        }
         const seen = watching.get(subscription.endpoint);
         if (seen && seen.until <= time) watching.delete(subscription.endpoint);
         else if (target && seen?.view === target) {
@@ -215,7 +242,7 @@ export function createPushStore({
           continue;
         }
         try {
-          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: "high", vapidDetails });
+          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: "high", vapidDetails, topic: pushTopic(payload.tag) });
           sent += 1;
           keep.push(subscription);
         } catch (error) {
@@ -266,6 +293,14 @@ type ShellEvent = {
 const ACTIVE = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
 /**
+ * A notification that needs the user belongs to one conversation. A completion stays one per Bot:
+ * three finished runs leave one updated notification, not three.
+ */
+export function waitingTag(slug: string, threadId: string): string {
+  return `waiting:${slug}:${threadId}`;
+}
+
+/**
  * Watch T3's shell stream and turn transitions into pushes. The first snapshot only seeds state.
  * The rules are the page's own (notifyIfNeeded in web/src/store.ts), so a phone hears what the open
  * app would have said: a Bot's main conversation finishing or asking for the user, and a side chat
@@ -312,12 +347,20 @@ export function createPushNotifier({
       const runStarted = thread.latestRunStartedAt ?? thread.latestRunRequestedAt ?? thread.latestUserMessageAt;
       if (value?.role === "assistant" && value.text.trim() && value.at && (!runStarted || value.at >= runStarted)) body = value.text.trim().slice(0, 140);
     }
+    const waiting = kind === "waiting";
+    const badge = botBadgeUrl(owner);
     await send({
       title: owner.name,
       body,
-      tag: owner.slug,
-      url: `/?bot=${encodeURIComponent(owner.slug)}`,
+      tag: waiting ? waitingTag(owner.slug, thread.id) : owner.slug,
+      url: waiting
+        ? `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`
+        : `/?bot=${encodeURIComponent(owner.slug)}`,
       bot: owner.slug,
+      icon: botAvatarUrl(owner),
+      ...(badge ? { badge } : {}),
+      timestamp: Date.parse(thread.updatedAt ?? "") || Date.now(),
+      kind,
     });
     log(`push: ${kind} ${owner.slug}`);
   }

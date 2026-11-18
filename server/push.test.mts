@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { generateVAPIDKeys, WebPushError } from "web-push";
-import { createPushNotifier, createPushStore, usableSubject, type PushPreview } from "./push.mts";
+import { createPushNotifier, createPushStore, pushTopic, usableSubject, type PushPreview } from "./push.mts";
 
 const keys = generateVAPIDKeys();
 const subscription = {
@@ -24,6 +24,7 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe({ endpoint: "not a url", keys: subscription.keys })).ok, false);
+  assert.equal(await store.devices(), 1);
   const result = await store.send({ title: "Bot", body: "Finished", tag: "bot", url: "/?bot=bot", bot: "bot" });
   assert.equal(result.sent, 1);
   assert.match(sent[0]!, /"body":"Finished"/u);
@@ -37,6 +38,45 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   const removed = await gone.send({ title: "Bot", body: "Finished", tag: "bot", url: "/", bot: "bot" });
   assert.equal(removed.removed, 1);
   assert.equal((await gone.unsubscribe(subscription.endpoint)).subscriptions, 0);
+  assert.equal(await gone.devices(), 0);
+});
+
+test("each push carries an RFC 8030 topic: the tag when it fits, a hash otherwise", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const topics: Array<string | undefined> = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (_subscription, _payload, options) => { topics.push(options?.topic); },
+  });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  await store.send({ title: "Bot", body: "Finished", tag: "alpha", url: "/?bot=alpha", bot: "alpha" });
+  await store.send({ title: "Bot", body: "Waiting", tag: "waiting:alpha:thread-1", url: "/?bot=alpha&thread=thread-1", bot: "alpha" });
+  assert.equal(topics[0], "alpha");
+  assert.equal(topics[1], pushTopic("waiting:alpha:thread-1"));
+  assert.match(topics[1]!, /^[A-Za-z0-9_-]{32}$/u);
+  assert.equal(pushTopic("a".repeat(40)).length, 32);
+  assert.equal(pushTopic("a".repeat(40)), pushTopic("a".repeat(40)));
+});
+
+test("a targeted send reaches only the endpoint that asked", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: string[] = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => { delivered.push(target.endpoint); },
+  });
+  const other = { ...subscription, endpoint: "https://fcm.googleapis.com/wp/other" };
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(other)).ok, true);
+  const payload = { title: "Threebot", body: "Test notification", tag: "test:notification", url: "/" };
+  assert.equal((await store.send(payload, { endpoint: subscription.endpoint })).sent, 1);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload, { endpoint: "https://fcm.googleapis.com/wp/missing" })).sent, 0);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload)).sent, 2);
+  assert.deepEqual(delivered, [subscription.endpoint, subscription.endpoint, other.endpoint]);
 });
 
 test("the notifier ignores the first snapshot and pushes completions and requests", async () => {
@@ -69,6 +109,13 @@ test("the notifier ignores the first snapshot and pushes completions and request
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 2);
   assert.equal(sent[1].body, "Waiting for you");
+  assert.equal(sent[0].tag, "alpha");
+  assert.equal(sent[0].icon, "/api/bots/alpha/avatar.png");
+  assert.equal(sent[0].badge, "/api/bots/alpha/badge.png");
+  assert.equal(typeof sent[0].timestamp, "number");
+  assert.equal(sent[1].tag, "waiting:alpha:thread-1");
+  assert.equal(sent[1].url, "/?bot=alpha&thread=thread-1");
+  assert.equal(sent[1].kind, "waiting");
   notifier.stop();
   assert.equal(cancelled, true);
 });
