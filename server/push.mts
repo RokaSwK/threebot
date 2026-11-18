@@ -1,7 +1,7 @@
 // Web Push for the installed PWA: VAPID keys and browser subscriptions live in one JSON file,
 // and the gateway watches T3's thread shell for finished or waiting Bots. A push only says which
 // Bot and a short preview; the actual conversation stays in T3.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { generateVAPIDKeys, sendNotification, WebPushError } from "web-push";
@@ -66,7 +66,7 @@ function viewKey(bot: unknown, room: unknown): string | null | undefined {
 }
 
 type VapidDetails = { subject: string; publicKey: string; privateKey: string };
-type Sender = (subscription: PushSubscription, payload: string, options?: { TTL?: number; urgency?: string; vapidDetails?: VapidDetails }) => Promise<unknown>;
+type Sender = (subscription: PushSubscription, payload: string, options?: { TTL?: number; urgency?: string; vapidDetails?: VapidDetails; topic?: string }) => Promise<unknown>;
 
 function record(value: unknown): PushSubscriptionRecord | null {
   if (!value || typeof value !== "object") return null;
@@ -101,6 +101,15 @@ export function usableSubject(value: unknown): string | null {
   }
   if (!host.includes(".") || host === "localhost" || host.endsWith(".local") || host.endsWith(".localhost") || /^[\d.]+$/u.test(host) || host.includes(":")) return null;
   return /^mailto:/iu.test(text) ? text : new URL(text).origin;
+}
+
+/**
+ * RFC 8030 Topic: while a device is offline, its push service keeps only the latest message with
+ * this topic, so it wakes up with one notice instead of a burst. The notification tag is the same
+ * identifier; a value that does not fit the 32-character base64url limit is hashed.
+ */
+export function pushTopic(tag: string): string {
+  return /^[A-Za-z0-9_-]{1,32}$/.test(tag) ? tag : createHash("sha256").update(tag).digest("base64url").slice(0, 32);
 }
 
 /** VAPID keys and push subscriptions. The private key never leaves this file or the server. */
@@ -228,7 +237,7 @@ export function createPushStore({
           continue;
         }
         try {
-          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: "high", vapidDetails });
+          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: "high", vapidDetails, topic: pushTopic(payload.tag) });
           sent += 1;
           keep.push(subscription);
         } catch (error) {
