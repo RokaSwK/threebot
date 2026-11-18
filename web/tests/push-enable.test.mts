@@ -10,7 +10,7 @@ function fakeNotification(permission: NotificationPermission, answer: Notificati
   return { permission, requestPermission: async () => answer };
 }
 
-const { enablePushNotifications } = await import("../src/lib/push.ts");
+const { enablePushNotifications, pushDeviceStatus } = await import("../src/lib/push.ts");
 
 test("granted permission counts as enabled when the Push API is missing", async () => {
   globals.window = {};
@@ -39,4 +39,13 @@ test("with the Push API, enabling still needs a working subscription", async () 
   const result = await enablePushNotifications();
   assert.equal(result.ok, false);
   assert.match(result.reason ?? "", /cannot receive push/i);
+});
+
+test("pushDeviceStatus reflects current browser permission and subscription support", async () => {
+  globals.window = {};
+  globals.Notification = { permission: "denied" };
+  const deniedStatus = await pushDeviceStatus();
+  assert.equal(deniedStatus.supported, false);
+  assert.equal(deniedStatus.permission, "denied");
+  assert.equal(deniedStatus.subscribed, false);
 });

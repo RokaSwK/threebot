@@ -432,7 +432,13 @@ function NotificationsPane() {
       {blocker && <div role="status" className="mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-muted">{blocker}</div>}
       <Group title="This device">
         <Row title="Push notifications" desc={!status.secure || !status.supported ? "Unavailable on this device." : status.subscribed ? "On for this device." : "Off for this device."}>
-          <Switch checked={status.subscribed} disabled={busy || !status.supported || !status.secure} onChange={(on) => void (on ? enable() : disable())} label="Push notifications on this device" />
+          <Switch
+            checked={status.subscribed}
+            disabled={busy || !status.supported || !status.secure || status.permission === "denied"}
+            describedBy={problem ? "push-problem" : undefined}
+            onChange={(on) => void (on ? enable() : disable())}
+            label="Push notifications on this device"
+          />
         </Row>
         <Row title="Permission" desc={status.permission === "denied" ? "Allow notifications for this site in the browser's settings, then come back." : "The browser's permission for this site."}>
           <span className="text-[13px] text-muted">{permission}</span>
@@ -440,9 +446,17 @@ function NotificationsPane() {
         <Row title="Devices" desc="Browsers and installed apps that receive this server's pushes.">
           <span className="text-[13px] text-muted">{devices ?? "—"}</span>
         </Row>
+        {status.subscribed && (
+          <Row title="Test notification" desc="Check that notifications pop up on this device.">
+            <Pill variant="soft" disabled={busy || status.permission !== "granted"} aria-describedby={problem ? "push-problem" : undefined} onClick={() => void test()}>
+              Send test
+            </Pill>
+          </Row>
+        )}
       </Group>
-      {problem && <div role="alert" className="mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-danger">{problem}</div>}
-      {status.subscribed && <button disabled={busy || status.permission !== "granted"} onClick={() => void test()} className="mb-6 flex h-10 w-full items-center justify-center rounded-xl border border-line px-4 text-[13.5px] hover:bg-hover disabled:opacity-50">Send a test notification</button>}
+      <div id="push-problem" role="alert" aria-live="assertive" className={problem ? "mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-danger" : "sr-only"}>
+        {problem}
+      </div>
       {status.supported && status.secure && !status.subscribed && <p className="text-[12.5px] leading-5 text-muted">If this browser refuses to register, its push service is the problem. Some Chromium browsers (for example Brave) need their push-service setting on; otherwise use Chrome or your phone.</p>}
     </>
   );
