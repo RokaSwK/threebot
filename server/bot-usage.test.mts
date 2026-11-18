@@ -193,6 +193,7 @@ test("transcript roots map to provider labels, never to a path", () => {
     const label = providerForSourcePath(path, home)!;
     assert.ok(label && !label.includes("/") && !label.includes(home), `${label} is a label, not a path`);
   }
+
   const window = usageDays(7, "UTC", NOW);
   assert.deepEqual([window.since, window.until, window.days.length], ["2026-11-10", "2026-11-16", 7]);
 });
@@ -222,4 +223,23 @@ test("the scan watermark stops below the oldest thread a pass didn't read", () =
   assert.equal(nextScanWatermark(100, [{ updatedAt: 200, read: true }, { updatedAt: 200, read: false }]), 199);
   assert.equal(nextScanWatermark(100, [{ updatedAt: 101, read: false }]), 100);
   assert.equal(nextScanWatermark(100, []), 100);
+});
+
+test("Windows transcript paths match the home and provider folders regardless of case", () => {
+  const winHome = "C:\\Users\\u";
+  assert.equal(providerForSourcePath("C:\\Users\\u\\.claude\\projects\\abc", winHome), "Claude");
+  assert.equal(providerForSourcePath("C:\\Users\\u\\.claude-work\\projects\\abc", winHome), "Claude (work)");
+  assert.equal(providerForSourcePath("c:\\users\\u\\.codex\\sessions\\abc", winHome), "Codex");
+  assert.equal(providerForSourcePath("C:/Users/u/.grok/sessions/abc", winHome), "Grok");
+  assert.equal(providerForSourcePath("c:\\users\\U\\.CLAUDE-Work\\Projects\\abc", winHome), "Claude (Work)");
+  assert.equal(providerForSourcePath("\\\\Host\\Share\\USER\\.Codex\\ARCHIVED_SESSIONS\\abc", "\\\\host\\share\\user"), "Codex");
+  assert.equal(providerForSourcePath("C:\\Users\\other\\.codex\\sessions\\abc", winHome), null);
+});
+
+test("usage buckets for the same Windows profile casing share an account", () => {
+  const rows = accountsFromBuckets([
+    { sourcePath: "C:\\Users\\u\\.CLAUDE-Work\\Projects\\a", totals: { outputTokens: 3 } },
+    { sourcePath: "c:\\users\\U\\.claude-work\\projects\\b", totals: { outputTokens: 7 } },
+  ], "C:\\Users\\u");
+  assert.deepEqual(rows.map(({ account, output }) => ({ account, output })), [{ account: "Claude (Work)", output: 10 }]);
 });
