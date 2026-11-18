@@ -172,3 +172,17 @@ test("a cancelled wake is not final while its replacement is pending", () => {
   assert.equal(result.chain.settled, false);
   assert.equal(result.reply, null);
 });
+
+test("the original run can answer after its own delegated completion is steered back into it", () => {
+  const [ack, child] = delegatedItems("completed");
+  const notification = {
+    id: "turn-item:message:completion", runId: "run-1", type: "notification", ordinal: 7,
+    source: { kind: "delegated_task", taskIds: ["sub-a"] }, outcome: "completed",
+  };
+  const items = [{ ...ack, ordinal: 3 }, child, notification];
+  const runs = [{ id: "run-1", userMessageId: "input", status: "completed", completedAt: "2026-01-01T00:00:30Z" }];
+  const tasks = [{ id: "sub-a", status: "completed", completionDelivery: { state: "delivered", observedByRunId: null } }];
+  assert.equal(chainReply(items, runs, "run-1", undefined, tasks).reply, null);
+  const report = { ...ack, id: "report", ordinal: 8, text: "Final report after the completion" };
+  assert.equal(chainReply([...items, report], runs, "run-1", undefined, tasks).reply?.id, "report");
+});

@@ -146,8 +146,9 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     if (fromRuns.length > 0) return fromRuns;
     // Before the dispatch is recorded, use the member thread's live status.
     return room.members.filter((member) => {
-      if (!member.threadId || latestTurn.runs.some((run) => run.slug === member.slug && run.status)) return false;
+      if (!member.threadId) return false;
       const shell = threads[member.threadId];
+      if (shell?.activeRunId && latestTurn.runs.some((run) => run.runId === shell.activeRunId && run.status)) return false;
       return ["preparing", "queued", "starting", "running", "waiting"].includes(shell?.activityRunStatus ?? shell?.status ?? "");
     });
   }, [room, latestTurn, threads]);

@@ -128,10 +128,6 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
   for (const item of items) {
     if (!item.runId) continue;
     if (item.type === "notification" && item.source?.kind === "delegated_task") {
-      const messageId = runsById.get(item.runId)?.userMessageId;
-      // T3 steers some notifications into an existing run. Its answer belongs to
-      // the message that started the run. T3's projection uses the message-derived row id.
-      if (messageId && item.id !== `turn-item:message:${encodeURIComponent(messageId)}` && item.messageId !== messageId) continue;
       const keys = (item.source.taskIds ?? []).map((id) => `task:${id}`);
       if (!keys.length && item.source.childThreadId) keys.push(`thread:${item.source.childThreadId}`);
       for (const key of keys) {
@@ -149,6 +145,7 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
   const seen = new Set([root]);
   const children: DelegatedChild[] = [];
   const completionRuns = new Set<string>();
+  const inlineNoticeOrdinals = new Map<string, number>();
   let completedAt = 0;
   const dispatchedAsync = new Set<string>();
   let pending = false;
@@ -167,7 +164,7 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
       const childEnd = Date.parse(childCompletedAt ?? "");
       const delivery = task?.completionDelivery;
       const awaitingDelivery = delivery?.state === "pending" || delivery?.state === "claimed";
-      const deliveredInline = delivery
+      let deliveredInline = delivery
         ? (delivery.state === "delivered" || delivery.state === "acknowledged") && delivery.observedByRunId === runId
         : childEnd <= parentEnd;
       completedAt = Math.max(completedAt, childEnd || 0);
@@ -176,7 +173,19 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
       let delivered = false;
       for (const notification of notifications) {
         const wakeId = notification.runId;
-        if (!wakeId || wakeId === runId) continue;
+        if (!wakeId) continue;
+        if (wakeId === runId) {
+          if (notification.outcome !== "updated" && ROOM_RUN_OVER.has(status)) {
+            deliveredInline = true;
+            if (notification.ordinal !== undefined) {
+              inlineNoticeOrdinals.set(runId, Math.max(inlineNoticeOrdinals.get(runId) ?? 0, notification.ordinal));
+            }
+          }
+          continue;
+        }
+        // T3 can steer into another run. A standalone wake must have started its run.
+        const messageId = runsById.get(wakeId)?.userMessageId;
+        if (messageId && notification.id !== `turn-item:message:${encodeURIComponent(messageId)}` && notification.messageId !== messageId) continue;
         seen.add(wakeId);
         if (notification.outcome === "updated") continue;
         const wakeStatus = runsById.get(wakeId)?.status;
@@ -211,8 +220,10 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
     || (Date.parse(runsById.get(a)?.completedAt ?? "") || 0) - (Date.parse(runsById.get(b)?.completedAt ?? "") || 0)
   ).at(-1) ?? root;
   const answerStatus = runsById.get(answerRun)?.status;
+  const inlineOrdinal = inlineNoticeOrdinals.get(answerRun);
+  const answerItems = inlineOrdinal === undefined ? items : items.filter((item) => (item.ordinal ?? 0) > inlineOrdinal);
   const reply = settled && !dispatchedAsync.has(answerRun) && (answerStatus === "completed" || (!answerStatus && children.length === 0))
-    ? pickReply(items, answerRun) : null;
+    ? pickReply(answerItems, answerRun) : null;
   return { chain, answerStatus, completedAt, reply: reply ? { ...reply, runId: answerRun } : null };
 }
 
