@@ -112,6 +112,26 @@ const validEntry = (value: unknown): value is UsageEntry => {
     && count(e.input) === e.input && count(e.cached) === e.cached && count(e.cacheWrite) === e.cacheWrite && count(e.output) === e.output;
 };
 
+/**
+ * Older ledgers could count every thread in a shared project. Hide only entries whose source thread
+ * is still known and confirmed to be outside that adopted Bot's ownership.
+ */
+export function usageEntryFilter(
+  sharedProjects: ReadonlyMap<string, string>,
+  threads: ReadonlyMap<string, { projectId?: string | null; owner?: string }>,
+): (entry: UsageEntry) => boolean {
+  return (entry) => {
+    const project = sharedProjects.get(entry.bot);
+    if (!project) return true;
+    let thread: { projectId?: string | null; owner?: string } | undefined;
+    // Thread IDs may include colons. Use the longest known prefix before the turn ID.
+    for (let i = entry.key.indexOf(":"); i >= 0; i = entry.key.indexOf(":", i + 1)) {
+      thread = threads.get(entry.key.slice(0, i)) ?? thread;
+    }
+    return !thread || thread.projectId !== project || thread.owner === entry.bot;
+  };
+}
+
 const PRUNE_DAYS = 90 * 24 * 60 * 60 * 1000;
 
 export function createUsageLedger({ file, now = Date.now }: { file: string; now?: () => number }) {
@@ -151,14 +171,14 @@ export function createUsageLedger({ file, now = Date.now }: { file: string; now?
       await fs.rename(`${file}.tmp`, file);
     },
     /** Totals per day, Bot, source and model over the last 7 or 30 days in the zone. */
-    async rows({ days, timeZone }: { days: number; timeZone?: string }) {
+    async rows({ days, timeZone, include }: { days: number; timeZone?: string; include?: (entry: UsageEntry) => boolean }) {
       const s = await load();
       let zone = timeZone?.trim() || undefined;
       try { new Intl.DateTimeFormat("en-CA", { timeZone: zone }); } catch { zone = undefined; }
       const { since, until, days: list } = usageDays(days, zone, now());
       const totals = new Map<string, UsageRow>();
       for (const entry of s.entries) {
-        if (entry.day < since || entry.day > until) continue;
+        if (entry.day < since || entry.day > until || include?.(entry) === false) continue;
         const key = `${entry.day}|${entry.bot}|${entry.source}|${entry.model}`;
         const row = totals.get(key) ?? { day: entry.day, bot: entry.bot, source: entry.source, model: entry.model, input: 0, cached: 0, cacheWrite: 0, output: 0, turns: 0 };
         row.input += entry.input; row.cached += entry.cached; row.cacheWrite += entry.cacheWrite; row.output += entry.output; row.turns += 1;

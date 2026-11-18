@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { MAX_WAIT_MS, PENDING_MS, busyBotThreads, createAutoUpdateStore, createAutoUpdater } from "./auto-update.mts";
+import { MAX_WAIT_MS, PENDING_MS, botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater } from "./auto-update.mts";
 
 const file = () => path.join(mkdtempSync(path.join(tmpdir(), "tb-auto-")), "auto-update.json");
 const bots = [{ slug: "alpha", projectId: "project-alpha", mainThreadId: "thread-alpha" }];
@@ -34,15 +34,20 @@ test("a Bot thread that is running or waiting on a request counts as busy; other
   assert.equal(busyBotThreads([thread({ id: "side", projectId: "elsewhere", status: "running", lineage: { rootThreadId: "thread-alpha", parentThreadId: "thread-alpha" } })], bots).length, 1, "a Bot's side chat in another project");
   assert.equal(busyBotThreads([thread({ id: "other", projectId: "project-other", status: "running", lineage: { rootThreadId: "other" } })], bots).length, 0);
   assert.equal(busyBotThreads([thread({ status: "running", archivedAt: "2026-01-01T00:00:00Z" })], bots).length, 0);
+});
 
-  // Adopted Bot: user's own threads in the adopted project are ignored; only main thread and subagents count
-  const adoptedBots = [{ slug: "repo-bot", projectId: "user-repo", mainThreadId: "thread-repo-bot", adopted: true }];
-  const userThreadInRepo = { id: "user-thread", projectId: "user-repo", status: "running", lineage: null };
-  const botMainInRepo = { id: "thread-repo-bot", projectId: "user-repo", status: "running", lineage: null };
-  const botChildInRepo = { id: "bot-child", projectId: "user-repo", status: "running", lineage: { rootThreadId: "thread-repo-bot" } };
-  assert.equal(busyBotThreads([userThreadInRepo], adoptedBots).length, 0, "user thread in adopted repo is not a bot thread");
-  assert.equal(busyBotThreads([botMainInRepo], adoptedBots).length, 1, "adopted bot main thread is a bot thread");
-  assert.equal(busyBotThreads([botChildInRepo], adoptedBots).length, 1, "adopted bot child task is a bot thread");
+test("usage follows adopted Bot threads and explicitly owned routine threads inside shared projects", () => {
+  const bots = [{ slug: "repo-bot", projectId: "user-repo", mainThreadId: "main", adopted: true, ownedThreadIds: ["routine"] }];
+  const threads = [
+    { id: "personal", projectId: "user-repo", status: "running" },
+    { id: "main", projectId: "user-repo", status: "idle" },
+    { id: "child", projectId: "user-repo", status: "idle", lineage: { rootThreadId: "main" } },
+    { id: "routine", projectId: "user-repo", status: "running" },
+    { id: "routine-child", projectId: "user-repo", status: "idle", lineage: { parentThreadId: "routine" } },
+  ];
+  assert.deepEqual(botThreads(threads, bots).map((item) => item.id), ["main", "child", "routine", "routine-child"]);
+  assert.deepEqual(busyBotThreads(threads, bots).map((item) => item.id), ["personal", "routine"]);
+
 });
 
 test("while a Bot is busy the update waits for the next check, and stops waiting after the cap", async () => {

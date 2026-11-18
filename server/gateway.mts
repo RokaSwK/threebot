@@ -48,7 +48,7 @@ import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
 import { channelFor, createUpdateChecker, currentVersion, installedRuntime, runtimePaths, startUpdateChecks, startUpdater, updateLogger } from "./release.mts";
-import { botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
+import { botThreadOwner, botThreads, busyBotThreads, createAutoUpdateStore, createAutoUpdater, versionInstalled, type BotThread } from "./auto-update.mts";
 import { exposureConfig, landingPath, onTailnet, tailnetUserAllowed } from "./exposure.mts";
 import { createProjects } from "./projects.mts";
 import { createRooms } from "./rooms.mts";
@@ -58,7 +58,7 @@ import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
 import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
-import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, type UsageEntry } from "./bot-usage.mts";
+import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
@@ -290,6 +290,30 @@ async function firstOf<T>(tag: string, payload: object, pick: (event: any) => T 
   }), 15000, "T3 timed out").finally(() => { try { stream?.cancel(); } catch {} });
 }
 const shellThreads = (omitIdleSubagents = true) => firstOf<(BotThread & { updatedAt?: string | null })[]>("orchestration.subscribeShell", { omitIdleSubagents }, (event) => event.kind === "snapshot" ? event.snapshot?.threads ?? [] : undefined);
+type UsageRoutine = { id?: string; projectId?: string | null; threadId?: string | null; threadMode?: string };
+const usageRoutines = () => firstOf<UsageRoutine[]>("scheduledTasks.subscribe", {}, (event) => Array.isArray(event.tasks) ? event.tasks : undefined);
+
+/** The dedicated room and linked routine threads of adopted Bots share the user's project. */
+async function usageBotRoster(bots: Bot[], tasks: UsageRoutine[] | null) {
+  const roomThreads = new Map<string, string[]>();
+  if (bots.some((bot) => bot.adopted)) {
+    for (const room of await rooms.list()) {
+      for (const { slug, threadId } of [...room.members, ...room.formerMembers]) {
+        if (!threadId) continue;
+        const owned = roomThreads.get(slug) ?? [];
+        owned.push(threadId);
+        roomThreads.set(slug, owned);
+      }
+    }
+  }
+  const routineThreads = new Map(tasks?.flatMap((task) => task.id && task.threadId ? [[task.id, task.threadId] as const] : []));
+  return bots.map((bot) => {
+    const ownedThreadIds = roomThreads.get(bot.slug) ?? [];
+    const routineThread = typeof bot.memoryTidyRoutineId === "string" ? routineThreads.get(bot.memoryTidyRoutineId) : undefined;
+    return { ...bot, ownedThreadIds: routineThread ? [...ownedThreadIds, routineThread] : ownedThreadIds };
+  });
+}
+
 /** The Bot threads a restart would interrupt, from one look at T3's thread list. */
 async function busyThreads() {
   return busyBotThreads(await shellThreads(), await listBots());
@@ -313,7 +337,7 @@ async function collectUsageStats({ since, until }: { since: number; until: numbe
   const quietly = <T,>(promise: Promise<T>): Promise<T | null> => promise.catch(() => null);
   const [config, tasks, threads] = await Promise.all([
     quietly(withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("server.getConfig", {}), 15000, "T3 timed out"))),
-    quietly(firstOf<{ projectId?: string | null; threadId?: string | null; threadMode?: string }[]>("scheduledTasks.subscribe", {}, (event) => Array.isArray(event.tasks) ? event.tasks : undefined)),
+    quietly(usageRoutines()),
     quietly(shellThreads(false)),
   ]);
   const t3code = typeof config?.environment?.serverVersion === "string" ? config.environment.serverVersion : null;
@@ -324,7 +348,7 @@ async function collectUsageStats({ since, until }: { since: number; until: numbe
     const recent = threads.filter((thread) => (Date.parse(thread.updatedAt ?? "") || until) > since);
     const projections: unknown[] = [];
     const deadline = Date.now() + 60_000;
-    for (const thread of botThreads(recent, bots).slice(0, 200)) {
+    for (const thread of botThreads(recent, await usageBotRoster(bots, tasks)).slice(0, 200)) {
       if (Date.now() > deadline) break;
       const projection = await quietly(withTimeout(t3rpc(), 10000, "T3 timed out").then((client) => withTimeout(client.call("orchestration.getThreadProjection", { threadId: thread.id }), 15000, "T3 timed out")));
       if (projection) projections.push(projection);
@@ -346,6 +370,7 @@ const usageLedger = createUsageLedger({ file: path.join(appDir, "usage", "ledger
 let usagePassAt = 0;
 let usageScannedAt = 0;
 let usagePassRunning = false;
+let includeUsageEntry: ((entry: UsageEntry) => boolean) | undefined;
 /** Failed projection reads per thread: after three, the thread stops holding the watermark back (it may be gone). */
 const usageReadFailures = new Map<string, number>();
 /** Records the finished provider turns of Bot threads changed since the last pass. Never throws. */
@@ -360,17 +385,24 @@ async function refreshUsageLedger() {
     if (threads) {
       const since = usageScannedAt || started - 7 * 24 * 60 * 60 * 1000;
       const recent = threads.filter((thread) => (Date.parse(thread.updatedAt ?? "") || started) > since);
-      const slugOfProject = new Map(bots.filter((bot) => !bot.adopted).map((bot) => [bot.projectId, bot.slug]).filter(([projectId]) => projectId) as [string, string][]);
-      const slugOfMain = new Map(bots.map((bot) => [bot.mainThreadId, bot.slug]).filter(([mainThreadId]) => mainThreadId) as [string, string][]);
+      const sharedProjects = new Map(bots.flatMap((bot) => bot.adopted && bot.projectId ? [[bot.slug, bot.projectId] as const] : []));
+      const needsRoutines = bots.some((bot) => bot.adopted && bot.memoryTidyRoutineId);
+      const tasks = needsRoutines ? await usageRoutines().catch(() => null) : [];
+      const owner = botThreadOwner(await usageBotRoster(bots, tasks));
+      if (tasks) includeUsageEntry = usageEntryFilter(sharedProjects,
+        new Map(threads.map((thread) => [thread.id, { projectId: thread.projectId, owner: owner(thread)?.slug }])));
       const { timezone } = await getSettings();
       const timeZone = timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
       const entries: UsageEntry[] = [];
       // One pass reads at most 200 threads, oldest first, and gives up on the clock, like the usage-stats collector.
       // Threads it doesn't read (failed, over the cap or the clock) hold the watermark back, so the next pass reads them.
       const stamp = (thread: { updatedAt?: string | null }) => Date.parse(thread.updatedAt ?? "") || started;
-      const candidates = botThreads(recent, bots).sort((a, b) => stamp(a) - stamp(b));
+      const candidates = recent.flatMap((thread) => {
+        const bot = owner(thread);
+        return bot ? [{ thread, bot: bot.slug }] : [];
+      }).sort((a, b) => stamp(a.thread) - stamp(b.thread));
       const results: { updatedAt: number; read: boolean }[] = [];
-      for (const [index, thread] of candidates.entries()) {
+      for (const [index, { thread, bot }] of candidates.entries()) {
         const updatedAt = stamp(thread);
         const left = deadline - Date.now();
         if (index >= 200 || left <= 0) { results.push({ updatedAt, read: false }); continue; }
@@ -387,7 +419,6 @@ async function refreshUsageLedger() {
         }
         usageReadFailures.delete(thread.id);
         results.push({ updatedAt, read: true });
-        const bot = slugOfMain.get(thread.id) ?? slugOfMain.get(thread.lineage?.rootThreadId ?? "") ?? slugOfMain.get(thread.lineage?.parentThreadId ?? "") ?? slugOfProject.get(thread.projectId ?? "") ?? "unknown";
         entries.push(...turnsFromProjection(projection as Parameters<typeof turnsFromProjection>[0], { bot, timeZone }));
       }
       if (entries.length) { await usageLedger.add(entries); await usageLedger.save(); }
@@ -1334,7 +1365,7 @@ const server = http.createServer(async (req, res) => {
         // A pass older than two minutes may have missed recent turns. A full pass can take over a minute, so
         // wait at most 5 s for it and answer from the ledger as it stands; the pass keeps running and saves.
         if (Date.now() - usagePassAt > 120_000) await Promise.race([refreshUsageLedger(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
-        return send(res, 200, await usageLedger.rows({ days, timeZone }), { "cache-control": "no-store" });
+        return send(res, 200, await usageLedger.rows({ days, timeZone, include: includeUsageEntry }), { "cache-control": "no-store" });
       }
       const { since, until } = usageDays(days, timeZone);
       try {
