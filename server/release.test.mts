@@ -9,7 +9,6 @@ import {
   activate,
   compareVersions,
   createUpdateChecker,
-  defaultWindowsAppDir,
   expectedSum,
   findRelease,
   installRelease,
@@ -178,17 +177,6 @@ test("the update check also carries the running release's notes, whole, for what
   assert.equal(dev.current, null);
 });
 
-test("installedRuntime recognizes Windows launcher installation path", () => {
-  const temp = mkdtempSync(path.join(tmpdir(), "tb-win-app-"));
-  const winApp = path.join(temp, "Programs", "Threebot", "app");
-  mkdirSync(winApp, { recursive: true });
-  const env = { LOCALAPPDATA: temp };
-  assert.equal(defaultWindowsAppDir(env), winApp);
-  if (process.platform === "win32") {
-    assert.equal(installedRuntime(winApp, path.join(temp, ".threebot"), env), true);
-  }
-});
-
 test("createUpdateChecker passes ETag and reuses cache on HTTP 304 Not Modified", async () => {
   let calls = 0;
   let receivedHeaders: Record<string, string> | undefined;
@@ -218,18 +206,27 @@ test("createUpdateChecker passes ETag and reuses cache on HTTP 304 Not Modified"
     };
   };
 
-  const check = createUpdateChecker({ env: {}, version: "0.1.0", fetchImpl: mockFetch });
+  let t = 0;
+  const check = createUpdateChecker({ env: {}, version: "0.1.0", fetchImpl: mockFetch, now: () => t });
   const first = await check();
   assert.equal(first.updateAvailable, true);
   assert.equal(first.latest?.version, "0.2.0");
   assert.equal(calls, 1);
   assert.equal(receivedHeaders!["if-none-match"], undefined);
 
-  const second = await check({ force: true });
+  t = 16 * 60 * 1000; // the next scheduled check
+  const second = await check();
   assert.equal(second.updateAvailable, true);
   assert.equal(second.latest?.version, "0.2.0");
+  assert.equal(second.error, null);
   assert.equal(calls, 2);
   assert.equal(receivedHeaders!["if-none-match"], '"v1-etag"');
+
+  // "Check now" bypasses the cache: no If-None-Match, so GitHub sends the whole, newer list.
+  const forced = await check({ force: true });
+  assert.equal(calls, 3);
+  assert.equal(receivedHeaders!["if-none-match"], undefined);
+  assert.equal(forced.latest?.version, "0.3.0");
 });
 
 test("createUpdateChecker reports rate limit reset time on HTTP 403 with x-ratelimit-reset", async () => {
@@ -237,12 +234,16 @@ test("createUpdateChecker reports rate limit reset time on HTTP 403 with x-ratel
   const mockFetch: FetchJson = async () => ({
     ok: false,
     status: 403,
-    headers: { "x-ratelimit-reset": String(resetEpoch) },
+    headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(resetEpoch) },
   });
   const check = createUpdateChecker({ env: {}, fetchImpl: mockFetch });
   const status = await check();
   assert.match(status.error!, /rate limit exceeded/i);
   assert.match(status.error!, /resets at/i);
+
+  // A 403 with requests left is some other refusal, not the rate limit.
+  const forbidden = await createUpdateChecker({ env: {}, fetchImpl: async () => ({ ok: false, status: 403, headers: { "x-ratelimit-remaining": "42" } }) })();
+  assert.equal(forbidden.error, "Couldn't list releases (HTTP 403)");
 });
 
 test("createUpdateChecker applies jitter within the jitterRatio bounds", async () => {

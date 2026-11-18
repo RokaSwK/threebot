@@ -55,22 +55,11 @@ export function runtimePaths(home: string = homeDir()) {
   return { home, runtime, versions: path.join(runtime, "versions"), current: path.join(runtime, "current"), previous: path.join(runtime, "previous") };
 }
 
-export function defaultWindowsAppDir(env: NodeJS.ProcessEnv = process.env): string {
-  const localAppData = env.LOCALAPPDATA || (env.USERPROFILE ? path.join(env.USERPROFILE, "AppData", "Local") : "");
-  return localAppData ? path.join(localAppData, "Programs", "Threebot", "app") : "";
-}
-
 /** True when this copy runs from an installed runtime, so it can update itself. */
-export function installedRuntime(root: string = packageRoot, home: string = homeDir(), env: NodeJS.ProcessEnv = process.env): boolean {
+export function installedRuntime(root: string = packageRoot, home: string = homeDir()): boolean {
   // Compare real paths: Node resolves the running file's links (/tmp is /private/tmp on macOS).
   const real = (p: string) => { try { return realpathSync(p); } catch { return path.resolve(p); } };
-  const realRoot = real(root);
-  if (path.dirname(realRoot) === real(runtimePaths(home).versions)) return true;
-  if (process.platform === "win32") {
-    const winApp = defaultWindowsAppDir(env);
-    if (winApp && path.resolve(realRoot).toLowerCase() === path.resolve(real(winApp)).toLowerCase()) return true;
-  }
-  return false;
+  return path.dirname(real(root)) === real(runtimePaths(home).versions);
 }
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
@@ -117,10 +106,10 @@ async function listReleases({ env = process.env, fetchImpl = fetch, etag, cached
     return { releases: cached ?? [], etag: etag ?? null };
   }
   if (!res.ok) {
-    if (res.status === 403 || res.status === 429) {
-      const reset = getHeader(res.headers, "x-ratelimit-reset");
-      const msg = reset ? `GitHub API rate limit exceeded (resets at ${new Date(Number(reset) * 1000).toISOString()})` : `GitHub API rate limit exceeded (HTTP ${res.status})`;
-      throw new Error(msg);
+    // GitHub answers an exhausted rate limit with 403 (and remaining 0) or 429; other 403s are not that.
+    if (res.status === 429 || (res.status === 403 && getHeader(res.headers, "x-ratelimit-remaining") === "0")) {
+      const reset = Number(getHeader(res.headers, "x-ratelimit-reset"));
+      throw new Error(reset > 0 ? `GitHub API rate limit exceeded (resets at ${new Date(reset * 1000).toISOString()})` : `GitHub API rate limit exceeded (HTTP ${res.status})`);
     }
     throw new Error(`Couldn't list releases (HTTP ${res.status})`);
   }
@@ -326,13 +315,15 @@ export interface UpdateStatus {
   error: string | null;
   checkedAt: string | null;
 }
-export const DEFAULT_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
+/** How often the gateway looks for a release. With an ETag an unchanged list costs no rate limit. */
+export const DEFAULT_UPDATE_INTERVAL_MS = 15 * 60 * 1000;
+/** ±15% on each wait, so gateways started together don't keep asking GitHub at the same moment. */
 export const DEFAULT_UPDATE_JITTER_RATIO = 0.15;
 
 export function createUpdateChecker({
   env = process.env,
   fetchImpl = fetch,
-  ttlMs = 15 * 60 * 1000,
+  ttlMs = DEFAULT_UPDATE_INTERVAL_MS,
   maxBackoffMs = 2 * 60 * 60 * 1000,
   version = currentVersion(),
   now = Date.now,
@@ -359,10 +350,11 @@ export function createUpdateChecker({
     return Math.round(baseMs * factor);
   };
 
-  const refresh = async (): Promise<UpdateStatus> => {
+  // A forced check ("Check now") asks for the whole list: no If-None-Match, so nothing cached answers it.
+  const refresh = async (force: boolean): Promise<UpdateStatus> => {
     const at = now();
     try {
-      const { releases: all, etag } = await listReleases({ env, fetchImpl, etag: lastEtag, cached: cachedReleases });
+      const { releases: all, etag } = await listReleases({ env, fetchImpl, etag: force ? null : lastEtag, cached: cachedReleases });
       lastEtag = etag;
       cachedReleases = all;
       const latest = pickRelease(all, { channel, env });
@@ -381,7 +373,7 @@ export function createUpdateChecker({
   };
   return async function check({ force = false }: { force?: boolean } = {}): Promise<UpdateStatus> {
     if (!force && now() < nextAt) return value;
-    return inflight ??= refresh().finally(() => { inflight = null; });
+    return inflight ??= refresh(force).finally(() => { inflight = null; });
   };
 }
 
