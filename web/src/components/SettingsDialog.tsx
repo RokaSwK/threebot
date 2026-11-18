@@ -408,10 +408,14 @@ function NotificationsPane() {
     setBusy(true);
     setProblem("");
     try {
-      const response = await fetch("/api/push/test", { method: "POST" });
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: status?.endpoint }),
+      });
       if (!response.ok) throw new Error(`The gateway answered ${response.status}.`);
       const body = await response.json() as { sent?: unknown };
-      toast(typeof body.sent === "number" && body.sent > 0 ? "Test notification sent" : "No device has push enabled");
+      toast(typeof body.sent === "number" && body.sent > 0 ? "Test notification sent to this device" : "This device did not accept the test");
     } catch (error) {
       setProblem(error instanceof Error ? error.message : String(error));
     } finally {
@@ -438,7 +442,7 @@ function NotificationsPane() {
         </Row>
       </Group>
       {problem && <div role="alert" className="mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-danger">{problem}</div>}
-      {status.subscribed && <button disabled={busy} onClick={() => void test()} className="mb-6 flex h-10 w-full items-center justify-center rounded-xl border border-line px-4 text-[13.5px] hover:bg-hover disabled:opacity-50">Send a test notification</button>}
+      {status.subscribed && <button disabled={busy || status.permission !== "granted"} onClick={() => void test()} className="mb-6 flex h-10 w-full items-center justify-center rounded-xl border border-line px-4 text-[13.5px] hover:bg-hover disabled:opacity-50">Send a test notification</button>}
       {status.supported && status.secure && !status.subscribed && <p className="text-[12.5px] leading-5 text-muted">If this browser refuses to register, its push service is the problem. Some Chromium browsers (for example Brave) need their push-service setting on; otherwise use Chrome or your phone.</p>}
     </>
   );

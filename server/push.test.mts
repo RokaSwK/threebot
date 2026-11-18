@@ -59,6 +59,26 @@ test("each push carries an RFC 8030 topic: the tag when it fits, a hash otherwis
   assert.equal(pushTopic("a".repeat(40)), pushTopic("a".repeat(40)));
 });
 
+test("a targeted send reaches only the endpoint that asked", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: string[] = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => { delivered.push(target.endpoint); },
+  });
+  const other = { ...subscription, endpoint: "https://fcm.googleapis.com/wp/other" };
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(other)).ok, true);
+  const payload = { title: "Threebot", body: "Test notification", tag: "test:notification", url: "/" };
+  assert.equal((await store.send(payload, { endpoint: subscription.endpoint })).sent, 1);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload, { endpoint: "https://fcm.googleapis.com/wp/missing" })).sent, 0);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload)).sent, 2);
+  assert.deepEqual(delivered, [subscription.endpoint, subscription.endpoint, other.endpoint]);
+});
+
 test("the notifier ignores the first snapshot and pushes completions and requests", async () => {
   let handler: any = null;
   let cancelled = false;

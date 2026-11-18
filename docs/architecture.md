@@ -166,5 +166,5 @@ Pushes are signed with `VAPID_SUBJECT` when set, else `APP_URL`, else the addres
 subscribed from. Apple refuses a localhost contact, so one is never used when a real address is
 known. The app asks for permission when the user sends a message or turns on **Settings ›
 Notifications** (Details links to that pane); the pane shows permission, subscription, the device
-count, a test notification and the exact failure reason, while each Bot keeps its own Notifications
-switch in Details.
+count, a test notification and the exact failure reason, and the test reaches only the device that
+asks. Each Bot keeps its own Notifications switch in Details.
