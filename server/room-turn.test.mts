@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { createRooms, validateMembers, type Room } from "./rooms.mts";
-import { createRoomEngine, crossMentions, promptFor, speakersFor } from "./room-turn.mts";
+import { createRoomEngine, crossMentions, linesFor, promptFor, speakersFor } from "./room-turn.mts";
 import { createPushStore } from "./push.mts";
 import { generateVAPIDKeys } from "web-push";
 
@@ -766,4 +766,17 @@ test("a refused fresh session keeps the flag for the next try", async () => {
   assert.equal(runtime.dispatched.find((command) => command.type === "message.dispatch").freshContext, true);
   runtime.complete("thread-alpha", "ok");
   await done();
+});
+
+test("a malformed last-turn timestamp keeps room history", async () => {
+  const { room, done } = await roomWith();
+  try {
+    const [member] = room.members;
+    const history = [{ at: "2026-11-16T12:00:00Z", author: { kind: "user" as const }, text: "hello" }];
+    assert.deepEqual(linesFor(room, { ...member, lastTurnAt: "invalid" }, history), linesFor(room, member, history));
+    assert.equal(linesFor(room, member, history).length, 1);
+    assert.deepEqual(linesFor(room, { ...member, lastTurnAt: "2026-11-16T12:00:00Z" }, history), []);
+  } finally {
+    await done();
+  }
 });
