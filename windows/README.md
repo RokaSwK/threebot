@@ -68,7 +68,8 @@ strictly to Threebot's process identity and taskbar icon:
   and sets `PKEY_AppUserModel_ID = "Threebot"`, ensuring the window lights up the pinned Threebot icon,
   shows `threebot.ico`, and provides a jump list context menu titled `Threebot` instead of Microsoft Edge.
 - **Single Instance Activation**: Clicking the pinned icon or shortcut when Threebot is already open
-  automatically activates and brings the existing Threebot window to the foreground.
+  automatically activates and brings the existing Threebot window to the foreground. A newer
+  portable bundle closes the open window first, so it can replace the installed `Threebot.exe`.
 - **Isolated Profile**: The browser profile is isolated in `%USERPROFILE%\.threebot\browser`.
 - **Fallback**: On systems where the WebView2 runtime is absent, the launcher automatically falls
   back to Chromium / Edge in dedicated standalone app mode with suppression flags (`--disable-fre`)
