@@ -24,12 +24,18 @@ export function pwaPrecache(): Plugin {
       if (!config.publicDir) this.error("PWA build requires its public assets.");
       const base = config.base.endsWith("/") ? config.base : config.base + "/";
       const files = new Map<string, string | Uint8Array>();
+      let pageMarker: string | undefined;
       for (const item of Object.values(bundle)) {
+        if (item.type === "asset" && item.fileName === "index.html") {
+          pageMarker = `<meta name="threebot-shell" content="${hash(item.source)}">`;
+          item.source = Buffer.from(item.source).toString().replace("</head>", `${pageMarker}\n</head>`);
+        }
         if (item.fileName === "index.html" || item.fileName.startsWith("assets/")) {
           if (!item.fileName.endsWith(".map")) files.set(item.fileName, item.type === "chunk" ? item.code : item.source);
         }
       }
-      if (!files.has("index.html")) this.error("PWA build requires index.html.");
+      if (!pageMarker || !Buffer.from(files.get("index.html") ?? "").includes(pageMarker)) this.error("PWA build requires index.html with a head.");
+      const shellMarker = pageMarker;
       for (const name of PUBLIC_ASSETS) files.set(name, await readFile(path.join(config.publicDir, name)));
       // The manifest is our own checked-in static file; only URL bases change.
       const manifest: unknown = JSON.parse(await readFile(path.join(config.publicDir, "manifest.webmanifest"), "utf8"));
@@ -50,8 +56,8 @@ export function pwaPrecache(): Plugin {
       const entries = [...files].map(([name, source]) => ({
         url: base + name.split("/").map(encodeURIComponent).join("/"),
         sha256: hash(source),
-        // Edge proxies rewrite HTML per request, so the page is identified by what it loads.
-        ...(name === "index.html" ? { markers: [...Buffer.from(source).toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g)].map((match) => match[1]) } : {}),
+        // Edge proxies can inject HTML. Identify the page itself as well as its entry scripts.
+        ...(name === "index.html" ? { markers: [shellMarker, ...Array.from(Buffer.from(source).toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g), (match) => match[1])] } : {}),
       })).sort((a, b) => a.url.localeCompare(b.url));
       // The worker is a classic script with no imports, so stripping its types is the whole build.
       const { code: template } = await transformWithOxc(await readFile(WORKER, "utf8"), WORKER, { lang: "ts" });

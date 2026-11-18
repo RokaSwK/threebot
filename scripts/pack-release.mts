@@ -15,6 +15,9 @@ const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 const version = arg("version") ?? pkg.version;
 if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Bad version: ${version}`);
 if (!existsSync(path.join(root, "web", "dist", "index.html"))) throw new Error("web/dist is missing. Run `npm run setup` first.");
+for (const entrypoint of ["server/cli.mjs", "server/gateway.mjs"]) {
+  if (!existsSync(path.join(root, entrypoint))) throw new Error(`Installed services require ${entrypoint}.`);
+}
 
 const name = `threebot-${version}`;
 const stage = path.join(out, ".stage", name);

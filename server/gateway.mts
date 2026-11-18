@@ -17,6 +17,7 @@ import { ADOPTED_INSTRUCTIONS, instructionTextError, readAdoptedInstructions, re
 import { withFileLock } from "./file-lock.mts";
 import { tokenForBot, tokenMatches } from "./bot-token.mts";
 import { createSiteIcons, normalizeDomain } from "./site-icons.mts";
+import { createCompressionCache, encodeBody, isCompressible, pickEncoding } from "./static-compression.mts";
 import { startProvisioner } from "./provisioner.mts";
 import { keepThreadsActive, settleQuietThreads } from "./auto-settle.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
@@ -1163,6 +1164,8 @@ async function proxyT3(req: IncomingMessage, res: ServerResponse, t3Path: string
 
 // ---------- static ----------
 const MIME: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".woff2": "font/woff2", ".webp": "image/webp", ".json": "application/json", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json", ".mp4": "video/mp4" };
+// Encoded bodies are rebuild-stable: the key carries the mtime and size, so a new build misses.
+const staticCompression = createCompressionCache();
 async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string) {
   const safe = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
   const safePosix = safe.replace(/\\/g, "/");
@@ -1175,17 +1178,32 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: s
   const ext = path.extname(file);
   // Cloudflare only answers Safari's range requests for a video it can cache at a known length.
   const cache = file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : ext === ".mp4" ? "public, max-age=86400" : "no-cache";
-  const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache };
+  // The bundle is text, and nothing between Tailscale and the browser compresses it.
+  const compressible = isCompressible(ext, stat.size);
+  const encoding = pickEncoding(req.headers["accept-encoding"], compressible);
+  const headers = { "content-type": MIME[ext] ?? "application/octet-stream", "cache-control": cache, vary: "Accept-Encoding" };
+  if (encoding === "unacceptable") {
+    res.writeHead(406, { vary: "Accept-Encoding", "cache-control": "no-store" });
+    return res.end();
+  }
   // Safari won't play a video unless it can ask for pieces of it.
-  const range = ext === ".mp4" && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  // With no validator, If-Range cannot match. Other static files only serve full representations.
+  const range = ext === ".mp4" && req.method === "GET" && !req.headers["if-range"] && /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+  if (encoding !== "identity") {
+    const body = await staticCompression.get(`${file}:${stat.ino}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}:${encoding}`, async () => encodeBody(await fs.readFile(file), encoding));
+    res.writeHead(200, { ...headers, "content-encoding": encoding, "content-length": body.length });
+    return res.end(req.method === "HEAD" ? undefined : body);
+  }
   if (range) {
     const start = Number(range[1]), end = Math.min(range[2] ? Number(range[2]) : stat.size - 1, stat.size - 1);
     if (start > end) { res.writeHead(416, { "content-range": `bytes */${stat.size}` }); return res.end(); }
-    res.writeHead(206, { ...headers, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${stat.size}`, "content-length": end - start + 1 });
-    return res.end((await fs.readFile(file)).subarray(start, end + 1));
+    const body = (await fs.readFile(file)).subarray(start, end + 1);
+    res.writeHead(206, { ...headers, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${stat.size}`, "content-length": body.length });
+    return res.end(body);
   }
-  res.writeHead(200, ext === ".mp4" ? { ...headers, "accept-ranges": "bytes", "content-length": stat.size } : headers);
-  res.end(await fs.readFile(file));
+  const body = req.method === "HEAD" ? undefined : await fs.readFile(file);
+  res.writeHead(200, { ...headers, ...(ext === ".mp4" ? { "accept-ranges": "bytes" } : {}), "content-length": body?.length ?? stat.size });
+  res.end(body);
 }
 
 // ---------- router ----------

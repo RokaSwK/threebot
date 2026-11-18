@@ -12,10 +12,16 @@ declare const BOT_BUILD_PRECACHE: Build | null;
 const BUILD = BOT_BUILD_PRECACHE;
 if (!BUILD) throw new Error("Build the PWA before registering its service worker.");
 const SCOPE = new URL(BUILD.base, self.location.origin);
-const CACHE_PREFIX = "bot-shell-" + encodeURIComponent(SCOPE.pathname) + "-";
+const scopeKey = encodeURIComponent(SCOPE.pathname) + "-";
+const LEGACY_PREFIX = "bot-shell-" + scopeKey;
+// Previous releases delete everything under their own prefix during activation.
+const CACHE_PREFIX = "bot-shell2-" + scopeKey;
 const SHELL = CACHE_PREFIX + BUILD.revision;
+const SHELL_STATE = "bot-shell-state-" + scopeKey;
 const INDEX = new URL("index.html", SCOPE).href;
-const STATIC = new Set(BUILD.entries.map((entry) => new URL(entry.url, self.location.origin).href));
+const STATIC = new Map(BUILD.entries.map((entry) => [new URL(entry.url, self.location.origin).href, entry]));
+const MATCH = { ignoreVary: true };
+const isShell = (key: string) => key.startsWith(CACHE_PREFIX) || key.startsWith(LEGACY_PREFIX);
 
 // One dropped connection must not cost a phone the whole update.
 async function retrying(entry: PrecacheEntry, attempts = 3): Promise<Response> {
@@ -28,6 +34,17 @@ async function retrying(entry: PrecacheEntry, attempts = 3): Promise<Response> {
   }
 }
 
+/** Whether these bytes are the ones this build names: the page by what it loads, everything else by hash. */
+async function matches(entry: PrecacheEntry, response: Response): Promise<boolean> {
+  if (response.status !== 200) return false;
+  if (entry.markers) {
+    const html = await response.clone().text();
+    return entry.markers.length > 0 && entry.markers.every((marker) => html.includes(marker));
+  }
+  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("") === entry.sha256;
+}
+
 async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
   const request = new Request(new URL(entry.url, self.location.origin), {
     credentials: "same-origin", cache: "reload", redirect: "error",
@@ -36,21 +53,37 @@ async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
   if (!response.ok || response.redirected || response.type !== "basic" || response.url !== request.url) {
     throw new Error("PWA static asset unavailable.");
   }
-  if (entry.markers) {
-    const html = await response.clone().text();
-    if (!entry.markers.length || !entry.markers.every((marker) => html.includes(marker))) throw new Error("PWA page is not this build.");
-    return response;
-  }
-  const digest = await crypto.subtle.digest("SHA-256", await response.clone().arrayBuffer());
-  const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  if (sha256 !== entry.sha256) throw new Error("PWA static asset revision changed.");
+  if (!(await matches(entry, response))) throw new Error(entry.markers ? "PWA page is not this build." : "PWA static asset revision changed.");
   return response;
+}
+
+/**
+ * The previous revision's cache may already hold this file: it kept its name, and the name is the
+ * content hash, so an unchanged chunk is copied instead of downloaded again. The copy is still
+ * checked — a half-written or evicted cache must never put old bytes into a new shell. `ignoreVary`
+ * because the gateway marks the bundle `Vary: Accept-Encoding` and this worker always stores the
+ * encoding the browser picked.
+ */
+async function reused(entry: PrecacheEntry, url: URL, previous: readonly Cache[]): Promise<Response | null> {
+  for (const cache of previous) {
+    const hit = await cache.match(url.href, MATCH);
+    if (!hit) continue;
+    try {
+      if (await matches(entry, hit)) return hit;
+    } catch { /* an unreadable copy is a miss */ }
+  }
+  return null;
 }
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(SHELL);
     try {
+      // A file that kept its name kept its bytes, so an update costs what changed instead of the
+      // whole shell. The previous revision's cache is still readable: activate deletes it later.
+      const previous = await Promise.all((await caches.keys())
+        .filter((key) => key !== SHELL && isShell(key))
+        .map((key) => caches.open(key)));
       // Bound installation traffic even when syntax/diagram engines emit many
       // lazy chunks. No page-controlled fetches are needed to prime this cache.
       let next = 0;
@@ -58,8 +91,8 @@ self.addEventListener("install", (event) => {
         while (next < BUILD.entries.length) {
           const entry = BUILD.entries[next++];
           const url = new URL(entry.url, self.location.origin);
-          // This cache belongs to one revision, so an interrupted install can resume.
-          if (!(await cache.match(url))) await cache.put(url, await retrying(entry));
+          const kept = await reused(entry, url, [cache, ...previous]);
+          await cache.put(url.href, kept ?? await retrying(entry));
         }
       }));
       const failed = results.find((result) => result.status === "rejected");
@@ -76,16 +109,22 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    const replaced = keys.filter((key) => key !== SHELL && (
-      key.startsWith(CACHE_PREFIX) || (SCOPE.pathname === "/" && /^bot-shell-v\d+$/.test(key))
-    ));
-    await Promise.all(replaced.map((key) => caches.delete(key)));
+    const previous = keys.filter((key) => key !== SHELL && key.startsWith(CACHE_PREFIX));
+    const legacy = keys.filter((key) => key.startsWith(LEGACY_PREFIX));
+    // Reusing a shell on rollback keeps its original insertion order. Remember
+    // the last activated shell so a subsequent update retains the right one.
+    const state = await caches.open(SHELL_STATE);
+    const lastActive = await (await state.match(SCOPE.href))?.text();
+    const predecessor = lastActive && previous.includes(lastActive) ? lastActive : previous.at(-1);
+    await state.put(SCOPE.href, new Response(SHELL));
+    const obsolete = SCOPE.pathname === "/" ? keys.filter((key) => /^bot-shell-v\d+$/.test(key)) : [];
+    const replaced = previous.filter((key) => key !== predecessor);
+    await Promise.all([...replaced, ...legacy.slice(0, -1), ...obsolete].map((key) => caches.delete(key)));
     await self.clients.claim();
-    if (!replaced.length) return;
-    // Old windows have no update logic of their own. Drafts are stored locally,
-    // and earlier hashed assets stay on the server until this reload happens.
+    if (!predecessor && !legacy.length && !obsolete.length) return;
+    // Start the reload without waiting for it, since its fetch waits for activation.
     const windows = await self.clients.matchAll({ type: "window" });
-    await Promise.allSettled(windows.map((client) => client.navigate(client.url)));
+    for (const client of windows) void client.navigate(client.url).catch(() => {});
   })());
 });
 
@@ -96,12 +135,15 @@ self.addEventListener("fetch", (event) => {
   const route = url.pathname.slice(SCOPE.pathname.length);
   if (/^(api|t3|cdn-cgi|login|logout|auth|welcome)(\/|$)/i.test(route)) return;
   if (request.mode === "navigate") {
-    // Serve a coherent installed revision. Never overwrite it with runtime HTML
-    // (including an Access login page); a new build installs as another worker.
-    event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(INDEX)) || fetch(request)));
-  } else if (STATIC.has(url.href)) {
-    event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(request, { ignoreVary: true })) || fetch(request)));
+    // An evicted page falls back to the original navigation, including any login redirect.
+    event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(INDEX, MATCH)) || fetch(request)));
+    return;
   }
+  const key = url.href;
+  const entry = STATIC.get(key);
+  if (!entry) return;
+  // An evicted entry may be served from the network only if it belongs to this worker.
+  event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(key, MATCH)) || verifiedResponse(entry)));
 });
 
 self.addEventListener("push", (event) => {
