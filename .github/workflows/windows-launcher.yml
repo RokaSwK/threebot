@@ -16,3 +16,5 @@ jobs:
         working-directory: windows/launcher
       - run: go vet ./...
         working-directory: windows/launcher
+      - name: Build launcher executable
+        run: powershell -ExecutionPolicy Bypass -File windows/launcher/build.ps1

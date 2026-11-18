@@ -1,9 +1,18 @@
 # Threebot for Windows
 
-Threebot on Windows is one portable folder: `Threebot.exe` plus the app it
-carries. There is no installer and no admin prompt.
+Threebot for Windows is distributed in two ways:
 
-## Using the bundle
+1. **One-Click Installer (`Threebot-Setup-<version>.exe`)**: A self-contained Windows setup executable built with Inno Setup. It installs per-user into `%LOCALAPPDATA%\Programs\Threebot` without requiring UAC elevation, sets up Start Menu and Startup shortcuts, and registers with Windows Apps & Features for clean uninstallation.
+2. **Portable Bundle (`Threebot-<version>-win64.zip`)**: One portable folder with `Threebot.exe` and bundled Node runtime. There is no installer and no admin prompt.
+
+## Using the Installer
+
+Download and run `Threebot-Setup-<version>.exe`.
+- **Zero UAC Elevation**: Installs per-user without administrative rights.
+- **Automated / Silent Install**: Run with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` for unattended setups (e.g., winget / chocolatey).
+- **Shortcut & Branding**: Automatically registers Start Menu, Desktop (optional), and Startup shortcuts with `AppUserModelID = Threebot` and `threebot.ico`.
+
+## Using the Portable Bundle
 
 ```
 Threebot-<version>-win64\
@@ -38,6 +47,16 @@ starts when that user signs in.
 script (`%USERPROFILE%\.threebot\threebot-serve.cmd`) plus the Startup shortcut.
 The gateway records its PID in `%USERPROFILE%\.threebot\gateway.pid`, which is
 how restart and upgrade stop the old process.
+
+## Building the installer
+
+Building `Threebot-Setup-<version>.exe` requires Inno Setup 6 (`ISCC.exe`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\build-installer.ps1
+```
+
+This compiles the portable bundle and produces `dist\windows\Threebot-Setup-<version>.exe`.
 
 ## Building the bundle
 
