@@ -22,7 +22,12 @@ export interface BotThread {
   lineage?: { rootThreadId?: string | null; parentThreadId?: string | null } | null;
 }
 /** The fields of a Bot this file reads. */
-export interface BotRef { projectId?: string | null; mainThreadId?: string | null }
+export interface BotRef {
+  projectId?: string | null;
+  mainThreadId?: string | null;
+  adopted?: boolean;
+  ownedThreadIds?: Iterable<string>;
+}
 
 export interface AutoUpdateNotice { kind: "updated" | "rolledBack" | "failed" | "waited"; version: string; from: string; url: string; at: string }
 /** What auto-update.json holds. */
@@ -40,17 +45,30 @@ type CheckResult = { checkedAt?: string | null; error?: string | null; updateAva
 
 /**
  * Bot threads that a restart would interrupt: running, or waiting on an approval or question.
- * A thread is a Bot's when it's in a Bot's project or descends from a Bot's main thread (side chats, subagents).
+ * A shared project still blocks an automatic restart while a thread there is busy.
+ * The restart guard stays conservative even when routine ownership is unknown.
  */
 export function busyBotThreads<T extends BotThread>(threads: T[], bots: BotRef[]): T[] {
-  return botThreads(threads, bots).filter((thread) => !thread.archivedAt
+  return botThreads(threads, bots.map(({ projectId, mainThreadId }) => ({ projectId, mainThreadId }))).filter((thread) => !thread.archivedAt
     && (Boolean(thread.pendingRuntimeRequest) || BUSY.has(thread.activityRunStatus ?? thread.status)));
 }
-/** The threads that belong to a Bot: in a Bot's project, or descended from a Bot's main thread. */
+
+/** Find a thread's owner by explicit identity or lineage, then by a Threebot-managed project. */
+export function botThreadOwner<T extends BotRef>(bots: T[]) {
+  const projects = new Map<string, T>();
+  const roots = new Map<string, T>();
+  for (const bot of bots) {
+    if (bot.projectId && !bot.adopted) projects.set(bot.projectId, bot);
+    if (bot.mainThreadId) roots.set(bot.mainThreadId, bot);
+    for (const id of bot.ownedThreadIds ?? []) roots.set(id, bot);
+  }
+  return (thread: Pick<BotThread, "id" | "projectId" | "lineage">): T | undefined =>
+    roots.get(thread.id) ?? roots.get(thread.lineage?.rootThreadId ?? "")
+    ?? roots.get(thread.lineage?.parentThreadId ?? "") ?? projects.get(thread.projectId ?? "");
+}
+
 export function botThreads<T extends Pick<BotThread, "id" | "projectId" | "lineage">>(threads: T[], bots: BotRef[]): T[] {
-  const projects = new Set(bots.map((bot) => bot.projectId).filter(Boolean));
-  const mains = new Set(bots.map((bot) => bot.mainThreadId).filter(Boolean));
-  return threads.filter((thread) => projects.has(thread.projectId) || mains.has(thread.id) || mains.has(thread.lineage?.rootThreadId) || mains.has(thread.lineage?.parentThreadId));
+  return threads.filter(botThreadOwner(bots));
 }
 
 export function createAutoUpdateStore(file: string) {

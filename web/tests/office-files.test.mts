@@ -383,6 +383,7 @@ test("cells select, extend into a range, copy as TSV and clear with Escape", asy
   const cells = [...document.querySelectorAll<HTMLElement>('.office-grid td[role="gridcell"]')];
   assert.equal(cells.length, 4);
   await act(async () => { cells[0].click(); });
+  assert.ok(document.activeElement === grid, "clicking a cell focuses the grid table");
   assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "false", "false", "false"]);
   await act(async () => cells[3].dispatchEvent(new window.MouseEvent("click", { shiftKey: true, bubbles: true })));
   assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["true", "true", "true", "true"], "Shift+click extends to the rectangular range");
@@ -397,6 +398,23 @@ test("cells select, extend into a range, copy as TSV and clear with Escape", asy
   assert.deepEqual(cells.map((cell) => cell.getAttribute("aria-selected")), ["false", "false", "true", "true"], "Shift+arrows extend the range");
   await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "c", ctrlKey: true, bubbles: true })));
   assert.deepEqual(copied, ["1\t2\n3\t4", "3\t4"], "Ctrl+C copies the same range on non-Mac platforms");
+});
+
+test("TSV clipboard export quotes and escapes cells containing tabs, newlines, or quotes", async () => {
+  const SPECIAL_SHEET = xlsx({ sheet1: `<worksheet xmlns="${S}"><sheetData>
+<row r="1"><c r="A1" t="inlineStr"><is><t>Tab\there</t></is></c><c r="B1" t="inlineStr"><is><t>Line\nbreak</t></is></c></row>
+<row r="2"><c r="A2" t="inlineStr"><is><t>Say "hello"</t></is></c><c r="B2" t="inlineStr"><is><t>plain</t></is></c></row>
+</sheetData></worksheet>` });
+  body = SPECIAL_SHEET;
+  await open("library/special.xlsx");
+  const copied: string[] = [];
+  Object.defineProperty(window.navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { copied.push(text); } } });
+  const grid = document.querySelector('[role="grid"]') as HTMLElement;
+  const cells = [...document.querySelectorAll<HTMLElement>('.office-grid td[role="gridcell"]')];
+  await act(async () => { cells[0].click(); });
+  await act(async () => cells[3].dispatchEvent(new window.MouseEvent("click", { shiftKey: true, bubbles: true })));
+  await act(async () => grid.dispatchEvent(new window.KeyboardEvent("keydown", { key: "c", metaKey: true, bubbles: true })));
+  assert.deepEqual(copied, ['"Tab\there"\t"Line\nbreak"\n"Say ""hello"""\tplain']);
 });
 
 test("the selection hint collapses, is remembered across mounts and expands again", async () => {

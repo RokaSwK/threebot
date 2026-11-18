@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 // this proves cache/event behavior, not browser install UI, rendering or eviction.
 const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-let temporary, app, nested, update, origin, server;
+let temporary, app, nested, update, later, origin, server;
 let files, offline = false, failure, edgeTokens = 0;
 const seen = [];
 async function tree(directory) {
@@ -34,7 +34,7 @@ function produced(directory, files) {
 async function fixtureBuild(base, revision) {
   const root = path.join(temporary, revision);
   await mkdir(root);
-  await writeFile(path.join(root, "index.html"), '<div id="root">' + revision + '</div><script type="module" src="./main.js"></script>');
+  await writeFile(path.join(root, "index.html"), '<!doctype html><html><head><title>Fixture</title></head><body><div id="root">' + revision + '</div><script type="module" src="./main.js"></script></body></html>' );
   await writeFile(path.join(root, "main.js"), 'import "./style.css"; window.loadDiagram = () => import("./lazy.js");');
   await writeFile(path.join(root, "lazy.js"), 'export const diagram = "' + revision + '";');
   await writeFile(path.join(root, "style.css"), 'body { background: #121212; }');
@@ -49,6 +49,7 @@ before(async () => {
   app = produced(outDir, await tree(outDir));
   nested = await fixtureBuild("/nested/bot/", "nested-one");
   update = await fixtureBuild("/", "updated-two");
+  later = await fixtureBuild("/", "updated-three");
   server = http.createServer((request, response) => {
     seen.push(request.url);
     response.setHeader("Vary", "Origin"); // Vite preview varies even same-origin static responses.
@@ -89,7 +90,15 @@ function cacheStorage() {
       const data = stores.get(name);
       return {
         async put(request, response) {
-          data.set(key(request), { request: request instanceof Request ? request.clone() : new Request(key(request)), response: response.clone() });
+          // Cache.put consumes the body and stores bytes, so repeated matches
+          // get independent streams even when the response came from this cache.
+          const body = await response.arrayBuffer();
+          data.set(key(request), {
+            request: request instanceof Request ? request.clone() : new Request(key(request)),
+            body,
+            status: response.status,
+            headers: new Headers(response.headers),
+          });
         },
         async match(request, options: CacheQueryOptions = {}) {
           const stored = data.get(key(request));
@@ -98,10 +107,10 @@ function cacheStorage() {
           // Cache API Query Cache matches every response Vary field against the
           // stored request, unless explicitly disabled. URL-only maps hide this.
           if (!options.ignoreVary) {
-            const vary = stored.response.headers.get("vary")?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
+            const vary = stored.headers.get("vary")?.split(",").map((name) => name.trim()).filter(Boolean) ?? [];
             if (vary.some((name) => name === "*" || query.headers.get(name) !== stored.request.headers.get(name))) return undefined;
           }
-          return stored.response.clone();
+          return new Response(stored.body.slice(0), { status: stored.status, headers: stored.headers });
         },
       };
     },
@@ -123,7 +132,7 @@ function worker(build, caches = cacheStorage()) {
     addEventListener(name, listener) { listeners.set(name, listener); },
   };
   vm.runInNewContext(build.source, {
-    self, caches, URL, Request, Uint8Array, crypto: webcrypto, setTimeout,
+    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout,
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
@@ -248,11 +257,15 @@ test("a dropped connection retries the file instead of abandoning the update", a
 test("an interrupted install resumes without downloading verified files again", async () => {
   serve(app);
   const caches = cacheStorage();
-  const key = "bot-shell-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
+  const key = "bot-shell2-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
   const first = app.manifest.entries[0];
-  await (await caches.open(key)).put(new URL(first.url, origin), new Response("already verified"));
+  const cache = await caches.open(key);
+  const second = app.manifest.entries[1];
+  await cache.put(new URL(first.url, origin), new Response(app.files.get(decodeURIComponent(first.url.slice(1)))));
+  await cache.put(new URL(second.url, origin), new Response("interrupted entry"));
   await worker(app, caches).lifecycle("install");
   assert.equal(seen.includes(first.url), false);
+  assert.equal(seen.includes(second.url), true);
   assert.equal(seen.filter((url) => url !== "/").length, app.manifest.entries.length - 1);
 });
 
@@ -280,15 +293,32 @@ test("content revisions migrate only this app's caches on activation, leaving ol
   assert.notEqual(app.manifest.revision, update.manifest.revision);
   serve(update);
   const next = worker(update, caches);
+  const changed = update.manifest.entries.filter((entry) => !app.manifest.entries.some((old) => old.url === entry.url && old.sha256 === entry.sha256));
+  failure = { url: changed.find((entry) => entry.url.endsWith(".js")).url, kind: "missing" };
+  await assert.rejects(next.lifecycle("install"));
+  assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));
+  failure = undefined;
+  seen.length = 0;
   await next.lifecycle("install");
+  assert.deepEqual(seen.filter((url) => url !== "/").sort(), changed.map((entry) => entry.url).sort());
   assert.ok((await caches.keys()).includes(oldKey), "waiting update cannot delete active old shell");
   offline = true;
   assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));
   await next.lifecycle("activate");
   assert.deepEqual(Buffer.from(await (await next.request("/", { navigate: true })).arrayBuffer()), update.files.get("index.html"));
-  assert.equal((await caches.keys()).includes(oldKey), false);
+  assert.equal((await caches.keys()).includes(oldKey), true);
   assert.ok((await caches.keys()).includes("unrelated-app-cache"));
   assert.ok((await caches.keys()).includes("bot-shell-%2Fnested%2Fbot%2F-retained"));
+});
+
+test("an update after a rollback retains the last active shell", async () => {
+  const caches = cacheStorage();
+  for (const build of [app, update, app, later, app]) {
+    serve(build);
+    const runtime = worker(build, caches);
+    await runtime.lifecycle("install"); await runtime.lifecycle("activate");
+  }
+  assert.deepEqual(seen.filter((url) => url !== "/"), [], "the rollback reuses every entry of the last active build");
 });
 
 test("non-root base emits scoped manifest, cache and offline navigation without intercepting sibling apps", async () => {

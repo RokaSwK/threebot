@@ -1151,6 +1151,25 @@ test('a room launches one idle thread per member in its own project, with the Bo
   } finally { rpc?.close(); await fixture.close(); }
 });
 
+test('a room follows a member run that delegated, and the line is the run its child woke', { timeout: 60000 }, async () => {
+  const fixture = await createFixture({ scenario: 'rooms' });
+  try {
+    const created = await fixture.request('/api/rooms', 'POST', { name: 'Delegated review', members: ['alpha', 'beta'], settings: {} });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    const room = created.body.room;
+    const sent = await fixture.request(`/api/rooms/${room.id}/messages`, 'POST', { text: '@Beta delegate two checks' });
+    assert.equal(sent.status, 202, JSON.stringify(sent.body));
+    let turn: Json = null;
+    for (let i = 0; i < 150 && turn?.status !== 'done'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      turn = (await fixture.request(`/api/rooms/${room.id}`)).body.room.turns[0];
+    }
+    assert.equal(turn.status, 'done', `the turn closes after the wake-up run, got ${JSON.stringify(turn)}\n${fixture.logs}`);
+    assert.match(turn.runs[0].replyRunId, /fixture-wake-/, 'the line is the run the delegated child woke, not the progress note');
+    assert.equal(turn.runs[0].status, 'replied');
+  } finally { await fixture.close(); }
+});
+
 test('the gateway turns T3 auto-settle off for Bot main threads soon after it starts', { timeout: 30000 }, async () => {
   const fixture = await createFixture();
   let rpc: T3Client | undefined;

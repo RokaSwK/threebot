@@ -49,17 +49,17 @@ export function FileGlyph({ kind }: { kind: FileGlyphKind }) {
 /** The signed URL of a workspace file, for HEAD probes and playback. */
 export function useWorkspaceAssetUrl(path: string | undefined): string | null {
   const threadId = useContext(WorkspaceFileContext)?.threadId ?? null;
-  const [url, setUrl] = useState<string | null>(null);
+  const [signed, setSigned] = useState<{ threadId: string; path: string; url: string } | null>(null);
   useEffect(() => {
-    setUrl(null);
+    setSigned(null);
     if (!threadId || !path) return;
     let live = true;
     Promise.resolve().then(() => { workspaceClient(threadId); return workspaceAssetUrl({ _tag: "workspace-file", threadId, path }); })
-      .then((signed) => { if (live) setUrl(signed); })
+      .then((url) => { if (live) setSigned({ threadId, path, url }); })
       .catch(() => {});
     return () => { live = false; };
   }, [threadId, path]);
-  return url;
+  return signed?.threadId === threadId && signed.path === path ? signed.url : null;
 }
 
 /** The Content-Length of a workspace file, probed once via HEAD on its signed URL. */
@@ -67,6 +67,7 @@ export function useFileSize(path: string | undefined, url: string | null): numbe
   const threadId = useContext(WorkspaceFileContext)?.threadId ?? null;
   const [size, setSize] = useState<number | null>(null);
   useEffect(() => {
+    setSize(null);
     if (!threadId || !path || !url) return;
     let live = true;
     void cachedFileSize(`${threadId}:${path}`, () => fileSizeFromHead(url)).then((bytes) => {

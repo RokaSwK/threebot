@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast, uploadAttachment, type Attachment } from "../store";
 import { uuid } from "./t3";
 
@@ -17,6 +17,7 @@ function release(attachment: Attachment) {
 export function usePendingAttachments(initial: Attachment[] = []) {
   const [items, setItems] = useState<PendingAttachment[]>(() => initial.map((attachment) => ({ state: "ready" as const, attachment })));
   const current = useRef(items);
+  const mounted = useRef(false);
   current.current = items;
   const update = (next: PendingAttachment[]) => { current.current = next; setItems(next); };
 
@@ -32,6 +33,16 @@ export function usePendingAttachments(initial: Attachment[] = []) {
     update([]);
   };
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      for (const item of current.current) release(item.attachment);
+    };
+  }, []);
+
+  const isPending = (id: string) => mounted.current && current.current.some((item) => item.attachment.id === id);
+
   const addFiles = async (files: FileList | File[]) => {
     const selected = Array.from(files).map((file) => ({ file, attachment: {
       type: file.type.startsWith("image/") ? "image" as const : "file" as const,
@@ -41,16 +52,16 @@ export function usePendingAttachments(initial: Attachment[] = []) {
     // Reserve the whole selection before awaiting, so a slow upload cannot be overtaken by a removal.
     update([...current.current, ...selected.map(({ attachment }): PendingAttachment => ({ state: "uploading", attachment }))]);
     for (const { file, attachment } of selected) {
-      if (!current.current.some((item) => item.attachment.id === attachment.id)) continue;
+      if (!isPending(attachment.id)) continue;
       try {
         const uploaded = await uploadAttachment(file);
-        if (!current.current.some((item) => item.attachment.id === attachment.id)) { release(uploaded); continue; }
+        if (!isPending(attachment.id)) { release(uploaded); continue; }
         update(current.current.map((item) => item.attachment.id === attachment.id ? { state: "ready", attachment: uploaded } : item));
         release(attachment);
       } catch {
-        const present = current.current.some((item) => item.attachment.id === attachment.id);
+        if (!isPending(attachment.id)) continue;
         remove(attachment.id);
-        if (present) toast(`Couldn't attach ${file.name}`);
+        toast(`Couldn't attach ${file.name}`);
       }
     }
   };
