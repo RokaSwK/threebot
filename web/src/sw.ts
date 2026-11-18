@@ -3,7 +3,7 @@
 // API, T3, login and Cloudflare traffic stay online.
 
 /** A file the worker precaches: its bytes' SHA-256, or for index.html the asset URLs it must load. */
-type PrecacheEntry = { url: string; sha256: string; markers?: string[] };
+type PrecacheEntry = { url: string; sha256: string; markers?: string[]; optional?: boolean };
 type Build = { revision: string; base: string; entries: PrecacheEntry[] };
 
 declare const self: ServiceWorkerGlobalScope;
@@ -20,6 +20,7 @@ const SHELL = CACHE_PREFIX + BUILD.revision;
 const SHELL_STATE = "bot-shell-state-" + scopeKey;
 const INDEX = new URL("index.html", SCOPE).href;
 const STATIC = new Map(BUILD.entries.map((entry) => [new URL(entry.url, self.location.origin).href, entry]));
+const CORE = BUILD.entries.filter((entry) => !entry.optional);
 const MATCH = { ignoreVary: true };
 const isShell = (key: string) => key.startsWith(CACHE_PREFIX) || key.startsWith(LEGACY_PREFIX);
 
@@ -84,12 +85,12 @@ self.addEventListener("install", (event) => {
       const previous = await Promise.all((await caches.keys())
         .filter((key) => key !== SHELL && isShell(key))
         .map((key) => caches.open(key)));
-      // Bound installation traffic even when syntax/diagram engines emit many
-      // lazy chunks. No page-controlled fetches are needed to prime this cache.
+      // Install the core shell immediately; optional modules (diagrams, pdf, highlight)
+      // download on demand at runtime and are cached then.
       let next = 0;
-      const results = await Promise.allSettled(Array.from({ length: Math.min(6, BUILD.entries.length) }, async () => {
-        while (next < BUILD.entries.length) {
-          const entry = BUILD.entries[next++];
+      const results = await Promise.allSettled(Array.from({ length: Math.min(6, CORE.length) }, async () => {
+        while (next < CORE.length) {
+          const entry = CORE[next++];
           const url = new URL(entry.url, self.location.origin);
           const kept = await reused(entry, url, [cache, ...previous]);
           await cache.put(url.href, kept ?? await retrying(entry));
@@ -142,8 +143,20 @@ self.addEventListener("fetch", (event) => {
   const key = url.href;
   const entry = STATIC.get(key);
   if (!entry) return;
-  // An evicted entry may be served from the network only if it belongs to this worker.
-  event.respondWith(caches.open(SHELL).then(async (cache) => (await cache.match(key, MATCH)) || verifiedResponse(entry)));
+  // An evicted or on-demand entry may be served from the network only if it belongs to this worker.
+  event.respondWith(caches.open(SHELL).then(async (cache) => {
+    const cached = await cache.match(key, MATCH);
+    if (cached) return cached;
+    const previous = await Promise.all((await caches.keys())
+      .filter((k) => k !== SHELL && isShell(k))
+      .map((k) => caches.open(k)));
+    const kept = await reused(entry, url, previous);
+    const response = kept ?? await verifiedResponse(entry);
+    try {
+      await cache.put(key, response.clone());
+    } catch { /* Quota exceeded or cache write failure must not break the current view */ }
+    return response;
+  }));
 });
 
 self.addEventListener("push", (event) => {
