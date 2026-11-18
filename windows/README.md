@@ -61,8 +61,16 @@ required: two `.syso` files with `.rsrc` sections cannot be linked into one exe.
 
 ## Window
 
-The window is Edge or Chrome in app mode (`--app=http://127.0.0.1:3780/`), which
-gives a frameless window, its own taskbar entry and Threebot's favicon. It uses
-the user's normal browser profile: a fresh profile makes Edge open a sign-in and
-sync dialog on first launch. Without Edge or Chrome the default browser opens
-the URL instead.
+`Threebot.exe` hosts Microsoft Edge's embedded **WebView2** runtime directly in a
+native Win32 window owned 100% by `Threebot.exe`. This binds the running window
+strictly to Threebot's process identity and taskbar icon:
+- **Taskbar Grouping & Identity**: The process calls `SetCurrentProcessExplicitAppUserModelID("Threebot")`
+  and sets `PKEY_AppUserModel_ID = "Threebot"`, ensuring the window lights up the pinned Threebot icon,
+  shows `threebot.ico`, and provides a jump list context menu titled `Threebot` instead of Microsoft Edge.
+- **Single Instance Activation**: Clicking the pinned icon or shortcut when Threebot is already open
+  automatically activates and brings the existing Threebot window to the foreground. A newer
+  portable bundle closes the open window first, so it can replace the installed `Threebot.exe`.
+- **Isolated Profile**: The browser profile is isolated in `%USERPROFILE%\.threebot\browser`.
+- **Fallback**: On systems where the WebView2 runtime is absent, the launcher automatically falls
+  back to Chromium / Edge in dedicated standalone app mode with suppression flags (`--disable-fre`)
+  and isolated browser profile directory. Without Edge or Chrome the default browser opens the URL.

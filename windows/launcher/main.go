@@ -16,11 +16,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/jchv/go-webview2"
+	"github.com/jchv/go-webview2/webviewloader"
 )
 
 const (
@@ -56,6 +60,16 @@ func run(background bool) error {
 	installDir := filepath.Join(localAppData(), "Programs", "Threebot")
 	home := threebotHome()
 
+	if !background {
+		if bundleUpgrades(root, installDir) {
+			// A newer bundle replaces the installed copy, including the Threebot.exe an open window
+			// is running from: close that window first instead of just focusing it.
+			closeExistingWindow(5 * time.Second)
+		} else if activateExistingWindow() {
+			return nil
+		}
+	}
+
 	appDir, nodeExe, err := prepare(root, installDir, home)
 	if err != nil {
 		return err
@@ -80,7 +94,7 @@ func run(background bool) error {
 		logPath := filepath.Join(home, "logs", "gateway.log")
 		return fmt.Errorf("the gateway didn't answer on %s\n\n%s", appURL, diagnostic(logPath))
 	}
-	return openWindow(installDir)
+	return openWindow(installDir, home)
 }
 
 // ---------- where things live ----------
@@ -150,6 +164,16 @@ func prepare(root, installDir, home string) (appDir, nodeExe string, err error) 
 		_ = copyFile(self, filepath.Join(installDir, "Threebot.exe"))
 	}
 	return installedApp, installedNode, nil
+}
+
+// bundleUpgrades reports whether this exe carries an app that differs from the installed one.
+func bundleUpgrades(root, installDir string) bool {
+	payloadApp := filepath.Join(root, "app")
+	if !fileExists(filepath.Join(payloadApp, "server", "cli.mjs")) {
+		return false // running from the installed copy
+	}
+	installed := readVersion(filepath.Join(installDir, "app"))
+	return installed == "" || installed != readVersion(payloadApp)
 }
 
 func readVersion(appDir string) string {
@@ -312,7 +336,9 @@ func ensureToken(home string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if strings.EqualFold(filepath.Ext(t3), ".cmd") || strings.EqualFold(filepath.Ext(t3), ".bat") {
 		shell := os.Getenv("ComSpec")
-		if shell == "" { shell = "cmd.exe" }
+		if shell == "" {
+			shell = "cmd.exe"
+		}
 		cmd = exec.CommandContext(ctx, shell)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CmdLine: `cmd.exe /d /s /c ""` + t3 + `" auth session issue --ttl 365d --label threebot --token-only"`}
 	}
@@ -358,8 +384,10 @@ func installShortcuts(installDir, root string) {
 			icon = self
 		}
 	}
-	writeShortcut(filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Threebot.lnk"),
-		self, "", installDir, icon, appName)
+	startMenu := filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Threebot.lnk")
+	writeShortcut(startMenu, self, "", installDir, icon, appName)
+	// The window carries an explicit AppUserModelID, so the shortcut that opens it must carry the same one.
+	_ = setShortcutAppUserModelID(startMenu, appName)
 	writeShortcut(filepath.Join(roamingAppData(), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Threebot.lnk"),
 		self, "--background", installDir, icon, appName+" gateway")
 }
@@ -424,7 +452,7 @@ func startGateway(appDir, nodeExe, home string) error {
 	}
 	cmd := exec.Command(nodeExe, filepath.Join(appDir, "server", "cli.mjs"), "serve")
 	cmd.Dir = appDir
-	cmd.Env = append(cleanGatewayEnv(), "THREEBOT_HOME="+home)
+	cmd.Env = append(cleanGatewayEnv(), "THREEBOT_HOME="+home, "THREEBOT_SERVICE=1")
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
 	if err := cmd.Start(); err != nil {
@@ -476,16 +504,321 @@ func waitHealthy(timeout time.Duration) bool {
 
 // ---------- the window ----------
 
-// openWindow shows Threebot as an app window (Chrome or Edge in app mode), so it has its own icon,
-// its own taskbar entry and no address bar. The user's normal browser profile is used on purpose:
-// a fresh profile makes Edge interrupt the first launch with a sign-in and sync dialog.
-func openWindow(installDir string) error {
-	args := []string{
+var (
+	user32                                      = syscall.NewLazyDLL("user32.dll")
+	shell32                                     = syscall.NewLazyDLL("shell32.dll")
+	procEnumWindows                             = user32.NewProc("EnumWindows")
+	procGetWindowThreadProcessID                = user32.NewProc("GetWindowThreadProcessId")
+	procIsWindowVisible                         = user32.NewProc("IsWindowVisible")
+	procSetWindowTextW                          = user32.NewProc("SetWindowTextW")
+	procSendMessageW                            = user32.NewProc("SendMessageW")
+	procPostMessageW                            = user32.NewProc("PostMessageW")
+	procLoadImageW                              = user32.NewProc("LoadImageW")
+	procFindWindowW                             = user32.NewProc("FindWindowW")
+	procDestroyWindow                           = user32.NewProc("DestroyWindow")
+	procSetForegroundWindow                     = user32.NewProc("SetForegroundWindow")
+	procShowWindow                              = user32.NewProc("ShowWindow")
+	procSHGetPropertyStoreForWindow             = shell32.NewProc("SHGetPropertyStoreForWindow")
+	procSetCurrentProcessExplicitAppUserModelID = shell32.NewProc("SetCurrentProcessExplicitAppUserModelID")
+	procSHGetPropertyStoreFromParsingName       = shell32.NewProc("SHGetPropertyStoreFromParsingName")
+	ole32                                       = syscall.NewLazyDLL("ole32.dll")
+	procCoInitializeEx                          = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize                          = ole32.NewProc("CoUninitialize")
+)
+
+var iidIPropertyStore = syscall.GUID{
+	Data1: 0x886D8EEB, Data2: 0x8CF2, Data3: 0x4446,
+	Data4: [8]byte{0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99},
+}
+
+// webviewWindowClass is the Win32 class go-webview2 registers for its window. Matching on class and
+// title together keeps an Explorer window of a folder named "Threebot" from passing as the app.
+const webviewWindowClass = "webview"
+
+type propertyKey struct {
+	fmtid syscall.GUID
+	pid   uint32
+}
+
+// propVariant mirrors PROPVARIANT for a VT_LPWSTR value (24 bytes on 64-bit Windows).
+type propVariant struct {
+	vt        uint16
+	reserved1 uint16
+	reserved2 uint16
+	reserved3 uint16
+	pwszVal   *uint16
+	padding   [8]byte
+}
+
+type iPropertyStoreVtbl struct {
+	QueryInterface uintptr
+	AddRef         uintptr
+	Release        uintptr
+	GetCount       uintptr
+	GetAt          uintptr
+	GetValue       uintptr
+	SetValue       uintptr
+	Commit         uintptr
+}
+
+type iPropertyStore struct {
+	lpVtbl *iPropertyStoreVtbl
+}
+
+// setAppUserModelID stamps PKEY_AppUserModel_ID on a window, so the taskbar groups it under the
+// pinned Threebot shortcut instead of under the browser that drew it.
+func setAppUserModelID(hwnd uintptr, appID string) error {
+	var store *iPropertyStore
+	r1, _, _ := procSHGetPropertyStoreForWindow.Call(hwnd, uintptr(unsafe.Pointer(&iidIPropertyStore)), uintptr(unsafe.Pointer(&store)))
+	if r1 != 0 || store == nil {
+		return fmt.Errorf("SHGetPropertyStoreForWindow failed: hr=0x%x", r1)
+	}
+	return writeAppUserModelID(store, appID)
+}
+
+// setShortcutAppUserModelID stamps the same ID on a saved .lnk (WScript.Shell can't), so the Start
+// Menu entry, a taskbar pin made from it and the window it opens share one taskbar button.
+func setShortcutAppUserModelID(lnk, appID string) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	const coinitApartmentThreaded = 0x2
+	if hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded); hr == 0 || hr == 1 { // S_OK, S_FALSE
+		defer procCoUninitialize.Call()
+	}
+	path, err := syscall.UTF16PtrFromString(lnk)
+	if err != nil {
+		return err
+	}
+	const gpsReadWrite = 0x2
+	var store *iPropertyStore
+	r1, _, _ := procSHGetPropertyStoreFromParsingName.Call(uintptr(unsafe.Pointer(path)), 0, gpsReadWrite, uintptr(unsafe.Pointer(&iidIPropertyStore)), uintptr(unsafe.Pointer(&store)))
+	if r1 != 0 || store == nil {
+		return fmt.Errorf("SHGetPropertyStoreFromParsingName failed: hr=0x%x", r1)
+	}
+	return writeAppUserModelID(store, appID)
+}
+
+// writeAppUserModelID sets PKEY_AppUserModel_ID on a property store, commits it and releases it.
+func writeAppUserModelID(store *iPropertyStore, appID string) error {
+	defer syscall.SyscallN(store.lpVtbl.Release, uintptr(unsafe.Pointer(store)))
+
+	pkey := propertyKey{
+		fmtid: syscall.GUID{
+			Data1: 0x9F4C2855, Data2: 0x9F79, Data3: 0x4B39,
+			Data4: [8]byte{0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3},
+		},
+		pid: 5, // PKEY_AppUserModel_ID
+	}
+	ptr, err := syscall.UTF16PtrFromString(appID)
+	if err != nil {
+		return err
+	}
+	pv := propVariant{vt: 31 /* VT_LPWSTR */, pwszVal: ptr}
+	if hr, _, _ := syscall.SyscallN(store.lpVtbl.SetValue, uintptr(unsafe.Pointer(store)), uintptr(unsafe.Pointer(&pkey)), uintptr(unsafe.Pointer(&pv))); hr != 0 {
+		return fmt.Errorf("IPropertyStore.SetValue failed: hr=0x%x", hr)
+	}
+	if hr, _, _ := syscall.SyscallN(store.lpVtbl.Commit, uintptr(unsafe.Pointer(store))); hr != 0 {
+		return fmt.Errorf("IPropertyStore.Commit failed: hr=0x%x", hr)
+	}
+	return nil
+}
+
+// iconPath prefers the installed icon and falls back to the one next to this exe.
+func iconPath(installDir string) string {
+	ico := filepath.Join(installDir, "threebot.ico")
+	if !fileExists(ico) {
+		if root, err := exeDir(); err == nil {
+			ico = filepath.Join(root, "threebot.ico")
+		}
+	}
+	return ico
+}
+
+// setWindowIcon gives a window Threebot's big (Alt+Tab, taskbar) and small (title bar) icons.
+func setWindowIcon(hwnd uintptr, icoPath string) {
+	if !fileExists(icoPath) {
+		return
+	}
+	icoPtr, err := syscall.UTF16PtrFromString(icoPath)
+	if err != nil {
+		return
+	}
+	const (
+		imageIcon      = 1
+		lrLoadFromFile = 0x00000010
+		wmSetIcon      = 0x0080
+		iconSmall      = 0
+		iconBig        = 1
+	)
+	if hBig, _, _ := procLoadImageW.Call(0, uintptr(unsafe.Pointer(icoPtr)), imageIcon, 32, 32, lrLoadFromFile); hBig != 0 {
+		procSendMessageW.Call(hwnd, wmSetIcon, iconBig, hBig)
+	}
+	if hSmall, _, _ := procLoadImageW.Call(0, uintptr(unsafe.Pointer(icoPtr)), imageIcon, 16, 16, lrLoadFromFile); hSmall != 0 {
+		procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, hSmall)
+	}
+}
+
+// applyWindowBranding waits briefly for the browser's first visible window and gives it Threebot's
+// AppUserModelID, title and icon.
+func applyWindowBranding(pid int, title, icoPath string) {
+	var found uintptr
+	cb := syscall.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
+		var wndPid uint32
+		procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&wndPid)))
+		if int(wndPid) == pid {
+			if vis, _, _ := procIsWindowVisible.Call(hwnd); vis != 0 {
+				found = hwnd
+				return 0 // stop enumerating
+			}
+		}
+		return 1
+	})
+	for deadline := time.Now().Add(6 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		found = 0
+		procEnumWindows.Call(cb, 0)
+		if found == 0 {
+			continue
+		}
+		_ = setAppUserModelID(found, appName)
+		if ptr, err := syscall.UTF16PtrFromString(title); err == nil {
+			procSetWindowTextW.Call(found, uintptr(unsafe.Pointer(ptr)))
+		}
+		setWindowIcon(found, icoPath)
+		return
+	}
+}
+
+// windowArgs builds Chromium flags to run Threebot in standalone app mode with an
+// isolated browser profile and first-run prompts disabled.
+func windowArgs(home string) []string {
+	browserDir := filepath.Join(home, "browser")
+	return []string{
 		"--app=" + appURL,
+		"--user-data-dir=" + browserDir,
+		"--class=" + appName,
 		"--window-size=1360,900",
 		"--no-first-run",
 		"--no-default-browser-check",
+		"--disable-fre",
+		"--disable-features=msFirstRunExperience,msEdgeSyncPrompt,msWelcomePage,msEdgeHubFirstRun",
 	}
+}
+
+// existingWindow finds an open Threebot WebView2 window, or returns 0.
+func existingWindow() uintptr {
+	class, err := syscall.UTF16PtrFromString(webviewWindowClass)
+	if err != nil {
+		return 0
+	}
+	title, err := syscall.UTF16PtrFromString(windowTitle)
+	if err != nil {
+		return 0
+	}
+	hwnd, _, _ := procFindWindowW.Call(uintptr(unsafe.Pointer(class)), uintptr(unsafe.Pointer(title)))
+	if hwnd == 0 {
+		return 0
+	}
+	if vis, _, _ := procIsWindowVisible.Call(hwnd); vis == 0 {
+		return 0
+	}
+	return hwnd
+}
+
+// activateExistingWindow brings an open Threebot window to the front, so a second click on the
+// pinned icon doesn't start a second copy.
+func activateExistingWindow() bool {
+	hwnd := existingWindow()
+	if hwnd == 0 {
+		return false
+	}
+	const swRestore = 9
+	procShowWindow.Call(hwnd, swRestore)
+	procSetForegroundWindow.Call(hwnd)
+	return true
+}
+
+// closeExistingWindow asks an open Threebot window to close and waits for its launcher to exit, so
+// an update can replace the Threebot.exe that process is running from.
+func closeExistingWindow(timeout time.Duration) {
+	hwnd := existingWindow()
+	if hwnd == 0 {
+		return
+	}
+	var pid uint32
+	procGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	const wmClose = 0x0010
+	procPostMessageW.Call(hwnd, wmClose, 0, 0)
+	if pid == 0 {
+		return
+	}
+	const synchronize = 0x00100000
+	handle, err := syscall.OpenProcess(synchronize, false, pid)
+	if err != nil {
+		return
+	}
+	defer syscall.CloseHandle(handle)
+	_, _ = syscall.WaitForSingleObject(handle, uint32(timeout/time.Millisecond))
+}
+
+// webView2Installed reports whether the Evergreen WebView2 runtime (or a matching Edge channel) is
+// present. go-webview2 exits the process on a failed environment, so check before trying it.
+func webView2Installed() bool {
+	installed, err := webviewloader.GetInstalledVersion()
+	return err == nil && installed != ""
+}
+
+func openWebView2Window(installDir, home string) (err error) {
+	if !webView2Installed() {
+		return errors.New("the WebView2 runtime isn't installed")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("webview2 panicked: %v", r)
+		}
+	}()
+
+	if ptr, err := syscall.UTF16PtrFromString(appName); err == nil {
+		procSetCurrentProcessExplicitAppUserModelID.Call(uintptr(unsafe.Pointer(ptr)))
+	}
+
+	dataPath := filepath.Join(home, "browser")
+	_ = os.MkdirAll(dataPath, 0o755)
+
+	w := webview2.NewWithOptions(webview2.WebViewOptions{
+		Debug:     false,
+		AutoFocus: true,
+		DataPath:  dataPath,
+		WindowOptions: webview2.WindowOptions{
+			Title:  windowTitle,
+			Width:  1360,
+			Height: 900,
+			Center: true,
+			IconId: 1,
+		},
+	})
+	if w == nil {
+		// go-webview2 shows its window before embedding the browser and leaves it behind when that
+		// fails; remove it so the fallback window isn't joined by an empty one.
+		if hwnd := existingWindow(); hwnd != 0 {
+			procDestroyWindow.Call(hwnd)
+		}
+		return errors.New("failed to initialize webview2")
+	}
+	defer w.Destroy()
+
+	if hwnd := uintptr(w.Window()); hwnd != 0 {
+		_ = setAppUserModelID(hwnd, appName)
+		setWindowIcon(hwnd, iconPath(installDir))
+	}
+
+	w.Navigate(appURL)
+	w.Run()
+	return nil
+}
+
+func openChromiumWindow(installDir, home string) error {
+	args := windowArgs(home)
+	icoPath := iconPath(installDir)
 	for _, exe := range chromiumCandidates() {
 		if !fileExists(exe) {
 			continue
@@ -493,7 +826,9 @@ func openWindow(installDir string) error {
 		cmd := exec.Command(exe, args...)
 		// No HideWindow here: Chromium applies the launcher's STARTUPINFO to its first window.
 		if err := cmd.Start(); err == nil {
-			// The window outlives this launcher; release it so Threebot.exe can be updated later.
+			// Brand the window with Threebot's AppUserModelID and icon, then release the process: the
+			// window outlives this launcher, so Threebot.exe can be updated later.
+			applyWindowBranding(cmd.Process.Pid, windowTitle, icoPath)
 			_ = cmd.Process.Release()
 			return nil
 		}
@@ -501,6 +836,17 @@ func openWindow(installDir string) error {
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", appURL)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Start()
+}
+
+// openWindow displays Threebot. It first attempts to open a native Win32 window hosting
+// the embedded WebView2 runtime (Solution B). This gives a native window 100% owned by
+// Threebot.exe, keeping the taskbar icon permanently bound to Threebot and displaying
+// Threebot's jump list. If WebView2 is unavailable, it falls back to Chromium app mode.
+func openWindow(installDir, home string) error {
+	if err := openWebView2Window(installDir, home); err == nil {
+		return nil
+	}
+	return openChromiumWindow(installDir, home)
 }
 
 func chromiumCandidates() []string {
