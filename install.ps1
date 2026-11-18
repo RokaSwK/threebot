@@ -1,7 +1,7 @@
-# Install Threebot on Windows:  irm https://raw.githubusercontent.com/warhammered/threebot/main/install.ps1 | iex
+# Install Threebot on Windows:  irm https://raw.githubusercontent.com/RokaSwK/threebot/main/install.ps1 | iex
 # Downloads a release, checks its SHA-256, installs it in %THREEBOT_HOME%\runtime\versions.
 $ErrorActionPreference = "Stop"
-$Repo = "warhammered/threebot"
+$Repo = "RokaSwK/threebot"
 $HomeDir = if ($env:THREEBOT_HOME) { $env:THREEBOT_HOME } else { Join-Path $env:USERPROFILE ".threebot" }
 $BinDir = if ($env:THREEBOT_INSTALL_BIN_DIR) { $env:THREEBOT_INSTALL_BIN_DIR } else { Join-Path $env:USERPROFILE ".local\bin" }
 $BaseUrl = if ($env:THREEBOT_RELEASE_BASE_URL) { $env:THREEBOT_RELEASE_BASE_URL } else { "https://github.com/$Repo/releases/download" }
