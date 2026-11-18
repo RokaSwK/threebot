@@ -154,3 +154,8 @@ func TestWindowArgsUsesIsolatedProfileAndAppId(t *testing.T) {
 		t.Fatalf("expected --disable-fre in args: %v", args)
 	}
 }
+
+func TestActivateExistingWindowDoesNotPanic(t *testing.T) {
+	// Verifies activateExistingWindow executes Win32 APIs safely.
+	_ = activateExistingWindow()
+}

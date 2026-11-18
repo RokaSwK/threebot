@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/jchv/go-webview2"
 )
 
 const (
@@ -49,6 +51,9 @@ func main() {
 }
 
 func run(background bool) error {
+	if !background && activateExistingWindow() {
+		return nil
+	}
 	root, err := exeDir()
 	if err != nil {
 		return err
@@ -612,10 +617,105 @@ func windowArgs(home string) []string {
 	}
 }
 
-// openWindow shows Threebot as a dedicated app window. It uses an isolated browser profile so it
-// doesn't merge with the user's main Edge/Chrome session, applies Threebot's AppUserModelID for taskbar
-// grouping, and sets the window icon to threebot.ico.
-func openWindow(installDir, home string) error {
+func activateExistingWindow() bool {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	findWindowW := user32.NewProc("FindWindowW")
+	setForegroundWindow := user32.NewProc("SetForegroundWindow")
+	showWindow := user32.NewProc("ShowWindow")
+	isWindowVisible := user32.NewProc("IsWindowVisible")
+
+	titlePtr, err := syscall.UTF16PtrFromString(windowTitle)
+	if err != nil {
+		return false
+	}
+	hwnd, _, _ := findWindowW.Call(0, uintptr(unsafe.Pointer(titlePtr)))
+	if hwnd != 0 {
+		vis, _, _ := isWindowVisible.Call(hwnd)
+		if vis != 0 {
+			const swRestore = 9
+			showWindow.Call(hwnd, swRestore)
+			setForegroundWindow.Call(hwnd)
+			return true
+		}
+	}
+	return false
+}
+
+func openWebView2Window(installDir, home string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("webview2 panicked: %v", r)
+		}
+	}()
+
+	shell32 := syscall.NewLazyDLL("shell32.dll")
+	setCurrentProcessExplicitAppUserModelID := shell32.NewProc("SetCurrentProcessExplicitAppUserModelID")
+	if ptr, err := syscall.UTF16PtrFromString(appName); err == nil {
+		setCurrentProcessExplicitAppUserModelID.Call(uintptr(unsafe.Pointer(ptr)))
+	}
+
+	dataPath := filepath.Join(home, "browser")
+	_ = os.MkdirAll(dataPath, 0o755)
+
+	w := webview2.NewWithOptions(webview2.WebViewOptions{
+		Debug:     false,
+		AutoFocus: true,
+		DataPath:  dataPath,
+		WindowOptions: webview2.WindowOptions{
+			Title:  windowTitle,
+			Width:  1360,
+			Height: 900,
+			Center: true,
+			IconId: 1,
+		},
+	})
+	if w == nil {
+		return errors.New("failed to initialize webview2")
+	}
+	defer w.Destroy()
+
+	hwnd := uintptr(w.Window())
+	if hwnd != 0 {
+		user32 := syscall.NewLazyDLL("user32.dll")
+		sendMessageW := user32.NewProc("SendMessageW")
+		loadImageW := user32.NewProc("LoadImageW")
+		shGetPropertyStoreForWindow := shell32.NewProc("SHGetPropertyStoreForWindow")
+
+		_ = setAppUserModelID(shGetPropertyStoreForWindow, hwnd, appName)
+
+		icoPath := filepath.Join(installDir, "threebot.ico")
+		if !fileExists(icoPath) {
+			if root, err := exeDir(); err == nil {
+				icoPath = filepath.Join(root, "threebot.ico")
+			}
+		}
+		if fileExists(icoPath) {
+			if icoPtr, err := syscall.UTF16PtrFromString(icoPath); err == nil {
+				const (
+					imageIcon      = 1
+					lrLoadFromFile = 0x00000010
+					wmSetIcon      = 0x0080
+					iconSmall      = 0
+					iconBig        = 1
+				)
+				hBig, _, _ := loadImageW.Call(0, uintptr(unsafe.Pointer(icoPtr)), imageIcon, 32, 32, lrLoadFromFile)
+				hSmall, _, _ := loadImageW.Call(0, uintptr(unsafe.Pointer(icoPtr)), imageIcon, 16, 16, lrLoadFromFile)
+				if hBig != 0 {
+					sendMessageW.Call(hwnd, wmSetIcon, iconBig, hBig)
+				}
+				if hSmall != 0 {
+					sendMessageW.Call(hwnd, wmSetIcon, iconSmall, hSmall)
+				}
+			}
+		}
+	}
+
+	w.Navigate(appURL)
+	w.Run()
+	return nil
+}
+
+func openChromiumWindow(installDir, home string) error {
 	args := windowArgs(home)
 	icoPath := filepath.Join(installDir, "threebot.ico")
 	if !fileExists(icoPath) {
@@ -639,6 +739,17 @@ func openWindow(installDir, home string) error {
 	cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", appURL)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	return cmd.Start()
+}
+
+// openWindow displays Threebot. It first attempts to open a native Win32 window hosting
+// the embedded WebView2 runtime (Solution B). This gives a native window 100% owned by
+// Threebot.exe, keeping the taskbar icon permanently bound to Threebot and displaying
+// Threebot's jump list. If WebView2 is unavailable, it falls back to Chromium app mode.
+func openWindow(installDir, home string) error {
+	if err := openWebView2Window(installDir, home); err == nil {
+		return nil
+	}
+	return openChromiumWindow(installDir, home)
 }
 
 func chromiumCandidates() []string {
