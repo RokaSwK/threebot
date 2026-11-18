@@ -616,8 +616,8 @@ button {
 .skill-row p { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
 .library-filters { min-width: 0; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
 .library-view [role="tab"] { padding: 8px 12px; font-size: 13px; }
-.library-list { border-radius: 18px; padding-inline: 16px; }
-.library-row { min-height: 66px; padding-block: 12px; }
+.library-list { border-radius: 18px; }
+.library-row { min-height: 66px; padding: 12px 16px; }
 .vault-pane { position: relative; min-height: 100%; padding-bottom: 76px; }
 .vault-tabs { gap: 2px; }
 .vault-items { border: 0; background: var(--bg-card); border-radius: 18px; }
