@@ -3,7 +3,7 @@
 // and store what the room needs (status, run ids, last reply time). Bot replies are never copied
 // into rooms.json: they stay in their threads.
 import { randomUUID } from "node:crypto";
-import { addressedMembers, clip, formatRoomLine, isPass, pickReply, type ReplyItem, type RoomLine } from "./room-lines.mts";
+import { addressedMembers, chainReply, clip, formatRoomLine, isPass, recordedRoomReply, ROOM_RUN_OVER, type ChainRun, type ChainTask, type ReplyItem, type RoomLine } from "./room-lines.mts";
 import { launchRoomThread, type LaunchDefaults, type RoomBot, type RoomRpc } from "./rooms-threads.mts";
 import { validateAttachments, type Room, type RoomAttachment, type RoomMember, type RoomRun, type RoomTurn, type RoomsStore } from "./rooms.mts";
 
@@ -25,14 +25,14 @@ export type EngineDeps = {
 };
 
 type Projection = {
-  runs?: { id: string; status: string; userMessageId?: string; ordinal?: number }[] | null;
+  runs?: (ChainRun & { status: string; userMessageId?: string })[] | null;
   turnItems?: ReplyItem[] | null;
+  subagents?: ChainTask[] | null;
 } | null;
 
 type QueuedMessage = { turnId: string; message: RoomMessage };
 type ActiveTurn = { turnId: string; abort: boolean; threads: Map<string, string | null> };
 
-const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const nameOfSlug = (slug: string) => slug;
 /** A member's part ended because the room was stopped before its message went out. */
@@ -167,7 +167,6 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         const marker = files.length > 0 ? `[attached: ${files.join(", ")}]` : "";
         return { at: turn.at, author: { kind: "user" as const }, text: [marker, clip(turn.text.trim(), 1_200)].filter(Boolean).join(" ") };
       });
-    const knownRuns = new Set(room.turns.flatMap((turn) => turn.runs.flatMap((run) => (run.runId ? [run.runId] : []))));
     const people = [...room.members, ...room.formerMembers];
     const seenThreads = new Set<string>();
     await Promise.all(people.map(async (member) => {
@@ -175,18 +174,18 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
       if (!threadId || seenThreads.has(threadId)) return;
       seenThreads.add(threadId);
       const projection = (await rpc.call("orchestration.getThreadProjection", { threadId }).catch(() => null)) as Projection;
-      const latest = new Map<string, ReplyItem>();
-      for (const item of projection?.turnItems ?? []) {
-        if ((item.type !== "assistant_message" && item.type !== "assistant") || item.status !== "completed") continue;
-        if (!item.runId || !knownRuns.has(item.runId) || typeof item.text !== "string" || item.text.trim() === "") continue;
-        const previous = latest.get(item.runId);
-        if (!previous || (item.ordinal ?? 0) >= (previous.ordinal ?? 0)) latest.set(item.runId, item);
-      }
-      for (const item of latest.values()) {
-        const text = String(item.text).trim();
-        if (isPass(text)) continue;
+      const items = projection?.turnItems ?? [];
+      const runs = projection?.runs ?? [];
+      // One line per run the room recorded, read through its delegated chain so a report that
+      // arrives after the turn closed is still what the other members see next time.
+      const registered = room.turns.flatMap((turn) => turn.runs.filter((run) => run.slug === member.slug).map((run) => ({ run, status: turn.status })));
+      for (const { run, status } of registered) {
+        const reply = recordedRoomReply(items, runs, run, status, projection?.subagents ?? []);
+        if (!reply) continue;
+        const text = reply.text.trim();
+        if (text === "" || isPass(text)) continue;
         history.push({
-          at: item.completedAt ?? item.updatedAt ?? "",
+          at: reply.at ?? "",
           author: { kind: "bot", slug: member.slug, name: nameOf(member.slug) },
           text: clip(text, 1_200),
         });
@@ -221,35 +220,44 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
     deadline: number,
     aborted: () => boolean,
     hooks: { onRun?: (runId: string) => void; onWaiting?: () => void; onSent?: (attachments: unknown[]) => void } = {},
-  ): Promise<{ status: string; runId: string | null; reply: { id: string; text: string; at: string | null } | null }> {
+  ): Promise<{ status: string; runId: string | null; reply: { id: string; runId: string; text: string; at: string | null } | null; delegated: number }> {
     let runId: string | null = null;
-    let announced = false;
     let waiting = false;
     let sentSeen = false;
+    let delegated = 0;
     for (;;) {
-      if (aborted()) return { status: "stopped", runId, reply: null };
+      if (aborted()) return { status: "stopped", runId, reply: null, delegated };
       const projection = (await rpc.call("orchestration.getThreadProjection", { threadId }).catch(() => null)) as Projection;
+      if (aborted()) return { status: "stopped", runId, reply: null, delegated };
+      const now = nowMs();
       const runs = projection?.runs ?? [];
+      const items = projection?.turnItems ?? [];
       const run = runs.find((candidate) => candidate.userMessageId === messageId) ?? null;
       if (run && run.id !== runId) {
         runId = run.id;
-        if (!announced) { announced = true; hooks.onRun?.(run.id); }
+        hooks.onRun?.(run.id);
       }
-      if (run?.status === "waiting" && !waiting) {
+      const resolved = run && ROOM_RUN_OVER.has(run.status) ? chainReply(items, runs, run.id, now, projection?.subagents ?? []) : null;
+      const activeRuns = resolved?.chain.runIds ?? (run ? [run.id] : []);
+      if (!waiting && runs.some((candidate) => candidate.status === "waiting" && activeRuns.includes(candidate.id))) {
         waiting = true;
         hooks.onWaiting?.();
       }
-      const sent = (projection?.turnItems ?? []).find((item) => item.type === "user_message" && item.messageId === messageId);
+      const sent = items.find((item) => item.type === "user_message" && item.messageId === messageId);
       // T3 stores the message with its claimed copies before the run finishes; report them at once.
       if (!sentSeen && sent) { sentSeen = true; hooks.onSent?.(sent.attachments ?? []); }
-      if (run && TERMINAL.has(run.status)) {
-        const reply = pickReply(projection?.turnItems ?? [], run.id);
-        return { status: run.status, runId: run.id, reply: reply ? { ...reply, text: reply.text.trim() } : null };
+      if (run && resolved) {
+        const { chain, reply, answerStatus, completedAt } = resolved;
+        delegated = chain.children.length;
+        if (chain.settled && (completedAt || Date.parse(reply?.at ?? "") || now) <= deadline) {
+          return { status: answerStatus ?? run.status, runId: run.id, reply: reply ? { ...reply, text: reply.text.trim() } : null, delegated };
+        }
+        if (chain.stalled) break;
       }
-      if (nowMs() >= deadline || pollMs <= 0) break;
-      await sleep(pollMs);
+      if (now >= deadline || pollMs <= 0) break;
+      await sleep(Math.min(pollMs, deadline - now));
     }
-    return { status: "timeout", runId, reply: null };
+    return { status: "timeout", runId, reply: null, delegated };
   }
 
   async function runTurn(roomId: string, turn: RoomTurn, message: RoomMessage): Promise<void> {
@@ -333,7 +341,10 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         // seconds the first four left from one shared deadline.
         const memberDeadline = Math.min(turnDeadline, nowMs() + memberTimeoutMs);
         const result = await waitForRun(member.threadId, messageId, memberDeadline, () => state.abort || active.get(roomId)?.turnId !== turn.id, {
-          onRun: (runId) => { void rooms.setTurnRun(roomId, turn.id, member.slug, runId).catch(() => {}); },
+          onRun: (runId) => {
+            part.runId = runId;
+            void rooms.setTurnRun(roomId, turn.id, { slug: member.slug, runId }).catch(() => {});
+          },
           onSent: (attachments) => {
             // T3 claimed a copy for this thread; keep it, which is what the room shows.
             const received = claimedAttachments(attachments);
@@ -354,10 +365,12 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           },
         });
         part.runId = result.runId;
-        if (result.status === "timeout" && result.runId) {
-          part.late = true;
-          await rooms.markRunLate(roomId, turn.id, member.slug, result.runId).catch(() => {});
+        if (result.reply) {
+          if (result.reply.runId !== result.runId) part.replyRunId = result.reply.runId;
+          if (result.reply.id) part.replyItemId = result.reply.id;
         }
+        if (result.status === "timeout" && result.delegated > 0) part.delegationTimedOut = true;
+        if (result.status === "timeout" && result.runId) part.late = true;
         const replied = result.reply && !isPass(result.reply.text) ? result.reply.text : null;
         if (replied) {
           said += 1;
@@ -371,7 +384,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
               ? "stopped"
               : "failed" });
         await rooms.setMember(roomId, member.slug, { lastTurnAt: (replied ? result.reply?.at : null) ?? at() });
-        log(`[rooms] ${room.name}: ${member.slug} ${result.status === "timeout" ? "late" : result.status}${replied ? "" : " (no reply)"}`);
+        log(`[rooms] ${room.name}: ${member.slug} ${result.status === "timeout" ? "late" : result.status}${replied ? "" : " (no reply)"}${result.delegated > 0 ? ` (${result.delegated} delegated)` : ""}`);
       } catch (err) {
         if (err instanceof StoppedError) {
           Object.assign(part, { status: "stopped", at: at() });
@@ -379,6 +392,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
         }
         log(`[rooms] ${room.name}: ${candidate.slug} failed: ${(err as Error).message}`);
         Object.assign(part, { status: "failed", error: clip((err as Error).message, 200), at: at() });
+      } finally {
+        await rooms.setTurnRun(roomId, turn.id, part);
       }
     };
 

@@ -470,10 +470,33 @@ export async function startFakeT3(root: string, port = 0, { scenario = 'basic', 
             // A room thread answers with a scripted line a moment later, so a room conversation can be seen.
             if (scenario === 'rooms' && thread.title.startsWith('#')) {
               const answered = run;
+              // "...delegate..." scripts the shape the room has to follow: the run ends with a child
+              // still out and a wake-up run, a moment later, carries the real answer.
+              const delegated = /The user.s message:\n[^\n]*delegate/i.test(payload.text);
               setTimeout(() => {
                 if (answered.status !== 'running') return;
                 const done = new Date().toISOString();
                 const name = projects.find((p) => p.id === thread.projectId)?.title ?? 'A Bot';
+                if (delegated) {
+                  const childThreadId = `fixture-child-${answered.id}`;
+                  entries.push(item(thread.id, entries.length + 1, 'subagent', { title: 'Scripted child check', childThreadId, subagentId: `child-${answered.id}`, status: 'running', runId: answered.id, startedAt: done, completedAt: null, updatedAt: done }));
+                  entries.push(item(thread.id, entries.length + 1, 'assistant_message', { text: `${name} is on it. A scripted progress note from the local fixture.`, runId: answered.id, startedAt: done, completedAt: done, updatedAt: done }));
+                  Object.assign(answered, { status: 'completed', completedAt: done });
+                  Object.assign(thread, { status: 'idle', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: done, updatedAt: done });
+                  publish();
+                  setTimeout(() => {
+                    const wakeAt = new Date().toISOString();
+                    const wakeRun = { id: `fixture-wake-${threadRuns.length + 1}-${thread.id}`, userMessageId: `fixture-wake-message-${threadRuns.length + 1}-${thread.id}`, ordinal: threadRuns.length + 1, status: 'completed', requestedAt: wakeAt, startedAt: wakeAt, completedAt: wakeAt, modelSelection: MODEL };
+                    threadRuns.push(wakeRun);
+                    const child = entries.find((entry) => entry.childThreadId === childThreadId);
+                    if (child) Object.assign(child, { status: 'completed', completedAt: wakeAt, updatedAt: wakeAt });
+                    entries.push(item(thread.id, entries.length + 1, 'notification', { id: `turn-item:message:${encodeURIComponent(wakeRun.userMessageId)}`, runId: wakeRun.id, status: 'completed', completedAt: wakeAt, updatedAt: wakeAt, source: { kind: 'delegated_task', childThreadId }, outcome: 'completed', summary: 'Delegated task "Scripted child check" finished' }));
+                    entries.push(item(thread.id, entries.length + 1, 'assistant_message', { text: `${name} finished the check. Final scripted report.`, runId: wakeRun.id, startedAt: wakeAt, completedAt: wakeAt, updatedAt: wakeAt }));
+                    Object.assign(thread, { updatedAt: wakeAt });
+                    publish();
+                  }, 600);
+                  return;
+                }
                 entries.push(item(thread.id, entries.length + 1, 'assistant_message', { text: `${name} here. A scripted reply from the local fixture; no model runs.`, runId: answered.id, startedAt: done, completedAt: done, updatedAt: done }));
                 Object.assign(answered, { status: 'completed', completedAt: done });
                 Object.assign(thread, { status: 'idle', activityRunStatus: null, activeRunId: null, latestRunCompletedAt: done, updatedAt: done });

@@ -22,6 +22,11 @@ export type RoomTurnStatus = "queued" | "running" | "done" | "stopped" | "interr
 export type RoomRun = {
   slug: string;
   runId: string | null;
+  /** The wake-up run that produced the published answer. */
+  replyRunId?: string;
+  /** The exact assistant item published, even if a device has only seen earlier rows. */
+  replyItemId?: string;
+  delegationTimedOut?: boolean;
   late?: boolean;
   status?: "replied" | "passed" | "no-reply" | "failed" | "timeout" | "stopped";
   error?: string;
