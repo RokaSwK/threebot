@@ -116,13 +116,19 @@ export type MessageFileLink = { href: string; path: string; text: string };
 const MARKDOWN_LINK = /(?<!!)\[([^\]]*)\]\(([^()\s]+)(?:\s+"[^"]*")?\)/g;
 
 function outsideCode(text: string): string {
-  let fence = "";
+  let fence: { char: string; length: number; maxIndent: number } | null = null;
   return text.split("\n").map((line) => {
-    const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+    const marker = /^([ \t]*)(`{3,}|~{3,})/.exec(line);
     if (marker) {
-      const char = marker[1][0] ?? "";
-      if (!fence) { fence = char; return ""; }
-      if (char === fence) { fence = ""; return ""; }
+      const indent = marker[1].replaceAll("\t", "    ").length;
+      const char = marker[2][0];
+      const length = marker[2].length;
+      if (!fence) { fence = { char, length, maxIndent: Math.max(3, indent) }; return ""; }
+      const trailing = line.slice(marker[0].length);
+      if (char === fence.char && length >= fence.length && indent <= fence.maxIndent && /^[ \t\r]*$/.test(trailing)) {
+        fence = null;
+        return "";
+      }
     }
     return fence ? "" : line.replace(/`[^`\n]*`/g, " ");
   }).join("\n");

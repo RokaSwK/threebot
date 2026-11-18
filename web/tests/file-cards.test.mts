@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FILE_CARD_COLORS, aboutFilePrompt, cachedFileSize, fileCardAccent, fileSizeCache, fileSizeFromHead, fileTypeLabel, formatSize, soloFileLinkParagraph } from "../src/lib/fileCards.ts";
+import { FILE_CARD_COLORS, aboutFilePrompt, cachedFileSize, fileCardAccent, fileSizeCache, fileSizeFromHead, fileTypeLabel, formatSize, messageFileLinks, soloFileLinkParagraph } from "../src/lib/fileCards.ts";
 
 test("file card accents map file types to their band colors", () => {
   assert.deepEqual(FILE_CARD_COLORS, { pdf: "#fc2d3e", sheet: "#14c370", doc: "#1784fc", slides: "#fa6710", other: "#98989d" });
@@ -79,4 +79,11 @@ test("a paragraph renders as a file card only when a workspace link is its entir
   assert.equal(soloFileLinkParagraph(paragraph([{ type: "element", tagName: "img", properties: {}, children: [] }]), resolve), null);
   assert.equal(soloFileLinkParagraph({ type: "element", tagName: "div", properties: {}, children: [link("library/report.pdf", "Report")] }, resolve), null);
   assert.equal(soloFileLinkParagraph(null, resolve), null);
+});
+
+test("messageFileLinks ignores links inside multi-backtick outer code blocks containing nested 3-backtick blocks", () => {
+  const text = "````markdown\n```python\nx = 1\n```\n[nested.pdf](library/nested.pdf)\n````text\n[example.pdf](library/example.pdf)\n    ````\n[indented.pdf](library/indented.pdf)\n   `````  \n\n[real.pdf](library/real.pdf)";
+  const resolve = (href: string) => (href.startsWith("library/") ? href : null);
+  const links = messageFileLinks(text, resolve);
+  assert.deepEqual(links.map((l) => l.path), ["library/real.pdf"]);
 });
