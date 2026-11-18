@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { accountsFromBuckets, createUsageLedger, nextScanWatermark, providerForSourcePath, turnsFromProjection, usageDays, type UsageEntry, type UsageProjection } from "./bot-usage.mts";
+import { accountsFromBuckets, createUsageLedger, nextScanWatermark, providerForSourcePath, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry, type UsageProjection } from "./bot-usage.mts";
 
 const NOW = Date.parse("2026-11-16T12:00:00Z");
 const tokens = { inputTokens: 10, cachedInputTokens: 2, cacheCreationTokens: 1, outputTokens: 5, models: ["model-a"] };
@@ -132,6 +132,26 @@ test("rows aggregate per day, Bot, source and model over exactly 7 or 30 days", 
     assert.equal(month.rows.length, 4);
     assert.equal((await h.ledger.rows({ days: 7, timeZone: "Europe/Istanbul" })).timeZone, "Europe/Istanbul");
     assert.equal(typeof (await h.ledger.rows({ days: 7, timeZone: "Not/AZone" })).timeZone, "string");
+  } finally { await h.cleanup(); }
+});
+
+test("saved personal usage in an adopted project is excluded from totals", async () => {
+  const h = await ledgerHarness();
+  try {
+    await h.ledger.add([
+      entry({ key: "thread:personal:turn", output: 100 }),
+      entry({ key: "thread:routine:turn", output: 7, source: "routine" }),
+      entry({ key: "thread:unseen:turn", output: 3 }),
+    ]);
+    await h.ledger.save();
+    const reopened = createUsageLedger({ file: h.file, now: () => NOW });
+    const include = usageEntryFilter(new Map([["scout", "shared"]]), new Map([
+      ["thread:personal", { projectId: "shared" }],
+      ["thread:routine", { projectId: "shared", owner: "scout" }],
+    ]));
+    const { rows } = await reopened.rows({ days: 7, timeZone: "UTC", include });
+    assert.deepEqual(rows.map((row) => [row.source, row.output]), [["routine", 7], ["you", 3]]);
+    assert.equal((await reopened.load()).entries.length, 3);
   } finally { await h.cleanup(); }
 });
 
