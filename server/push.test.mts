@@ -24,6 +24,7 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe({ endpoint: "not a url", keys: subscription.keys })).ok, false);
+  assert.equal(await store.devices(), 1);
   const result = await store.send({ title: "Bot", body: "Finished", tag: "bot", url: "/?bot=bot", bot: "bot" });
   assert.equal(result.sent, 1);
   assert.match(sent[0]!, /"body":"Finished"/u);
@@ -37,6 +38,7 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   const removed = await gone.send({ title: "Bot", body: "Finished", tag: "bot", url: "/", bot: "bot" });
   assert.equal(removed.removed, 1);
   assert.equal((await gone.unsubscribe(subscription.endpoint)).subscriptions, 0);
+  assert.equal(await gone.devices(), 0);
 });
 
 test("the notifier ignores the first snapshot and pushes completions and requests", async () => {
@@ -69,6 +71,13 @@ test("the notifier ignores the first snapshot and pushes completions and request
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sent.length, 2);
   assert.equal(sent[1].body, "Waiting for you");
+  assert.equal(sent[0].tag, "alpha");
+  assert.equal(sent[0].icon, "/api/bots/alpha/avatar.png");
+  assert.equal(sent[0].badge, "/api/bots/alpha/badge.png");
+  assert.equal(typeof sent[0].timestamp, "number");
+  assert.equal(sent[1].tag, "waiting:alpha:thread-1");
+  assert.equal(sent[1].url, "/?bot=alpha&thread=thread-1");
+  assert.equal(sent[1].kind, "waiting");
   notifier.stop();
   assert.equal(cancelled, true);
 });

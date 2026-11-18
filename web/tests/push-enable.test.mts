@@ -15,22 +15,28 @@ const { enablePushNotifications } = await import("../src/lib/push.ts");
 test("granted permission counts as enabled when the Push API is missing", async () => {
   globals.window = {};
   globals.Notification = fakeNotification("default", "granted");
-  assert.equal(await enablePushNotifications(), true);
+  assert.equal((await enablePushNotifications()).ok, true);
   globals.Notification = fakeNotification("granted", "granted");
-  assert.equal(await enablePushNotifications(), true);
+  assert.equal((await enablePushNotifications()).ok, true);
 });
 
 test("refused or denied permission stays not enabled without the Push API", async () => {
   globals.window = {};
   globals.Notification = fakeNotification("default", "denied");
-  assert.equal(await enablePushNotifications(), false);
+  const refused = await enablePushNotifications();
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason ?? "", /not granted/i);
   globals.Notification = fakeNotification("denied", "granted");
-  assert.equal(await enablePushNotifications(), false);
+  const blocked = await enablePushNotifications();
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.reason ?? "", /blocked/i);
 });
 
 test("with the Push API, enabling still needs a working subscription", async () => {
   globals.window = { PushManager: class {} };
   globals.Notification = fakeNotification("granted", "granted");
   // No service worker in this test, so the subscription cannot be made.
-  assert.equal(await enablePushNotifications(), false);
+  const result = await enablePushNotifications();
+  assert.equal(result.ok, false);
+  assert.match(result.reason ?? "", /cannot receive push/i);
 });

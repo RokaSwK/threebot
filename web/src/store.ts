@@ -3,6 +3,7 @@ import { api } from "./lib/api";
 import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
 import { enablePushNotifications } from "./lib/push";
+import { botBadge, notificationContent, notificationTarget, waitingTag } from "./lib/notification";
 import { allT3Clients, t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -400,9 +401,14 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
   if (!bot || bot.notifications === false || bot.hidden) return;
   if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
-  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you");
-  else if (side) return;
-  else if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
+  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) {
+    void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you", "waiting", next.id);
+  } else {
+    // The request is gone: its notification is a stale reminder of something already answered.
+    if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) void closeNotification(waitingTag(bot.slug, next.id));
+    if (side) return;
+    if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
+  }
 }
 
 export async function completionNotification(bot: Bot, completed: ThreadShell) {
@@ -413,21 +419,40 @@ export async function completionNotification(bot: Bot, completed: ThreadShell) {
   const fresh = preview?.role === "assistant" && preview.at && (!runStarted || preview.at >= runStarted);
   const current = get().threads[completed.id];
   if (current && current.latestRunId !== completed.latestRunId) return;
-  return notify(bot, fresh ? preview.text.slice(0, 140) : "Finished");
+  return notify(bot, fresh ? preview.text.slice(0, 140) : "Finished", "finished", completed.id);
 }
 
-async function notify(bot: Bot, body: string) {
+/** A waiting notification is per thread; a completion is per Bot, so three runs leave one notice. */
+async function notify(bot: Bot, body: string, kind: "finished" | "waiting", threadId: string) {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  const options = { body, tag: bot.slug, icon: "/icon-192.png", data: { url: `/?bot=${encodeURIComponent(bot.slug)}` } };
+  const target = notificationTarget(bot.slug, kind, threadId);
+  const { title, options } = notificationContent({
+    title: bot.name,
+    body,
+    tag: target.tag,
+    url: target.url,
+    icon: `/api/bots/${encodeURIComponent(bot.slug)}/avatar.png`,
+    badge: kind === "waiting" ? botBadge(bot) : null,
+    timestamp: Date.now(),
+  });
   // Android has no page Notification constructor; only the worker can show one.
   const registration = await navigator.serviceWorker?.getRegistration();
-  if (registration) return registration.showNotification(bot.name, options);
-  const notification = new Notification(bot.name, options);
+  if (registration) return registration.showNotification(title, options);
+  const notification = new Notification(title, options);
   notification.onclick = () => {
     window.focus();
     select(bot.slug);
     notification.close();
   };
+}
+
+/** Best effort: iOS may accept this call and do nothing. */
+async function closeNotification(tag: string) {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    if (!registration?.getNotifications) return;
+    for (const notification of await registration.getNotifications({ tag })) notification.close();
+  } catch { /* A closed or unsupported notification is not an error worth showing. */ }
 }
 
 export function requestNotificationPermission() {
