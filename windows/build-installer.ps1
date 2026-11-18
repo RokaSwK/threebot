@@ -2,15 +2,13 @@
 # Requires Inno Setup 6 (ISCC.exe).
 param(
   [string]$OutDir = (Join-Path (Split-Path -Parent $PSScriptRoot) "dist\windows"),
-  [string]$Version = "",
   [switch]$SkipBundle
 )
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-if (-not $Version) {
-  $Version = (Get-Content (Join-Path $repo "package.json") -Raw | ConvertFrom-Json).version
-}
+# The same version build-bundle.ps1 names the bundle with.
+$Version = (Get-Content (Join-Path $repo "package.json") -Raw | ConvertFrom-Json).version
 
 # 1. Build bundle first if not skipped
 if (-not $SkipBundle) {

@@ -40,6 +40,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[InstallDelete]
+; Replace the app and Node instead of overlaying them: a file the new version dropped (a stale
+; package left in server\node_modules) must not linger and shadow its replacement.
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\runtime"
+
 [Files]
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -72,7 +78,8 @@ begin
 end;
 
 // The gateway runs node.exe from {app}\runtime and holds the app's files: stop it the way
-// Threebot.exe does (its pid file), so an upgrade replaces them and the new version starts.
+// Threebot.exe does (its pid file), so an upgrade replaces them and the new version starts. The
+// image filter keeps a stale pid that Windows gave to another program from killing that program.
 procedure StopGateway();
 var
   PidFile: String;
@@ -83,7 +90,7 @@ begin
   if not LoadStringFromFile(PidFile, Pid) then
     Exit;
   if StrToIntDef(Trim(String(Pid)), 0) > 0 then
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/PID ' + Trim(String(Pid)) + ' /T /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /FI "PID eq ' + Trim(String(Pid)) + '" /FI "IMAGENAME eq node.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   DeleteFile(PidFile);
   Sleep(700);
 end;
