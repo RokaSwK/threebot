@@ -33,14 +33,14 @@ export function Library({ bot }: { bot: Bot }) {
   const source = mergeLibraryEntries(items, files ?? []);
   const visible = filterLibraryEntries(source, filter);
   return <div className="library-view">
-    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
+    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} tabIndex={filter === name ? 0 : -1} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
     {libraryGroups(visible).map(group => <section key={group.label} className="library-time-group">
       {group.label && <h3 className="mb-2 px-4 text-[14px] font-normal text-faint">{group.label}</h3>}
-      <div className="library-list overflow-hidden rounded-[20px] bg-card px-4">
+      <div className="library-list overflow-hidden rounded-[20px] bg-card">
         {group.entries.map((item) => {
           const age = libraryAge(item.at);
           const content = <><span className="grid size-6 shrink-0 place-items-center text-muted">{isLibraryPage(item) ? <PanelsTopLeft size={20} /> : item.kind === "link" ? <Globe size={20} /> : item.kind === "media" ? <LibraryThumbnail item={item} threadId={bot.mainThreadId} /> : <FileText size={20} />}</span><span className="min-w-0 flex-1"><span className="block truncate text-[14px]">{item.title}</span><span className="mt-1 block truncate text-[12px] text-muted">{isLibraryPage(item) ? <><span>Canvas</span>{" · "}<span>Private</span></> : item.detail === "Workspace file" ? "File" : item.detail}{item.kind !== "link" && age && ` · ${age}`}</span></span></>;
-          const row = "library-row flex w-full items-center gap-3 border-b border-line py-4 text-left last:border-0 hover:bg-hover";
+          const row = "library-row flex w-full items-center gap-3 border-b border-line px-4 py-4 text-left transition-colors last:border-0 hover:bg-hover";
           return item.kind === "link" ? <a key={item.id} className={row} href={item.href} target="_blank" rel="noreferrer">{content}</a> : <button key={item.id} className={row} onClick={() => setOpened(item)}>{content}</button>;
         })}
       </div>

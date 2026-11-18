@@ -315,7 +315,11 @@ test('Library uses a fixed tab order, real transcript links, Image/Video thumbna
   useApp.setState({ threadData: { main: { loaded: true, items: { message: message('[Documentation](https://example.com/docs) https://example.com/docs javascript:alert(1)') }, runs: {}, requests: {} } } });
   await mount(h(Library, { bot }));
   assert.deepEqual([...document.querySelectorAll('[role=tab]')].map(e => e.textContent), ['All', 'Pages', 'Media', 'Links', 'Files']);
+  assert.equal(document.querySelector('[role=tab][aria-selected="true"]')?.getAttribute('tabindex'), '0');
+  assert.equal(document.querySelectorAll('[role=tab][aria-selected="false"][tabindex="-1"]').length, 4);
   assert.equal(document.querySelectorAll('.library-row').length, 5);
+  assert.ok(document.querySelector('.library-list:not(.px-4)'), 'library-list leaves padding to rows so hover spans edge-to-edge');
+  assert.ok(document.querySelector('.library-row.px-4.hover\\:bg-hover'), 'library-row carries horizontal padding and hover highlight');
   await click(button('Media'));
   assert.equal(document.querySelectorAll('.library-row').length, 2);
   assert.match(container.textContent, /Image/); assert.match(container.textContent, /Video/);
