@@ -102,7 +102,7 @@ export type ChainTask = {
   status: string;
   completedAt?: string | null;
   updatedAt?: string | null;
-  completionDelivery?: { state: string } | null;
+  completionDelivery?: { state: string; observedByRunId?: string | null } | null;
 };
 
 export type DelegatedChild = {
@@ -133,7 +133,7 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
       // the message that started the run. T3's projection uses the message-derived row id.
       if (messageId && item.id !== `turn-item:message:${encodeURIComponent(messageId)}` && item.messageId !== messageId) continue;
       const keys = (item.source.taskIds ?? []).map((id) => `task:${id}`);
-      if (item.source.childThreadId) keys.push(`thread:${item.source.childThreadId}`);
+      if (!keys.length && item.source.childThreadId) keys.push(`thread:${item.source.childThreadId}`);
       for (const key of keys) {
         const notifications = wakesByChild.get(key) ?? [];
         notifications.push(item);
@@ -165,8 +165,11 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
       const childCompletedAt = task?.completedAt ?? item.completedAt ?? null;
       children.push({ childThreadId, subagentId: item.subagentId ?? null, title: item.title ?? null, status, completedAt: childCompletedAt });
       const childEnd = Date.parse(childCompletedAt ?? "");
-      const delivery = task?.completionDelivery?.state;
-      const awaitingDelivery = delivery === "pending" || delivery === "claimed";
+      const delivery = task?.completionDelivery;
+      const awaitingDelivery = delivery?.state === "pending" || delivery?.state === "claimed";
+      const deliveredInline = delivery
+        ? (delivery.state === "delivered" || delivery.state === "acknowledged") && delivery.observedByRunId === runId
+        : childEnd <= parentEnd;
       completedAt = Math.max(completedAt, childEnd || 0);
       const notifications = (item.subagentId && wakesByChild.get(`task:${item.subagentId}`))
         || wakesByChild.get(`thread:${childThreadId}`) || [];
@@ -176,6 +179,8 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
         if (!wakeId || wakeId === runId) continue;
         seen.add(wakeId);
         if (notification.outcome === "updated") continue;
+        const wakeStatus = runsById.get(wakeId)?.status;
+        if (awaitingDelivery && (wakeStatus === "cancelled" || wakeStatus === "interrupted" || wakeStatus === "rolled_back")) continue;
         if (ROOM_RUN_OVER.has(status)) {
           completionRuns.add(wakeId);
           delivered = true;
@@ -186,10 +191,10 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
       } else if (!ROOM_RUN_OVER.has(status)) {
         dispatchedAsync.add(runId);
         pending = true;
-      } else if (awaitingDelivery || !(childEnd <= parentEnd)) {
+      } else if (!deliveredInline) {
         dispatchedAsync.add(runId);
         missingWake = true;
-        lastUndelivered = Math.max(lastUndelivered, childEnd || Date.parse(task?.updatedAt ?? item.updatedAt ?? "") || 0);
+        lastUndelivered = Math.max(lastUndelivered, parentEnd || 0, childEnd || 0, Date.parse(task?.updatedAt ?? item.updatedAt ?? "") || 0);
       }
     }
   }

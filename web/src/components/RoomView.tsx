@@ -139,19 +139,18 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
   const answering = useMemo(() => {
     if (!room || latestTurn?.status !== "running") return [];
     const fromRuns = (latestTurn.runs ?? []).flatMap((run) => {
-      if (!run.runId || replies.some((reply) => reply.runId === run.runId)) return [];
+      if (!run.runId || run.status) return [];
       const member = room.members.find((candidate) => candidate.slug === run.slug);
       return member ? [member] : [];
     });
     if (fromRuns.length > 0) return fromRuns;
-    // The turn index fills `runs` as each member finishes; until then the member thread's shell
-    // says who is still working.
+    // Before the dispatch is recorded, use the member thread's live status.
     return room.members.filter((member) => {
-      if (!member.threadId) return false;
+      if (!member.threadId || latestTurn.runs.some((run) => run.slug === member.slug && run.status)) return false;
       const shell = threads[member.threadId];
       return ["preparing", "queued", "starting", "running", "waiting"].includes(shell?.activityRunStatus ?? shell?.status ?? "");
     });
-  }, [room, latestTurn, replies, threads]);
+  }, [room, latestTurn, threads]);
 
   const botNames = useMemo(() => Object.values(bots).map((bot) => ({ slug: bot.slug, name: bot.name })), [bots]);
 

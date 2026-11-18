@@ -139,7 +139,7 @@ export type Subagent = {
   providerInstanceId?: string | null;
   model?: string | null;
   progress?: string | null;
-  completionDelivery?: { state: string } | null;
+  completionDelivery?: { state: string; observedByRunId?: string | null } | null;
   result: string | null;
   startedAt: string | null;
   completedAt: string | null;

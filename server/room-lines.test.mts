@@ -142,3 +142,33 @@ test("a task marked pending delivery is not an inline answer even if it finished
   assert.equal(chain.settled, false);
   assert.equal(reply, null);
 });
+
+test("a notification for another task in a reused child thread is not part of this answer", () => {
+  const [ack, child] = delegatedItems("completed");
+  const items = [
+    ack, child,
+    { id: "notice", runId: "follow-up", type: "notification", outcome: "completed", source: { kind: "delegated_task", taskIds: ["another"], childThreadId: "child-a" } },
+    { ...ack, runId: "follow-up", text: "Different task" },
+  ];
+  const runs = [{ id: "run-1", status: "completed" }, { id: "follow-up", status: "completed" }];
+  assert.equal(chainReply(items, runs, "run-1").reply, null);
+});
+
+test("delivery into another run cannot make the original acknowledgement an inline answer", () => {
+  const items = delegatedItems("completed");
+  const runs = [{ id: "run-1", status: "completed", completedAt: "2026-01-01T00:00:38Z" }];
+  const tasks = [{ id: "sub-a", status: "completed", completionDelivery: { state: "delivered", observedByRunId: "some-other-run" } }];
+  const { chain, reply } = chainReply(items, runs, "run-1", Date.parse("2026-01-01T00:00:39Z"), tasks);
+  assert.equal(reply, null);
+  assert.equal(chain.stalled, false, "the dispatch just ended, so the wake still has its grace period");
+});
+
+test("a cancelled wake is not final while its replacement is pending", () => {
+  const [ack, child] = delegatedItems("completed");
+  const items = [ack, child, { id: "notice", runId: "wake", type: "notification", outcome: "completed", source: { kind: "delegated_task", taskIds: ["sub-a"] } }];
+  const runs = [{ id: "run-1", status: "completed", completedAt: "2026-01-01T00:00:20Z" }, { id: "wake", status: "cancelled" }];
+  const tasks = [{ id: "sub-a", status: "completed", completionDelivery: { state: "pending" } }];
+  const result = chainReply(items, runs, "run-1", Date.parse("2026-01-01T00:00:21Z"), tasks);
+  assert.equal(result.chain.settled, false);
+  assert.equal(result.reply, null);
+});
