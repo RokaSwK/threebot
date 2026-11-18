@@ -152,3 +152,19 @@ test("a timed-out room part displays only a settled late report", () => {
   assert.equal(lines[0].text, "Informe final");
   assert.equal(lines[0].late, true);
 });
+
+test("a published reply waits for its exact item when a device only has the acknowledgement", () => {
+  const data = {
+    "thread-a": {
+      items: { ack: assistant("ack", "run-1", "En marcha") },
+      runs,
+    },
+  };
+  const published = [turn([{ slug: "alpha", runId: "run-1", replyItemId: "final", status: "replied" }])];
+  assert.deepEqual(roomLines(members, published, data), []);
+  const complete = { "thread-a": { ...data["thread-a"], items: {
+    ack: data["thread-a"].items.ack,
+    final: assistant("final", "run-1", "Informe"),
+  } } };
+  assert.equal(roomLines(members, published, complete)[0].text, "Informe");
+});

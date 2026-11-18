@@ -148,7 +148,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
     return room.members.filter((member) => {
       if (!member.threadId) return false;
       const shell = threads[member.threadId];
-      if (shell?.activeRunId && latestTurn.runs.some((run) => run.runId === shell.activeRunId && run.status)) return false;
+      if (shell?.activeRunId && latestTurn.runs.some((run) => run.status && (run.runId === shell.activeRunId || run.replyRunId === shell.activeRunId))) return false;
       return ["preparing", "queued", "starting", "running", "waiting"].includes(shell?.activityRunStatus ?? shell?.status ?? "");
     });
   }, [room, latestTurn, threads]);

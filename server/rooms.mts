@@ -86,6 +86,8 @@ export type RoomRun = {
   runId: string | null;
   /** The wake-up run that produced the published answer. */
   replyRunId?: string;
+  /** The exact assistant item published, even if a device has only seen earlier rows. */
+  replyItemId?: string;
   delegationTimedOut?: boolean;
   /** The member passed `memberTimeoutMin`; its reply may still arrive, but it opens no wave. */
   late?: boolean;

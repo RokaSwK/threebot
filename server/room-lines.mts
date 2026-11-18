@@ -230,11 +230,14 @@ export function chainReply(items: ReplyItem[], runs: ChainRun[], root: string, n
 /** Read the answer the room published, or a settled answer that arrived after its deadline. */
 export function recordedRoomReply(
   items: ReplyItem[], runs: ChainRun[],
-  part: { runId: string | null; replyRunId?: string; status?: string; delegationTimedOut?: boolean },
+  part: { runId: string | null; replyRunId?: string; replyItemId?: string; status?: string; delegationTimedOut?: boolean },
   turnStatus: string, tasks?: ChainTask[],
 ) {
   if (!part.runId) return null;
-  if (part.status === "replied" || part.status === "passed") return pickReply(items, part.replyRunId ?? part.runId);
+  if (part.status === "replied" || part.status === "passed") {
+    const published = part.replyItemId ? items.filter((item) => item.id === part.replyItemId) : items;
+    return pickReply(published, part.replyRunId ?? part.runId);
+  }
   if (part.status === "timeout" && runs.some((run) => run.id === part.runId && run.status === "completed")) {
     const { reply, chain } = chainReply(items, runs, part.runId, undefined, tasks);
     return part.delegationTimedOut && chain.children.length === 0 ? null : reply;

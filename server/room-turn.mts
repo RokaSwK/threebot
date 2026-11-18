@@ -365,7 +365,10 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           },
         });
         part.runId = result.runId;
-        if (result.reply && result.reply.runId !== result.runId) part.replyRunId = result.reply.runId;
+        if (result.reply) {
+          if (result.reply.runId !== result.runId) part.replyRunId = result.reply.runId;
+          if (result.reply.id) part.replyItemId = result.reply.id;
+        }
         if (result.status === "timeout" && result.delegated > 0) part.delegationTimedOut = true;
         if (result.status === "timeout" && result.runId) part.late = true;
         const replied = result.reply && !isPass(result.reply.text) ? result.reply.text : null;
