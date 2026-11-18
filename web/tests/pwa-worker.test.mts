@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 // this proves cache/event behavior, not browser install UI, rendering or eviction.
 const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-let temporary, app, nested, update, origin, server;
+let temporary, app, nested, update, later, origin, server;
 let files, offline = false, failure, edgeTokens = 0;
 const seen = [];
 async function tree(directory) {
@@ -49,6 +49,7 @@ before(async () => {
   app = produced(outDir, await tree(outDir));
   nested = await fixtureBuild("/nested/bot/", "nested-one");
   update = await fixtureBuild("/", "updated-two");
+  later = await fixtureBuild("/", "updated-three");
   server = http.createServer((request, response) => {
     seen.push(request.url);
     response.setHeader("Vary", "Origin"); // Vite preview varies even same-origin static responses.
@@ -123,7 +124,7 @@ function worker(build, caches = cacheStorage()) {
     addEventListener(name, listener) { listeners.set(name, listener); },
   };
   vm.runInNewContext(build.source, {
-    self, caches, URL, Request, Uint8Array, crypto: webcrypto, setTimeout,
+    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout,
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
@@ -300,6 +301,16 @@ test("content revisions migrate only this app's caches on activation, leaving ol
   assert.equal((await caches.keys()).includes(oldKey), true);
   assert.ok((await caches.keys()).includes("unrelated-app-cache"));
   assert.ok((await caches.keys()).includes("bot-shell-%2Fnested%2Fbot%2F-retained"));
+});
+
+test("an update after a rollback retains the last active shell", async () => {
+  const caches = cacheStorage();
+  for (const build of [app, update, app, later, app]) {
+    serve(build);
+    const runtime = worker(build, caches);
+    await runtime.lifecycle("install"); await runtime.lifecycle("activate");
+  }
+  assert.deepEqual(seen.filter((url) => url !== "/"), [], "the rollback reuses every entry of the last active build");
 });
 
 test("non-root base emits scoped manifest, cache and offline navigation without intercepting sibling apps", async () => {

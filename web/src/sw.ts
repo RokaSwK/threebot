@@ -17,6 +17,7 @@ const LEGACY_PREFIX = "bot-shell-" + scopeKey;
 // Previous releases delete everything under their own prefix during activation.
 const CACHE_PREFIX = "bot-shell2-" + scopeKey;
 const SHELL = CACHE_PREFIX + BUILD.revision;
+const SHELL_STATE = "bot-shell-state-" + scopeKey;
 const INDEX = new URL("index.html", SCOPE).href;
 const STATIC = new Map(BUILD.entries.map((entry) => [new URL(entry.url, self.location.origin).href, entry]));
 const MATCH = { ignoreVary: true };
@@ -110,12 +111,17 @@ self.addEventListener("activate", (event) => {
     const keys = await caches.keys();
     const previous = keys.filter((key) => key !== SHELL && key.startsWith(CACHE_PREFIX));
     const legacy = keys.filter((key) => key.startsWith(LEGACY_PREFIX));
-    const hasPredecessor = previous.pop() || legacy.at(-1);
+    // Reusing a shell on rollback keeps its original insertion order. Remember
+    // the last activated shell so a subsequent update retains the right one.
+    const state = await caches.open(SHELL_STATE);
+    const lastActive = await (await state.match(SCOPE.href))?.text();
+    const predecessor = lastActive && previous.includes(lastActive) ? lastActive : previous.at(-1);
+    await state.put(SCOPE.href, new Response(SHELL));
     const obsolete = SCOPE.pathname === "/" ? keys.filter((key) => /^bot-shell-v\d+$/.test(key)) : [];
-    // Retain one predecessor in each cache family, including the reversible migration.
-    await Promise.all([...previous, ...legacy.slice(0, -1), ...obsolete].map((key) => caches.delete(key)));
+    const replaced = previous.filter((key) => key !== predecessor);
+    await Promise.all([...replaced, ...legacy.slice(0, -1), ...obsolete].map((key) => caches.delete(key)));
     await self.clients.claim();
-    if (!hasPredecessor && !obsolete.length) return;
+    if (!predecessor && !legacy.length && !obsolete.length) return;
     // Start the reload without waiting for it, since its fetch waits for activation.
     const windows = await self.clients.matchAll({ type: "window" });
     for (const client of windows) void client.navigate(client.url).catch(() => {});
