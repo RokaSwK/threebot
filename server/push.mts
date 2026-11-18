@@ -216,7 +216,7 @@ export function createPushStore({
       return { ok: true, watching: true };
     },
 
-    async send(payload: PushPayload): Promise<{ sent: number; removed: number; watching: number }> {
+    async send(payload: PushPayload, options?: { endpoint?: string }): Promise<{ sent: number; removed: number; watching: number }> {
       const current = await load();
       if (!current.subscriptions.length) return { sent: 0, removed: 0, watching: 0 };
       // The app's own address when nothing is configured: Apple refuses a localhost contact.
@@ -229,6 +229,11 @@ export function createPushStore({
       // A push is about one thing: a room, or a Bot. With neither there is nothing to hold back.
       const target = payload.room ? `room:${payload.room}` : payload.bot ? `bot:${payload.bot}` : null;
       for (const subscription of current.subscriptions) {
+        // The Settings test names the device that asked; every other subscription stays untouched.
+        if (options?.endpoint && subscription.endpoint !== options.endpoint) {
+          keep.push(subscription);
+          continue;
+        }
         const seen = watching.get(subscription.endpoint);
         if (seen && seen.until <= time) watching.delete(subscription.endpoint);
         else if (target && seen?.view === target) {

@@ -14,6 +14,8 @@ export type PushDeviceStatus = {
   secure: boolean;
   permission: NotificationPermission | "unsupported";
   subscribed: boolean;
+  /** This browser's subscription endpoint, so the Settings test reaches this device only. */
+  endpoint?: string;
   endpointHost?: string;
 };
 
@@ -86,6 +88,7 @@ export async function pushDeviceStatus(): Promise<PushDeviceStatus> {
   const supported = typeof navigator !== "undefined" && "serviceWorker" in navigator && "PushManager" in window && typeof Notification !== "undefined";
   const permission: PushDeviceStatus["permission"] = typeof Notification === "undefined" ? "unsupported" : Notification.permission;
   let subscribed = false;
+  let endpoint: string | undefined;
   let endpointHost: string | undefined;
   if (supported) {
     try {
@@ -93,11 +96,12 @@ export async function pushDeviceStatus(): Promise<PushDeviceStatus> {
       const subscription = await registration?.pushManager.getSubscription();
       subscribed = Boolean(subscription);
       if (subscription) {
+        endpoint = subscription.endpoint;
         try { endpointHost = new URL(subscription.endpoint).host; } catch { /* A malformed endpoint still counts as subscribed. */ }
       }
     } catch { /* A registration that cannot be read means no usable subscription yet. */ }
   }
-  return { supported, secure: typeof isSecureContext === "boolean" ? isSecureContext : true, permission, subscribed, endpointHost };
+  return { supported, secure: typeof isSecureContext === "boolean" ? isSecureContext : true, permission, subscribed, endpoint, endpointHost };
 }
 
 /** Remove this browser's subscription locally and from the gateway. */

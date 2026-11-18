@@ -1481,6 +1481,14 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { publicKey: await pushStore.publicKey() }, { "cache-control": "no-store" });
     }
     if (p === "/api/push/test" && req.method === "POST") {
+      // The pane sends this device's endpoint; a client that sends no body still tests every device.
+      let endpoint: string | undefined;
+      if (req.headers["content-type"]?.includes("application/json")) {
+        try {
+          const body = await readBody(req);
+          if (typeof body?.endpoint === "string") endpoint = body.endpoint;
+        } catch { /* an empty body keeps the broadcast test */ }
+      }
       const result = await pushStore.send({
         title: "Threebot",
         body: "Test notification",
@@ -1488,7 +1496,7 @@ const server = http.createServer(async (req, res) => {
         url: "/",
         icon: "/icon-192.png",
         timestamp: Date.now(),
-      });
+      }, { endpoint });
       return send(res, 200, result, { "cache-control": "no-store" });
     }
     if (p === "/api/push/subscribe" && req.method === "POST") {
