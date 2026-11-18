@@ -123,11 +123,17 @@ function worker(build, caches = cacheStorage()) {
   const listeners = new Map();
   let claimCalls = 0, skipCalls = 0;
   const navigated = [];
+  const opened: string[] = [];
+  const shown: { title: string; options: NotificationOptions }[] = [];
   const self = {
     location: new URL(build.manifest.base + "sw.js", origin),
     clients: {
       async claim() { claimCalls++; },
-      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, async navigate(target) { navigated.push(target); } })); },
+      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, async focus() {}, async navigate(target) { if (build.navigateFails) throw new Error("not controlled"); navigated.push(target); } })); },
+      async openWindow(target: string) { opened.push(target); return null; },
+    },
+    registration: {
+      async showNotification(title: string, options: NotificationOptions) { shown.push({ title, options }); },
     },
     skipWaiting() { skipCalls++; },
     addEventListener(name, listener) { listeners.set(name, listener); },
@@ -137,11 +143,22 @@ function worker(build, caches = cacheStorage()) {
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
-    caches, navigated, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
+    caches, navigated, opened, shown, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
     async lifecycle(name) {
       const pending = [];
       listeners.get(name)({ waitUntil(promise) { pending.push(promise); } });
       await Promise.all(pending);
+    },
+    async click(data: unknown) {
+      const pending: Promise<unknown>[] = [];
+      listeners.get("notificationclick")({ notification: { data, close() {} }, waitUntil(promise: Promise<unknown>) { pending.push(promise); } });
+      await Promise.all(pending);
+    },
+    async push(payload: unknown) {
+      const pending: Promise<unknown>[] = [];
+      listeners.get("push")({ data: { json: () => payload }, waitUntil(promise: Promise<unknown>) { pending.push(promise); } });
+      await Promise.all(pending);
+      return shown.at(-1);
     },
     async request(pathname: string, { method = "GET", navigate = false, headers }: { method?: string; navigate?: boolean; headers?: HeadersInit } = {}) {
       const request = new Request(new URL(pathname, origin), { method, headers });
@@ -398,4 +415,52 @@ test("an update serves a lazy chunk the previous shell cached on demand, and nev
   const fresh = await third.request(laterLazy.url);
   assert.equal(digest(Buffer.from(await fresh.arrayBuffer())), laterLazy.sha256);
   assert.deepEqual(seen, [laterLazy.url]);
+});
+
+test("a push shows the Bot's icon, badge and timestamp", async () => {
+  const runtime = worker(app);
+  const notice = await runtime.push({
+    title: "Alpha",
+    body: "Waiting for you",
+    tag: "waiting:alpha:thread-1",
+    url: "/?bot=alpha&thread=thread-1",
+    icon: "/api/bots/alpha/avatar.png",
+    badge: "/api/bots/alpha/badge.png",
+    timestamp: 1_700_000_000_000,
+  });
+  assert.ok(notice);
+  const options = notice.options as NotificationOptions & { timestamp?: number };
+  assert.equal(notice.title, "Alpha");
+  assert.equal(options.body, "Waiting for you");
+  assert.equal(options.tag, "waiting:alpha:thread-1");
+  assert.equal(options.icon, "/api/bots/alpha/avatar.png");
+  assert.equal(options.badge, "/api/bots/alpha/badge.png");
+  assert.equal(options.timestamp, 1_700_000_000_000);
+  assert.equal((options.data as { url?: string }).url, "/?bot=alpha&thread=thread-1");
+  assert.equal("renotify" in options, false, "a replacement stays quiet");
+});
+
+test("a push with no icon keeps the app icon and drops malformed extras", async () => {
+  const runtime = worker(app);
+  const notice = await runtime.push({
+    body: "Finished",
+    timestamp: Number.NaN,
+    badge: 42,
+  });
+  assert.ok(notice);
+  const options = notice.options as NotificationOptions & { timestamp?: number };
+  assert.equal(notice.title, "Threebot");
+  assert.equal(options.tag, "threebot");
+  assert.equal(options.icon, "/icon-192.png");
+  assert.equal(options.timestamp, undefined);
+  assert.equal(options.badge, undefined);
+});
+
+test("a notification click navigates the open window, and opens a new one when it cannot", async () => {
+  const runtime = worker({ ...app, openWindows: [`${origin}/`] });
+  await runtime.click({ url: "/?bot=alpha&thread=thread-1" });
+  assert.deepEqual(runtime.navigated, [`${origin}/?bot=alpha&thread=thread-1`]);
+  const failing = worker({ ...app, openWindows: [`${origin}/`], navigateFails: true });
+  await failing.click({ url: "/?bot=beta" });
+  assert.deepEqual(failing.opened, [`${origin}/?bot=beta`]);
 });

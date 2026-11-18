@@ -7,6 +7,7 @@ import path from "node:path";
 import { generateVAPIDKeys, sendNotification, WebPushError } from "web-push";
 import type { Bot } from "./main-bot.mts";
 import type { T3Client } from "./t3rpc.mts";
+import { botAvatarUrl, botBadgeUrl } from "./bot-icons.mts";
 
 const MAX_SUBSCRIPTIONS = 20;
 const MAX_ENDPOINT = 2_048;
@@ -37,6 +38,13 @@ export type PushPayload = {
   bot?: string;
   /** The room this push is about. A room push is held back on the device looking at that room. */
   room?: string;
+  /** The Bot's picture or drawn avatar, served by the gateway. */
+  icon?: string;
+  /** Android's monochrome status-bar icon; absent for a Bot with a photo. */
+  badge?: string;
+  /** When the event happened, for clients that show it. */
+  timestamp?: number;
+  kind?: "finished" | "waiting";
 };
 
 // What a presence report may name: a Bot reference as the page keeps it (a slug, or
@@ -146,6 +154,11 @@ export function createPushStore({
   return {
     async publicKey(): Promise<string> {
       return (await load()).vapid.publicKey;
+    },
+
+    /** How many browsers/devices have a subscription. */
+    async devices(): Promise<number> {
+      return (await load()).subscriptions.length;
     },
 
     async subscribe(value: unknown, origin?: unknown): Promise<{ ok: true; subscriptions: number } | { ok: false; message: string }> {
@@ -266,6 +279,14 @@ type ShellEvent = {
 const ACTIVE = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
 /**
+ * A notification that needs the user belongs to one conversation. A completion stays one per Bot:
+ * three finished runs leave one updated notification, not three.
+ */
+export function waitingTag(slug: string, threadId: string): string {
+  return `waiting:${slug}:${threadId}`;
+}
+
+/**
  * Watch T3's shell stream and turn transitions into pushes. The first snapshot only seeds state.
  * The rules are the page's own (notifyIfNeeded in web/src/store.ts), so a phone hears what the open
  * app would have said: a Bot's main conversation finishing or asking for the user, and a side chat
@@ -312,12 +333,20 @@ export function createPushNotifier({
       const runStarted = thread.latestRunStartedAt ?? thread.latestRunRequestedAt ?? thread.latestUserMessageAt;
       if (value?.role === "assistant" && value.text.trim() && value.at && (!runStarted || value.at >= runStarted)) body = value.text.trim().slice(0, 140);
     }
+    const waiting = kind === "waiting";
+    const badge = botBadgeUrl(owner);
     await send({
       title: owner.name,
       body,
-      tag: owner.slug,
-      url: `/?bot=${encodeURIComponent(owner.slug)}`,
+      tag: waiting ? waitingTag(owner.slug, thread.id) : owner.slug,
+      url: waiting
+        ? `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`
+        : `/?bot=${encodeURIComponent(owner.slug)}`,
       bot: owner.slug,
+      icon: botAvatarUrl(owner),
+      ...(badge ? { badge } : {}),
+      timestamp: Date.parse(thread.updatedAt ?? "") || Date.now(),
+      kind,
     });
     log(`push: ${kind} ${owner.slug}`);
   }

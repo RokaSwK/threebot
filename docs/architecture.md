@@ -146,10 +146,24 @@ or when the page looks away), and a push about that Bot — or about that room �
 device. A room push carries the room id, so it is held back on the device looking at that room and
 still reaches a phone looking at a Bot or at another room. A report names a room or a Bot (a room
 wins when both arrive); any other value is refused with a 400, and an older page that sends only
-`bot` keeps working. The push uses the same notification tag as the page's own
-notification, so the two replace each other.
+`bot` keeps working. A completion keeps the Bot's own tag, so three finished runs leave one notice.
+A push that needs the user gets one tag per conversation (`waiting:<slug>:<threadId>`) and
+deep-links to that thread, so a side chat's request is not replaced by that Bot's completion or by
+another side chat. Both carry the Bot's picture or drawn avatar from `/api/bots/<slug>/avatar.png`;
+a wait also carries the monochrome `/badge.png` for Android's status bar and the event time. Safari
+ignores the icon, badge and timestamp, and iOS still stacks
+notifications because it does not coalesce tags. The page builds the same options for its own
+notifications, so the two replace each other.
+
+A tag only replaces notifications inside one client. A browser tab and an installed app, or two
+browsers on the same machine, are separate notification surfaces: the web app cannot make one
+replace the other, and the server cannot dedupe across browsers because each subscription is
+independent. One client per device is a user choice; the notification rules above apply inside
+that client.
 
 Pushes are signed with `VAPID_SUBJECT` when set, else `APP_URL`, else the address the browser
 subscribed from. Apple refuses a localhost contact, so one is never used when a real address is
-known. The app asks for permission when the user sends a message or presses **Enable push on this
-device** in Details, then registers the subscription.
+known. The app asks for permission when the user sends a message or turns on **Settings ›
+Notifications** (Details links to that pane); the pane shows permission, subscription, the device
+count, a test notification and the exact failure reason, while each Bot keeps its own Notifications
+switch in Details.

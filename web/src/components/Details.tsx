@@ -20,7 +20,6 @@ import { ComputerScreen, useBotTabs } from "./Computer";
 import type { Bot, ModelSelection, ScheduledTask } from "../lib/types";
 
 import { chatDraft } from "../lib/chatDrafts";
-import { enablePushNotifications } from "../lib/push";
 import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
 import "./routines.css";
 import { findTidyTask } from "../lib/memoryTidy";
@@ -292,7 +291,7 @@ function DetailsTab({ bot, tasks, onOpenRoutine, onCreate, routinesOnly }: { bot
           <Switch checked={bot.notifications !== false} onChange={(v) => updateBot(bot.slug, { notifications: v })} label="Notifications" />
         </div>
         <p className="notifications-below hidden">Get notified when this Bot finishes or is waiting for you</p>
-        {typeof Notification !== "undefined" && Notification.permission !== "granted" && <Pill variant="soft" className="mt-2" onClick={() => void enablePushNotifications().then((ok) => toast(ok ? "Push notifications enabled" : "Notifications were not enabled"))}>Enable push on this device</Pill>}
+        <button onClick={() => { useApp.setState({ settingsPane: "notifications" }); openDialog("settings"); }} className="mt-2 text-[12.5px] text-muted underline">Push on this device</button>
       </Section></div>
       <Section title="Folder">
         <div className="flex items-center gap-2 rounded-2xl bg-card px-3.5 py-3 font-mono text-[11.5px] text-muted">
