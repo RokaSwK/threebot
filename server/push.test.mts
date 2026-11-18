@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { generateVAPIDKeys, WebPushError } from "web-push";
-import { createPushNotifier, createPushStore, usableSubject, type PushPreview } from "./push.mts";
+import { createPushNotifier, createPushStore, pushTopic, usableSubject, type PushPreview } from "./push.mts";
 
 const keys = generateVAPIDKeys();
 const subscription = {
@@ -39,6 +39,24 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   assert.equal(removed.removed, 1);
   assert.equal((await gone.unsubscribe(subscription.endpoint)).subscriptions, 0);
   assert.equal(await gone.devices(), 0);
+});
+
+test("each push carries an RFC 8030 topic: the tag when it fits, a hash otherwise", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const topics: Array<string | undefined> = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (_subscription, _payload, options) => { topics.push(options?.topic); },
+  });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  await store.send({ title: "Bot", body: "Finished", tag: "alpha", url: "/?bot=alpha", bot: "alpha" });
+  await store.send({ title: "Bot", body: "Waiting", tag: "waiting:alpha:thread-1", url: "/?bot=alpha&thread=thread-1", bot: "alpha" });
+  assert.equal(topics[0], "alpha");
+  assert.equal(topics[1], pushTopic("waiting:alpha:thread-1"));
+  assert.match(topics[1]!, /^[A-Za-z0-9_-]{32}$/u);
+  assert.equal(pushTopic("a".repeat(40)).length, 32);
+  assert.equal(pushTopic("a".repeat(40)), pushTopic("a".repeat(40)));
 });
 
 test("the notifier ignores the first snapshot and pushes completions and requests", async () => {

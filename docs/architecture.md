@@ -150,10 +150,11 @@ wins when both arrive); any other value is refused with a 400, and an older page
 A push that needs the user gets one tag per conversation (`waiting:<slug>:<threadId>`) and
 deep-links to that thread, so a side chat's request is not replaced by that Bot's completion or by
 another side chat. Both carry the Bot's picture or drawn avatar from `/api/bots/<slug>/avatar.png`;
-a wait also carries the monochrome `/badge.png` for Android's status bar and the event time. Safari
-ignores the icon, badge and timestamp, and iOS still stacks
-notifications because it does not coalesce tags. The page builds the same options for its own
-notifications, so the two replace each other.
+a wait also carries the monochrome `/badge.png` for Android's status bar and the event time. Each
+push also carries an RFC 8030 `Topic` derived from the tag, so a device that was offline receives
+the latest notice per conversation instead of a burst. Safari ignores the icon, badge and timestamp,
+and iOS still stacks notifications because it does not coalesce tags. The page builds the same
+options for its own notifications, so the two replace each other.
 
 A tag only replaces notifications inside one client. A browser tab and an installed app, or two
 browsers on the same machine, are separate notification surfaces: the web app cannot make one
