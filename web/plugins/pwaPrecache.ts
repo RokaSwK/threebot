@@ -9,7 +9,7 @@ const hash = (source: string | Uint8Array) => createHash("sha256").update(source
 const WORKER = fileURLToPath(new URL("../src/sw.ts", import.meta.url));
 const MARKER = "BOT_BUILD_PRECACHE";
 
-/** Embed exact build bytes, including lazy chunks, in the worker that installs them. */
+/** Embed exact build bytes, installing the core shell and caching lazy chunks on demand. */
 export function pwaPrecache(): Plugin {
   let config: ResolvedConfig;
   return {
@@ -53,11 +53,43 @@ export function pwaPrecache(): Plugin {
       const manifestSource = JSON.stringify(manifest, null, 2) + "\n";
       files.set("manifest.webmanifest", manifestSource);
       this.emitFile({ type: "asset", fileName: "manifest.webmanifest", source: manifestSource });
+      const coreFiles = new Set<string>(["index.html", "manifest.webmanifest", ...PUBLIC_ASSETS]);
+      const initialAssets = Array.from(
+        Buffer.from(files.get("index.html") ?? "").toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g),
+        (match) => match[1],
+      );
+      for (const assetUrl of initialAssets) {
+        const decoded = decodeURIComponent(assetUrl);
+        const rel = decoded.startsWith(base) ? decoded.slice(base.length) : decoded.replace(/^\.?\//, "");
+        coreFiles.add(rel);
+      }
+      const queue = [...coreFiles];
+      while (queue.length > 0) {
+        const fileName = queue.pop()!;
+        const item = bundle[fileName];
+        if (!item || item.type !== "chunk") continue;
+        for (const imp of item.imports ?? []) {
+          if (!coreFiles.has(imp)) {
+            coreFiles.add(imp);
+            queue.push(imp);
+          }
+        }
+        const cssList = (item as { viteMetadata?: { importedCss?: Set<string> } }).viteMetadata?.importedCss;
+        if (cssList) {
+          for (const css of cssList) {
+            if (!coreFiles.has(css)) {
+              coreFiles.add(css);
+              queue.push(css);
+            }
+          }
+        }
+      }
       const entries = [...files].map(([name, source]) => ({
         url: base + name.split("/").map(encodeURIComponent).join("/"),
         sha256: hash(source),
+        ...(coreFiles.has(name) ? {} : { optional: true }),
         // Edge proxies can inject HTML. Identify the page itself as well as its entry scripts.
-        ...(name === "index.html" ? { markers: [shellMarker, ...Array.from(Buffer.from(source).toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g), (match) => match[1])] } : {}),
+        ...(name === "index.html" ? { markers: [shellMarker, ...initialAssets] } : {}),
       })).sort((a, b) => a.url.localeCompare(b.url));
       // The worker is a classic script with no imports, so stripping its types is the whole build.
       const { code: template } = await transformWithOxc(await readFile(WORKER, "utf8"), WORKER, { lang: "ts" });
