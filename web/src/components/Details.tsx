@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowLeft, Brain, ChevronsRight, ChevronLeft, ChevronRight, CircleUser, Clock, FileText, Folder, Library as LibraryIcon, Monitor, Play, Plus, Trash2 } from "lucide-react";
-import { ModelPicker } from "./ModelPicker";
+import { ModelLabel, ModelPicker } from "./ModelPicker";
 import { CodingWorkRows } from "./MachinesPane";
 import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
@@ -23,7 +23,7 @@ import { chatDraft } from "../lib/chatDrafts";
 import { enablePushNotifications } from "../lib/push";
 import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
 import "./routines.css";
-import { changeRoutineEnabled, changeRoutineFreshSession, copyWebhookUrl, displayTimezone, removeRoutine, routineDate, routineHistory, scheduleText, testRoutine, threadMode } from "../lib/routines";
+import { changeRoutineEnabled, changeRoutineFreshSession, chatModelFrom, copyWebhookUrl, displayTimezone, moveRoutineToChat, removeRoutine, routineDate, routineDestination, routineHistory, scheduleText, setRoutineModel, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
 
 /**
@@ -210,7 +210,7 @@ function ConnectedAppsSection({ bot }: { bot: Bot }) {
 function ModelSection({ bot, threadId }: { bot: Bot; threadId: string | null }) {
   const shell = useApp((s) => threadId ? s.threads[threadId] : undefined);
   const project = useApp((s) => (bot.projectId ? s.projects[bot.projectId] : undefined));
-  const model = shell?.modelSelection ?? project?.defaultModelSelection ?? null;
+  const model = threadId === bot.mainThreadId ? chatModelFrom(bot, shell, project) : shell?.modelSelection ?? project?.defaultModelSelection ?? null;
   const change = (selection: ModelSelection) => (threadId && threadId !== bot.mainThreadId
     ? t3.dispatch({ type: "thread.model-selection.set", threadId, modelSelection: selection })
     : setBotModel(bot.slug, selection)).catch((error: unknown) => toast(error instanceof Error ? error.message : "Couldn't change the model"));
@@ -329,10 +329,45 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const [pending, setPending] = useState<string | null>(null);
   const busy = useRef(false);
   const [error, setError] = useState("");
+  const [moveTo, setMoveTo] = useState<ModelSelection | null>(null);
+  const [confirmBack, setConfirmBack] = useState(false);
   const timezone = displayTimezone(useApp((s) => s.settings?.timezone ?? ""));
   // Older T3 versions keep every bound routine in the same conversation and ignore a mode.
   const modes = useApp((s) => s.runtimeFeatures.scheduledTaskThreadModes);
   const mode = threadMode(task);
+  const destination = routineDestination(task, bot);
+  const ownThreadId = destination === "own" ? task.threadId : null;
+  const ownThread = useApp((s) => (ownThreadId ? s.threads[ownThreadId] : undefined));
+  const chatThread = useApp((s) => (bot.mainThreadId ? s.threads[bot.mainThreadId] : undefined));
+  const project = useApp((s) => (bot.projectId ? s.projects[bot.projectId] : undefined));
+  const chatModel = chatModelFrom(bot, chatThread, project);
+  const model = destination === "own" ? ownThread?.modelSelection ?? task.modelSelection ?? null : destination === "chat" ? chatModel : task.modelSelection ?? null;
+  // A run in progress owns the thread until it ends; moving the routine then is a change nobody asked for.
+  const running = task.lastRunStatus === "running";
+  const picker = useRef<HTMLButtonElement>(null);
+  const modelAction = useRef<HTMLButtonElement>(null);
+  const backAction = useRef<HTMLButtonElement>(null);
+  const confirmBox = useRef<HTMLDivElement>(null);
+  const status = useRef<HTMLParagraphElement>(null);
+  const previousDestination = useRef(destination);
+  const busyBlock = pending === "model" || pending === "move" || pending === "back" || pending === "fresh";
+  // The region is mounted empty: a node that appears already filled is not announced by every reader.
+  const announce = (text: string) => {
+    const node = status.current;
+    if (!node) return;
+    node.textContent = "";
+    window.setTimeout(() => { if (status.current === node) node.textContent = text; }, 20);
+  };
+  // Moving the routine replaces the control that had focus; send it to the control that appears.
+  useEffect(() => {
+    if (previousDestination.current === destination) return;
+    previousDestination.current = destination;
+    (destination === "own" ? picker : modelAction).current?.focus();
+  }, [destination]);
+  useEffect(() => {
+    if (!moveTo && !confirmBack) return;
+    confirmBox.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [moveTo, confirmBack]);
   const action = async (label: string, work: () => Promise<unknown>) => {
     if (busy.current) return;
     busy.current = true;
@@ -341,28 +376,110 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     catch (cause) { setError(cause instanceof Error ? cause.message : "Couldn't update this routine"); }
     finally { busy.current = false; setPending(null); }
   };
+  // In the chat, the chat owns the model; picking another one starts the move to a conversation of its own.
+  const chooseModel = (selection: ModelSelection) => {
+    if (destination === "chat") {
+      if (chatModel && selection.instanceId === chatModel.instanceId && selection.model === chatModel.model) { setMoveTo(null); return; }
+      setMoveTo(selection);
+      return;
+    }
+    void action("model", async () => {
+      await setRoutineModel(task, bot, selection);
+      announce(`Model set to ${selection.model}.`);
+    });
+  };
+  const moveOut = () => {
+    if (!moveTo) return;
+    void action("move", async () => {
+      await setRoutineModel(task, bot, moveTo);
+      setMoveTo(null);
+      announce(`Moved to its own conversation on ${moveTo.model}.`);
+    });
+  };
+  const moveBack = () => {
+    void action("back", async () => {
+      await moveRoutineToChat(task, bot);
+      setConfirmBack(false);
+      announce("Back in the chat. Its old conversation is still open.");
+    });
+  };
+  const destinationNote = destination === "chat"
+    ? `Runs with the model of ${bot.name}’s chat. Change it there and this routine follows.`
+    : destination === "own"
+      ? task.runCount
+        ? `Runs on ${model?.model ?? "its model"} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
+        : `Runs on ${model?.model ?? "its model"} in its own conversation. Nothing there until the first run.`
+      : destination === "own-pending"
+        ? "The first run starts its own conversation with this model."
+        : `Each run starts a new thread with this model. ${bot.name}’s chat gets a one-line summary.`;
+  const freshNote = mode === "fresh_session"
+    ? destination === "chat"
+      ? `Each run starts a fresh session instead of re-reading the whole chat. ${bot.name} keeps its memory and files, and your next message carries on from the run.`
+      : "Each run starts a fresh session instead of re-reading the earlier runs."
+    : destination === "chat"
+      ? "Each run continues the conversation, re-reading the chat so far."
+      : "Each run continues the conversation, re-reading the earlier runs.";
   return <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 pb-6">
     <div className="routine-detail-back mb-3 flex items-center gap-2"><IconButton onClick={onBack} aria-label="Back to routines"><ArrowLeft size={16} /></IconButton><span className="text-[14px] font-medium">Routine</span></div>
     <div className="mb-4 flex flex-col items-center gap-2 pt-2 text-center"><span className="grid size-12 place-items-center rounded-2xl bg-card text-muted"><Clock size={20} /></span><div className="max-w-full break-words text-[16px] font-medium">{task.title}</div><div className="text-[13px] text-muted">{!task.enabled && "Paused · "}{scheduleText(task, timezone)}</div></div>
     <div className="mb-5 flex flex-wrap justify-center gap-2">
       <Pill variant="soft" disabled={!!pending} onClick={() => void action("state", () => changeRoutineEnabled(task, !task.enabled))}>{pending === "state" ? "Saving…" : task.enabled ? "Pause" : "Resume"}</Pill>
       <Pill variant="soft" disabled={!!pending} onClick={onEdit}>Edit</Pill>
-      {task.schedule.type !== "webhook" && <Pill disabled={!!pending || task.lastRunStatus === "running"} onClick={() => void action("test", async () => { await testRoutine(task); })}><Play size={12} fill="currentColor" />{pending === "test" || task.lastRunStatus === "running" ? "Running…" : "Test"}</Pill>}
+      {task.schedule.type !== "webhook" && <Pill disabled={!!pending || task.lastRunStatus === "running"} onClick={() => void action("test", async () => {
+        await testRoutine(task);
+        if (destination === "own" && task.threadId) toast("Test run started in its own conversation.", { href: "#", label: "Open", open: () => selectThread(bot, task.threadId!) });
+        else if (destination !== "chat") toast("Test run started in a new thread.");
+      })}><Play size={12} fill="currentColor" />{pending === "test" || task.lastRunStatus === "running" ? "Running…" : "Test"}</Pill>}
     </div>
-    {error && <p role="alert" className="mb-4 break-words text-[13px] text-danger">{error}</p>}
+    {error && <p role="alert" id="routine-error" className="mb-4 break-words text-[13px] text-danger">{error}</p>}
     {task.blockedByPolicy && <p role="status" className="mb-4 break-words rounded-2xl bg-card px-3.5 py-3 text-[13px]">This routine can’t run: {task.blockedByPolicy}</p>}
     <Section title="Instruction"><div className="whitespace-pre-wrap break-words rounded-2xl bg-card px-3.5 py-3 text-[13.5px]">{task.prompt}</div></Section>
     <Section title="When to run"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">{scheduleText(task, timezone)}{!task.enabled && <p className="mt-1 text-muted">{task.schedule.type === "webhook" ? "Paused. Webhook deliveries will not dispatch work." : "Paused. Scheduled runs are off; Test still dispatches work."}</p>}{task.schedule.type === "fixed_time" && <p className="mt-1 text-[12px] text-muted">Uses the T3 server’s clock and daylight saving rules. Changing your display timezone does not change this schedule.</p>}</div></Section>
-    {modes && mode !== "new_thread" && <Section title="Conversation"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">
-      <div className="flex items-center gap-3"><span className="flex-1">Start fresh each run</span>{pending === "fresh" ? <span className="text-muted">Saving…</span> : <Switch label="Start fresh each run" checked={mode === "fresh_session"} onChange={(on) => void action("fresh", () => changeRoutineFreshSession(task, bot, on))} />}</div>
-      <p className="mt-1 text-[12px] text-muted">{mode === "fresh_session" ? `Each run starts a fresh session here instead of re-reading the whole chat. ${bot.name} keeps its memory and files, and your next message carries on from the run.` : "Each run continues the conversation, re-reading the chat so far."}</p>
-    </div></Section>}
+    <Section title="Where it runs"><div role="group" aria-label="Where it runs" className={clsx("rounded-2xl bg-card px-3.5 py-3 text-[13px]", busyBlock && "opacity-60")} aria-busy={busyBlock || undefined}>
+      {destination === "chat" ? <>
+        <div className="flex min-w-0 items-center gap-2"><ModelLabel value={chatModel} wrap /></div>
+        <p id="routine-destination-note" className="mt-1 text-[12px] leading-relaxed text-muted">{destinationNote}</p>
+        <ModelPicker value={chatModel} onChange={chooseModel} closeOnPick trigger={(open) => <button ref={modelAction} type="button" onClick={open} disabled={running} aria-describedby={`routine-destination-note${error ? " routine-error" : ""}`} className="mt-1 flex min-h-10 items-center text-[13px] text-fg hover:underline disabled:text-muted disabled:hover:no-underline max-sm:min-h-11">Use its own model…</button>} title="Model for this routine" note={`A model of its own means a conversation of its own. ${bot.name}’s chat keeps its model.`} />
+      </> : <>
+        <ModelPicker value={model} onChange={chooseModel} triggerRef={picker} triggerClassName="min-h-11" describedBy={`routine-destination-note${error ? " routine-error" : ""}`} title="Model for this routine" />
+        <p id="routine-destination-note" className="mt-1 text-[12px] leading-relaxed text-muted">{destinationNote}</p>
+      </>}
+      {destination === "own" && <div className="mt-1 flex flex-wrap items-center gap-x-4">
+        {!!task.runCount && <button type="button" className="flex min-h-10 items-center text-[13px] text-fg hover:underline max-sm:min-h-11" onClick={() => { if (task.threadId) selectThread(bot, task.threadId); }}>Open conversation</button>}
+        <button ref={backAction} type="button" onClick={() => setConfirmBack(true)} disabled={running} className="flex min-h-10 items-center text-[13px] text-fg hover:underline disabled:text-muted disabled:hover:no-underline max-sm:min-h-11">Move it back to the chat</button>
+      </div>}
+      {running && destination !== "new-thread" && <p className="mt-1 text-[12px] text-muted">A run is in progress. You can move it when the run finishes.</p>}
+      {moveTo && destination === "chat" && <div ref={confirmBox} className="mt-2.5 border-t border-line pt-2.5">
+        <p className="text-[13px]">Move it to its own conversation on <span className="font-medium">{moveTo.model}</span>? Future runs answer there; {bot.name}’s chat gets a one-line summary.</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Pill variant="soft" disabled={pending === "move" || running} onClick={moveOut}>{pending === "move" ? "Moving…" : "Move it"}</Pill>
+          <Pill variant="soft" disabled={pending === "move"} onClick={() => { setMoveTo(null); modelAction.current?.focus(); }}>Keep it here</Pill>
+        </div>
+      </div>}
+      {confirmBack && <div ref={confirmBox} className="mt-2.5 border-t border-line pt-2.5">
+        <p className="text-[13px]">Move it back to {bot.name}’s chat? Its old conversation stays open.</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Pill variant="soft" disabled={pending === "back" || running} onClick={moveBack}>{pending === "back" ? "Moving…" : "Move it back"}</Pill>
+          <Pill variant="soft" disabled={pending === "back"} onClick={() => { setConfirmBack(false); backAction.current?.focus(); }}>Keep it here</Pill>
+        </div>
+      </div>}
+      {modes && destination !== "new-thread" && <>
+        <div className="mt-2.5 flex items-center gap-3 border-t border-line pt-2.5">
+          <span className="flex-1" id="routine-fresh-label">Start fresh each run</span>
+          <Switch labelledBy="routine-fresh-label" describedBy="routine-fresh-note" busy={pending === "fresh"} disabled={!!pending} checked={mode === "fresh_session"} onChange={(on) => void action("fresh", async () => {
+            await changeRoutineFreshSession(task, bot, on);
+            announce(on ? "Each run now starts a fresh session." : "Each run now continues the conversation.");
+          })} />
+        </div>
+        <p id="routine-fresh-note" className="mt-1 text-[12px] leading-relaxed text-muted">{freshNote}</p>
+      </>}
+      <p role="status" aria-live="polite" aria-atomic="true" className="sr-only" ref={status} />
+    </div></Section>
     {task.schedule.type === "webhook" && <WebhookDetails task={task} />}
     <RoutineHistory task={task} timezone={timezone} />
     {confirm ? <div className="flex flex-wrap items-center gap-2"><span className="flex-1 text-[13px]">Delete this routine?</span><Pill variant="soft" disabled={!!pending} onClick={() => setConfirm(false)}>Cancel</Pill><Pill variant="danger" disabled={!!pending} onClick={() => void action("delete", async () => { await removeRoutine(task); onBack(); })}>{pending === "delete" ? "Deleting…" : "Delete"}</Pill></div> : <button onClick={() => setConfirm(true)} className="flex min-h-10 items-center gap-2 px-1 text-[13px] text-danger hover:underline"><Trash2 size={13} /> Delete routine</button>}
   </div>;
 }
-
 function RoutineHistory({ task, timezone }: { task: ScheduledTask; timezone: string }) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof routineHistory>> | null>(null);
   const [error, setError] = useState(""); const [revision, refresh] = useState(0);

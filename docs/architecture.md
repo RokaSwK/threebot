@@ -31,7 +31,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Bot persona, memory, library | `AGENTS.md` (+ `CLAUDE.md` link), `memory/MEMORY.md`, `library/` in the Bot folder |
 | Helper Bots | New Bot projects created by agents (they follow the same folder convention) |
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |
-| Routines | T3 scheduled tasks bound to the Bot's main thread |
+| Routines | T3 scheduled tasks bound to the Bot's chat, or to a conversation of their own with a model of their own |
 | Staying active | T3 0.1.8+ settles threads idle for a week; at start and hourly the gateway sends `thread.auto-settle.set` (`enabled: false`) for Bot main, room and routine threads that still have it on. A T3 without `autoSettleDisabledAt` is left alone |
 | Settled in T3 (beta) | With `beta.settleBotThreads` on, every minute the gateway sends `thread.settle` for quiet Bot threads: main and room threads, threads in a non-adopted Bot project, and descendants of a main thread. It skips archived, settled, pinned, snoozed, busy, waiting, background-work, usage-limit, merge-wait and PR-watched threads, and any whose last run or message is under 2 minutes old. Threebot then shows a settled main thread as idle, not finished |
 | Approval cards | T3 `approval_request` turn items + `runtime-request.respond` |

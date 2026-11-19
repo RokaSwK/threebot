@@ -103,6 +103,8 @@ export type ThreadShell = {
   latestRunRequestedAt?: string | null;
   modelSelection: ModelSelection;
   runtimeMode: string;
+  /** Optional: older shells omit it. */
+  interactionMode?: string;
   pendingRuntimeRequest: { id: string; kind: string; blocking: boolean } | null;
   latestVisibleMessage: { id: string; role: string; text: string; updatedAt: string } | null;
   latestUserMessageAt: string | null;
@@ -245,6 +247,14 @@ export type ScheduledTask = {
   threadId: string | null;
   /** Where runs go. T3 versions before thread modes omit it; their bound tasks continue the conversation. */
   threadMode?: "new_thread" | "continue" | "fresh_session";
+  /** The model T3 starts a thread with. A run bound to an existing thread follows that thread's model instead. */
+  modelSelection?: ModelSelection;
+  runtimeMode?: string;
+  interactionMode?: string;
+  workspaceStrategy?: unknown;
+  /** Unattended runs keep whatever created them; edits must not turn them into the user's messages. */
+  createdBy?: "user" | "agent" | "system";
+  creationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   nextRunAt?: string | null;
   lastRunAt?: string | null;
   lastRunStatus?: string | null;
