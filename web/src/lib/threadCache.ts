@@ -1,5 +1,5 @@
-// What this device kept from the last time it could reach the gateway: each Bot's window and the
-// list it opened with.
+// What this device kept from the last time it could reach the gateway: each Bot's window, the list it
+// opened with, and the image bytes already seen.
 //
 // A paint cache, never a source of truth: T3's snapshot replaces a view whole, nothing is dispatched
 // from one, and everything here is written from what the store already holds. A conversation keeps
@@ -47,6 +47,7 @@ const EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
 const RULES: Record<string, { keep: number; bytes: number }> = {
   view: { keep: 8, bytes: 30 * MB },
   boot: { keep: 1, bytes: 1 * MB },
+  asset: { keep: 80, bytes: 40 * MB },
 };
 
 type Entry = { savedAt: number; bytes: number };
@@ -156,7 +157,7 @@ const bytesOf = (value: unknown) => {
   try { return JSON.stringify(value)?.length ?? 0; } catch { return Number.MAX_SAFE_INTEGER; }
 };
 
-/** `view:<thread>`, `room:<id>`, `rooms`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
+/** `view:<thread>`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
 const kindOf = (id: string) => id.split(":")[0] ?? id;
 
 async function readIndex(store: Backend): Promise<Index> {
@@ -172,9 +173,9 @@ async function readIndex(store: Backend): Promise<Index> {
 }
 
 /** Stores the record and drops what its kind can no longer keep: expired, over its count, or over its bytes. */
-async function writeRecord(id: string, value: unknown): Promise<void> {
+async function writeRecord(id: string, value: unknown, knownBytes?: number): Promise<void> {
   const store = storage();
-  const bytes = bytesOf(value);
+  const bytes = knownBytes ?? bytesOf(value);
   const index = await readIndex(store);
   const now = Date.now();
   index[id] = { savedAt: now, bytes };
@@ -210,9 +211,9 @@ export async function readRecord<T>(id: string, usable: (value: unknown) => valu
 }
 
 /** Every write is best effort: a refused or full quota must never reach the caller. */
-async function writeQuietly(id: string, value: unknown): Promise<void> {
+async function writeQuietly(id: string, value: unknown, knownBytes?: number): Promise<void> {
   if (stopped) return;
-  await serial(() => writeRecord(id, value)).catch(() => {});
+  await serial(() => writeRecord(id, value, knownBytes)).catch(() => {});
 }
 
 const isView = (key: string) => (value: unknown): value is CachedView => {
@@ -245,4 +246,26 @@ export async function readBoot(): Promise<CachedBoot | null> {
 
 export async function writeBoot(boot: Omit<CachedBoot, "v" | "savedAt">): Promise<void> {
   await writeQuietly("boot", { ...boot, v: 1, savedAt: Date.now() });
+}
+
+/** Drops one record: a file that would not decode must not be served twice. */
+export async function forgetRecord(id: string): Promise<void> {
+  await serial(async () => {
+    const store = storage();
+    const index = await readIndex(store);
+    delete index[id];
+    await store.put(INDEX, index).catch(() => {});
+    await store.remove([id]).catch(() => {});
+  }).catch(() => {});
+}
+
+/** Bytes this device kept for a file it has already shown, keyed by whatever identifies the asset. */
+export async function readAsset<T>(key: string, usable: (value: unknown) => value is T): Promise<T | null> {
+  return readRecord(`asset:${key}`, usable);
+}
+
+export async function writeAsset(key: string, value: unknown): Promise<void> {
+  // A Blob is not JSON: its bytes are not in the record's serialized length, so the index needs them.
+  const size = (value as { bytes?: unknown })?.bytes;
+  await writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined);
 }

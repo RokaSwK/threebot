@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
+import { isAssetSource } from "../lib/assetCopies";
 import type { LibraryResource } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
 import "./ImageViewer.css";
@@ -57,7 +58,7 @@ const DOUBLE_TAP_SCALE = 2.5;
 async function signedUrl(resource: LibraryResource, scopeThreadId: string | null) {
   if (resource._tag === "workspace-file") workspaceClient(resource.threadId);
   const url = await workspaceAssetUrl(resource, scopeThreadId);
-  if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
+  if (!isAssetSource(url)) throw new Error("Invalid asset response");
   return url;
 }
 
