@@ -9,6 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
+import { clearCache, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -19,6 +20,10 @@ export type ThreadData = {
   requests: Record<string, RuntimeRequest>;
   subagents: Record<string, Subagent>;
   loaded: boolean;
+  /** Painted from this device's own copy; T3's snapshot has not landed yet, so it says nothing about now. */
+  stale?: boolean;
+  /** The copy was looked for and found empty: what is missing is on the server, not on its way. */
+  copyChecked?: boolean;
   /** Bounded snapshots hold only recent rows; older ones load page by page from this cursor. */
   historyCursor?: string | null;
   hasMoreHistory?: boolean;
@@ -53,6 +58,10 @@ type State = {
   archivedThreads: Record<string, ThreadShell>;
   auth: "unknown" | "loading" | "access" | "password" | "error" | "ready";
   connection: "connecting" | "open" | "closed";
+  /** This page opened from what the device kept, or lost a socket it had: what is on screen is the last copy. */
+  offline: boolean;
+  /** One short line for the live region: only state changes say anything, never the first paint. */
+  announcement: string;
   botsRoot: string;
   executorUrl: string | null;
   settings: Settings | null;
@@ -117,6 +126,8 @@ export const useApp = create<State>(() => ({
   archivedThreads: {},
   auth: "unknown",
   connection: "closed",
+  offline: false,
+  announcement: "",
   botsRoot: "",
   executorUrl: null,
   settings: null,
@@ -201,36 +212,22 @@ async function initialize() {
   set({ auth: "loading" });
   try {
     leaveLoginRoute();
-    const s = await api.session();
-    if (!s.authenticated) return set({ auth: s.accessLogin ? "access" : s.passwordRequired ? "password" : "error" });
-    const [config, settings, bots, historical] = await initialData();
-    const route = new URLSearchParams(location.search);
-    const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
-    const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
-    if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
-    if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
-    if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
-    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
-    void loadRooms().catch(() => {});
-    if (routeRoom) selectRoom(routeRoom);
-    if (!runtimeStarted) {
-      t3.onState((connection) => set({ connection }));
-      t3.onReconnect(() => {
-        subscribeShell();
-        subscribeTasks();
-        loadProviders();
-        void loadArchivedThreads();
-        resubscribeThreads();
-      });
-      // A phone suspends the page: on return the socket may be dead or waiting out a retry.
-      const wake = () => { if (document.visibilityState === "visible") for (const client of allT3Clients()) client.checkAlive(); };
-      document.addEventListener("visibilitychange", wake);
-      window.addEventListener("online", wake);
-      window.addEventListener("pageshow", wake);
-      window.setInterval(refreshBots, 5_000);
-      window.setInterval(() => { if (document.visibilityState === "visible") void loadMachines(); }, 60_000);
-      runtimeStarted = true;
+    const boot = await readBoot();
+    // A device that opened this app before paints what it kept at once; the gateway is asked behind
+    // that paint, so no launch waits on a timeout a phone may take seconds to give.
+    if (boot) {
+      openFromCopy(boot);
+      void confirmLaunch();
+      return;
     }
+    const session = await api.session();
+    if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+    const [config, settings, bots, historical] = await initialData();
+    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+    keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    openRoute(bots, historical);
+    void loadRooms().catch(() => {});
+    startRuntime();
     t3.connect();
     void loadVault();
     void loadMachines();
@@ -241,7 +238,152 @@ async function initialize() {
   }
 }
 
+/**
+ * The launch that painted from the copy on screen: ask the gateway properly, now that nobody is
+ * waiting. A changed password wins over the copy; a refused launch leaves the copy on screen.
+ */
+async function confirmLaunch() {
+  const session = await api.session().catch(() => null);
+  // Asked and unanswered: the gateway is not reachable, which is what "offline" means here.
+  if (!session) return set({ offline: true });
+  if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+  try {
+    const [config, settings, bots, historical] = await initialData();
+    if (get().auth !== "ready") return;
+    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+    keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    // A Bot or room the copy did not know about (added on another device) is still reachable by URL.
+    openRoute(bots, historical);
+    void loadRooms().catch(() => {});
+    // The copy carries neither of these, and the first paint must not be the last word on them.
+    void loadVault();
+    void loadMachines();
+  } catch {
+    // The gateway answered the session but not the rest: the copy stays, the socket keeps trying.
+  }
+}
+
+/** Where the URL points: a Bot, a thread on a linked machine, the Projects page, or a room. */
+function openRoute(bots: Bot[], historical: Bot[]) {
+  const route = new URLSearchParams(location.search);
+  const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
+  const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
+  if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
+  if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
+  if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
+  if (routeRoom) selectRoom(routeRoom);
+}
+
+/**
+ * What this device kept, painted at once. "Offline" is claimed only when the browser already knows
+ * there is no network; otherwise the copy is simply a copy until the socket proves otherwise.
+ */
+function openFromCopy(boot: CachedBoot) {
+  copied = true;
+  set({ botsRoot: boot.botsRoot, executorUrl: boot.executorUrl, settings: boot.settings, bots: Object.fromEntries(boot.bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(boot.historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+  // The URL still points where the user was: a room opens from its copy, a thread from its view.
+  openRoute(boot.bots, boot.historical);
+  void loadRooms().catch(() => {});
+  startRuntime();
+  t3.connect();
+  booted = true;
+  set({ auth: "ready", offline: navigator.onLine === false });
+}
+
+/** What the next launch needs when the gateway cannot be reached. Best effort: a full quota changes nothing here. */
+function keepBoot(boot: Omit<CachedBoot, "v" | "savedAt">) {
+  void writeBoot(boot);
+}
+
+/** This launch painted a copy before asking: the one thing that makes an offline claim honest later. */
+let copied = false;
+/** Signing out is the last write: nothing on screen may be saved after it. */
+let forgetting = false;
+
+function startRuntime() {
+  if (runtimeStarted) return;
+  let live = false;
+  let failures = 0;
+  t3.onState((connection) => {
+    if (connection === "open") {
+      const was = get().offline;
+      live = true;
+      failures = 0;
+      set({ connection, offline: false });
+      // Same page, new state: a screen reader hears the change, a first paint stays quiet.
+      if (copied && was) announce("Connected");
+      return;
+    }
+    // Connecting says nothing about reachability, and a retry must not undo what we already know.
+    if (connection !== "closed") return set({ connection });
+    failures++;
+    const known = navigator.onLine === false || live;
+    // A socket that never opened gets two tries before the copy is called offline: one dropped
+    // attempt on a phone is a retry, not news.
+    const offlineNow = known || get().offline || (copied && failures >= 2);
+    if (offlineNow && !get().offline) announce(navigator.onLine === false ? "Offline. Showing saved copies." : "Disconnected. Showing saved copies.");
+    set({ connection, offline: offlineNow });
+  });
+  t3.onReconnect(() => {
+    subscribeShell();
+    subscribeTasks();
+    loadProviders();
+    void loadArchivedThreads();
+    resubscribeThreads();
+  });
+  // A phone suspends the page: on return the socket may be dead or waiting out a retry.
+  const wake = () => { if (document.visibilityState === "visible") for (const client of allT3Clients()) client.checkAlive(); };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("online", () => {
+    // A socket that stayed open never fires "open" again: the radio coming back is enough to trust it.
+    if (get().offline && get().connection === "open") {
+      set({ offline: false });
+      announce("Connected");
+    }
+    wake();
+  });
+  window.addEventListener("pageshow", wake);
+  // A page that leaves keeps whatever is on screen: the next launch starts from it.
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCache(); });
+  window.addEventListener("pagehide", flushCache);
+  // The radio is the fastest and most reliable witness: it says "offline" before any request fails.
+  window.addEventListener("offline", () => {
+    if (!get().offline) announce(copied ? "Offline. Showing saved copies." : "Offline.");
+    set({ offline: true });
+  });
+  window.setInterval(() => { if (navigator.onLine !== false) void refreshBots(); }, 5_000);
+  window.setInterval(() => { if (document.visibilityState === "visible" && navigator.onLine !== false) void loadMachines(); }, 60_000);
+  runtimeStarted = true;
+}
+
+/** Runs the launch again in a test, where one process gets one real launch. */
+export function resetBootForTest() {
+  booted = false;
+  bootRequest = null;
+  forgetting = false;
+}
+
+/** Says one short line to assistive tech, and clears it so the same words can be said again later. */
+let clearAnnouncement: ReturnType<typeof setTimeout> | undefined;
+export function announce(text: string) {
+  clearTimeout(clearAnnouncement);
+  set({ announcement: text });
+  clearAnnouncement = setTimeout(() => set({ announcement: "" }), 4_000);
+}
+
 // ---------- vault ----------
+/**
+ * Signing out (or handing the device to someone else) must leave nothing readable behind. Saving
+ * stops first: a page that leaves flushes what is on screen, and that must not undo the erase.
+ */
+export async function forgetDeviceCopy() {
+  forgetting = true;
+  for (const timer of cacheTimers.values()) clearTimeout(timer);
+  cacheTimers.clear();
+  stopCacheWrites();
+  await clearCache().catch(() => {});
+}
+
 export async function loadVault() {
   const items = await vaultApi.list().catch(() => null);
   if (items) set({ vault: items });
@@ -250,7 +392,8 @@ export async function loadVault() {
 
 export async function refreshBots() {
   const revision = botsRevision;
-  const [bots, historical] = await Promise.all([api.bots().catch(() => null), api.botIdentities().catch(() => null)]);
+  // A phone that cannot reach the gateway must not queue a request every five seconds.
+  const [bots, historical] = await Promise.all([api.bots(deadline(GATEWAY_PATIENCE_MS)).catch(() => null), api.botIdentities(deadline(GATEWAY_PATIENCE_MS)).catch(() => null)]);
   if (!bots) {
     const session = await api.session().catch(() => null);
     if (session && !session.authenticated && session.accessLogin) set({ auth: "access" });
@@ -259,6 +402,7 @@ export async function refreshBots() {
   if (revision !== botsRevision || pendingBotMutations) return;
   set({ bots: Object.fromEntries(bots.map((b) => [b.slug, b])) });
   if (historical) set({ historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+  keepBoot({ botsRoot: get().botsRoot, executorUrl: get().executorUrl, settings: get().settings, bots, historical: historical ?? Object.values(get().historicalBots) });
 }
 
 async function loadProviders() {
@@ -444,6 +588,7 @@ function emptyThread(): ThreadData {
 
 function patchThread(threadId: string, fn: (d: ThreadData) => ThreadData) {
   set((s) => ({ threadData: { ...s.threadData, [threadId]: fn(s.threadData[threadId] ?? emptyThread()) } }));
+  scheduleCache(threadId);
 }
 
 function scopedShell(thread: ThreadShell, environmentId?: string): ThreadShell {
@@ -460,7 +605,6 @@ const snapshotGenerations = new Map<string, number>();
 
 /** The newest stream opened per thread; a replaced stream's late frames are ignored. */
 const streamGenerations = new Map<string, number>();
-
 /** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
 function openThreadStream(threadId: string, bounded = true): StreamHandle {
   const target = threadTarget(threadId);
@@ -468,8 +612,11 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
   streamGenerations.set(threadId, stream);
   if (target.environmentId) familyThreadIds.add(threadId);
   // acceptBoundedSnapshot: a long thread opens with its recent rows only (older T3 ignores it and sends everything).
+  // acceptCompactTurnItems: the rows a chat shows lead the full list, so T3 leaves their items out of turnItems
+  // instead of sending each one twice. This client paints from visibleTurnItems, and reads turnItems only for
+  // interrupt requests, which T3 keeps there as a retained dependency.
   const afterSequence = bounded || completeThreads.has(threadId) ? threadSequences.get(threadId) : undefined;
-  return threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
+  const handle = threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true, acceptCompactTurnItems: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
     // A cancelled stream can still deliver its snapshot; it must not replace the newer stream's rows (a room's full history).
     if (streamGenerations.get(threadId) !== stream) return;
     if (it.kind === "snapshot") {
@@ -478,6 +625,7 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
       if (p.thread) set((s) => ({ threads: { ...s.threads, [p.thread.id]: { ...s.threads[p.thread.id], ...p.thread } } }));
       const items: Record<string, TurnItem> = {};
       for (const v of p.visibleTurnItems ?? []) items[v.item.id] = v.item;
+      // With turnItemsOmitLocalVisible the rows above are the whole answer: T3 left their items out of turnItems.
       if (!p.visibleTurnItems?.length) for (const i of p.turnItems ?? []) items[i.id] = i;
       // Run controls read interrupt requests, which T3 may keep only in turnItems.
       else for (const i of p.turnItems ?? []) if (i.type === "run_interrupt_request" && !items[i.id]) items[i.id] = i;
@@ -487,6 +635,7 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
         requests: Object.fromEntries((p.runtimeRequests ?? []).map((r: RuntimeRequest) => [r.id, r])),
         subagents: Object.fromEntries((p.subagents ?? []).map((agent: Subagent) => [agent.id, agent])),
         loaded: true,
+        stale: false,
         historyCursor: it.hasMoreHistory ? it.historyCursor ?? null : null,
         hasMoreHistory: it.hasMoreHistory === true && typeof it.historyCursor === "string",
       }));
@@ -510,10 +659,78 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
       }
     }
   });
+  // Paint this device's copy while T3 builds the snapshot; the snapshot replaces it whole.
+  void hydrateThread(threadId, stream);
+  return handle;
 }
 
-const olderLoads = new Set<string>();
-/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
+// ---------- the device's own copy ----------
+/** A write pending per conversation, so a streaming turn saves at most once a second instead of per frame. */
+const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleCache(threadId: string) {
+  if (forgetting || cacheTimers.has(threadId)) return;
+  cacheTimers.set(threadId, setTimeout(() => { cacheTimers.delete(threadId); void saveThread(threadId); }, 1200));
+}
+
+/** Keeps the newest window for the next cold start. Never the source of a paint: the snapshot always replaces it. */
+async function saveThread(threadId: string) {
+  if (forgetting) return;
+  // A linked machine keeps its history in its own T3; this cache is for this machine's threads.
+  if (threadTarget(threadId).environmentId) return;
+  const data = get().threadData[threadId];
+  // A stale thread is what a cache read put here: writing it back would renew a copy nobody refreshed.
+  if (!data?.loaded || data.stale) return;
+  await writeView({
+    v: 1,
+    key: threadId,
+    savedAt: Date.now(),
+    thread: get().threads[threadId] ?? null,
+    // A restored or partially built projection may carry only what it needs; the copy takes it as it is.
+    items: Object.values(data.items ?? {}),
+    runs: Object.values(data.runs ?? {}),
+    requests: Object.values(data.requests ?? {}),
+    subagents: Object.values(data.subagents ?? {}),
+    historyCursor: data.historyCursor ?? null,
+    hasMoreHistory: data.hasMoreHistory === true,
+  });
+}
+
+function flushCache() {
+  if (forgetting) return;
+  for (const [threadId, timer] of cacheTimers) {
+    clearTimeout(timer);
+    cacheTimers.delete(threadId);
+    void saveThread(threadId);
+  }
+}
+
+/** Paints the last copy while T3 builds the snapshot. A snapshot, or a newer stream, wins over it. */
+async function hydrateThread(threadId: string, generation: number) {
+  if (get().threadData[threadId]?.loaded) return;
+  const view = await readView(threadId);
+  if (!view) {
+    // Nothing kept for this conversation: say so instead of leaving a spinner over an empty screen.
+    if (streamGenerations.get(threadId) === generation) patchThread(threadId, (data) => data.loaded ? data : { ...data, copyChecked: true });
+    return;
+  }
+  // A snapshot that landed while the read was in flight, or a stream that replaced this one, is the truth.
+  if (get().threadData[threadId]?.loaded || streamGenerations.get(threadId) !== generation) return;
+  if (view.thread && !get().threads[view.thread.id]) set((s) => ({ threads: { ...s.threads, [view.thread!.id]: view.thread! } }));
+  patchThread(threadId, (data) => data.loaded ? data : {
+    items: Object.fromEntries(view.items.flatMap((item) => item && typeof item.id === "string" ? [[item.id, item] as const] : [])),
+    runs: Object.fromEntries(view.runs.flatMap((run) => run && typeof run.id === "string" ? [[run.id, run] as const] : [])),
+    requests: Object.fromEntries(view.requests.flatMap((request) => request && typeof request.id === "string" ? [[request.id, request] as const] : [])),
+    subagents: Object.fromEntries(view.subagents.flatMap((agent) => agent && typeof agent.id === "string" ? [[agent.id, agent] as const] : [])),
+    loaded: true,
+    stale: true,
+    copyChecked: true,
+    historyCursor: view.historyCursor,
+    hasMoreHistory: view.hasMoreHistory,
+  });
+}
+
+const olderLoads = new Set<string>();/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
 export async function loadOlderMessages(threadId: string): Promise<boolean> {
   const data = get().threadData[threadId];
   if (!data?.hasMoreHistory || !data.historyCursor || olderLoads.has(threadId)) return false;
@@ -676,7 +893,10 @@ export function stopRoomPoll() {
   roomPollTick = 0;
 }
 
-/** The sidebar's room list. Errors are the caller's to show; the last list stays on screen. */
+/** A request to this gateway that has not answered in this long is not going to. */
+const GATEWAY_PATIENCE_MS = 8_000;
+const deadline = (ms: number) => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(ms) : undefined);
+
 export async function loadRooms() {
   const list = await fetchRooms();
   set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
