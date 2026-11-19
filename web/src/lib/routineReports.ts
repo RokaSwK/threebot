@@ -14,10 +14,15 @@ const firstParagraph = (text: string) => {
   return `${(space > 120 ? cut.slice(0, space) : cut).trimEnd()}…`;
 };
 
-/** The routines whose runs leave the Bot's chat. Newest first; the chat shows only the latest few. */
+/**
+ * The routines whose runs leave this Bot's chat: its own project, a conversation of their own, and a run.
+ * T3 streams every project's routines, so the project is what keeps another Bot's lines out of this chat.
+ * Newest first; the chat shows only the latest few.
+ */
 export function ownConversationRoutines(bot: Bot, tasks: ScheduledTask[], limit = 5): ScheduledTask[] {
+  if (!bot.projectId) return [];
   return tasks
-    .filter((task) => task.threadId && task.threadId !== bot.mainThreadId && (task.runCount ?? 0) > 0)
+    .filter((task) => task.projectId === bot.projectId && task.threadId && task.threadId !== bot.mainThreadId && (task.runCount ?? 0) > 0)
     .sort((left, right) => (right.lastRunAt ?? "").localeCompare(left.lastRunAt ?? ""))
     .slice(0, Math.max(1, limit));
 }
