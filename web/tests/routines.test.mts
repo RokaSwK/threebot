@@ -290,6 +290,14 @@ test('a routine in its own conversation reports one line with time and the last 
  const empty=await r.readRoutineReports(bot,[{...task,id:'routine-empty',threadId:'routine-empty'}]);
  assert.equal(empty[0].summary,'Ran in its own conversation.','a run without text still leaves a line');
 });
+test('another project\u2019s routines and a Bot without a project leave no line in this chat',async()=>{
+ const task={...original,threadId:'routine',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text:'Tidied three lines.'}]}:{};
+ assert.deepEqual(r.ownConversationRoutines(bot,[{...task,projectId:'someone-else'}]),[],'a routine of another project is not this Bot\u2019s');
+ assert.equal((await r.readRoutineReports(bot,[{...task,projectId:'someone-else'}])).length,0);
+ assert.deepEqual(r.ownConversationRoutines({...bot,projectId:null},[task]),[],'a Bot with no project owns no routine');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task]).map(t=>t.threadId),['routine'],'its own routine still reports');
+});
 
 test('a failed move archives the conversation it started and leaves the routine in the chat',async()=>{
  const chatModel={instanceId:'pi',model:'chat-model',options:[]};const next={instanceId:'pi',model:'next',options:[]};
