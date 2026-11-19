@@ -1,11 +1,12 @@
-// What this device kept from the last time it could reach the gateway: each Bot's window, the list it
-// opened with, and the image bytes already seen.
+// What this device kept from the last time it could reach the gateway: each Bot's window, the rooms,
+// and the image bytes already seen.
 //
 // A paint cache, never a source of truth: T3's snapshot replaces a view whole, nothing is dispatched
 // from one, and everything here is written from what the store already holds. A conversation keeps
 // its newest rows, so the same recent window a bounded snapshot carries is what a cold start paints.
 
 import type { Bot, Run, RuntimeRequest, Settings, Subagent, ThreadShell, TurnItem } from "./types";
+import type { RoomSummary, RoomView } from "./rooms";
 
 /** One conversation, as the store holds it. */
 export type CachedView = {
@@ -33,6 +34,9 @@ export type CachedBoot = {
   historical: Bot[];
 };
 
+export type CachedRooms = { v: 1; savedAt: number; rooms: RoomSummary[] };
+export type CachedRoom = { v: 1; id: string; savedAt: number; room: RoomView };
+
 const DB_NAME = "threebot.view";
 const DB_VERSION = 1;
 const STORE = "views";
@@ -40,12 +44,16 @@ const INDEX = "index";
 const MB = 1024 * 1024;
 /** One conversation's window. A bounded snapshot tops out at 1 MiB in T3; this leaves room for runs and requests. */
 export const VIEW_BYTES = 2 * MB;
+/** A member thread a room reads: the room shows the recent turns, so it needs less than a chat does. */
+export const ROOM_VIEW_BYTES = 1 * MB;
 /** A late write never counts as "last seen" for the next launch, so a forgotten device does not keep everything. */
 const EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Per record kind: how many to keep and how many bytes they may take together. */
 const RULES: Record<string, { keep: number; bytes: number }> = {
   view: { keep: 8, bytes: 30 * MB },
+  room: { keep: 12, bytes: 4 * MB },
+  rooms: { keep: 1, bytes: 1 * MB },
   boot: { keep: 1, bytes: 1 * MB },
   asset: { keep: 80, bytes: 40 * MB },
 };
@@ -157,7 +165,7 @@ const bytesOf = (value: unknown) => {
   try { return JSON.stringify(value)?.length ?? 0; } catch { return Number.MAX_SAFE_INTEGER; }
 };
 
-/** `view:<thread>`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
+/** `view:<thread>`, `room:<id>`, `rooms`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
 const kindOf = (id: string) => id.split(":")[0] ?? id;
 
 async function readIndex(store: Backend): Promise<Index> {
@@ -248,7 +256,38 @@ export async function writeBoot(boot: Omit<CachedBoot, "v" | "savedAt">): Promis
   await writeQuietly("boot", { ...boot, v: 1, savedAt: Date.now() });
 }
 
-/** Drops one record: a file that would not decode must not be served twice. */
+/** The sidebar's rooms, so it lists them before the gateway answers. */
+export async function readRooms(): Promise<RoomSummary[] | null> {
+  const cached = await readRecord("rooms", (value): value is CachedRooms => !!value && typeof value === "object" && (value as CachedRooms).v === 1 && Array.isArray((value as CachedRooms).rooms));
+  return cached?.rooms ?? null;
+}
+
+export async function writeRooms(rooms: RoomSummary[]): Promise<void> {
+  await writeQuietly("rooms", { v: 1, savedAt: Date.now(), rooms });
+}
+
+/** One room's turn index and members. The replies stay in the members' own cached windows. */
+export async function readRoom(id: string): Promise<RoomView | null> {
+  const cached = await readRecord(`room:${id}`, (value): value is CachedRoom => {
+    if (!value || typeof value !== "object") return false;
+    const room = value as Partial<CachedRoom>;
+    return room.v === 1 && room.id === id && !!room.room && Array.isArray(room.room.turns);
+  });
+  return cached?.room ?? null;
+}
+
+export async function writeRoom(room: RoomView): Promise<void> {
+  // A room is rewritten on every turn change; the copy keeps its newest turns instead of growing forever.
+  // A fixture or a partially built room may carry no turns: the copy then keeps the room as it is.
+  const turns = Array.isArray(room.turns) ? room.turns : [];
+  const trimmed = { ...room, turns: turns.slice(-400) };
+  while (bytesOf(trimmed) > ROOM_VIEW_BYTES && trimmed.turns.length > 20) {
+    trimmed.turns = trimmed.turns.slice(Math.ceil(trimmed.turns.length / 4));
+  }
+  await writeQuietly(`room:${room.id}`, { v: 1, id: room.id, savedAt: Date.now(), room: trimmed });
+}
+
+/** Drops one record: a deleted room must not come back, and a broken file must not be served twice. */
 export async function forgetRecord(id: string): Promise<void> {
   await serial(async () => {
     const store = storage();
@@ -258,6 +297,8 @@ export async function forgetRecord(id: string): Promise<void> {
     await store.remove([id]).catch(() => {});
   }).catch(() => {});
 }
+
+export const forgetRoom = (id: string) => forgetRecord(`room:${id}`);
 
 /** Bytes this device kept for a file it has already shown, keyed by whatever identifies the asset. */
 export async function readAsset<T>(key: string, usable: (value: unknown) => value is T): Promise<T | null> {

@@ -114,6 +114,21 @@ test('a warm launch still asks for the Vault and the machines it does not cache'
   assert.ok(fetched.some((url) => url.includes('/api/machines')), 'and neither are the linked machines');
 });
 
+test('the room the URL names is opened once, not again when the gateway answers', async () => {
+  resetBootForTest();
+  resetCacheForTest();
+  sessionAnswer = async () => ({ authenticated: true });
+  globalThis.location = new URL('http://boot-copy.test/?room=r1') as unknown as Location;
+  await keepCopy();
+  const at = '2026-01-01T00:00:00Z';
+  await app.writeRoom({ id: 'r1', name: 'Design review', description: '', guidance: '', section: null, pinned: false, createdAt: at, settings: { mode: 'panel', defaultResponder: 'lead', lead: 'alpha', model: 'inherit', mentionPolicy: 'anywhere', allowCrossMentions: true, maxWaves: 3, maxReplies: 10, memberTimeoutMin: 10, turnDeadlineMin: 20, notifications: true }, members: [], formerMembers: [], turns: [{ id: 'turn-1', at, text: 'Look at this', mentions: [], replyTo: null, status: 'done', runs: [] }] });
+  fetched.length = 0;
+  await boot();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const roomFetches = fetched.filter((url) => url === '/api/rooms/r1');
+  assert.equal(roomFetches.length, 1, 'asking the gateway again does not close and reopen what is on screen');
+});
+
 test('signing out refuses the saves that are still on their way', async () => {
   resetCacheForTest();
   const view = { v: 1, key: 'thread-signout', savedAt: Date.now(), thread: null, items: [{ id: 'm1', text: 'kept' }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false };

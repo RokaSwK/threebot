@@ -144,12 +144,12 @@ export type DeleteRoomResult = {
 
 const roomPath = (id: string) => `/api/rooms/${encodeURIComponent(id)}`;
 
-export function fetchRooms(): Promise<RoomSummary[]> {
-  return apiRequest<{ rooms: RoomSummary[] }>("/api/rooms").then((body) => body.rooms);
+export function fetchRooms(signal?: AbortSignal): Promise<RoomSummary[]> {
+  return apiRequest<{ rooms: RoomSummary[] }>("/api/rooms", signal ? { signal } : {}).then((body) => body.rooms);
 }
 
-export function fetchRoom(id: string): Promise<RoomView> {
-  return apiRequest<{ room: RoomView }>(roomPath(id)).then((body) => body.room);
+export function fetchRoom(id: string, signal?: AbortSignal): Promise<RoomView> {
+  return apiRequest<{ room: RoomView }>(roomPath(id), signal ? { signal } : {}).then((body) => body.room);
 }
 
 export function createRoom(input: CreateRoomInput): Promise<RoomView> {
