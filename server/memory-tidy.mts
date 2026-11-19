@@ -35,6 +35,8 @@ export type MemoryTidyTask = {
   threadMode?: string;
   schedule: { type: string; timeOfDay?: string; weekdays?: number[]; [key: string]: unknown };
   projectId: string;
+  /** Present on T3's task; kept so a frequency change does not reset a model chosen for the tidy. */
+  modelSelection?: unknown;
   lastRunAt?: string | null;
   lastRunStatus?: string | null;
   lastRunError?: string | null;
@@ -108,7 +110,9 @@ export async function setMemoryTidy({ client, bot, frequency, modelSelection }: 
     threadId: existing?.threadId ?? null,
     threadMode: existing?.threadMode ?? "fresh_session",
     workspaceStrategy: { type: "root" },
-    modelSelection,
+    // A model chosen for this routine wins over the Bot's current one; changing the frequency is not
+    // a request to change the model.
+    modelSelection: existing?.modelSelection ?? modelSelection,
     // It only edits files inside memory/. Commands still ask; no need for full access.
     runtimeMode: "auto-accept-edits",
     interactionMode: "default",

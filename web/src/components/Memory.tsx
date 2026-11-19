@@ -6,7 +6,9 @@ import { selectThread, setDetailsOpen, toast, useApp } from "../store";
 import { chatDraft } from "../lib/chatDrafts";
 import { memoryApi, type MemoryFile, type MemoryFiles, type MemoryScope, type TidyFrequency } from "../lib/memory";
 import { findTidyTask, tidyScheduleText, tidyState } from "../lib/memoryTidy";
-import type { Bot } from "../lib/types";
+import { setRoutineModel } from "../lib/routines";
+import { ModelPicker } from "./ModelPicker";
+import type { Bot, ModelSelection } from "../lib/types";
 
 // While no one is editing, the tab picks up the Bot's own edits on this beat.
 const REFRESH_MS = 5_000;
@@ -52,9 +54,22 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   };
 
   const tasks = useApp((s) => s.tasks);
+  const threads = useApp((s) => s.threads);
   const routine = useMemo(() => findTidyTask(bot, tasks), [bot, tasks]);
   const frequency = tidyState(routine);
   const [tidyBusy, setTidyBusy] = useState<TidyFrequency | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const tidyModel = routine ? (routine.threadId ? threads[routine.threadId]?.modelSelection ?? routine.modelSelection ?? null : routine.modelSelection ?? null) : null;
+  const changeTidyModel = async (selection: ModelSelection) => {
+    if (!routine || modelBusy) return;
+    setModelBusy(true);
+    try {
+      await setRoutineModel(routine, bot, selection);
+      toast(`Tidy runs on ${selection.model}.`);
+    } catch (cause) {
+      toast(cause instanceof Error ? cause.message : "Couldn't change the tidy model");
+    } finally { setModelBusy(false); }
+  };
   const changeTidy = async (next: TidyFrequency) => {
     if (tidyBusy) return;
     setTidyBusy(next);
@@ -124,6 +139,13 @@ export function MemoryTab({ bot }: { bot: Bot }) {
             ))}
           </div>
         </div>
+        {routine && <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line pt-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px]">Tidy model</div>
+            <p id="tidy-model-note" className="text-[12px] text-muted">Runs in its own conversation on this model.</p>
+          </div>
+          <ModelPicker value={tidyModel} onChange={(selection) => void changeTidyModel(selection)} triggerClassName="min-h-11" describedBy="tidy-model-note" title="Tidy model" />
+        </div>}
         {routine?.threadId && <button type="button" aria-label={`View tidy runs for ${bot.name}`} className="mt-2 text-[12px] text-fg underline underline-offset-2" onClick={() => { selectThread(bot, routine.threadId!); setDetailsOpen(false); }}>View runs</button>}
       </div>
     </div>

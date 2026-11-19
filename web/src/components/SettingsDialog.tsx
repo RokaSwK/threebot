@@ -273,7 +273,7 @@ function T3DictationRow() {
 function BackupModelRow() {
   const fallback = useApp((state) => state.fallbackModel);
   const change = (selection: ModelSelection | null) => saveFallbackModel(selection).catch((error) => toast(error instanceof Error ? error.message : "Couldn't save the backup model"));
-  return <Row title="Backup model" desc="T3 uses it for new threads when the default model is out of usage. Routines keep their own model.">
+  return <Row title="Backup model" desc="T3 uses it for new threads when the default model is out of usage. Routines in their own conversation keep their model.">
     <div className="backup-model-actions flex items-center gap-2">
       <ModelPicker value={fallback} onChange={(selection) => void change(selection)} />
       {fallback && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => void change(null)}>Turn off</button>}

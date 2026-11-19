@@ -752,13 +752,14 @@ test('a remote child on a machine Threebot reaches opens inside the app with its
   useApp.setState({ machines: null });
 });
 
-test('a routine report says what ran and names the run behind View', async () => {
+test('a routine report says what ran and names the run behind Open', async () => {
   const bot = { slug: 'alpha', name: 'Alpha', mainThreadId: 'root', shape: 'blob', color: 'teal' };
   const entry = { kind: 'routine-report' as const, id: 'routine-report:task-1', at: '2026-11-16T03:30:00Z', title: 'Tidy memory', summary: 'Running now, in its own conversation.', threadId: 't-tidy', failed: false };
   await act(async () => root.render(h(RoutineReportLine, { entry, bot })));
   const view = host.querySelector('button');
-  assert.equal(view.textContent, 'View');
-  assert.equal(view.getAttribute('aria-label'), 'View the Tidy memory conversation');
+  assert.equal(view.textContent, 'Open');
+  assert.equal(view.getAttribute('aria-label'), 'Open the Tidy memory conversation');
+  assert.equal(host.querySelector('time').getAttribute('datetime'), entry.at);
   assert.equal(host.querySelector('svg').getAttribute('aria-hidden'), 'true');
   assert.match(host.textContent ?? '', /Running now, in its own conversation/u);
 });

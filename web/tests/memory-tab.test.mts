@@ -169,3 +169,13 @@ test("the tidy frequency is one choice of three, and the routine link names its 
   const view = button("View runs");
   assert.equal(view?.getAttribute("aria-label"), "View tidy runs for Alpha");
 });
+
+test("the tidy model row keeps its own conversation and shows the chosen model", async () => {
+  const task = { id: "task-9", title: "Tidy memory", projectId: "p-alpha", enabled: true, threadId: "t-tidy", schedule: { type: "fixed_time", timeOfDay: "03:30" } };
+  await act(async () => root.render(h(MemoryTab, { bot: { ...bot, projectId: "p-alpha" } })));
+  await act(async () => useApp.setState({ tasks: [task], threads: { "t-tidy": { modelSelection: { instanceId: "pi", model: "tidy-model", options: [] } } }, providers: [] }));
+  await settle();
+  assert.match(host.textContent ?? "", /Tidy model/u);
+  assert.match(host.textContent ?? "", /Runs in its own conversation on this model/u);
+  assert.match(host.textContent ?? "", /tidy-model/u);
+});

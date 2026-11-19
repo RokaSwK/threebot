@@ -7,6 +7,7 @@ import { SubagentRow } from "./ThreadFamily";
 import { sameTaskBot } from "../lib/threadFamily";
 import { Pill, Spinner } from "./ui";
 import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, selectThread, useApp } from "../store";
+import { timeAgo } from "../lib/projects";
 import type { Entry } from "../lib/transcript";
 import type { Bot } from "../lib/types";
 import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretLink, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
@@ -43,11 +44,12 @@ export function EventLine({ entry }: { entry: Extract<Entry, { kind: "event" }> 
 /** A routine's report, derived from T3's run; it is not a model turn and never wakes the Bot. */
 export function RoutineReportLine({ entry, bot }: { entry: Extract<Entry, { kind: "routine-report" }>; bot: Bot }) {
   return (
-    <div className="fade-up flex flex-wrap items-center justify-center gap-2 py-2 text-[13px] text-muted">
-      <Sparkles size={13} className="opacity-80" aria-hidden="true" />
-      <span className="text-fg">{entry.title}</span>
-      <span className={entry.failed ? "text-danger" : "text-fg"}>{entry.summary}</span>
-      <button type="button" aria-label={`View the ${entry.title} conversation`} className="underline underline-offset-2 hover:text-fg" onClick={() => selectThread(bot, entry.threadId)}>View</button>
+    <div className="fade-up flex flex-wrap items-center justify-start gap-x-2 gap-y-1 py-2 text-left text-[13px] text-muted sm:justify-center sm:text-center">
+      <Sparkles size={13} className="shrink-0 opacity-80" aria-hidden="true" />
+      <span className="break-words text-fg">{entry.title}</span>
+      <span className={clsx("line-clamp-2 min-w-0 flex-1 sm:line-clamp-1 sm:flex-none", entry.failed ? "text-danger" : "text-fg")}>{entry.summary}</span>
+      <time dateTime={entry.at} className="shrink-0 text-[12px]">{timeAgo(entry.at)}</time>
+      <button type="button" aria-label={`Open the ${entry.title} conversation`} className="inline-flex min-h-6 min-w-6 shrink-0 items-center px-1 underline underline-offset-2 hover:text-fg max-sm:min-h-11" onClick={() => selectThread(bot, entry.threadId)}>Open</button>
     </div>
   );
 }
