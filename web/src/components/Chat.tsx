@@ -87,6 +87,7 @@ function StopAllButton({ threadId }: { threadId: string }) {
 export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = false }: { bot: Bot; threadId?: string | null; onBack?: () => void; embedded?: boolean }) {
   useEffect(() => (threadId ? watchThread(threadId) : undefined), [threadId]);
   const data = useApp((s) => (threadId ? s.threadData[threadId] : undefined));
+  const offline = useApp((s) => s.offline);
   const shell = useApp((s) => (threadId ? s.threads[threadId] : undefined));
   const threads = useApp((s) => s.threads);
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
@@ -134,7 +135,8 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   }), [runs, providers]);
   const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches, routineReports: tidyReport ? [tidyReport] : [] }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches, tidyReport]);
   const activeRun = runs.filter(run => isActiveRun(run) && run.status !== "queued").sort((a, b) => b.ordinal - a.ordinal)[0];
-  const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest;
+  // A stale paint is history: it cannot say a run is going on right now.
+  const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest && data?.stale !== true;
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!working) return;
@@ -144,6 +146,11 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const phrases = working ? workingPhrases(items, activeRun?.id ?? null) : [];
   const phrase = activeRun?.status === "preparing" ? "Getting ready…" : phrases.length ? phrases[tick % phrases.length] : "";
   const status = isChild && threadId ? conversationStatus(threadId) : botStatus(bot);
+  // A page that is not live says so where the Bot's status goes. "Offline" is only claimed when the
+  // browser says so or a live socket went away; otherwise the rows are simply a saved copy.
+  const statusText = offline
+    ? (data?.stale ? "Offline · Saved copy" : "Offline")
+    : data?.stale ? "Saved copy" : statusLine(status);
 
   const { scroller, showJump, onScrollCapture, onUserScrollIntent, visibleEntries, hiddenCount, loadEarlier } = useChatScroll({ threadKey: threadId ?? `bot:${bot.slug}`, loaded: data?.loaded === true, entries });
   // Older rows of a bounded thread come from T3 page by page; reveal them once they've rendered as hidden entries.
@@ -182,7 +189,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
         )}
         <button onClick={() => setDetailsOpen(!detailsOpen)} className="chat-title pointer-events-auto flex h-8 max-w-[55%] items-center gap-2 rounded-full border border-line bg-chat/80 pr-3.5 pl-1.5 backdrop-blur hover:bg-hover" title="View conversation details">
           <ActivityAvatar threadId={threadId} status={status} shape={identity.shape} color={identity.color} picture={identity.avatarImage} size={onBack ? 26 : 24} />
-          <span className="chat-title-text min-w-0"><span className="chat-title-name flex min-w-0 items-center gap-1.5 text-[13.5px]"><span className="truncate">{identity.name}</span>{threadId && threadTarget(threadId).environmentId && <MachineBadge environmentId={threadTarget(threadId).environmentId!} />}</span>{statusLine(status) && <span className="chat-status block truncate text-[11px] text-muted">{statusLine(status)}</span>}</span>
+          <span className="chat-title-text min-w-0"><span className="chat-title-name flex min-w-0 items-center gap-1.5 text-[13.5px]"><span className="truncate">{identity.name}</span>{threadId && threadTarget(threadId).environmentId && <MachineBadge environmentId={threadTarget(threadId).environmentId!} />}</span>{statusText && <span className="chat-status block truncate text-[11px] text-muted">{statusText}</span>}</span>
         </button>
         <div className="pointer-events-auto absolute right-3 flex gap-1">
           <IconButton className="chat-computer" title="Open computer" onClick={() => openDialog({ kind: "computer", slug: bot.slug })}>
@@ -207,15 +214,22 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
       >
         <WorkspaceFileContext value={workspace}>
         <div className={clsx("chat-messages mx-auto flex w-full max-w-[960px] flex-col px-4 pb-4", embedded ? "pt-3" : "pt-16")}>
-          {!data?.loaded && threadId && (
+          {!data?.loaded && threadId && (data?.copyChecked && offline ? (
+            // Nothing kept for this conversation, and no network to ask: say it instead of spinning.
+            // Online, an empty spinner is honest: the snapshot is on its way.
+            <div className="mx-auto flex w-full max-w-[320px] flex-col items-center py-16 text-center" role="status">
+              <h2 className="text-[16px] font-medium">Not on this device yet</h2>
+              <p className="mt-1 text-[13.5px] text-muted">It will load when the gateway is reachable.</p>
+            </div>
+          ) : (
             <div className="flex justify-center py-10 text-muted">
               <Spinner size={18} />
             </div>
-          )}
+          ))}
           {greeting && !embedded && (
             <BotBubble text={`Hey${settings?.userName ? ` ${settings.userName}` : ""}, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?`} />
           )}
-          {(hiddenCount > 0 || data?.hasMoreHistory) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
+          {(hiddenCount > 0 || (data?.hasMoreHistory && !offline)) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
               <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />
@@ -249,7 +263,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
 
       {threadId && !embedded && <SideChatPill parentThreadId={threadId} />}
       {voiceChat && threadId && <VoiceDock bot={identity === bot ? bot : { ...bot, ...identity }} threadId={threadId} observation={voiceObservation} onEnd={() => setVoiceChat(false)} />}
-      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} embedded={embedded} inVoiceChat={voiceChat} onVoiceChat={async () => {
+      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} embedded={embedded} offline={offline} inVoiceChat={voiceChat} onVoiceChat={async () => {
         if (!threadId || !voiceChatSupported()) return;
         const problem = await requestMicrophone();
         if (problem) toast(problem); else setVoiceChat(true);
@@ -459,7 +473,7 @@ function useMobileChat() {
   return mobile;
 }
 
-function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
+function Composer({ bot, threadId, working, embedded, offline, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; offline: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
   const draft = chatDraft(bot, threadId);
   const { text, attachments: atts, sending, failed, replyTo, fresh } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const { setText, addFiles, setReply, setFresh } = draft;
@@ -496,7 +510,11 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
     setText("");
     startFresh();
   };
-  const submit = () => !atts.length && isClearCommand(text) ? clearCommand() : side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
+  const submit = () => {
+    // Enter reaches this too, so the offline guard belongs here and not only on the Send button.
+    if (offline) return;
+    return !atts.length && isClearCommand(text) ? clearCommand() : side ? void submitSide(side.prompt) : /^\/goal(?:\s|$)/.test(text.trim()) && !atts.length ? void submitGoal() : draft.submit();
+  };
   const [listening, setListening] = useState(false);
   useReportLocalActivity(threadId, listening ? "listening" : atts.some((item) => item.state === "uploading") ? "uploading" : sending ? "sending" : null);
   const settings = useVoiceSettings();
@@ -747,6 +765,9 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
           <PendingAttachments items={atts} onRemove={draft.removeAttachment} />
           {fresh && freshOn && <div className="composer-reply composer-fresh" role="status"><span>Your next message starts a fresh session. {bot.name} won't see earlier messages, only its memory and files.</span><button type="button" aria-label="Keep the current session" title="Keep the current session" onClick={() => setFresh(false)}><X size={16} aria-hidden="true" /></button></div>}
           {replyTo && <div className="composer-reply"><span title={replyTo}>{replyLabel(replyTo)}</span><button type="button" aria-label="Cancel reply" onClick={() => setReply(null)}><X size={16} aria-hidden="true" /></button></div>}
+          {offline && (
+            <p className="composer-offline px-3 pt-1.5 text-[11.5px] text-muted">You're offline. Your draft is kept here until the connection is back.</p>
+          )}
           <div className="composer-controls flex items-end gap-1.5 p-1.5" data-expanded={replying}>
             <ComposerActions mobile={mobile} onFiles={addFiles} actions={composerActions} resetKey={`${bot.slug}:${threadId ?? ""}`} />
             <textarea
@@ -835,7 +856,7 @@ function Composer({ bot, threadId, working, embedded, inVoiceChat, onVoiceChat, 
               {transcribing ? <Spinner /> : <Mic size={16} />}
             </IconButton>}
             {threadId && <ComposerRunAction threadId={threadId} working={working} hasDraft={!!text.trim() || atts.length > 0} inVoiceChat={inVoiceChat || embedded} onVoiceChat={onVoiceChat} />}
-            {(text.trim() || atts.length > 0) && <IconButton onClick={submit} disabled={sending || specialSend.disabled || atts.some((item) => item.state === "uploading")} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send">
+            {(text.trim() || atts.length > 0) && <IconButton onClick={submit} disabled={offline || sending || specialSend.disabled || atts.some((item) => item.state === "uploading")} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title={offline ? "You're offline. Reconnect to send." : "Send"}>
               <ArrowUp size={17} />
             </IconButton>}
           </div>
