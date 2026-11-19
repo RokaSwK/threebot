@@ -107,3 +107,11 @@ test("adopted Bot tidy targets only its .bot/memory folder", async () => {
   await setMemoryTidy({ client, bot: adopted, frequency: "nightly", modelSelection });
   assert.equal(client.calls.find((call) => call.tag === "scheduledTasks.upsert")!.payload.prompt, prompt);
 });
+
+test("changing the frequency keeps the model chosen for the tidy", async () => {
+  const chosen = { instanceId: "pi", model: "tidy-model", options: [{ id: "thinking", value: "low" }] };
+  const client = fakeClient([{ ...task, modelSelection: chosen }]);
+  await setMemoryTidy({ client, bot, frequency: "weekly", modelSelection });
+  const upsert = client.calls.find((call) => call.tag === "scheduledTasks.upsert")!.payload;
+  assert.deepEqual(upsert.modelSelection, chosen);
+});
