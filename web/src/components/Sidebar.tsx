@@ -5,7 +5,7 @@ import { ActivityAvatar } from "./ActivityAvatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
 import { UpdatePopover, useUpdateNotice } from "./RemoteAccess";
-import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, useProjectsOn, type BotStatus } from "../store";
+import { archiveThread, archivedInT3, unarchiveBotProject, forgetDeviceCopy, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, toast, updateBot, useApp, useProjectsOn, type BotStatus } from "../store";
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
@@ -448,6 +448,8 @@ function AccountMenu({ x, y, onClose }: { x: number; y: number; onClose: () => v
           onSelect: async () => {
             const target = await signOutTarget();
             await api.logout();
+            // What this device kept is readable without a password: signing out forgets it too.
+            await forgetDeviceCopy();
             location.href = target;
           },
         },

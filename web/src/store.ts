@@ -9,6 +9,8 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
+import { ROOM_VIEW_BYTES, clearCache, forgetRoom, readBoot, readRoom, readRooms, readView, stopCacheWrites, writeBoot, writeRoom, writeRooms, writeView, type CachedBoot } from "./lib/threadCache";
+import { resetAssetCopies } from "./lib/assetCopies";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -19,6 +21,10 @@ export type ThreadData = {
   requests: Record<string, RuntimeRequest>;
   subagents: Record<string, Subagent>;
   loaded: boolean;
+  /** Painted from this device's own copy; T3's snapshot has not landed yet, so it says nothing about now. */
+  stale?: boolean;
+  /** The copy was looked for and found empty: what is missing is on the server, not on its way. */
+  copyChecked?: boolean;
   /** Bounded snapshots hold only recent rows; older ones load page by page from this cursor. */
   historyCursor?: string | null;
   hasMoreHistory?: boolean;
@@ -53,6 +59,16 @@ type State = {
   archivedThreads: Record<string, ThreadShell>;
   auth: "unknown" | "loading" | "access" | "password" | "error" | "ready";
   connection: "connecting" | "open" | "closed";
+  /** This page opened from what the device kept, or lost a socket it had: what is on screen is the last copy. */
+  offline: boolean;
+  /** The open room is the copy this device kept; its poll has not answered yet. */
+  roomStale: boolean;
+  /** This device has no copy of the open room: what is missing is on the server, not on its way. */
+  roomMissing: boolean;
+  /** The gateway says the open room is gone (deleted on another device); its copy must not come back. */
+  roomGone: boolean;
+  /** One short line for the live region: only state changes say anything, never the first paint. */
+  announcement: string;
   botsRoot: string;
   executorUrl: string | null;
   settings: Settings | null;
@@ -117,6 +133,11 @@ export const useApp = create<State>(() => ({
   archivedThreads: {},
   auth: "unknown",
   connection: "closed",
+  offline: false,
+  roomStale: false,
+  roomMissing: false,
+  roomGone: false,
+  announcement: "",
   botsRoot: "",
   executorUrl: null,
   settings: null,
@@ -201,36 +222,22 @@ async function initialize() {
   set({ auth: "loading" });
   try {
     leaveLoginRoute();
-    const s = await api.session();
-    if (!s.authenticated) return set({ auth: s.accessLogin ? "access" : s.passwordRequired ? "password" : "error" });
-    const [config, settings, bots, historical] = await initialData();
-    const route = new URLSearchParams(location.search);
-    const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
-    const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
-    if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
-    if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
-    if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
-    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
-    void loadRooms().catch(() => {});
-    if (routeRoom) selectRoom(routeRoom);
-    if (!runtimeStarted) {
-      t3.onState((connection) => set({ connection }));
-      t3.onReconnect(() => {
-        subscribeShell();
-        subscribeTasks();
-        loadProviders();
-        void loadArchivedThreads();
-        resubscribeThreads();
-      });
-      // A phone suspends the page: on return the socket may be dead or waiting out a retry.
-      const wake = () => { if (document.visibilityState === "visible") for (const client of allT3Clients()) client.checkAlive(); };
-      document.addEventListener("visibilitychange", wake);
-      window.addEventListener("online", wake);
-      window.addEventListener("pageshow", wake);
-      window.setInterval(refreshBots, 5_000);
-      window.setInterval(() => { if (document.visibilityState === "visible") void loadMachines(); }, 60_000);
-      runtimeStarted = true;
+    const boot = await readBoot();
+    // A device that opened this app before paints what it kept at once; the gateway is asked behind
+    // that paint, so no launch waits on a timeout a phone may take seconds to give.
+    if (boot) {
+      openFromCopy(boot);
+      void confirmLaunch();
+      return;
     }
+    const session = await api.session();
+    if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+    const [config, settings, bots, historical] = await initialData();
+    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+    keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    openRoute(bots, historical);
+    void loadRooms().catch(() => {});
+    startRuntime();
     t3.connect();
     void loadVault();
     void loadMachines();
@@ -241,7 +248,162 @@ async function initialize() {
   }
 }
 
+/**
+ * The launch that painted from the copy on screen: ask the gateway properly, now that nobody is
+ * waiting. A changed password wins over the copy; a refused launch leaves the copy on screen.
+ */
+async function confirmLaunch() {
+  const session = await api.session().catch(() => null);
+  // Asked and unanswered: the gateway is not reachable, which is what "offline" means here.
+  if (!session) return set({ offline: true });
+  if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+  try {
+    const [config, settings, bots, historical] = await initialData();
+    if (get().auth !== "ready") return;
+    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+    keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    // A Bot or room the copy did not know about (added on another device) is still reachable by URL.
+    openRoute(bots, historical);
+    void loadRooms().catch(() => {});
+    // The copy carries neither of these, and the first paint must not be the last word on them.
+    void loadVault();
+    void loadMachines();
+  } catch {
+    // The gateway answered the session but not the rest: the copy stays, the socket keeps trying.
+  }
+}
+
+/**
+ * Where the URL points: a Bot, a thread on a linked machine, the Projects page, or a room.
+ * The URL's room is opened once per launch: asking the gateway again must not close what is on screen.
+ */
+let routeRoomOpened = false;
+function openRoute(bots: Bot[], historical: Bot[]) {
+  const route = new URLSearchParams(location.search);
+  const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
+  const routeBot = bots.find((b) => b.slug === route.get("bot")) ?? historical.find((b) => `archived:${b.mainThreadId}` === route.get("bot"));
+  if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
+  if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
+  if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
+  if (routeRoom && !routeRoomOpened) {
+    routeRoomOpened = true;
+    selectRoom(routeRoom);
+  }
+}
+
+/**
+ * What this device kept, painted at once. "Offline" is claimed only when the browser already knows
+ * there is no network; otherwise the copy is simply a copy until the socket proves otherwise.
+ */
+function openFromCopy(boot: CachedBoot) {
+  copied = true;
+  set({ botsRoot: boot.botsRoot, executorUrl: boot.executorUrl, settings: boot.settings, bots: Object.fromEntries(boot.bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(boot.historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+  // The URL still points where the user was: a room opens from its copy, a thread from its view.
+  openRoute(boot.bots, boot.historical);
+  void hydrateRooms();
+  void loadRooms().catch(() => {});
+  startRuntime();
+  t3.connect();
+  booted = true;
+  set({ auth: "ready", offline: navigator.onLine === false });
+}
+
+/** What the next launch needs when the gateway cannot be reached. Best effort: a full quota changes nothing here. */
+function keepBoot(boot: Omit<CachedBoot, "v" | "savedAt">) {
+  void writeBoot(boot);
+}
+
+/** This launch painted a copy before asking: the one thing that makes an offline claim honest later. */
+let copied = false;
+/** Signing out is the last write: nothing on screen may be saved after it. */
+let forgetting = false;
+
+function startRuntime() {
+  if (runtimeStarted) return;
+  let live = false;
+  let failures = 0;
+  t3.onState((connection) => {
+    if (connection === "open") {
+      const was = get().offline;
+      live = true;
+      failures = 0;
+      set({ connection, offline: false });
+      // Same page, new state: a screen reader hears the change, a first paint stays quiet.
+      if (copied && was) announce("Connected");
+      return;
+    }
+    // Connecting says nothing about reachability, and a retry must not undo what we already know.
+    if (connection !== "closed") return set({ connection });
+    failures++;
+    const known = navigator.onLine === false || live;
+    // A socket that never opened gets two tries before the copy is called offline: one dropped
+    // attempt on a phone is a retry, not news.
+    const offlineNow = known || get().offline || (copied && failures >= 2);
+    if (offlineNow && !get().offline) announce(navigator.onLine === false ? "Offline. Showing saved copies." : "Disconnected. Showing saved copies.");
+    set({ connection, offline: offlineNow });
+  });
+  t3.onReconnect(() => {
+    subscribeShell();
+    subscribeTasks();
+    loadProviders();
+    void loadArchivedThreads();
+    resubscribeThreads();
+  });
+  // A phone suspends the page: on return the socket may be dead or waiting out a retry.
+  const wake = () => { if (document.visibilityState === "visible") for (const client of allT3Clients()) client.checkAlive(); };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("online", () => {
+    // A socket that stayed open never fires "open" again: the radio coming back is enough to trust it.
+    if (get().offline && get().connection === "open") {
+      set({ offline: false });
+      announce("Connected");
+    }
+    wake();
+  });
+  window.addEventListener("pageshow", wake);
+  // A page that leaves keeps whatever is on screen: the next launch starts from it.
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCache(); });
+  window.addEventListener("pagehide", flushCache);
+  // The radio is the fastest and most reliable witness: it says "offline" before any request fails.
+  window.addEventListener("offline", () => {
+    if (!get().offline) announce(copied ? "Offline. Showing saved copies." : "Offline.");
+    set({ offline: true });
+  });
+  window.setInterval(() => { if (navigator.onLine !== false) void refreshBots(); }, 5_000);
+  window.setInterval(() => { if (document.visibilityState === "visible" && navigator.onLine !== false) void loadMachines(); }, 60_000);
+  runtimeStarted = true;
+}
+
+/** Runs the launch again in a test, where one process gets one real launch. */
+export function resetBootForTest() {
+  booted = false;
+  bootRequest = null;
+  routeRoomOpened = false;
+  forgetting = false;
+}
+
+/** Says one short line to assistive tech, and clears it so the same words can be said again later. */
+let clearAnnouncement: ReturnType<typeof setTimeout> | undefined;
+export function announce(text: string) {
+  clearTimeout(clearAnnouncement);
+  set({ announcement: text });
+  clearAnnouncement = setTimeout(() => set({ announcement: "" }), 4_000);
+}
+
 // ---------- vault ----------
+/**
+ * Signing out (or handing the device to someone else) must leave nothing readable behind. Saving
+ * stops first: a page that leaves flushes what is on screen, and that must not undo the erase.
+ */
+export async function forgetDeviceCopy() {
+  forgetting = true;
+  for (const timer of cacheTimers.values()) clearTimeout(timer);
+  cacheTimers.clear();
+  stopCacheWrites();
+  resetAssetCopies();
+  await clearCache().catch(() => {});
+}
+
 export async function loadVault() {
   const items = await vaultApi.list().catch(() => null);
   if (items) set({ vault: items });
@@ -250,7 +412,8 @@ export async function loadVault() {
 
 export async function refreshBots() {
   const revision = botsRevision;
-  const [bots, historical] = await Promise.all([api.bots().catch(() => null), api.botIdentities().catch(() => null)]);
+  // A phone that cannot reach the gateway must not queue a request every five seconds.
+  const [bots, historical] = await Promise.all([api.bots(deadline(GATEWAY_PATIENCE_MS)).catch(() => null), api.botIdentities(deadline(GATEWAY_PATIENCE_MS)).catch(() => null)]);
   if (!bots) {
     const session = await api.session().catch(() => null);
     if (session && !session.authenticated && session.accessLogin) set({ auth: "access" });
@@ -259,6 +422,7 @@ export async function refreshBots() {
   if (revision !== botsRevision || pendingBotMutations) return;
   set({ bots: Object.fromEntries(bots.map((b) => [b.slug, b])) });
   if (historical) set({ historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+  keepBoot({ botsRoot: get().botsRoot, executorUrl: get().executorUrl, settings: get().settings, bots, historical: historical ?? Object.values(get().historicalBots) });
 }
 
 async function loadProviders() {
@@ -444,6 +608,7 @@ function emptyThread(): ThreadData {
 
 function patchThread(threadId: string, fn: (d: ThreadData) => ThreadData) {
   set((s) => ({ threadData: { ...s.threadData, [threadId]: fn(s.threadData[threadId] ?? emptyThread()) } }));
+  scheduleCache(threadId);
 }
 
 function scopedShell(thread: ThreadShell, environmentId?: string): ThreadShell {
@@ -460,16 +625,22 @@ const snapshotGenerations = new Map<string, number>();
 
 /** The newest stream opened per thread; a replaced stream's late frames are ignored. */
 const streamGenerations = new Map<string, number>();
+/** Threads a room reads in full. Their copy keeps less: the room shows the recent turns. */
+const roomThreads = new Set<string>();
 
 /** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
 function openThreadStream(threadId: string, bounded = true): StreamHandle {
   const target = threadTarget(threadId);
   const stream = (streamGenerations.get(threadId) ?? 0) + 1;
   streamGenerations.set(threadId, stream);
+  if (bounded) roomThreads.delete(threadId); else roomThreads.add(threadId);
   if (target.environmentId) familyThreadIds.add(threadId);
   // acceptBoundedSnapshot: a long thread opens with its recent rows only (older T3 ignores it and sends everything).
+  // acceptCompactTurnItems: the rows a chat shows lead the full list, so T3 leaves their items out of turnItems
+  // instead of sending each one twice. This client paints from visibleTurnItems, and reads turnItems only for
+  // interrupt requests, which T3 keeps there as a retained dependency.
   const afterSequence = bounded || completeThreads.has(threadId) ? threadSequences.get(threadId) : undefined;
-  return threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
+  const handle = threadClient(threadId).stream("orchestration.subscribeThread", { threadId: target.threadId, ...(bounded ? { acceptBoundedSnapshot: true, acceptCompactTurnItems: true } : {}), ...(afterSequence !== undefined ? { afterSequence } : {}), ...(!target.environmentId && get().runtimeFeatures.threadResumeCompletionMarker ? { requestCompletionMarker: true } : {}) }, (it) => {
     // A cancelled stream can still deliver its snapshot; it must not replace the newer stream's rows (a room's full history).
     if (streamGenerations.get(threadId) !== stream) return;
     if (it.kind === "snapshot") {
@@ -478,6 +649,7 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
       if (p.thread) set((s) => ({ threads: { ...s.threads, [p.thread.id]: { ...s.threads[p.thread.id], ...p.thread } } }));
       const items: Record<string, TurnItem> = {};
       for (const v of p.visibleTurnItems ?? []) items[v.item.id] = v.item;
+      // With turnItemsOmitLocalVisible the rows above are the whole answer: T3 left their items out of turnItems.
       if (!p.visibleTurnItems?.length) for (const i of p.turnItems ?? []) items[i.id] = i;
       // Run controls read interrupt requests, which T3 may keep only in turnItems.
       else for (const i of p.turnItems ?? []) if (i.type === "run_interrupt_request" && !items[i.id]) items[i.id] = i;
@@ -487,6 +659,7 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
         requests: Object.fromEntries((p.runtimeRequests ?? []).map((r: RuntimeRequest) => [r.id, r])),
         subagents: Object.fromEntries((p.subagents ?? []).map((agent: Subagent) => [agent.id, agent])),
         loaded: true,
+        stale: false,
         historyCursor: it.hasMoreHistory ? it.historyCursor ?? null : null,
         hasMoreHistory: it.hasMoreHistory === true && typeof it.historyCursor === "string",
       }));
@@ -510,10 +683,78 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
       }
     }
   });
+  // Paint this device's copy while T3 builds the snapshot; the snapshot replaces it whole.
+  void hydrateThread(threadId, stream);
+  return handle;
 }
 
-const olderLoads = new Set<string>();
-/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
+// ---------- the device's own copy ----------
+/** A write pending per conversation, so a streaming turn saves at most once a second instead of per frame. */
+const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleCache(threadId: string) {
+  if (forgetting || cacheTimers.has(threadId)) return;
+  cacheTimers.set(threadId, setTimeout(() => { cacheTimers.delete(threadId); void saveThread(threadId); }, 1200));
+}
+
+/** Keeps the newest window for the next cold start. Never the source of a paint: the snapshot always replaces it. */
+async function saveThread(threadId: string) {
+  if (forgetting) return;
+  // A linked machine keeps its history in its own T3; this cache is for this machine's threads.
+  if (threadTarget(threadId).environmentId) return;
+  const data = get().threadData[threadId];
+  // A stale thread is what a cache read put here: writing it back would renew a copy nobody refreshed.
+  if (!data?.loaded || data.stale) return;
+  await writeView({
+    v: 1,
+    key: threadId,
+    savedAt: Date.now(),
+    thread: get().threads[threadId] ?? null,
+    // A restored or partially built projection may carry only what it needs; the copy takes it as it is.
+    items: Object.values(data.items ?? {}),
+    runs: Object.values(data.runs ?? {}),
+    requests: Object.values(data.requests ?? {}),
+    subagents: Object.values(data.subagents ?? {}),
+    historyCursor: data.historyCursor ?? null,
+    hasMoreHistory: data.hasMoreHistory === true,
+  }, roomThreads.has(threadId) ? ROOM_VIEW_BYTES : undefined);
+}
+
+function flushCache() {
+  if (forgetting) return;
+  for (const [threadId, timer] of cacheTimers) {
+    clearTimeout(timer);
+    cacheTimers.delete(threadId);
+    void saveThread(threadId);
+  }
+}
+
+/** Paints the last copy while T3 builds the snapshot. A snapshot, or a newer stream, wins over it. */
+async function hydrateThread(threadId: string, generation: number) {
+  if (get().threadData[threadId]?.loaded) return;
+  const view = await readView(threadId);
+  if (!view) {
+    // Nothing kept for this conversation: say so instead of leaving a spinner over an empty screen.
+    if (streamGenerations.get(threadId) === generation) patchThread(threadId, (data) => data.loaded ? data : { ...data, copyChecked: true });
+    return;
+  }
+  // A snapshot that landed while the read was in flight, or a stream that replaced this one, is the truth.
+  if (get().threadData[threadId]?.loaded || streamGenerations.get(threadId) !== generation) return;
+  if (view.thread && !get().threads[view.thread.id]) set((s) => ({ threads: { ...s.threads, [view.thread!.id]: view.thread! } }));
+  patchThread(threadId, (data) => data.loaded ? data : {
+    items: Object.fromEntries(view.items.flatMap((item) => item && typeof item.id === "string" ? [[item.id, item] as const] : [])),
+    runs: Object.fromEntries(view.runs.flatMap((run) => run && typeof run.id === "string" ? [[run.id, run] as const] : [])),
+    requests: Object.fromEntries(view.requests.flatMap((request) => request && typeof request.id === "string" ? [[request.id, request] as const] : [])),
+    subagents: Object.fromEntries(view.subagents.flatMap((agent) => agent && typeof agent.id === "string" ? [[agent.id, agent] as const] : [])),
+    loaded: true,
+    stale: true,
+    copyChecked: true,
+    historyCursor: view.historyCursor,
+    hasMoreHistory: view.hasMoreHistory,
+  });
+}
+
+const olderLoads = new Set<string>();/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
 export async function loadOlderMessages(threadId: string): Promise<boolean> {
   const data = get().threadData[threadId];
   if (!data?.hasMoreHistory || !data.historyCursor || olderLoads.has(threadId)) return false;
@@ -657,7 +898,7 @@ export function runtimeMode(s = get()) {
 // ---------- actions ----------
 export function select(slug: string | null) {
   stopRoomPoll();
-  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null, selectedRoom: null, roomView: null, roomError: null });
+  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null, selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null });
   if (slug) localStorage.setItem("bot.selected", slug);
   const bot = slug ? get().bots[slug] : null;
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
@@ -676,11 +917,29 @@ export function stopRoomPoll() {
   roomPollTick = 0;
 }
 
-/** The sidebar's room list. Errors are the caller's to show; the last list stays on screen. */
+/** A request to this gateway that has not answered in this long is not going to. */
+const GATEWAY_PATIENCE_MS = 8_000;
+const deadline = (ms: number) => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(ms) : undefined);
+
+/**
+ * The sidebar's room list: what this device kept answers first, the gateway refreshes behind it.
+ * A phone that cannot reach the network does not hold the list until a request times out.
+ */
 export async function loadRooms() {
-  const list = await fetchRooms();
+  await hydrateRooms();
+  const list = await fetchRooms(deadline(GATEWAY_PATIENCE_MS)).catch(() => null);
+  if (!list) return Object.values(get().rooms);
   set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
+  void writeRooms(list);
   return list;
+}
+
+/** Paints the kept list once, before any request: a cold start with no network still names the rooms. */
+async function hydrateRooms() {
+  if (Object.keys(get().rooms).length) return;
+  const kept = await readRooms().catch(() => null);
+  if (!kept || Object.keys(get().rooms).length) return;
+  set({ rooms: Object.fromEntries(kept.map((room) => [room.id, room])) });
 }
 
 /** Everything the room view renders; a poll that changes none of it must not replace the object. */
@@ -731,16 +990,21 @@ export function markRoomSeen(id: string) {
 
 export async function loadRoom(id: string, quiet = false) {
   try {
-    const room = await fetchRoom(id);
+    const room = await fetchRoom(id, deadline(GATEWAY_PATIENCE_MS));
     if (get().selectedRoom !== id) return;
     const previous = get().roomView?.id === id ? get().roomView : null;
     if (previous && roomFingerprint(previous) === roomFingerprint(room)) {
       // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
+      // The copy on screen is still this room as it is now, so it stops being a copy.
+      if (get().roomStale) set({ roomStale: false });
       if (!quiet && get().roomError) set({ roomError: null });
       return;
     }
     set((s) => ({
       roomView: room,
+      roomStale: false,
+      roomMissing: false,
+      roomGone: false,
       roomError: null,
       // Keep the sidebar row in step without another list request.
       rooms: s.rooms[room.id] ? { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id]) } : s.rooms,
@@ -748,22 +1012,52 @@ export async function loadRoom(id: string, quiet = false) {
     // A reply that arrives while the room is open has been seen; leaving the room must not mark
     // the row unread for something the user just read.
     if (get().selectedRoom === id) markRoomSeen(id);
+    void writeRoom(room);
   } catch (error) {
     if (get().selectedRoom !== id) return;
+    // Deleted on another device: the copy is not a way back in, and retrying will not bring it back.
+    if ((error as { status?: number })?.status === 404 && !get().roomGone) {
+      stopRoomPoll();
+      void forgetRoom(id);
+      return set((s) => {
+        const rooms = { ...s.rooms };
+        delete rooms[id];
+        return { rooms, roomView: null, roomStale: false, roomMissing: false, roomGone: true, roomError: null };
+      });
+      void writeRooms(Object.values(get().rooms));
+    }
     // A poll failure is transient; only the first load replaces the view with an error.
-    if (!quiet) set({ roomError: error instanceof Error ? error.message : "Couldn't load the room" });
+    if (quiet) return;
+    const kept = await readRoom(id);
+    if (get().selectedRoom !== id) return;
+    // A room this device opened before opens again from its copy; the poll keeps trying to go live.
+    if (kept) return set({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: get().rooms[id] ? { ...get().rooms, [id]: summaryPatch(kept, get().rooms[id]) } : get().rooms });
+    set({ roomMissing: true, roomError: error instanceof Error ? error.message : "Couldn't load the room" });
   }
+}
+
+/**
+ * Paints the room this device kept while the gateway answers; the poll replaces it whole.
+ * Finding nothing is an answer too, and it comes from storage: the page must not wait for a
+ * network timeout to say the room is not here.
+ */
+async function hydrateRoom(id: string) {
+  const kept = await readRoom(id);
+  if (get().selectedRoom !== id || get().roomView || get().roomGone) return;
+  if (!kept) return set({ roomMissing: true });
+  set((s) => ({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: s.rooms[id] ? { ...s.rooms, [id]: summaryPatch(kept, s.rooms[id]) } : s.rooms }));
 }
 
 /** Opens a room. The view polls every 2 s until another Bot or page is selected. */
 export function selectRoom(id: string | null) {
   stopRoomPoll();
   if (!id) {
-    set({ selectedRoom: null, roomView: null, roomError: null, page: get().page === "room" ? null : get().page });
+    set({ selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: get().page === "room" ? null : get().page });
     return;
   }
-  set({ selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  set({ selectedRoom: id, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
   markRoomSeen(id);
+  void hydrateRoom(id);
   void loadRoom(id);
   startRoomPoll(id);
 }
@@ -791,6 +1085,8 @@ function startRoomPoll(id: string) {
   stopRoomPoll();
   roomPollId = id;
   roomPoll = window.setInterval(() => {
+    // With no network the poll only burns requests; the socket coming back (or a manual retry) resumes it.
+    if (get().offline || navigator.onLine === false) return;
     if (roomPollId !== id || get().selectedRoom !== id || document.visibilityState !== "visible" || roomPollBusy) return;
     roomPollTick += 1;
     // While a turn is in flight the view needs 2 s; an idle room only needs to notice a message
@@ -816,8 +1112,9 @@ export async function createRoom(input: CreateRoomInput) {
  */
 export function showRoom(id: string) {
   stopRoomPoll();
-  set({ dialog: null, selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  set({ dialog: null, selectedRoom: id, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
   markRoomSeen(id);
+  void hydrateRoom(id);
   void loadRoom(id);
   startRoomPoll(id);
 }
@@ -831,13 +1128,16 @@ export async function saveRoom(id: string, input: UpdateRoomInput) {
   set((s) => ({
     rooms: { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id] ?? fallback) },
     roomView: s.selectedRoom === room.id ? room : s.roomView,
+    ...(s.selectedRoom === room.id ? { roomStale: false } : {}),
   }));
+  void writeRoom(room);
   return room;
 }
 
 export async function removeRoom(id: string) {
   const result = await deleteRoomApi(id);
   clearRoomDraft(id);
+  void forgetRoom(id);
   try {
     const roomSeen = { ...get().roomSeen };
     delete roomSeen[id];
@@ -849,7 +1149,7 @@ export async function removeRoom(id: string) {
   set((s) => {
     const rooms = { ...s.rooms };
     delete rooms[id];
-    return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
+    return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
   });
   return result;
 }
@@ -857,7 +1157,8 @@ export async function removeRoom(id: string) {
 /** Start over: the room forgets its messages and every Bot opens a new session on its next answer. */
 export async function resetRoom(id: string) {
   const room = await resetRoomApi(id);
-  set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
+  set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView, ...(s.selectedRoom === id ? { roomStale: false } : {}) }));
+  void writeRoom(room);
   await loadRooms().catch(() => {});
   return room;
 }

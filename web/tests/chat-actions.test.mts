@@ -35,7 +35,9 @@ const bundle = await buildOnce({
       export { EntryView, AttachmentList } from ${JSON.stringify(chat)};
       export { Sidebar } from ${JSON.stringify(`${src}components/Sidebar.tsx`)};
       export { useApp } from ${JSON.stringify(`${src}store.ts`)};
-      export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined,
+      export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};
+      export { resetAssetCopies } from ${JSON.stringify(`${src}lib/assetCopies.ts`)};
+      export { resetCacheForTest } from ${JSON.stringify(`${src}lib/threadCache.ts`)};` : undefined,
     transform: (code, id) => isModule(id, chat) ? { code: `${code}\nexport { EntryView, AttachmentList };`, map: null } : undefined,
   }], ssr: { noExternal: true }, build: { ssr: "virtual:chat-actions-tests", write: false },
 });
@@ -44,7 +46,7 @@ assert.ok(entry);
 const directory = await mkdtemp(join(tmpdir(), "bot-chat-actions-"));
 const filename = join(directory, "components.mjs");
 await writeFile(filename, entry.code);
-const { createElement: h, act, createRoot, EntryView, AttachmentList, Sidebar, useApp, t3 } = await import(pathToFileURL(filename).href);
+const { createElement: h, act, createRoot, EntryView, AttachmentList, Sidebar, useApp, t3, resetAssetCopies, resetCacheForTest } = await import(pathToFileURL(filename).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(directory, { recursive: true }); });
 
 const bot = { slug: "example", name: "Example", mainThreadId: "main", workspaceRoot: "/workspace/example", shape: "blob", color: "gray" };
@@ -67,6 +69,9 @@ const contextMenu = async (element) => {
 beforeEach(() => {
   window.happyDOM.setWindowSize({ width: 390, height: 844 });
   mock.restoreAll();
+  // Nothing an earlier test kept may answer for this one: neither an object URL nor stored bytes.
+  resetAssetCopies();
+  resetCacheForTest();
   copied = []; calls = []; fetches = []; downloads = []; commands = [];
   dispatch = async () => ({ sequence: 1 });
   t3.dispatch = (command) => { commands.push(command); return dispatch(command); };
@@ -210,12 +215,17 @@ test("attachment failures retry with a new signed URL and unsupported formats ke
 test("Download uses the attachment disposition and handles signing failure with explicit retry", async () => {
   let attempts = 0; rpc = async () => { if (++attempts === 1) throw new Error("Private signing diagnostic"); return { relativeUrl: "/assets/fresh-download" }; };
   await renderAttachments([file]); await click(button("Download report.pdf"));
+  // Without a signature the copy is looked for first, which is one turn of the loop later than a bare failure.
+  await act(async () => { await flush(); });
   assert.match(document.querySelector('[role="alert"]').textContent, /Couldn't download.*Try again/);
   assert.doesNotMatch(document.body.textContent, /Private signing diagnostic|Download started/);
   assert.deepEqual(downloads, []);
   await click(button("Download report.pdf"));
   assert.deepEqual(calls.map((call) => call.payload.resource), Array(2).fill({ _tag: "attachment", attachmentId: file.id, disposition: "attachment" }));
-  assert.deepEqual(downloads, [{ href: "/t3/assets/fresh-download", name: file.name }]);
+  // The bytes are fetched once and kept, so the download comes from them.
+  assert.equal(downloads.length, 1);
+  assert.match(String(downloads[0].href), /^blob:/);
+  assert.equal(downloads[0].name, file.name);
   assert.match(document.querySelector('[role="status"]').textContent, /Download started/);
 });
 

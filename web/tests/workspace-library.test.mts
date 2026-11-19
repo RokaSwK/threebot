@@ -259,10 +259,12 @@ test('workspace Markdown images request the owner resource and show retry on dec
   await mount(h(WorkspaceFileContext, { value: { ...workspace, openFile() {} } }, h(MessageContent, { text: '![Photo](file:///workspace/bots/example/library/photo.png)' })));
   assert.deepEqual(calls[0].payload.resource, { _tag: 'workspace-file', threadId: 'main', path: 'library/photo.png' });
   const image = document.querySelector('img');
-  assert.equal(image.getAttribute('src'), '/t3/assets/signed?token=fixture');
+  // The bytes that render are the bytes this device keeps, so one request serves both.
+  assert.match(String(image.getAttribute('src')), /^blob:/);
   await act(async () => image.dispatchEvent(new Event('error')));
   assert.ok(button('Retry'));
   await click(button('Retry'));
+  // Bytes that would not decode are dropped, so retrying asks the gateway again instead of reusing them.
   assert.equal(calls.length, 2);
 });
 

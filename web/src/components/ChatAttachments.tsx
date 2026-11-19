@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { CloudDownload, Download, FileText, LoaderCircle, X } from "lucide-react";
 import { assetUrl, type Attachment } from "../store";
+import { assetKey, assetSource, isAssetSource } from "../lib/assetCopies";
 import { fileGlyphKind, fileTypeLabel, formatSize } from "../lib/fileCards";
 import { FileCard } from "./FileCard";
 import { workspaceFileKind } from "../lib/workspaceLinks";
@@ -74,8 +75,13 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
     let live = true;
     setThumbnail(attachment.previewUrl ?? null); setDownloadState("idle");
     if (attachment.type === "image" && !attachment.previewUrl) {
-      assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "inline" }).then((url) => {
-        if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
+      assetSource(
+        () => assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "inline" }),
+        assetKey({ _tag: "attachment", attachmentId: attachment.id }),
+        "image",
+        attachment.sizeBytes ?? undefined,
+      ).then((url) => {
+        if (!isAssetSource(url)) throw new Error("Invalid asset response");
         if (live) setThumbnail(url);
       }).catch(() => { if (live) setThumbnail(null); });
     }
@@ -85,9 +91,14 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
     if (operation.current) return;
     const token = Symbol(); operation.current = token; setDownloadState("preparing");
     try {
-      const url = await assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "attachment" });
+      const url = await assetSource(
+        () => assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "attachment" }),
+        assetKey({ _tag: "attachment", attachmentId: attachment.id }),
+        "file",
+        attachment.sizeBytes ?? undefined,
+      );
       if (operation.current !== token) return;
-      if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
+      if (!isAssetSource(url)) throw new Error("Invalid asset response");
       const link = document.createElement("a");
       link.href = url; link.download = attachment.name; link.hidden = true;
       document.body.appendChild(link);
