@@ -68,6 +68,7 @@ function useShortcuts() {
 
 export default function App() {
   const auth = useApp((s) => s.auth);
+  const announcement = useApp((s) => s.announcement);
   const picture = useApp(s => s.selected ? s.bots[s.selected]?.avatarImage : null);
   useEffect(() => {
     const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
@@ -84,6 +85,9 @@ export default function App() {
   if (auth === "password") return <Login />;
   return (
     <ErrorBoundary>
+      {/* Mounted from the first paint and filled on transitions only: a live region added with its
+          text is skipped by screen readers, and the first paint is not an event worth announcing. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</div>
       <Shell />
     </ErrorBoundary>
   );

@@ -150,6 +150,18 @@ test("the real composer renders mobile tap protection while retaining each threa
   assert.match(desktop, />A saved main draft<\/textarea>/);
 });
 
+test("a composer with no network keeps the draft and says why it cannot send", () => {
+  drafts.set("bot.draft.tunnel", "Typed in the tunnel");
+  globalThis.window = { matchMedia: () => ({ matches: false }) as MediaQueryList } as Partial<BrowserWindow> as BrowserWindow;
+  const offline = render(h(Composer, { bot, threadId: "tunnel", working: false, offline: true }));
+  assert.match(offline, /Your draft is kept here until the connection is back\./);
+  assert.match(offline, /<button[^>]*disabled=""[^>]*title="You&#x27;re offline\. Reconnect to send\."/);
+  assert.match(offline, />Typed in the tunnel<\/textarea>/);
+  const online = render(h(Composer, { bot, threadId: "tunnel", working: false, offline: false }));
+  assert.doesNotMatch(online, /Your draft is kept here/);
+  assert.doesNotMatch(online, /Reconnect to send/);
+});
+
 function picker(mobile) {
   return render(h(ComposerActions, { mobile, onFiles() {} }));
 }
