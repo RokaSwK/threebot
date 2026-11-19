@@ -8,6 +8,7 @@ import { sameTaskBot } from "../lib/threadFamily";
 import { Pill, Spinner } from "./ui";
 import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, selectThread, useApp } from "../store";
 import { timeAgo } from "../lib/projects";
+import { assetKey, assetSource, keepFetchedAsset, signedAsset } from "../lib/assetCopies";
 import type { Entry } from "../lib/transcript";
 import type { Bot } from "../lib/types";
 import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretLink, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
@@ -373,7 +374,11 @@ export function FileCard({ entry, bot, onOpen }: { entry: Extract<Entry, { kind:
 export function ToolImage({ entry, threadId, botName }: { entry: Extract<Entry, { kind: "image" }>; threadId: string; botName: string }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }).then(setUrl).catch(() => setUrl(null));
+    assetSource(
+      () => assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }),
+      assetKey({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }),
+      "image",
+    ).then(setUrl).catch(() => setUrl(null));
   }, [threadId, entry.item.id, entry.index]);
   if (!url) return null;
   return (
@@ -454,9 +459,11 @@ function PagePreview({ entry }: { entry: PageEntry }) {
     setLoad({ kind: "loading" });
     const read = async () => {
       try {
-        const url = await assetUrl({ _tag: "attachment", attachmentId: entry.attachmentId, disposition: "inline" });
+        const key = assetKey({ _tag: "attachment", attachmentId: entry.attachmentId });
+        const url = await signedAsset(() => assetUrl({ _tag: "attachment", attachmentId: entry.attachmentId, disposition: "inline" }), key);
         if (controller.signal.aborted) return;
         const response = await fetch(url, { signal: controller.signal });
+        void keepFetchedAsset(key, response);
         if (!response.ok) throw new Error("Page unavailable");
         const html = await response.text();
         if (!controller.signal.aborted) setLoad({ kind: "ready", html, url });

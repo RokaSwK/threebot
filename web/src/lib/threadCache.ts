@@ -1,5 +1,5 @@
-// What this device kept from the last time it could reach the gateway: each Bot's window and the
-// list it opened with.
+// What this device kept from the last time it could reach the gateway: each Bot's window, the list it
+// opened with, and the image bytes already seen.
 //
 // A paint cache, never a source of truth: T3's snapshot replaces a view whole, nothing is dispatched
 // from one, and everything here is written from what the store already holds. A conversation keeps
@@ -50,6 +50,7 @@ const fresh = (savedAt: unknown) => typeof savedAt === "number" && Date.now() - 
 const RULES: Record<string, { keep: number; bytes: number }> = {
   view: { keep: 8, bytes: 30 * MB },
   boot: { keep: 1, bytes: 1 * MB },
+  asset: { keep: 80, bytes: 40 * MB },
   // Markers for deleted records: small, and kept long enough to outlive any save another tab queued.
   gone: { keep: 500, bytes: 1 * MB },
 };
@@ -196,7 +197,7 @@ const bytesOf = (value: unknown) => {
   try { return JSON.stringify(value)?.length ?? 0; } catch { return Number.MAX_SAFE_INTEGER; }
 };
 
-/** `view:<thread>`, `room:<id>`, `rooms`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
+/** `view:<thread>`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
 const kindOf = (id: string) => id.split(":")[0] ?? id;
 
 async function readIndex(store: Store): Promise<Index> {
@@ -212,9 +213,9 @@ async function readIndex(store: Store): Promise<Index> {
 }
 
 /** Stores the record and drops what its kind can no longer keep: expired, over its count, or over its bytes. */
-async function writeRecord(id: string, value: unknown): Promise<void> {
+async function writeRecord(id: string, value: unknown, knownBytes?: number): Promise<void> {
   const mine = await tabGeneration();
-  const bytes = bytesOf(value);
+  const bytes = knownBytes ?? bytesOf(value);
   await storage().transact("readwrite", async (store) => {
     // Signed out since this tab started: what it holds belongs to the last sign-in. Deleted (in any
     // tab): a save queued before the deletion must not bring it back.
@@ -284,9 +285,9 @@ export async function forgetRecords(ids: string[], { deleted = false }: { delete
 }
 
 /** Every write is best effort: a refused or full quota must never reach the caller. */
-async function writeQuietly(id: string, value: unknown): Promise<void> {
+async function writeQuietly(id: string, value: unknown, knownBytes?: number): Promise<void> {
   if (stopped) return;
-  await serial(() => writeRecord(id, value)).catch(() => {});
+  await serial(() => writeRecord(id, value, knownBytes)).catch(() => {});
 }
 
 const isView = (key: string) => (value: unknown): value is CachedView => {
@@ -321,4 +322,26 @@ export async function readBoot(): Promise<CachedBoot | null> {
 
 export async function writeBoot(boot: Omit<CachedBoot, "v" | "savedAt">): Promise<void> {
   await writeQuietly("boot", { ...boot, v: 1, savedAt: Date.now() });
+}
+
+/** Drops one record: a file that would not decode must not be served twice. */
+export async function forgetRecord(id: string): Promise<void> {
+  await serial(async () => {
+    const store = storage();
+    const index = await readIndex(store);
+    delete index[id];
+    await store.put(INDEX, index).catch(() => {});
+    await store.remove([id]).catch(() => {});
+  }).catch(() => {});
+}
+
+/** Bytes this device kept for a file it has already shown, keyed by whatever identifies the asset. */
+export async function readAsset<T>(key: string, usable: (value: unknown) => value is T): Promise<T | null> {
+  return readRecord(`asset:${key}`, usable);
+}
+
+export async function writeAsset(key: string, value: unknown): Promise<void> {
+  // A Blob is not JSON: its bytes are not in the record's serialized length, so the index needs them.
+  const size = (value as { bytes?: unknown })?.bytes;
+  await writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined);
 }

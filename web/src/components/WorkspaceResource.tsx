@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ArrowUp, Download, ZoomIn, ZoomOut } from "lucide-react";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
+import { assetKey, assetSource, dropAsset, isAssetSource, keepFetchedAsset } from "../lib/assetCopies";
 import { workspaceFileKind, workspaceLinkPath, type LibraryResource } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
 import { themedWorkspacePage } from "../lib/workspacePage";
@@ -29,9 +30,14 @@ export function WorkspaceMessageImage({ src, alt }: { src?: string | Blob; alt?:
     if (!path) return;
     if (!threadId) { setError(true); return; }
     let live = true;
-    Promise.resolve().then(() => { workspaceClient(threadId); return workspaceAssetUrl({ _tag: "workspace-file", threadId, path }); }).then((signed) => {
-      if (!signed.startsWith("/t3/")) throw new Error("Invalid asset response");
-      if (live) setUrl(signed);
+    Promise.resolve().then(() => {
+      workspaceClient(threadId);
+      // An inline picture is kept on sight: one request, and it is there on the next cold start.
+      const resource = { _tag: "workspace-file" as const, threadId, path };
+      return assetSource(() => workspaceAssetUrl(resource), assetKey(resource, threadId), "image");
+    }).then((source) => {
+      if (!isAssetSource(source)) throw new Error("Invalid asset response");
+      if (live) setUrl(source);
     }).catch(() => { if (live) setError(true); });
     return () => { live = false; };
   }, [path, threadId, attempt]);
@@ -41,7 +47,7 @@ export function WorkspaceMessageImage({ src, alt }: { src?: string | Blob; alt?:
   }
   if (error) return <span role="status">Couldn't load image. <button className="underline" onClick={() => setAttempt((value) => value + 1)}>Retry</button></span>;
   if (!url) return <span role="status">Loading image…</span>;
-  return <InlineImage buttonRef={ref} src={url} alt={alt} onOpen={open} viewer={viewer} onError={() => setError(true)} />;
+  return <InlineImage buttonRef={ref} src={url} alt={alt} onOpen={open} viewer={viewer} onError={() => { const key = assetKey({ _tag: "workspace-file", threadId, path }, threadId ?? undefined); if (key) void dropAsset(key); setError(true); }} />;
 }
 
 /** The tappable thumbnail of a chat image. Enter and Space open it, as on any button. */
@@ -99,7 +105,7 @@ function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeTh
     (async () => {
       if (resource._tag === "workspace-file") workspaceClient(resource.threadId);
       const url = await workspaceAssetUrl(resource, ownerThreadId);
-      if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
+      if (!isAssetSource(url)) throw new Error("Invalid asset response");
       // Media elements report HTTP/decode failures themselves and support
       // streaming/range requests. Do not prefetch or buffer the complete file.
       if (["image", "video", "audio"].includes(resolvedFileKind)) {
@@ -110,6 +116,8 @@ function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeTh
       stage = "fetch";
       const response = await fetch(url, { signal: controller.signal, redirect: "error" });
       if (!response.ok) throw new Error(`Asset HTTP ${response.status}`);
+      // The viewer read the bytes anyway: keep them for a launch with no gateway.
+      void keepFetchedAsset(assetKey(resource as unknown as Record<string, unknown>, ownerThreadId ?? undefined), response);
       if (["pdf", "sheet", "doc"].includes(resolvedFileKind)) {
         const bytes = await response.arrayBuffer();
         if (live) setState({ kind: "ready", url, content: null, bytes });

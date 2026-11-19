@@ -83,7 +83,9 @@ test("file sizes include genuine zero and scale valid byte counts without invent
 test("extensionless image MIME survives thumbnail failure and opens the real image without inventing a filename", async () => {
   await render([{ id: "photo", type: "file", name: "holiday", mimeType: " Image/PNG ; charset=binary ", sizeBytes: 512 }]);
   const thumbnail = button("Open holiday").querySelector("img");
-  assert.equal(thumbnail.getAttribute("src"), "/t3/assets/current-1");
+  const kept = thumbnail.getAttribute("src");
+  // The picture renders from the bytes it was fetched with, and those are what this device keeps.
+  assert.match(String(kept), /^blob:/);
   await act(async () => thumbnail.dispatchEvent(new window.Event("error")));
   assert.equal(button("Open holiday").textContent, "holiday512B");
   await click("Open holiday");
@@ -92,8 +94,9 @@ test("extensionless image MIME survives thumbnail failure and opens the real ima
   assert.equal(image.alt, "holiday");
   assert.deepEqual(calls.slice(0, 2), Array(2).fill({ _tag: "attachment", attachmentId: "photo", disposition: "inline" }));
   await click("Close"); await click("Download holiday");
-  assert.deepEqual(calls[2], { _tag: "attachment", attachmentId: "photo", disposition: "attachment" });
-  assert.deepEqual(downloads, [{ href: "/t3/assets/current-3", filename: "holiday" }]);
+  // Kept on first sight, so the download needs no new signature and works with no gateway.
+  assert.equal(calls.length, 2, "a file already kept is not signed again to download it");
+  assert.deepEqual(downloads, [{ href: kept, filename: "holiday" }]);
 });
 
 test("unknown formats and invalid MIME retain full accessible names and a working original-file action", async () => {
