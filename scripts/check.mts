@@ -23,15 +23,31 @@ const run = (command: string, args: string[], cwd = root) => {
     : spawnSync(command, args, { cwd, stdio: 'inherit' });
   if (status !== 0) process.exit(status ?? 1);
 };
-run('npm', ['test'], path.join(root, 'web'));
-run('npm', ['run', 'build'], path.join(root, 'web'));
-run('npm', ['run', 'typecheck:tests'], path.join(root, 'web'));
-run('npm', ['run', 'typecheck'], path.join(root, 'server'));
-run('node', ['--test', TEST_TIMEOUT, ...readdirSync(path.join(root, 'server')).filter((name) => name.endsWith('.test.mts'))], path.join(root, 'server'));
-run('node', ['--test', TEST_TIMEOUT, 'scripts/fixture.test.mts']);
-// The usage-stats collector (telemetry/), a Cloudflare Worker: its type check and tests. The npm
-// shim for tsrs is a shell script on Windows, so run the entry file with this same Node instead.
-run('node', [path.join(root, 'server', 'node_modules', 'tsrs', 'bin', 'tsrs'), '-p', 'telemetry/tsconfig.json']);
-run('node', ['--test', TEST_TIMEOUT, 'telemetry/test/worker.test.ts']);
-run('node', ['--test', TEST_TIMEOUT, 'scripts/verify-assets.test.mts', 'scripts/release-notes.test.mts']);
-console.log('All checks passed.');
+// CI runs the gate in parts on parallel jobs; with no part given, everything runs here in order.
+//   node scripts/check.mts [web-tests[:<index>/<total>] | fixture | rest]
+const [part = 'all', shard] = (process.argv[2] ?? 'all').split(':');
+if (!['all', 'web-tests', 'fixture', 'rest'].includes(part) || (shard && !/^\d+\/\d+$/.test(shard))) {
+  console.error(`Unknown part ${process.argv[2]}. Use web-tests[:i/n], fixture or rest.`);
+  process.exit(2);
+}
+const runs = (name: string) => part === 'all' || part === name;
+
+if (runs('web-tests')) {
+  const files = readdirSync(path.join(root, 'web', 'tests')).filter((name) => name.endsWith('.test.mts')).map((name) => `tests/${name}`);
+  run('node', ['--test', '--test-concurrency=1', TEST_TIMEOUT, ...(shard ? [`--test-shard=${shard}`] : []), ...files], path.join(root, 'web'));
+}
+if (runs('rest')) {
+  run('npm', ['run', 'build'], path.join(root, 'web'));
+  run('npm', ['run', 'typecheck:tests'], path.join(root, 'web'));
+  run('npm', ['run', 'typecheck'], path.join(root, 'server'));
+  run('node', ['--test', TEST_TIMEOUT, ...readdirSync(path.join(root, 'server')).filter((name) => name.endsWith('.test.mts'))], path.join(root, 'server'));
+}
+if (runs('fixture')) run('node', ['--test', TEST_TIMEOUT, 'scripts/fixture.test.mts']);
+if (runs('rest')) {
+  // The usage-stats collector (telemetry/), a Cloudflare Worker: its type check and tests. The npm
+  // shim for tsrs is a shell script on Windows, so run the entry file with this same Node instead.
+  run('node', [path.join(root, 'server', 'node_modules', 'tsrs', 'bin', 'tsrs'), '-p', 'telemetry/tsconfig.json']);
+  run('node', ['--test', TEST_TIMEOUT, 'telemetry/test/worker.test.ts']);
+  run('node', ['--test', TEST_TIMEOUT, 'scripts/verify-assets.test.mts', 'scripts/release-notes.test.mts']);
+}
+console.log(part === 'all' ? 'All checks passed.' : `Checks passed: ${process.argv[2]}.`);
