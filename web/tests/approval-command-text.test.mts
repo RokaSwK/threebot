@@ -47,3 +47,12 @@ test("nothing to match keeps the card as it was", () => {
   assert.equal(card([command("other", "ls"), approval("call_5", "Ran command")]).prompt, "Ran command");
   assert.equal(card([command("call_6", "ls", "Changed files"), approval("call_6", "Changed files", "file-change")]).prompt, "Changed files");
 });
+
+test("a command from another run, another driver or an ambiguous match never lands on the card", () => {
+  const otherRun = { ...command("call_7", "rm -rf /tmp/x"), runId: "earlier-run" };
+  assert.equal(card([otherRun, approval("call_7", "Ran command")]).prompt, "Ran command");
+  const otherDriver = { ...command("call_8", "ls"), nativeItemRef: { driver: "codex", nativeId: "call_8", strength: "strong" } };
+  assert.equal(card([otherDriver, approval("call_8", "Ran command")]).prompt, "Ran command");
+  const twice = [command("call_9", "ls"), { ...command("call_9", "rm -rf build"), id: "cmd-call_9-b" }];
+  assert.equal(card([...twice, approval("call_9", "Ran command")]).prompt, "Ran command");
+});
