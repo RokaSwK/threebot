@@ -56,3 +56,11 @@ test("a command from another run, another driver or an ambiguous match never lan
   const twice = [command("call_9", "ls"), { ...command("call_9", "rm -rf build"), id: "cmd-call_9-b" }];
   assert.equal(card([...twice, approval("call_9", "Ran command")]).prompt, "Ran command");
 });
+
+test("another provider keeps its own title-only approval", () => {
+  const nativeItemRef = { driver: "codex", nativeId: "call_10", strength: "strong" };
+  assert.equal(card([
+    { ...command("call_10", "git status"), nativeItemRef },
+    { ...approval("call_10", "Ran command"), nativeItemRef },
+  ]).prompt, "Ran command");
+});

@@ -143,7 +143,7 @@ function ApprovalRequestCard({ entry, threadId }: ApprovalProps) {
       <div className="rounded-[13px] bg-card-inner px-3.5 py-3">
         <div className="text-[14px]">{item.title || kindLabel[item.requestKind] || "Approve this action?"}</div>
         {item.reason && <div className="mt-1 text-[13px] text-muted">{item.reason}</div>}
-        {item.prompt && <pre className="mt-2.5 max-h-48 overflow-auto rounded-lg bg-active px-3 py-2 font-mono text-[12px] whitespace-pre-wrap">{item.prompt}</pre>}
+        {item.prompt && <pre className="mt-2.5 max-h-48 overflow-auto rounded-lg bg-active px-3 py-2 font-mono text-[12px] whitespace-pre-wrap" style={item.requestKind === "command" && item.nativeItemRef?.driver === "antigravity" ? { overflowWrap: "anywhere" } : undefined}>{item.prompt}</pre>}
       </div>
       {pending && (
         <div className="flex flex-wrap gap-2 px-1.5 pt-2 pb-1">

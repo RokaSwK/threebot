@@ -105,7 +105,7 @@ export function modelSwitches(runs: Run[], modelName: (selection: ModelSelection
  * call carries the command as `input`; show that instead.
  */
 function withCommandText(approval: TurnItem, commandInputs: Map<string, { input: string; title: string | null } | null>): TurnItem {
-  if (approval.requestKind !== "command") return approval;
+  if (approval.requestKind !== "command" || approval.nativeItemRef?.driver !== "antigravity") return approval;
   const key = commandKey(approval);
   const tool = key ? commandInputs.get(key) : undefined;
   if (!tool || (approval.prompt && approval.prompt !== tool.title)) return approval;
