@@ -155,7 +155,7 @@ export function MermaidDiagram({ source }: { source: string }) {
     </div>
     {!sourceVisible && (state.kind === "ready" ? <button type="button" className="mermaid-canvas" aria-label="Open diagram preview" onClick={() => { setZoom(1); setPreviewOpen(true); }}><span role="img" aria-label="Rendered diagram" dangerouslySetInnerHTML={{ __html: state.svg }} /></button>
       : state.kind === "loading" ? <div className="mermaid-status" role="status"><LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> Rendering diagram…</div>
-      : <div className="mermaid-status" role="alert">{navigator.onLine === false ? "Diagrams need a connection the first time. Showing the source." : "Couldn't render this diagram."}<button type="button" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={13} aria-hidden="true" /> Try again</button></div>)}
+      : <div className="mermaid-status" role="alert">{navigator.onLine === false ? "Diagrams need a connection the first time. Reload once you're back online." : "Couldn't render this diagram."}<button type="button" onClick={() => setAttempt((value) => value + 1)}><RotateCcw size={13} aria-hidden="true" /> Try again</button></div>)}
     {(sourceVisible || state.kind === "error") && <pre className="mermaid-source"><code>{source}</code></pre>}
     {copyState === "error" && <div className="mermaid-copy-error" role="alert">Couldn't copy source. Try again.</div>}
     <span role="status" className="sr-only">{copyState === "copied" ? "Diagram source copied." : ""}</span>

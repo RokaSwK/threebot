@@ -49,7 +49,7 @@ async function matches(entry: PrecacheEntry, response: Response): Promise<boolea
 
 async function verifiedResponse(entry: PrecacheEntry, cache: RequestCache = "reload"): Promise<Response> {
   const request = new Request(new URL(entry.url, self.location.origin), {
-    credentials: "same-origin", cache, redirect: "error",
+    credentials: "same-origin", cache, redirect: "error", ...(cache === "only-if-cached" ? { mode: "same-origin" as const } : {}),
   });
   const response = await fetch(request);
   if (!response.ok || response.redirected || response.type !== "basic" || response.url !== request.url) {
@@ -154,7 +154,7 @@ self.addEventListener("fetch", (event) => {
     // A chunk the page loaded before this worker controlled it may sit in the HTTP cache: offline,
     // that copy (checked like any other) is the only one there is.
     const response = await reused(entry, url, previous)
-      ?? await verifiedResponse(entry, "force-cache").catch(() => verifiedResponse(entry));
+      ?? await verifiedResponse(entry, "only-if-cached").catch(() => verifiedResponse(entry));
     try {
       await cache.put(key, response.clone());
     } catch { /* Quota exceeded or cache write failure must not break the current view */ }

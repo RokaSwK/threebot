@@ -29,7 +29,7 @@ export function EmojiPicker({ onBack, onPick }: { onBack: () => void; onPick: (e
       <label><Search size={18} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search emoji" aria-label="Search emoji" /></label>
     </div>
     <div className="emoji-picker-scroll">
-      {groups?.length === 0 && <p role="alert">{navigator.onLine === false ? "Emoji need a connection the first time." : "Couldn't load emoji. Go back and try again."}</p>}
+      {groups?.length === 0 && <p role="alert">{navigator.onLine === false ? "Emoji need a connection the first time. Reload once you're back online." : "Couldn't load emoji. Go back and try again."}</p>}
       {groups && groups.length > 0 && visible.length === 0 && <p>No emoji found</p>}
       {visible.map((group) => <section key={group.name} aria-label={group.name}>
         <h3>{group.name.replace(" & Emotion", " & People")}</h3>
