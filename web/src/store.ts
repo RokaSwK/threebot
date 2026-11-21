@@ -3,7 +3,7 @@ import { api } from "./lib/api";
 import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
 import { enablePushNotifications, pushTurnedOff } from "./lib/push";
-import { botBadge, notificationContent, notificationTarget, waitingTag, waitingThread } from "./lib/notification";
+import { botBadge, notificationContent, notificationTarget, waitingThread } from "./lib/notification";
 import { allT3Clients, t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -494,6 +494,7 @@ function subscribeShell() {
     } else if (it.kind === "thread.updated") {
       if (it.location === "archive") {
         closeThreadNotices(it.thread.id);
+        queueMicrotask(closeAnsweredNotifications);
         set((s) => ({ archivedThreads: { ...s.archivedThreads, [it.thread.id]: it.thread }, threads: { ...s.threads, [it.thread.id]: it.thread } }));
         return;
       }
@@ -504,6 +505,7 @@ function subscribeShell() {
     } else if (it.kind === "thread.removed") {
       forgetThreadCopy([it.threadId]);
       closeThreadNotices(it.threadId);
+      queueMicrotask(closeAnsweredNotifications);
       set((s) => {
         const threads = { ...s.threads };
         delete threads[it.threadId];
@@ -594,7 +596,8 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   if (!bot) return;
   // The request is gone: its notification is a stale reminder, even (above all) when it was answered
   // right here in the Bot this page is looking at.
-  if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) void closeNotifications((tag) => tag === waitingTag(bot.slug, next.id));
+  // closeAnsweredNotifications also clears an older per-Bot notice once this was the Bot's last wait.
+  if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) closeAnsweredNotifications();
   if (bot.notifications === false || bot.hidden) return;
   if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
   if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) {

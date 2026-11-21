@@ -271,7 +271,6 @@ export function createPushStore({
           const status = error instanceof WebPushError ? error.statusCode : 0;
           if (status === 404 || status === 410) {
             gone.add(subscription);
-            watching.delete(subscription.endpoint);
           } else {
             console.error("push: send failed", status || (error as Error).message);
           }
@@ -280,6 +279,8 @@ export function createPushStore({
       if (gone.size > 0) {
         // Only the records that failed: a registration made since then is a new, working one.
         current.subscriptions = current.subscriptions.filter((subscription) => !gone.has(subscription));
+        // Presence goes with the endpoint, unless the device registered it again meanwhile.
+        for (const { endpoint } of gone) if (!current.subscriptions.some((record) => record.endpoint === endpoint)) watching.delete(endpoint);
         await save();
       }
       return { sent, removed: gone.size, watching: skipped };
@@ -307,6 +308,7 @@ export type PushPreview = { role: string; text: string; at: string | null };
 
 type ShellEvent = {
   kind: string;
+  resolvedRepositoryIdentityRoots?: unknown;
   snapshot?: { threads?: ShellThread[] };
   thread?: ShellThread;
   threadId?: string;
@@ -416,6 +418,8 @@ export function createPushNotifier({
   }
 
   function handle(event: ShellEvent) {
+    // A project-only enrichment snapshot (no threads) is not the roster: it must not reset it.
+    if (event.kind === "snapshot" && event.resolvedRepositoryIdentityRoots !== undefined && !event.snapshot?.threads?.length) return;
     if (event.kind === "snapshot") {
       // After a reconnect: a request answered during the gap is resolved now. A thread missing from
       // the snapshot may only be omitted, so only one that is present and no longer waits counts.

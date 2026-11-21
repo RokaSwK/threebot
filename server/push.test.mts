@@ -443,6 +443,8 @@ test("a removed thread that was waiting resolves its notice", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const side = { id: "side-1", projectId: "project", status: "waiting", pendingRuntimeRequest: { id: "r" }, lineage: { parentThreadId: "thread-1", sideChat: true } };
   handler!({ kind: "snapshot", snapshot: { threads: [side] } });
+  // A project-only enrichment snapshot is not the roster and must not forget the waiting thread.
+  handler!({ kind: "snapshot", resolvedRepositoryIdentityRoots: {}, snapshot: { projects: [], threads: [] } });
   handler!({ kind: "thread.removed", threadId: "side-1" });
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["resolved", "waiting:alpha:side-1"]]);

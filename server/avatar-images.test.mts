@@ -100,4 +100,13 @@ test('notification images come from the drawn avatar, and a photo has no monochr
   assert.equal((await fetch(fixture.url + '/api/push/test', { method: 'POST' })).status, 415);
   assert.equal((await fixture.request('/api/push/test', 'POST', {})).status, 400);
   assert.equal((await fixture.request('/api/push/test', 'POST', { endpoint: 'https://push.example/unknown' })).body.sent, 0);
+  // A worker renewing a rotated subscription: refused when the old one was turned off, swapped in otherwise.
+  const keys = { p256dh: 'p256dh-value-1234567890', auth: 'auth-value-1234' };
+  const old = { endpoint: 'https://push.example/device-old', keys };
+  const renewed = { endpoint: 'https://push.example/device-new', keys };
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: renewed, replaces: old.endpoint })).status, 409);
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: old })).status, 200);
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: renewed, replaces: old.endpoint })).status, 200);
+  assert.equal((await fixture.request(`/api/push?endpoint=${encodeURIComponent(old.endpoint)}`)).body.registered, false);
+  assert.equal((await fixture.request(`/api/push?endpoint=${encodeURIComponent(renewed.endpoint)}`)).body.registered, true);
 });

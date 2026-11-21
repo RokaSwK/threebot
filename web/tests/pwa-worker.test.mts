@@ -137,7 +137,7 @@ function worker(build, caches = cacheStorage()) {
     registration: {
       async showNotification(title: string, options: NotificationOptions) {
         // A notice waits for its icon before it shows; a test can slow that down.
-        if (build.showDelay && options.icon && !options.silent) await new Promise((resolve) => setTimeout(resolve, build.showDelay));
+        if (build.showDelay) await new Promise((resolve) => setTimeout(resolve, build.showDelay));
         shown.push({ title, options });
         const tag = options.tag ?? "";
         const kept = tray.filter((notice) => notice.tag !== tag || !tag);
@@ -145,7 +145,10 @@ function worker(build, caches = cacheStorage()) {
         const notice = { tag, title, body: options.body, close() { const index = tray.indexOf(notice); if (index >= 0) tray.splice(index, 1); } };
         tray.push(notice);
       },
-      async getNotifications({ tag }: { tag?: string } = {}) { return tray.filter((notice) => !tag || notice.tag === tag); },
+      async getNotifications({ tag }: { tag?: string } = {}) {
+        if (build.trayDelay) await new Promise((resolve) => setTimeout(resolve, build.trayDelay));
+        return tray.filter((notice) => !tag || notice.tag === tag);
+      },
     },
     skipWaiting() { skipCalls++; },
     addEventListener(name, listener) { listeners.set(name, listener); },
@@ -484,6 +487,17 @@ test("a resolution that arrives while its waiting notice is still loading closes
   await Promise.all([waiting, resolved]);
   // Out of order, the waiting notice would land last and stay; in turn, the answer has the last word.
   assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.body]), [["waiting:alpha:side-1", "Answered"]]);
+});
+
+test("two resolutions at once leave one Answered notice, not one each", async () => {
+  const runtime = worker({ ...app, trayDelay: 5, showDelay: 20 });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-2", url: "/", kind: "waiting" });
+  await Promise.all([
+    runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved" }),
+    runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-2", url: "/", kind: "resolved" }),
+  ]);
+  assert.deepEqual(runtime.tray.map((notice) => notice.body), ["Answered"]);
 });
 
 test("Firefox's resolution always leaves a quiet notice, so it never spends push quota", async () => {

@@ -192,7 +192,9 @@ self.addEventListener("push", (event) => {
   // and Firefox spends a quota on such a push (the gateway sets `show` there), so in those cases the
   // answered notice is replaced, quietly, by one that says so.
   if (payload.kind === "resolved") {
-    event.waitUntil(inTurn(tag, async () => {
+    // After this notice's own turn, resolutions also go one at a time, so two at once can't both
+    // find an empty tray and each leave an "Answered".
+    event.waitUntil(inTurn(tag, () => inTurn("\u0000resolutions", async () => {
       for (const notification of await self.registration.getNotifications({ tag })) notification.close();
       if (payload.show !== true) {
         if ((await self.registration.getNotifications()).length) return;
@@ -200,7 +202,7 @@ self.addEventListener("push", (event) => {
         if (windows.some((client) => client.visibilityState === "visible")) return;
       }
       await self.registration.showNotification(title, { body: typeof payload.body === "string" ? payload.body : "Answered", tag, silent: true, icon, data });
-    }));
+    })));
     return;
   }
   // The worker's DOM lib predates `timestamp`; the browser supports it.
@@ -219,11 +221,14 @@ self.addEventListener("push", (event) => {
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil((async () => {
     const subscription = event.newSubscription;
-    if (!subscription) return;
+    // Only a renewal of a subscription the gateway knows: one turned off stays off (the gateway
+    // refuses it), and without the old one the page registers again on its next open.
+    const replaces = event.oldSubscription?.endpoint;
+    if (!subscription || !replaces) return;
     await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subscription: subscription.toJSON() }),
+      body: JSON.stringify({ subscription: subscription.toJSON(), replaces }),
     }).catch(() => {});
   })());
 });
