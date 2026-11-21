@@ -5,7 +5,7 @@ import { ActivityAvatar } from "./ActivityAvatar";
 import { Menu, Modal, Pill, RoundButton, type MenuItem } from "./ui";
 import { useUsagePeak } from "./UsagePanel";
 import { UpdatePopover, useUpdateNotice } from "./RemoteAccess";
-import { archiveThread, archivedInT3, unarchiveBotProject, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, setSidebarCompact, toast, updateBot, useApp, useProjectsOn, type BotStatus } from "../store";
+import { archiveThread, archivedInT3, unarchiveBotProject, forgetDeviceCopy, isSettled, setThreadDone, botStatus, mainThread, markThreadRead, markThreadUnread, openDialog, openProjects, saveSettings, select, setSidebarCompact, toast, updateBot, useApp, useProjectsOn, type BotStatus } from "../store";
 import { followBoard, isOpenTask, useBoard } from "../lib/projects";
 import { copyText } from "../lib/t3";
 import { api, signOutTarget } from "../lib/api";
@@ -463,6 +463,8 @@ function AccountMenu({ x, y, onClose }: { x: number; y: number; onClose: () => v
           icon: <LogOut size={14} />,
           onSelect: async () => {
             const target = await signOutTarget();
+            // What this device kept is readable without a password: forget it before the session goes.
+            await forgetDeviceCopy();
             await api.logout();
             location.href = target;
           },

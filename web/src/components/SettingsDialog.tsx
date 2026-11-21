@@ -14,7 +14,7 @@ import { RemoteAccessPane, UpdatesPane, useUpdateNotice } from "./RemoteAccess";
 import { UsageStatsPane } from "./UsageStats";
 import { MachinesPane } from "./MachinesPane";
 import { fastDrawingModel } from "../lib/avatarDrawing";
-import { defaultModel, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
+import { defaultModel, forgetDeviceCopy, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
 import { t3http } from "../lib/t3";
 import type { ModelSelection, Settings } from "../lib/types";
@@ -120,7 +120,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   const signOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
-    try { const target = await signOutTarget(); await api.logout(); location.href = target; }
+    try { const target = await signOutTarget(); await forgetDeviceCopy(); await api.logout(); location.href = target; }
     catch { setSigningOut(false); toast("Couldn't sign out. Try again."); }
   };
   return <div className="settings-home pt-16">
