@@ -614,7 +614,7 @@ button {
 .skill-row strong { font-size: 15px; font-weight: 500; }
 .skill-row small { display: block; color: var(--fg-muted); font-size: 11px; margin-top: 4px; }
 .skill-row p { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
-.library-filters { min-width: 0; overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+.library-filters { min-width: 0; flex-wrap: wrap; }
 .library-view [role="tab"] { padding: 8px 12px; font-size: 13px; }
 .library-list { border-radius: 18px; }
 .library-row { min-height: 66px; padding: 12px 16px; }
@@ -821,6 +821,8 @@ button {
   .dark .bot-modal-backdrop > [data-bot-modal].connect-app-detail { background: var(--bg-details); }
   .dark .bot-modal-backdrop > [data-bot-modal].settings-appearance,
   .dark .bot-modal-backdrop > [data-bot-modal].workspace-document-sheet { background: var(--bg-chat); }
+  /* One swipeable row on a phone; the 3px inset keeps a focused filter's ring inside the scroller. */
+  .library-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 3px; margin: -3px -3px 17px; }
 }
 
 

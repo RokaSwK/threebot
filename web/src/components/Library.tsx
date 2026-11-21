@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { FileText, Globe, Image, Video, PanelsTopLeft, Library as LibraryIcon } from "lucide-react";
 import clsx from "clsx";
 import { useApp, watchThread } from "../store";
@@ -9,6 +9,8 @@ import { workspaceClient } from "../lib/workspaceTransport";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
 import type { Bot } from "../lib/types";
+
+const LIBRARY_FILTERS = ["All", "Pages", "Media", "Links", "Files"];
 
 export function Library({ bot }: { bot: Bot }) {
   const [filter, setFilter] = useState("All");
@@ -32,8 +34,17 @@ export function Library({ bot }: { bot: Bot }) {
   const items = useMemo(() => conversationLibrary(Object.values(data?.items ?? {}), { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId, libraryDir: botLibraryDir(bot) }), [data?.items, bot.workspaceRoot, bot.mainThreadId, bot.adopted]);
   const source = mergeLibraryEntries(items, files ?? []);
   const visible = filterLibraryEntries(source, filter);
+  // A tablist is one tab stop: arrow keys, Home and End move between the filters (as in Details).
+  const onFilterKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = LIBRARY_FILTERS.length - 1;
+    const next = event.key === "ArrowRight" ? (index === last ? 0 : index + 1) : event.key === "ArrowLeft" ? (index === 0 ? last : index - 1) : event.key === "Home" ? 0 : event.key === "End" ? last : null;
+    if (next === null) return;
+    event.preventDefault();
+    setFilter(LIBRARY_FILTERS[next]);
+    (event.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+  };
   return <div className="library-view">
-    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} tabIndex={filter === name ? 0 : -1} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
+    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{LIBRARY_FILTERS.map((name, index) => <button key={name} type="button" role="tab" aria-selected={filter === name} tabIndex={filter === name ? 0 : -1} onClick={() => setFilter(name)} onKeyDown={(event) => onFilterKeyDown(event, index)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
     {libraryGroups(visible).map(group => <section key={group.label} className="library-time-group">
       {group.label && <h3 className="mb-2 px-4 text-[14px] font-normal text-faint">{group.label}</h3>}
       <div className="library-list overflow-hidden rounded-[20px] bg-card">

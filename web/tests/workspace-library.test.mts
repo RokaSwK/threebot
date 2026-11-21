@@ -338,6 +338,29 @@ test('Library uses a fixed tab order, real transcript links, Image/Video thumbna
   assert.equal(document.querySelectorAll('.library-row').length, 0, 'no invented links when the transcript has none');
 });
 
+test('Library filters move with arrow keys, Home and End as one tab stop', async () => {
+  rpc = async () => ({ entries: [], truncated: false });
+  useApp.setState({ threadData: { main: { loaded: true, items: {}, runs: {}, requests: {} } } });
+  await mount(h(Library, { bot }));
+  const key = async (name) => { await act(async () => { document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })); await flush(); }); };
+  const selected = () => document.querySelector('[role=tab][aria-selected="true"]');
+  button('All').focus();
+  await key('ArrowRight');
+  assert.equal(selected().textContent, 'Pages');
+  assert.equal(document.activeElement, selected());
+  assert.equal(selected().getAttribute('tabindex'), '0');
+  await key('End');
+  assert.equal(selected().textContent, 'Files');
+  await key('ArrowRight');
+  assert.equal(selected().textContent, 'All', 'ArrowRight wraps to the first filter');
+  await key('ArrowLeft');
+  assert.equal(selected().textContent, 'Files', 'ArrowLeft wraps to the last filter');
+  await key('Home');
+  assert.equal(selected().textContent, 'All');
+  assert.equal(document.activeElement, selected());
+  assert.equal(document.querySelectorAll('[role=tab][tabindex="0"]').length, 1);
+});
+
 
 test('CSV preview parses quoted cells and keeps markup as text', async () => {
   fetchResponse = () => new Response('name,value\n"A,B","<script>unsafe</script>"\nC,2', { status: 200 });
