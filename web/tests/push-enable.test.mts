@@ -112,3 +112,16 @@ test("a subscription already in flight when push is turned off never reaches the
   assert.equal((await off).ok, true);
   assert.equal(browser.log.includes("gateway /api/push/subscribe"), false, `log: ${browser.log.join(", ")}`);
 });
+
+test("a subscription the browser rotates while push is turned off is removed too", async () => {
+  const browser = pushBrowser((url) => url === "/api/push/key" ? Response.json({ publicKey: "AQAB" }) : Response.json({ ok: true }));
+  const registration = await (globalThis as any).navigator.serviceWorker.getRegistration();
+  const first = await registration.pushManager.getSubscription();
+  // Off reads endpoint A; by its next look the browser has rotated to B (and the worker renewed it).
+  let rotated: { endpoint: string; unsubscribe(): Promise<boolean> } | null = { endpoint: "https://fcm.googleapis.com/wp/rotated", async unsubscribe() { browser.log.push("browser unsubscribe rotated"); rotated = null; return true; } };
+  let reads = 0;
+  registration.pushManager.getSubscription = async () => (reads++ === 0 ? first : rotated);
+  browser.log.length = 0;
+  assert.equal((await disablePushNotifications()).ok, true);
+  assert.deepEqual(browser.log, ["gateway /api/push/unsubscribe", "browser unsubscribe", "gateway /api/push/unsubscribe", "browser unsubscribe rotated"]);
+});

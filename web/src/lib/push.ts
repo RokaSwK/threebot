@@ -142,8 +142,13 @@ export async function disablePushNotifications(): Promise<PushResult> {
 async function removeSubscription(): Promise<PushResult> {
   try {
     const registration = await navigator.serviceWorker.getRegistration();
-    const subscription = await registration?.pushManager.getSubscription();
-    if (subscription) {
+    // Twice at most: if the browser rotated the subscription while this ran (and the worker renewed
+    // it on the gateway), the new endpoint is removed too. A renewal landing after that is refused,
+    // since the endpoint it replaces is gone.
+    for (let pass = 0, last = ""; pass < 2; pass += 1) {
+      const subscription = await registration?.pushManager.getSubscription();
+      if (!subscription || subscription.endpoint === last) break;
+      last = subscription.endpoint;
       const response = await fetch("/api/push/unsubscribe", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -153,9 +158,9 @@ async function removeSubscription(): Promise<PushResult> {
         setPushOff(false);
         return { ok: false, reason: `The gateway could not remove the subscription (HTTP ${response.status}).` };
       }
+      // The gateway no longer sends here; a browser that fails to drop the endpoint only keeps a dead one.
+      await subscription.unsubscribe().catch(() => false);
     }
-    // The gateway no longer sends here; a browser that fails to drop the endpoint only keeps a dead one.
-    await subscription?.unsubscribe().catch(() => false);
     return { ok: true };
   } catch (error) {
     setPushOff(false);
