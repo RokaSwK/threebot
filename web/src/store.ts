@@ -258,7 +258,7 @@ async function confirmLaunch() {
       keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
     }
     // A Bot or room the copy did not know about (added on another device) is still reachable by URL.
-    openRoute(bots, historical);
+    openRoute(Object.values(get().bots), Object.values(get().historicalBots));
     void loadRooms().catch(() => {});
     // The copy carries neither of these, and the first paint must not be the last word on them.
     void loadVault();

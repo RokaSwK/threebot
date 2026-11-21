@@ -95,6 +95,8 @@ function indexedBackend(): Backend {
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error ?? new Error("Cache write aborted"));
       });
+      // A failed request rejects the work and the commit both; the work's rejection is the one reported.
+      done.catch(() => {});
       // Each request settles inside the transaction's own event, so awaiting it keeps the transaction open.
       const ask = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
@@ -246,10 +248,12 @@ async function writeRecord(id: string, value: unknown): Promise<void> {
 
 /** Reads one record of a known shape, ignoring anything this version did not write. */
 export async function readRecord<T>(id: string, usable: (value: unknown) => value is T): Promise<T | null> {
-  // Reading pins this tab to the sign-in whose copy it paints.
-  void tabGeneration().catch(() => {});
-  const value = await storage().transact("readonly", (store) => store.get(id)).catch(() => null);
-  return usable(value) ? value : null;
+  if (stopped) return null;
+  // Reading pins this tab to the sign-in whose copy it paints; a later sign-in's records are not its to read.
+  const mine = await tabGeneration().catch(() => null);
+  if (!mine) return null;
+  const value = await storage().transact("readonly", async (store) => await store.get(GENERATION) === mine ? store.get(id) : null).catch(() => null);
+  return !stopped && usable(value) ? value : null;
 }
 
 /** Forgets these records now, index first, so a deleted conversation or room is never painted again. */
