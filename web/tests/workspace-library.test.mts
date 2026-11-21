@@ -359,6 +359,10 @@ test('Library filters move with arrow keys, Home and End as one tab stop', async
   assert.equal(selected().textContent, 'All');
   assert.equal(document.activeElement, selected());
   assert.equal(document.querySelectorAll('[role=tab][tabindex="0"]').length, 1);
+  const panel = document.querySelector('[role=tabpanel]');
+  assert.equal(selected().getAttribute('aria-controls'), panel.id);
+  assert.equal(panel.getAttribute('aria-labelledby'), selected().id);
+  assert.equal(panel.getAttribute('tabindex'), '0', 'an empty panel is still reachable by Tab');
 });
 
 
