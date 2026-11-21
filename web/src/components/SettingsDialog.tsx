@@ -364,6 +364,9 @@ function Permissions({ s }: { s: Settings }) {
         <Row title="Auto-Review" desc="Use provider approval checks before actions run.">
           <Switch checked={s.autoReview !== false} onChange={(v) => save({ autoReview: v })} label="Auto-Review" />
         </Row>
+        <Row title="Chats can give permissions" desc="Threads your Bots and other chats start or message act on those requests as if you'd typed them, without asking you to confirm again.">
+          <Switch checked={s.chatPermissions !== false} onChange={(v) => save({ chatPermissions: v })} label="Chats can give permissions" />
+        </Row>
       </Group>
       <RuleList title="Always Ask" desc="Stop and ask when an action matches these rules" rules={rules.alwaysAsk} onChange={(r) => save({ rules: { ...rules, alwaysAsk: r } })} />
       <RuleList title="Allow without Asking" desc="Continue automatically when an action matches these rules" rules={rules.allowWithoutAsking} onChange={(r) => save({ rules: { ...rules, allowWithoutAsking: r } })} />

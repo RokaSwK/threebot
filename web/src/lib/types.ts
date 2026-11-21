@@ -58,6 +58,8 @@ export type Settings = {
   accent: "bot" | "black";
   timezone: string;
   autoReview: boolean;
+  /** Requests relayed from the user's other chats and Bots carry their permission. */
+  chatPermissions: boolean;
   rules: { alwaysAsk: string[]; allowWithoutAsking: string[] };
   sections: string[];
   defaultModel: ModelSelection | null;
