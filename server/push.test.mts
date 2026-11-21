@@ -4,9 +4,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { generateVAPIDKeys, WebPushError } from "web-push";
-import { createPushNotifier, createPushStore, usableSubject, type PushPreview } from "./push.mts";
+import { createPushNotifier, createPushStore, pushTopic, usableSubject, type PushPreview } from "./push.mts";
 
 const keys = generateVAPIDKeys();
+/** Pushes render their Bot's embedded icon first, so wait for them rather than for one tick. */
+const until = async (check: () => boolean) => { for (let i = 0; i < 400 && !check(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5)); };
 const subscription = {
   endpoint: "https://push.example/sub/1",
   keys: { p256dh: "p256dh-value-1234567890", auth: "auth-value-1234" },
@@ -24,6 +26,7 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe(subscription)).ok, true);
   assert.equal((await store.subscribe({ endpoint: "not a url", keys: subscription.keys })).ok, false);
+  assert.equal(await store.devices(), 1);
   const result = await store.send({ title: "Bot", body: "Finished", tag: "bot", url: "/?bot=bot", bot: "bot" });
   assert.equal(result.sent, 1);
   assert.match(sent[0]!, /"body":"Finished"/u);
@@ -37,6 +40,45 @@ test("push subscriptions dedupe, unsubscribe and remove a gone endpoint", async 
   const removed = await gone.send({ title: "Bot", body: "Finished", tag: "bot", url: "/", bot: "bot" });
   assert.equal(removed.removed, 1);
   assert.equal((await gone.unsubscribe(subscription.endpoint)).subscriptions, 0);
+  assert.equal(await gone.devices(), 0);
+});
+
+test("each push carries an RFC 8030 topic: the tag when it fits, a hash otherwise", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const topics: Array<string | undefined> = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (_subscription, _payload, options) => { topics.push(options?.topic); },
+  });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  await store.send({ title: "Bot", body: "Finished", tag: "alpha", url: "/?bot=alpha", bot: "alpha" });
+  await store.send({ title: "Bot", body: "Waiting", tag: "waiting:alpha:thread-1", url: "/?bot=alpha&thread=thread-1", bot: "alpha" });
+  assert.equal(topics[0], "alpha");
+  assert.equal(topics[1], pushTopic("waiting:alpha:thread-1"));
+  assert.match(topics[1]!, /^[A-Za-z0-9_-]{32}$/u);
+  assert.equal(pushTopic("a".repeat(40)).length, 32);
+  assert.equal(pushTopic("a".repeat(40)), pushTopic("a".repeat(40)));
+});
+
+test("a targeted send reaches only the endpoint that asked", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: string[] = [];
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => { delivered.push(target.endpoint); },
+  });
+  const other = { ...subscription, endpoint: "https://fcm.googleapis.com/wp/other" };
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(other)).ok, true);
+  const payload = { title: "Threebot", body: "Test notification", tag: "test:notification", url: "/" };
+  assert.equal((await store.send(payload, { endpoint: subscription.endpoint })).sent, 1);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload, { endpoint: "https://fcm.googleapis.com/wp/missing" })).sent, 0);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  assert.equal((await store.send(payload)).sent, 2);
+  assert.deepEqual(delivered, [subscription.endpoint, subscription.endpoint, other.endpoint]);
 });
 
 test("the notifier ignores the first snapshot and pushes completions and requests", async () => {
@@ -62,15 +104,50 @@ test("the notifier ignores the first snapshot and pushes completions and request
   assert.ok(handler);
   handler!({ kind: "snapshot", snapshot: { threads: [{ id: "thread-1", projectId: "project", status: "running", activityRunStatus: "running", pendingRuntimeRequest: null }] } });
   handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "completed", activityRunStatus: "completed", pendingRuntimeRequest: null, updatedAt: "2026-11-10T10:00:00.000Z" } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await until(() => sent.length === 1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].body, "Finished");
   handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "waiting", activityRunStatus: "waiting", pendingRuntimeRequest: { id: "request-1" } } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await until(() => sent.length === 2);
   assert.equal(sent.length, 2);
   assert.equal(sent[1].body, "Waiting for you");
+  assert.equal(sent[0].tag, "alpha");
+  assert.match(sent[0].icon, /^\/api\/bots\/alpha\/avatar\.png\?v=[\w-]{12}$/);
+  assert.match(sent[0].badge, /^\/api\/bots\/alpha\/badge\.png\?v=[\w-]{12}$/);
+  // The push itself carries small copies, for a device that can't fetch at display time.
+  assert.match(sent[0].iconData, /^data:image\/webp;base64,/);
+  assert.match(sent[0].badgeData, /^data:image\/png;base64,/);
+  assert.ok(Buffer.byteLength(JSON.stringify(sent[0])) < 3_500, "fits a push service's 4 KB limit");
+  assert.equal(typeof sent[0].timestamp, "number");
+  assert.equal(sent[1].tag, "waiting:alpha:thread-1");
+  assert.equal(sent[1].url, "/?bot=alpha&thread=thread-1");
+  assert.equal(sent[1].kind, "waiting");
+  // Answered (here or on another device): every device closes that conversation's notice.
+  handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "running", activityRunStatus: "running", pendingRuntimeRequest: null } });
+  await until(() => sent.length === 3);
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].kind, "resolved");
+  assert.equal(sent[2].tag, sent[1].tag, "the same tag, and so the same push topic, as the waiting notice");
   notifier.stop();
   assert.equal(cancelled, true);
+});
+
+test("a resolved push skips Safari, and asks Firefox to leave a quiet notice", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: Array<{ endpoint: string; urgency?: string; topic?: string; show?: boolean }> = [];
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async (target, payload, options) => { delivered.push({ endpoint: target.endpoint, urgency: options?.urgency, topic: options?.topic, show: JSON.parse(payload).show }); } });
+  const apple = { ...subscription, endpoint: "https://web.push.apple.com/device" };
+  const mozilla = { ...subscription, endpoint: "https://updates.push.services.mozilla.com/wpush/v2/device" };
+  for (const item of [subscription, apple, mozilla]) assert.equal((await store.subscribe(item)).ok, true);
+  const tag = "waiting:alpha:thread-1";
+  assert.equal((await store.send({ title: "Alpha", body: "Waiting for you", tag, url: "/", bot: "alpha", kind: "waiting" })).sent, 3);
+  delivered.length = 0;
+  assert.equal((await store.send({ title: "Alpha", body: "Answered", tag, url: "/", bot: "alpha", kind: "resolved" })).sent, 2);
+  assert.deepEqual(delivered, [
+    { endpoint: subscription.endpoint, urgency: "normal", topic: pushTopic(tag), show: undefined },
+    { endpoint: mozilla.endpoint, urgency: "normal", topic: pushTopic(tag), show: true },
+  ]);
+  assert.equal(await store.devices(), 3, "skipped devices keep their subscription");
 });
 
 test("disabled Bots and a first thread update do not notify", async () => {
@@ -281,4 +358,120 @@ test("a completion push quotes only this run's own reply", async () => {
   next = null;
   assert.deepEqual(await finish("main", "completed", run), ["Finished"]);
   notifier.stop();
+});
+
+test("an endpoint unsubscribed while a send is in flight stays removed", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const other = { ...subscription, endpoint: "https://push.example/sub/2" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => {
+      if (target.endpoint === subscription.endpoint) { await gate; return; }
+      throw new WebPushError("gone", 410, {}, "", target.endpoint);
+    },
+  });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(other)).ok, true);
+  const sending = store.send({ title: "Bot", body: "Waiting", tag: "bot", url: "/", bot: "bot" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await store.unsubscribe(subscription.endpoint);
+  release();
+  assert.equal((await sending).removed, 1);
+  assert.equal(await store.devices(), 0, "neither the gone endpoint nor the unsubscribed one comes back");
+  const reloaded = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  assert.equal(await reloaded.devices(), 0, "and that is what was saved");
+});
+
+test("a muted Bot's request still resolves, and a reconnect resolves what was answered in the gap", async () => {
+  let handler: any = null;
+  const client = { stream(_tag: string, _payload: unknown, onItem: (event: any) => void) { handler = onItem; return { done: new Promise<void>(() => {}), cancel() {} }; } };
+  const bot = { slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "thread-1", notifications: true, hidden: false };
+  const sent: any[] = [];
+  const notifier = createPushNotifier({ connect: async () => client as any, bots: async () => [bot as any], send: async (payload) => { sent.push(payload); }, retryMs: 60_000, log: () => {} });
+  void notifier.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const side = (id: string, pending: boolean) => ({ id, projectId: "project", status: pending ? "waiting" : "running", pendingRuntimeRequest: pending ? { id: `r-${id}` } : null, lineage: { parentThreadId: "thread-1", sideChat: true } });
+  handler!({ kind: "snapshot", snapshot: { threads: [side("side-1", false), side("side-2", false)] } });
+  handler!({ kind: "thread.updated", thread: side("side-1", true) });
+  handler!({ kind: "thread.updated", thread: side("side-2", true) });
+  await until(() => sent.length === 2);
+  assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["waiting", "waiting:alpha:side-1"], ["waiting", "waiting:alpha:side-2"]]);
+  bot.notifications = false;
+  handler!({ kind: "thread.updated", thread: side("side-1", false) });
+  await until(() => sent.length === 3);
+  assert.deepEqual(sent.at(-1).kind === "resolved" && sent.at(-1).tag, "waiting:alpha:side-1", "muting the Bot later does not strand its notice");
+  // The stream drops; side chat 2 is answered meanwhile; the new snapshot says so.
+  handler!({ kind: "snapshot", snapshot: { threads: [side("side-2", false)] } });
+  await until(() => sent.length === 4);
+  assert.deepEqual([sent.at(-1).kind, sent.at(-1).tag], ["resolved", "waiting:alpha:side-2"]);
+  assert.equal(sent.length, 4);
+  notifier.stop();
+});
+
+test("a device that registers again during a send still gets it, and a late 410 removes only the old record", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const other = { ...subscription, endpoint: "https://push.example/sub/2" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const delivered: string[] = [];
+  let first = true;
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => {
+      if (target.endpoint === other.endpoint && first) { first = false; await gate; throw new WebPushError("gone", 410, {}, "", target.endpoint); }
+      delivered.push(target.endpoint);
+    },
+  });
+  assert.equal((await store.subscribe(other)).ok, true);
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  const sending = store.send({ title: "Bot", body: "Waiting", tag: "bot", url: "/", bot: "bot" });
+  await new Promise((resolve) => setImmediate(resolve));
+  // Both devices register again while the first send is still waiting on the push service.
+  assert.equal((await store.subscribe(other)).ok, true);
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  release();
+  await sending;
+  assert.ok(delivered.includes(subscription.endpoint), "the re-registered device still receives the push");
+  assert.equal(await store.devices(), 2, "the fresh registration of the failed endpoint is kept");
+});
+
+test("a removed thread that was waiting resolves its notice", async () => {
+  let handler: any = null;
+  const client = { stream(_tag: string, _payload: unknown, onItem: (event: any) => void) { handler = onItem; return { done: new Promise<void>(() => {}), cancel() {} }; } };
+  const bot = { slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "thread-1", notifications: true, hidden: false };
+  const sent: any[] = [];
+  const notifier = createPushNotifier({ connect: async () => client as any, bots: async () => [bot as any], send: async (payload) => { sent.push(payload); }, retryMs: 60_000, log: () => {} });
+  void notifier.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const side = { id: "side-1", projectId: "project", status: "waiting", pendingRuntimeRequest: { id: "r" }, lineage: { parentThreadId: "thread-1", sideChat: true } };
+  handler!({ kind: "snapshot", snapshot: { threads: [side] } });
+  // A project-only enrichment snapshot is not the roster and must not forget the waiting thread.
+  handler!({ kind: "snapshot", resolvedRepositoryIdentityRoots: {}, snapshot: { projects: [], threads: [] } });
+  handler!({ kind: "thread.removed", threadId: "side-1" });
+  await until(() => sent.length === 1);
+  assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["resolved", "waiting:alpha:side-1"]]);
+  notifier.stop();
+});
+
+test("a rotated subscription renews in one step, and never after push was turned off, also across a restart", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  const rotated = { ...subscription, endpoint: "https://push.example/sub/rotated" };
+  // Renewal first, then off (the page now holds the rotated endpoint and removes that one).
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(rotated, undefined, subscription.endpoint)).ok, true);
+  assert.deepEqual([await store.has(subscription.endpoint), await store.has(rotated.endpoint)], [false, true], "swapped in one step");
+  await store.unsubscribe(rotated.endpoint);
+  // Off first, then a late renewal of the endpoint that was turned off.
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  await store.unsubscribe(subscription.endpoint);
+  const late = await store.subscribe(rotated, undefined, subscription.endpoint);
+  assert.equal(late.ok, false);
+  assert.equal("off" in late && late.off, true);
+  const restarted = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  assert.equal(await restarted.devices(), 0, "still off after a restart");
 });

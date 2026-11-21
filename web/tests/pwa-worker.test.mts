@@ -17,6 +17,9 @@ const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let temporary, app, nested, update, later, sameLazy, origin, server;
 let files, offline = false, failure, edgeTokens = 0;
+// Stand-in bytes for a Bot's avatar or badge PNG, and the small copy a push carries.
+const BOT_PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
+const EMBEDDED = "data:image/webp;base64,UklGRg==";
 const seen = [];
 async function tree(directory) {
   const files = new Map();
@@ -69,6 +72,8 @@ before(async () => {
       }
       response.setHeader("content-type", "text/html"); response.end('<title>Cloudflare Access login</title>'); return;
     }
+    // A Bot's notification images, as the gateway serves them.
+    if (/^\/api\/bots\/[a-z0-9-]+\/(avatar|badge)\.png(\?|$)/.test(request.url)) { response.writeHead(200, { "content-type": "image/png" }); response.end(BOT_PNG); return; }
     const bytes = files?.get(filename);
     response.writeHead(bytes ? 200 : 404);
     response.end(bytes ?? "not found");
@@ -113,6 +118,8 @@ function cacheStorage() {
           }
           return new Response(stored.body.slice(0), { status: stored.status, headers: stored.headers });
         },
+        async keys() { return [...data.values()].map((stored) => stored.request); },
+        async delete(request) { return data.delete(key(request)); },
       };
     },
     async keys() { return [...stores.keys()]; },
@@ -123,25 +130,61 @@ function worker(build, caches = cacheStorage()) {
   const listeners = new Map();
   let claimCalls = 0, skipCalls = 0;
   const navigated = [];
+  const opened: string[] = [];
+  const shown: { title: string; options: NotificationOptions }[] = [];
+  // What the tray still holds: a notification replaces one with its tag, and close() removes it.
+  const tray: { tag: string; title: string; body?: string; close(): void }[] = [];
   const self = {
     location: new URL(build.manifest.base + "sw.js", origin),
     clients: {
       async claim() { claimCalls++; },
-      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, async navigate(target) { navigated.push(target); } })); },
+      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, visibilityState: build.visible ? "visible" : "hidden", async focus() {}, async navigate(target) { if (build.navigateFails) throw new Error("not controlled"); navigated.push(target); } })); },
+      async openWindow(target: string) { opened.push(target); return null; },
+    },
+    registration: {
+      async showNotification(title: string, options: NotificationOptions) {
+        // A notice waits for its icon before it shows; a test can slow that down.
+        if (build.showDelay) await new Promise((resolve) => setTimeout(resolve, build.showDelay));
+        shown.push({ title, options });
+        const tag = options.tag ?? "";
+        const kept = tray.filter((notice) => notice.tag !== tag || !tag);
+        tray.splice(0, tray.length, ...kept);
+        const notice = { tag, title, body: options.body, close() { const index = tray.indexOf(notice); if (index >= 0) tray.splice(index, 1); } };
+        tray.push(notice);
+      },
+      async getNotifications({ tag }: { tag?: string } = {}) {
+        if (build.trayDelay) await new Promise((resolve) => setTimeout(resolve, build.trayDelay));
+        return tray.filter((notice) => !tag || notice.tag === tag);
+      },
     },
     skipWaiting() { skipCalls++; },
     addEventListener(name, listener) { listeners.set(name, listener); },
   };
   vm.runInNewContext(build.source, {
-    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout,
+    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout, AbortSignal, btoa,
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
-    caches, navigated, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
+    caches, navigated, opened, shown, tray, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
     async lifecycle(name) {
       const pending = [];
       listeners.get(name)({ waitUntil(promise) { pending.push(promise); } });
       await Promise.all(pending);
+    },
+    async click(data: unknown) {
+      const pending: Promise<unknown>[] = [];
+      listeners.get("notificationclick")({ notification: { data, close() {} }, waitUntil(promise: Promise<unknown>) { pending.push(promise); } });
+      await Promise.all(pending);
+    },
+    async push(payload: unknown) {
+      await this.pushStarted(payload);
+      return shown.at(-1);
+    },
+    /** Dispatches a push and returns its waitUntil work without waiting for it. */
+    pushStarted(payload: unknown) {
+      const pending: Promise<unknown>[] = [];
+      listeners.get("push")({ data: { json: () => payload }, waitUntil(promise: Promise<unknown>) { pending.push(promise); } });
+      return Promise.all(pending);
     },
     async request(pathname: string, { method = "GET", navigate = false, headers }: { method?: string; navigate?: boolean; headers?: HeadersInit } = {}) {
       const request = new Request(new URL(pathname, origin), { method, headers });
@@ -398,4 +441,150 @@ test("an update serves a lazy chunk the previous shell cached on demand, and nev
   const fresh = await third.request(laterLazy.url);
   assert.equal(digest(Buffer.from(await fresh.arrayBuffer())), laterLazy.sha256);
   assert.deepEqual(seen, [laterLazy.url]);
+});
+
+test("a push shows the Bot's icon, badge and timestamp", async () => {
+  const runtime = worker(app);
+  const notice = await runtime.push({
+    title: "Alpha",
+    body: "Waiting for you",
+    tag: "waiting:alpha:thread-1",
+    url: "/?bot=alpha&thread=thread-1",
+    icon: "/api/bots/alpha/avatar.png",
+    badge: "/api/bots/alpha/badge.png",
+    timestamp: 1_700_000_000_000,
+  });
+  assert.ok(notice);
+  const options = notice.options as NotificationOptions & { timestamp?: number };
+  assert.equal(notice.title, "Alpha");
+  assert.equal(options.body, "Waiting for you");
+  assert.equal(options.tag, "waiting:alpha:thread-1");
+  // Fetched once, then handed over as data, so Android never fetches it at display time.
+  assert.equal(options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+  assert.equal(options.badge, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+  assert.equal(options.timestamp, 1_700_000_000_000);
+  assert.equal((options.data as { url?: string }).url, "/?bot=alpha&thread=thread-1");
+  assert.equal("renotify" in options, false, "a replacement stays quiet");
+});
+
+test("a resolved push closes that conversation's notice and shows nothing", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "A side chat is waiting for you", tag: "waiting:alpha:side-1", url: "/?bot=alpha&thread=side-1", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "A side chat is waiting for you", tag: "waiting:alpha:side-2", url: "/?bot=alpha&thread=side-2", kind: "waiting" });
+  assert.deepEqual(runtime.tray.map((notice) => notice.tag), ["waiting:alpha:side-1", "waiting:alpha:side-2"], "two waiting side chats stay visible");
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/?bot=alpha&thread=side-1", kind: "resolved" });
+  assert.equal(runtime.shown.length, 2, "nothing new is shown");
+  assert.deepEqual(runtime.tray.map((notice) => notice.tag), ["waiting:alpha:side-2"]);
+});
+
+test("resolving the last notice with no window in view leaves a quiet Answered notice, not Chromium's own", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:main", url: "/?bot=alpha&thread=main", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:main", url: "/?bot=alpha&thread=main", icon: "/api/bots/alpha/avatar.png", kind: "resolved" });
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.title]), [["waiting:alpha:main", "Alpha"]]);
+  const quiet = runtime.shown.at(-1)!;
+  assert.equal(quiet.options.body, "Answered");
+  assert.equal(quiet.options.silent, true);
+  assert.equal(quiet.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`, "still the Bot's own face");
+});
+
+test("a resolution that arrives while its waiting notice is still loading closes it afterwards", async () => {
+  const runtime = worker({ ...app, showDelay: 30 });
+  const waiting = runtime.pushStarted({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", icon: "/api/bots/alpha/avatar.png", kind: "waiting" });
+  const resolved = runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved" });
+  await Promise.all([waiting, resolved]);
+  // Out of order, the waiting notice would land last and stay; in turn, the answer has the last word.
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.body]), [["waiting:alpha:side-1", "Answered"]]);
+});
+
+test("two resolutions at once leave one Answered notice, not one each", async () => {
+  const runtime = worker({ ...app, trayDelay: 5, showDelay: 20 });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-2", url: "/", kind: "waiting" });
+  await Promise.all([
+    runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved" }),
+    runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-2", url: "/", kind: "resolved" }),
+  ]);
+  assert.deepEqual(runtime.tray.map((notice) => notice.body), ["Answered"]);
+});
+
+test("Firefox's resolution always leaves a quiet notice, so it never spends push quota", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-2", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved", show: true });
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.title]), [["waiting:alpha:side-2", "Alpha"], ["waiting:alpha:side-1", "Alpha"]]);
+  assert.equal(runtime.shown.at(-1)!.options.body, "Answered");
+  assert.equal(runtime.shown.at(-1)!.options.silent, true);
+});
+
+test("resolving the last notice while a window is in view just closes it", async () => {
+  const runtime = worker({ ...app, openWindows: ["http://127.0.0.1:4173/"], visible: true });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:main", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:main", url: "/", kind: "resolved" });
+  assert.deepEqual(runtime.tray, []);
+  assert.equal(runtime.shown.length, 1);
+});
+
+test("offline with nothing cached, the push's own small copies show the Bot", async () => {
+  const runtime = worker(app);
+  offline = true;
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", badge: "/api/bots/alpha/badge.png?v=one", iconData: EMBEDDED, badgeData: "data:image/png;base64,iVBORw==", kind: "finished" });
+  offline = false;
+  assert.equal(notice!.options.icon, EMBEDDED);
+  assert.equal(notice!.options.badge, "data:image/png;base64,iVBORw==");
+});
+
+test("once fetched, a Bot's icon shows offline at full size, and a new look replaces the old one", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  offline = true;
+  const cached = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  offline = false;
+  assert.equal(cached!.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+  await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=two", kind: "finished" });
+  const icons = [...runtime.caches.stores.entries()].find(([name]) => name.startsWith("bot-icons-"))![1];
+  assert.deepEqual([...icons.keys()].map((url) => new URL(url).search), ["?v=two"]);
+});
+
+test("a cache that can't be opened still shows the fetched image", async () => {
+  const broken = cacheStorage();
+  const runtime = worker(app, { ...broken, async open(name) { if (name.startsWith("bot-icons-")) throw new Error("quota"); return broken.open(name); } });
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  assert.equal(notice!.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+});
+
+test("a sign-in page instead of the image falls back to the push's own copy, and is not kept", async () => {
+  const runtime = worker(app);
+  failure = { url: "/api/bots/alpha/avatar.png?v=signed-out", kind: "login-html" };
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=signed-out", iconData: EMBEDDED, kind: "finished" });
+  failure = undefined;
+  assert.equal(notice!.options.icon, EMBEDDED);
+  const icons = [...runtime.caches.stores.entries()].find(([name]) => name.startsWith("bot-icons-"))?.[1];
+  assert.equal(icons?.size ?? 0, 0);
+});
+
+test("a push with no icon keeps the app icon and drops malformed extras", async () => {
+  const runtime = worker(app);
+  const notice = await runtime.push({
+    body: "Finished",
+    timestamp: Number.NaN,
+    badge: 42,
+  });
+  assert.ok(notice);
+  const options = notice.options as NotificationOptions & { timestamp?: number };
+  assert.equal(notice.title, "Threebot");
+  assert.equal(options.tag, "threebot");
+  assert.equal(options.icon, "/icon-192.png");
+  assert.equal(options.timestamp, undefined);
+  assert.equal(options.badge, undefined);
+});
+
+test("a notification click navigates the open window, and opens a new one when it cannot", async () => {
+  const runtime = worker({ ...app, openWindows: [`${origin}/`] });
+  await runtime.click({ url: "/?bot=alpha&thread=thread-1" });
+  assert.deepEqual(runtime.navigated, [`${origin}/?bot=alpha&thread=thread-1`]);
+  const failing = worker({ ...app, openWindows: [`${origin}/`], navigateFails: true });
+  await failing.click({ url: "/?bot=beta" });
+  assert.deepEqual(failing.opened, [`${origin}/?bot=beta`]);
 });

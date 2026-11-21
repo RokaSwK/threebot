@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
-import { enablePushNotifications } from "./lib/push";
+import { enablePushNotifications, pushTurnedOff } from "./lib/push";
+import { botBadge, notificationContent, notificationTarget, waitingThread } from "./lib/notification";
 import { allT3Clients, t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -481,6 +482,7 @@ function subscribeShell() {
         threads: { ...Object.fromEntries(Object.entries(s.threads).filter(([id]) => familyThreadIds.has(id) || mainThreadIds(s).has(id))), ...s.archivedThreads, ...Object.fromEntries(snap.threads.map((t: ThreadShell) => [t.id, t])) },
       }));
       schedulePreviews();
+      closeAnsweredNotifications();
     } else if (it.kind === "project.updated") {
       set((s) => ({ projects: { ...s.projects, [it.project.id]: it.project } }));
     } else if (it.kind === "project.removed") {
@@ -491,6 +493,8 @@ function subscribeShell() {
       });
     } else if (it.kind === "thread.updated") {
       if (it.location === "archive") {
+        closeThreadNotices(it.thread.id);
+        queueMicrotask(closeAnsweredNotifications);
         set((s) => ({ archivedThreads: { ...s.archivedThreads, [it.thread.id]: it.thread }, threads: { ...s.threads, [it.thread.id]: it.thread } }));
         return;
       }
@@ -500,6 +504,8 @@ function subscribeShell() {
       notifyIfNeeded(prev, it.thread);
     } else if (it.kind === "thread.removed") {
       forgetThreadCopy([it.threadId]);
+      closeThreadNotices(it.threadId);
+      queueMicrotask(closeAnsweredNotifications);
       set((s) => {
         const threads = { ...s.threads };
         delete threads[it.threadId];
@@ -587,12 +593,36 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   const side = isSideChat(next);
   const ownerThreadId = side ? next.lineage.parentThreadId : next.id;
   const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
-  if (!bot || bot.notifications === false || bot.hidden) return;
+  if (!bot) return;
+  // The request is gone: its notification is a stale reminder, even (above all) when it was answered
+  // right here in the Bot this page is looking at.
+  // closeAnsweredNotifications also clears an older per-Bot notice once this was the Bot's last wait.
+  if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) closeAnsweredNotifications();
+  if (bot.notifications === false || bot.hidden) return;
   if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
-  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you");
-  else if (side) return;
-  else if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
+  if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) {
+    void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you", "waiting", next.id);
+  } else if (!side && ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") {
+    void completionNotification(bot, next).catch(() => {});
+  }
 }
+
+/** On a fresh shell: close "waiting" notices whose request was answered while this page was closed. */
+function closeAnsweredNotifications() {
+  const waits = (thread?: ThreadShell) => !!thread?.pendingRuntimeRequest && !thread.archivedAt;
+  // State is read per notice, after the tray read: a conversation that starts waiting meanwhile keeps its notice.
+  void closeNotifications((tag, body) => {
+    const { threads, bots } = get();
+    const id = waitingThread(tag);
+    if (id !== null) return !!threads[id] && !waits(threads[id]);
+    // Before per-conversation tags, a wait used the Bot's own tag: close it once none of that Bot's
+    // conversations waits. A completion (any other text) keeps its notice.
+    const bot = Object.values(bots).find((b) => b.slug === tag);
+    if (!bot || !LEGACY_WAITING.has(body)) return false;
+    return !Object.values(threads).some((thread) => waits(thread) && (thread.id === bot.mainThreadId || (isSideChat(thread) && thread.lineage.parentThreadId === bot.mainThreadId)));
+  });
+}
+const LEGACY_WAITING = new Set(["Waiting for you", "A side chat is waiting for you"]);
 
 export async function completionNotification(bot: Bot, completed: ThreadShell) {
   // Require output from this run; a stale cache or the user's prompt is not a completion body.
@@ -602,24 +632,67 @@ export async function completionNotification(bot: Bot, completed: ThreadShell) {
   const fresh = preview?.role === "assistant" && preview.at && (!runStarted || preview.at >= runStarted);
   const current = get().threads[completed.id];
   if (current && current.latestRunId !== completed.latestRunId) return;
-  return notify(bot, fresh ? preview.text.slice(0, 140) : "Finished");
+  return notify(bot, fresh ? preview.text.slice(0, 140) : "Finished", "finished", completed.id);
 }
 
-async function notify(bot: Bot, body: string) {
+/** A waiting notification is per thread; a completion is per Bot, so three runs leave one notice. */
+async function notify(bot: Bot, body: string, kind: "finished" | "waiting", threadId: string) {
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  const options = { body, tag: bot.slug, icon: "/icon-192.png", data: { url: `/?bot=${encodeURIComponent(bot.slug)}` } };
+  const target = notificationTarget(bot.slug, kind, threadId);
+  const { title, options } = notificationContent({
+    title: bot.name,
+    body,
+    tag: target.tag,
+    url: target.url,
+    icon: `/api/bots/${encodeURIComponent(bot.slug)}/avatar.png`,
+    badge: botBadge(bot),
+    timestamp: Date.now(),
+  });
+  // A request answered while the notice was still being shown (its icon loads first) must not stay.
+  const stale = () => {
+    const thread = get().threads[threadId];
+    return kind === "waiting" && (!thread?.pendingRuntimeRequest || !!thread.archivedAt);
+  };
   // Android has no page Notification constructor; only the worker can show one.
   const registration = await navigator.serviceWorker?.getRegistration();
-  if (registration) return registration.showNotification(bot.name, options);
-  const notification = new Notification(bot.name, options);
+  if (registration) {
+    await registration.showNotification(title, options);
+    if (stale()) void closeNotifications((tag) => tag === target.tag);
+    return;
+  }
+  const notification = new Notification(title, options);
+  pageNotices.get(target.tag)?.close();
+  pageNotices.set(target.tag, notification);
+  notification.onclose = () => { if (pageNotices.get(target.tag) === notification) pageNotices.delete(target.tag); };
   notification.onclick = () => {
     window.focus();
-    select(bot.slug);
+    // A waiting notice opens its own conversation (a side chat), as the worker's click does.
+    if (kind === "waiting" && threadId !== bot.mainThreadId) selectThread(bot, threadId);
+    else select(bot.slug);
     notification.close();
   };
+  if (stale()) notification.close();
 }
 
+/** Notices made with the page's Notification constructor (no service worker, or the Mac app's bridge), by tag. */
+const pageNotices = new Map<string, Notification>();
+
+/** Best effort: iOS may accept this call and do nothing. */
+async function closeNotifications(match: (tag: string, body: string) => boolean) {
+  try {
+    const registration = typeof navigator === "undefined" ? undefined : await navigator.serviceWorker?.getRegistration();
+    for (const [tag, notification] of pageNotices) if (match(tag, notification.body)) notification.close();
+    if (!registration?.getNotifications) return;
+    for (const notification of await registration.getNotifications()) if (match(notification.tag, notification.body)) notification.close();
+  } catch { /* A closed or unsupported notification is not an error worth showing. */ }
+}
+
+/** A thread that was archived or removed no longer waits for anyone. */
+const closeThreadNotices = (threadId: string) => void closeNotifications((tag) => waitingThread(tag) === threadId);
+
 export function requestNotificationPermission() {
+  // Asked on a first message; a device where push was turned off in Settings stays off.
+  if (pushTurnedOff()) return;
   void enablePushNotifications();
 }
 

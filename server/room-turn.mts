@@ -9,6 +9,9 @@ import { validateAttachments, type Room, type RoomAttachment, type RoomMember, t
 
 export type RoomMessage = { text: string; mentions?: string[]; replyTo?: string | null; attachments?: RoomAttachment[] };
 
+/** `speaker`: the Bot that is waiting or spoke last; its avatar is the notification's (a room has none of its own). */
+export type RoomNotification = { title: string; body: string; url: string; room: string; kind: "waiting" | "finished"; speaker?: string };
+
 export type EngineRpc = RoomRpc & { dispatch(command: object): Promise<unknown> };
 
 export type EngineDeps = {
@@ -17,7 +20,7 @@ export type EngineDeps = {
   bots: () => Promise<Map<string, RoomBot>>;
   defaults: () => Promise<LaunchDefaults>;
   /** A room-level notification. `room` lets the gateway hold it back on a device that has it open. */
-  notify?: (payload: { title: string; body: string; url: string; room: string }) => Promise<void> | void;
+  notify?: (payload: RoomNotification) => Promise<void> | void;
   log?: (line: string) => void;
   /** How often a run's projection is read. Tests pass 0. */
   pollMs?: number;
@@ -361,6 +364,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
               body: `${nameOf(member.slug)} is waiting for you`,
               url: `/?room=${room.id}`,
               room: room.id,
+              kind: "waiting",
+              speaker: member.slug,
             })).catch(() => {});
           },
         });
@@ -441,6 +446,8 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           body: clip(last.text.replace(/\s+/g, " "), 140),
           url: `/?room=${room.id}`,
           room: room.id,
+          kind: "finished",
+          speaker: last.slug,
         })).catch(() => {});
       }
     } catch (err) {

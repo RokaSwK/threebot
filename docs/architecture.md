@@ -146,10 +146,51 @@ or when the page looks away), and a push about that Bot — or about that room �
 device. A room push carries the room id, so it is held back on the device looking at that room and
 still reaches a phone looking at a Bot or at another room. A report names a room or a Bot (a room
 wins when both arrive); any other value is refused with a 400, and an older page that sends only
-`bot` keeps working. The push uses the same notification tag as the page's own
-notification, so the two replace each other.
+`bot` keeps working. A completion keeps the Bot's own tag, so three finished runs leave one notice.
+A push that needs the user gets one tag per conversation (`waiting:<slug>:<threadId>`) and
+deep-links to that thread, so a side chat's request is not replaced by that Bot's completion or by
+another side chat. Every Bot push (a completion, a wait, a room's) shows a Bot's face: its uploaded
+picture or its drawn avatar from `/api/bots/<slug>/avatar.png?v=<look>`, and as Android's status-bar
+badge its white silhouette from `/badge.png`, or Threebot's own monochrome badge
+(`/api/push/badge.png`) for a Bot with a photo. A room has no avatar of its own, so a room push shows
+the Bot that is waiting or spoke last. The `v` changes with the look, so no cache keeps an old face.
+The worker hands the browser these images as `data:` URLs (from its own `bot-icons-` cache, or
+fetched once with the session cookie), so Android never fetches them at display time, when it may be
+offline or signed out of Access and would draw a letter. A push also carries small copies of both
+(`iconData`, `badgeData`, about 2 KB, dropped first if a message would pass the push services' 4 KB),
+for a device that has nothing cached and cannot fetch. Each
+push also carries an RFC 8030 `Topic` derived from the tag, so a device that was offline receives
+the latest notice per conversation instead of a burst. Safari ignores the icon, badge and timestamp,
+and iOS still stacks notifications because it does not coalesce tags. The page builds the same
+options for its own notifications, so the two replace each other.
+
+When a request is answered, here or on another device (or its thread is archived or removed), the
+gateway sends a `resolved` push with the same tag, and so the same topic, after the `waiting` one:
+a device that was offline gets the `resolved` push in place of the stale `waiting` one. The worker
+handles one tag's pushes in arrival order and closes that notice. Browsers do not let a push leave
+nothing behind: Chromium shows its own "updated in the background" notice when no notification and
+no window remain, and Firefox spends a quota on such a push. So when nothing else is on screen in
+Chromium, and always in Firefox, the answered notice is replaced, silently, by one that says
+"Answered". Safari gets no `resolved` push: it revokes a subscription after a few pushes that show
+nothing and does not coalesce tags, so a replacement would stack. The page clears what pushes cannot:
+it closes a `waiting` notice when that request disappears or its thread is archived or removed, and
+on every shell snapshot it closes the ones whose thread no longer waits (and, after the update, the
+older per-Bot waiting notices of a Bot that no longer waits).
+
+Settings › Notifications turns push on or off for one device. Off tells the gateway to forget the
+endpoint first (so a failed request leaves the browser subscription in place to retry), then drops
+the browser subscription, and remembers the choice on the device so a reload or a first message
+does not subscribe it again while the browser's permission is still granted.
+
+A tag only replaces notifications inside one client. A browser tab and an installed app, or two
+browsers on the same machine, are separate notification surfaces: the web app cannot make one
+replace the other, and the server cannot dedupe across browsers because each subscription is
+independent. One client per device is a user choice; the notification rules above apply inside
+that client.
 
 Pushes are signed with `VAPID_SUBJECT` when set, else `APP_URL`, else the address the browser
 subscribed from. Apple refuses a localhost contact, so one is never used when a real address is
-known. The app asks for permission when the user sends a message or presses **Enable push on this
-device** in Details, then registers the subscription.
+known. The app asks for permission when the user sends a message or turns on **Settings ›
+Notifications** (Details links to that pane); the pane shows permission, subscription, the device
+count, a test notification and the exact failure reason, and the test reaches only the device that
+asks. Each Bot keeps its own Notifications switch in Details.

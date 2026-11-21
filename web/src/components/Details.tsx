@@ -20,8 +20,8 @@ import { ComputerScreen, useBotTabs } from "./Computer";
 import type { Bot, ModelSelection, ScheduledTask } from "../lib/types";
 
 import { chatDraft } from "../lib/chatDrafts";
-import { enablePushNotifications } from "../lib/push";
 import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
+import { pushDeviceStatus, type PushDeviceStatus } from "../lib/push";
 import "./routines.css";
 import { findTidyTask } from "../lib/memoryTidy";
 import { reportsToChat } from "../lib/routineReports";
@@ -286,13 +286,15 @@ function DetailsTab({ bot, tasks, onOpenRoutine, onCreate, routinesOnly }: { bot
       </Section>
       </div>
       {!routinesOnly && <><div className="notifications-setting"><Section title="Notifications">
-        <div className="flex items-center gap-3 rounded-2xl bg-card px-3.5 py-3">
-          <div className="notifications-label hidden min-w-0 flex-1 text-[17px]">Notifications</div>
-          <div className="notifications-inline min-w-0 flex-1 text-[13px] text-muted">Get notified when this Bot finishes or is waiting for you.</div>
-          <Switch checked={bot.notifications !== false} onChange={(v) => updateBot(bot.slug, { notifications: v })} label="Notifications" />
+        <div className="overflow-hidden rounded-2xl bg-card">
+          <div className="flex items-center gap-3 px-3.5 py-3">
+            <div className="notifications-label hidden min-w-0 flex-1 text-[17px]">Notifications</div>
+            <div className="notifications-inline min-w-0 flex-1 text-[13px] text-muted">Get notified when this Bot finishes or is waiting for you.</div>
+            <Switch checked={bot.notifications !== false} onChange={(v) => updateBot(bot.slug, { notifications: v })} label="Notifications" />
+          </div>
+          <DevicePushRow />
         </div>
         <p className="notifications-below hidden">Get notified when this Bot finishes or is waiting for you</p>
-        {typeof Notification !== "undefined" && Notification.permission !== "granted" && <Pill variant="soft" className="mt-2" onClick={() => void enablePushNotifications().then((ok) => toast(ok ? "Push notifications enabled" : "Notifications were not enabled"))}>Enable push on this device</Pill>}
       </Section></div>
       <Section title="Folder">
         <div className="flex items-center gap-2 rounded-2xl bg-card px-3.5 py-3 font-mono text-[11.5px] text-muted">
@@ -301,6 +303,30 @@ function DetailsTab({ bot, tasks, onOpenRoutine, onCreate, routinesOnly }: { bot
         </div>
       </Section></>}
     </>
+  );
+}
+
+function DevicePushRow() {
+  const [status, setStatus] = useState<PushDeviceStatus | null>(null);
+  useEffect(() => {
+    void pushDeviceStatus().then(setStatus);
+  }, []);
+  const stateLabel = !status ? null : !status.supported || !status.secure ? "Unavailable" : status.subscribed ? "On" : "Off";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        useApp.setState({ settingsPane: "notifications" });
+        openDialog("settings");
+      }}
+      className="flex min-h-10 w-full items-center justify-between border-t border-line px-3.5 py-2.5 text-left text-[12.5px] text-muted transition-colors hover:bg-hover hover:text-fg"
+    >
+      <span>Push on this device</span>
+      <span className="flex items-center gap-1.5 font-medium">
+        {stateLabel && <span className={clsx("rounded-full px-2 py-0.5 text-[11px]", status?.subscribed ? "bg-active text-fg" : "text-muted")}>{stateLabel}</span>}
+        <ChevronRight size={14} className="text-muted" />
+      </span>
+    </button>
   );
 }
 

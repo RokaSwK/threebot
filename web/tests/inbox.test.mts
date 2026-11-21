@@ -68,7 +68,7 @@ test('snooze presets skip elapsed choices and preserve next weekday semantics',(
 });
 
 test('completion notifications never repeat a user prompt or stale prior-run reply',async()=>{
- const notifications=[];globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push(options.body)}} as unknown as typeof Notification;
+ const notifications=[];globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push(options.body)}close(){}} as unknown as typeof Notification;
  api.threadPreviews=async()=>({main:{role:'user',text:'Private prompt',at:'2026-01-02'}});
  await completionNotification(bot,thread);assert.deepEqual(notifications,['Finished']);
  api.threadPreviews=async()=>({main:{role:'assistant',text:'Older answer',at:'2025-12-01'}});

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
-import { Activity, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Network, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
+import { Activity, Bell, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Network, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
 import { Avatar } from "./Avatar";
 import { UsagePanel, useUsagePeak } from "./UsagePanel";
 import { SkillsDialog } from "./SkillsDialog";
@@ -16,6 +16,7 @@ import { MachinesPane } from "./MachinesPane";
 import { fastDrawingModel } from "../lib/avatarDrawing";
 import { defaultModel, forgetDeviceCopy, openDialog, saveFallbackModel, saveSettings, toast, useApp } from "../store";
 import { api, signOutTarget } from "../lib/api";
+import { disablePushNotifications, enablePushNotifications, pushDeviceStatus, type PushDeviceStatus } from "../lib/push";
 import { t3http } from "../lib/t3";
 import type { ModelSelection, Settings } from "../lib/types";
 import { saveVoiceSettings } from "../lib/voiceChat";
@@ -29,6 +30,7 @@ const PANES = [
   { id: "computer", label: "Computer", icon: <Monitor size={15} /> },
   { id: "machines", label: "Machines", icon: <Network size={15} /> },
   { id: "permissions", label: "Permissions", icon: <Shield size={15} /> },
+  { id: "notifications", label: "Notifications", icon: <Bell size={15} /> },
   { id: "vault", label: "Vault", icon: <Vault size={15} /> },
   { id: "access", label: "Remote access", icon: <Globe size={15} /> },
   { id: "updates", label: "Updates", icon: <Download size={15} /> },
@@ -91,6 +93,7 @@ export function SettingsDialog() {
                 {pane === "bots" && <BotsPane />}
                 {pane === "machines" && <MachinesPane save={save} />}
                 {pane === "permissions" && <Permissions s={settings} />}
+                {pane === "notifications" && <NotificationsPane />}
                 {pane === "vault" && <VaultPane />}
                 {pane === "access" && <RemoteAccessPane />}
                 {pane === "updates" && <UpdatesPane t3={<T3Version />} />}
@@ -148,6 +151,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
       <T3DictationRow />
     </Group>
     <Group><SettingsHomeLink title="Appearance" detail={`${s.theme === "system" ? "System" : s.theme === "dark" ? "Dark" : "Light"} · ${paletteLabel(s.palette)}`} onClick={() => pane("appearance")} /></Group>
+    <Group><SettingsHomeLink title="Notifications" description="Push on this device, devices and a test notification" onClick={() => pane("notifications")} /></Group>
     <Group><SettingsHomeLink title="Remote access" description="Open Threebot on your phone and other computers" onClick={() => pane("access")} /></Group>
     <Group><SettingsHomeLink title="Skills" onClick={onSkills} /><SettingsHomeLink title="Updates" detail={update ? `${update.version} available` : undefined} onClick={() => pane("updates")} /><SettingsHomeLink title="Beta" description="Try experimental features" onClick={() => pane("beta")} /><SettingsHomeLink title="Usage stats" description="Anonymous, off unless you turn them on" onClick={() => pane("usage-stats")} /></Group>
     <Group><SettingsHomeLink title={signingOut ? "Signing out…" : "Sign Out"} disabled={signingOut} onClick={() => void signOut()} /></Group>
@@ -351,6 +355,115 @@ function RuleEditor({ draft, setDraft, commit, cancel, placeholder }: { placehol
     <>
       <div className="rule-editor-body"><label htmlFor="permission-rule">Applies to</label><textarea id="permission-rule" autoFocus value={draft} maxLength={1000} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} rows={3} /><p>Name the action and who or what it affects, like "Emails to dana@acme.com".</p></div>
       <div className="rule-editor-footer"><Pill onClick={commit} disabled={!draft.trim()}>Add rule</Pill><Pill variant="ghost" onClick={cancel}>Cancel</Pill></div>
+    </>
+  );
+}
+
+/** Why this device cannot enable push, in the order the browser hits the walls. */
+function pushBlocker(status: PushDeviceStatus): string {
+  if (!status.secure) return "Push needs HTTPS. Open Threebot through its HTTPS address (Tailscale or Cloudflare).";
+  if (!status.supported) {
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent)
+      || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    return ios
+      ? "On iPhone and iPad, add Threebot to the Home Screen first, then open it from there."
+      : "This browser cannot receive push notifications; it still shows page notifications while open.";
+  }
+  if (status.permission === "denied") return "Notifications are blocked for this site. Allow them in the browser's settings, then come back.";
+  return "";
+}
+
+function NotificationsPane() {
+  const [status, setStatus] = useState<PushDeviceStatus | null>(null);
+  const [devices, setDevices] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState("");
+  const refresh = async () => {
+    const device = await pushDeviceStatus();
+    // On only when the gateway confirms it holds this endpoint: one it refused, forgot or can't be
+    // asked about shows Off, and the switch can register it again.
+    let registered = false;
+    try {
+      const response = await fetch(`/api/push${device.endpoint ? `?endpoint=${encodeURIComponent(device.endpoint)}` : ""}`, { cache: "no-store" });
+      if (response.ok) {
+        const body = await response.json() as { devices?: unknown; registered?: unknown };
+        if (typeof body.devices === "number") setDevices(body.devices);
+        registered = body.registered === true;
+      }
+    } catch { /* the device count is informational */ }
+    setStatus({ ...device, subscribed: device.subscribed && registered });
+  };
+  useEffect(() => { void refresh(); }, []);
+  const enable = async () => {
+    setBusy(true);
+    setProblem("");
+    const result = await enablePushNotifications();
+    setBusy(false);
+    if (!result.ok) setProblem(result.reason ?? "Couldn't enable push notifications.");
+    await refresh();
+  };
+  const disable = async () => {
+    setBusy(true);
+    setProblem("");
+    const result = await disablePushNotifications();
+    setBusy(false);
+    if (!result.ok) setProblem(result.reason ?? "Couldn't disable push notifications.");
+    await refresh();
+  };
+  const test = async () => {
+    setBusy(true);
+    setProblem("");
+    try {
+      const response = await fetch("/api/push/test", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: status?.endpoint }),
+      });
+      if (!response.ok) throw new Error(`The gateway answered ${response.status}.`);
+      const body = await response.json() as { sent?: unknown };
+      toast(typeof body.sent === "number" && body.sent > 0 ? "Test notification sent to this device" : "This device did not accept the test");
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!status) return <div role="status" className="grid h-32 place-items-center"><Spinner /></div>;
+  const permission = status.permission === "granted" ? "Allowed" : status.permission === "denied" ? "Blocked" : status.permission === "default" ? "Not asked yet" : "Not available";
+  const blocker = pushBlocker(status);
+  return (
+    <>
+      <H>Notifications</H>
+      <p className="mb-5 text-[13px] leading-6 text-muted">Push reaches this browser or installed app when Threebot is closed. Each Bot has its own Notifications switch in Details.</p>
+      {blocker && <div role="status" className="mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-muted">{blocker}</div>}
+      <Group title="This device">
+        <Row title="Push notifications" desc={!status.secure || !status.supported ? "Unavailable on this device." : status.subscribed ? "On for this device." : "Off for this device."}>
+          <Switch
+            checked={status.subscribed}
+            disabled={busy || !status.supported || !status.secure || status.permission === "denied"}
+            describedBy={problem ? "push-problem" : undefined}
+            onChange={(on) => void (on ? enable() : disable())}
+            label="Push notifications on this device"
+          />
+        </Row>
+        <Row title="Permission" desc={status.permission === "denied" ? "Allow notifications for this site in the browser's settings, then come back." : "The browser's permission for this site."}>
+          <span className="text-[13px] text-muted">{permission}</span>
+        </Row>
+        <Row title="Devices" desc="Browsers and installed apps that receive this server's pushes.">
+          <span className="text-[13px] text-muted">{devices ?? "—"}</span>
+        </Row>
+        {status.subscribed && (
+          <Row title="Test notification" desc="Check that notifications pop up on this device.">
+            <Pill variant="soft" disabled={busy || status.permission !== "granted"} aria-describedby={problem ? "push-problem" : undefined} onClick={() => void test()}>
+              Send test
+            </Pill>
+          </Row>
+        )}
+      </Group>
+      <div id="push-problem" role="alert" aria-live="assertive" className={problem ? "mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-danger" : "sr-only"}>
+        {problem}
+      </div>
+      {status.supported && status.secure && !status.subscribed && <p className="text-[12.5px] leading-5 text-muted">If this browser refuses to register, its push service is the problem. Some Chromium browsers (for example Brave) need their push-service setting on; otherwise use Chrome or your phone.</p>}
     </>
   );
 }

@@ -1,6 +1,6 @@
 import sharp, { type SharpOptions } from 'sharp';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, open } from 'node:fs/promises';
+import { mkdir, writeFile, open, realpath, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 
@@ -45,8 +45,27 @@ export async function storeAvatarImage({ workspaceRoot, slug }: { workspaceRoot:
 export async function readAvatarImage(bot: { workspaceRoot: string }, image: unknown) {
   const relative = avatarImageFile(image);
   if (!relative) throw fail('not found', 404);
-  const handle = await open(path.join(bot.workspaceRoot, relative), constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { return await handle.readFile(); } finally { await handle.close(); }
+  // Only the Bot's own folder: a symlinked `.bot` or `avatar-images` must not lead anywhere else.
+  const root = await realpath(bot.workspaceRoot);
+  const file = path.join(root, relative);
+  const inside = async () => await realpath(file) === file;
+  if (!await inside()) throw fail('not found', 404);
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    // Checked again on what was opened: a folder swapped for a symlink in between is refused.
+    const info = await handle.stat();
+    const there = await stat(file);
+    if (!await inside() || info.ino !== there.ino || info.dev !== there.dev) throw fail('not found', 404);
+    if (!info.isFile() || info.size > MAX_AVATAR_BYTES) throw fail('not found', 404);
+    const bytes = Buffer.alloc(info.size);
+    let read = 0;
+    while (read < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, read, bytes.length - read, read);
+      if (!bytesRead) break;
+      read += bytesRead;
+    }
+    return bytes.subarray(0, read);
+  } finally { await handle.close(); }
 }
 
 /** Only the gateway may mint image references. Existing URLs can be retained,

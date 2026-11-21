@@ -162,29 +162,114 @@ self.addEventListener("fetch", (event) => {
   }));
 });
 
+// A Bot's icon and badge, as the notification gets them: the full-size image from this cache, or
+// fetched (same origin, with the session cookie) and kept here, or the small copy the push carries.
+// Always a data: image, so Android never fetches at display time, where it may be offline or signed
+// out and would draw a letter instead. Kept apart from the shell caches, which updates replace.
+const ICONS = "bot-icons-" + scopeKey;
+async function imageData(url: unknown, embedded: unknown): Promise<string | undefined> {
+  const fallback = typeof embedded === "string" && embedded.startsWith("data:image/") ? embedded : undefined;
+  if (typeof url !== "string" || !url.startsWith("/")) return fallback;
+  try {
+    const key = new URL(url, SCOPE).href;
+    // The cache only helps: a storage failure must not cost an image the network can give.
+    const cache = await caches.open(ICONS).catch(() => undefined);
+    let response = await cache?.match(key).catch(() => undefined);
+    if (!response) {
+      const fresh = await fetch(key, { credentials: "same-origin", signal: AbortSignal.timeout(4_000) }).catch(() => null);
+      // A sign-in page answers with HTML: only an image is used.
+      if (fresh?.ok && fresh.headers.get("content-type")?.startsWith("image/")) {
+        // A drawn stand-in for a picture the gateway couldn't read is shown, not kept under the picture's URL.
+        if (cache && !fresh.headers.has("x-threebot-fallback")) {
+          try {
+            await cache.put(key, fresh.clone());
+            const path = new URL(key).pathname;
+            for (const old of await cache.keys()) if (old.url !== key && new URL(old.url).pathname === path) await cache.delete(old);
+          } catch { /* shown anyway; kept next time */ }
+        }
+        response = fresh;
+      }
+    }
+    if (!response) return fallback;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return `data:${response.headers.get("content-type") ?? "image/png"};base64,${btoa(binary)}`;
+  } catch {
+    return fallback;
+  }
+}
+
+// One notice's operations run in arrival order: a "resolved" push must not finish before the
+// "waiting" one it answers is shown (showing waits for the icon to load).
+const noticeTurns = new Map<string, Promise<unknown>>();
+function inTurn(tag: string, operation: () => Promise<unknown>): Promise<unknown> {
+  const run = (noticeTurns.get(tag) ?? Promise.resolve()).then(operation, operation);
+  noticeTurns.set(tag, run);
+  void run.finally(() => { if (noticeTurns.get(tag) === run) noticeTurns.delete(tag); }).catch(() => {});
+  return run;
+}
+
 self.addEventListener("push", (event) => {
   // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
   // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
   // back a push about the Bot or room this device has open (lib/push.ts reports that). The tag is the one
-  // the page's own notification uses, so the two replace each other instead of stacking.
-  let payload: { title?: unknown; body?: unknown; tag?: unknown; url?: unknown } = {};
+  // the page's own notification uses, so the two replace each other instead of stacking. The worker
+  // is a classic script with no imports, so the option guards are repeated from lib/notification.ts.
+  let payload: {
+    title?: unknown; body?: unknown; tag?: unknown; url?: unknown;
+    icon?: unknown; badge?: unknown; timestamp?: unknown; kind?: unknown; show?: unknown;
+    iconData?: unknown; badgeData?: unknown;
+  } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
-  event.waitUntil(self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+  const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
+  const title = typeof payload.title === "string" && payload.title ? payload.title : "Threebot";
+  const data = { url: typeof payload.url === "string" ? payload.url : "./" };
+  // The Bot's own images (a push from an older gateway has none: the app's icon, as before).
+  const images = async () => {
+    const [icon, badge] = await Promise.all([imageData(payload.icon, payload.iconData), imageData(payload.badge, payload.badgeData)]);
+    return { icon: icon ?? "/icon-192.png", ...(badge ? { badge } : {}) };
+  };
+  // A request answered here or elsewhere: close its notice (the gateway sends no Safari device this).
+  // Chromium shows its own "updated in the background" notice when a push leaves nothing on screen,
+  // and Firefox spends a quota on such a push (the gateway sets `show` there), so in those cases the
+  // answered notice is replaced, quietly, by one that says so.
+  if (payload.kind === "resolved") {
+    // After this notice's own turn, resolutions also go one at a time, so two at once can't both
+    // find an empty tray and each leave an "Answered".
+    event.waitUntil(inTurn(tag, () => inTurn("\u0000resolutions", async () => {
+      for (const notification of await self.registration.getNotifications({ tag })) notification.close();
+      if (payload.show !== true) {
+        if ((await self.registration.getNotifications()).length) return;
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        if (windows.some((client) => client.visibilityState === "visible")) return;
+      }
+      await self.registration.showNotification(title, { body: typeof payload.body === "string" ? payload.body : "Answered", tag, silent: true, data, ...await images() });
+    })));
+    return;
+  }
+  // The worker's DOM lib predates `timestamp`; the browser supports it.
+  const options: NotificationOptions & { timestamp?: number } = {
     body: typeof payload.body === "string" ? payload.body : "Finished",
-    tag: typeof payload.tag === "string" ? payload.tag : "threebot",
-    icon: "/icon-192.png",
-    data: { url: typeof payload.url === "string" ? payload.url : "./" },
-  }));
+    tag,
+    data,
+  };
+  if (typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)) options.timestamp = payload.timestamp;
+  event.waitUntil(inTurn(tag, async () => self.registration.showNotification(title, { ...options, ...await images() })));
 });
+
 
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil((async () => {
     const subscription = event.newSubscription;
-    if (!subscription) return;
+    // Only a renewal of a subscription the gateway knows: one turned off stays off (the gateway
+    // refuses it), and without the old one the page registers again on its next open.
+    const replaces = event.oldSubscription?.endpoint;
+    if (!subscription || !replaces) return;
     await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subscription: subscription.toJSON() }),
+      body: JSON.stringify({ subscription: subscription.toJSON(), replaces }),
     }).catch(() => {});
   })());
 });
@@ -197,6 +282,11 @@ self.addEventListener("notificationclick", (event) => {
     const open = windows.find((client) => client.url.startsWith(SCOPE.href));
     if (!open) return self.clients.openWindow(target);
     await open.focus();
-    return open.navigate(target);
+    try {
+      await open.navigate(target);
+    } catch {
+      // A window the worker no longer controls cannot be navigated; open a new one instead.
+      return self.clients.openWindow(target);
+    }
   })());
 });

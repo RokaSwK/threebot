@@ -78,3 +78,35 @@ test('gateway upload persists through restart and archive, serves only PNG, and 
   assert.deepEqual(Buffer.from(await (await fetch(fixture.url + image)).arrayBuffer()), stored);
   assert.ok((await fixture.request('/api/bot-identities')).body.bots.some((bot: { avatarImage?: string | null }) => bot.avatarImage === image));
 });
+
+test('notification images come from the drawn avatar, and a photo has no monochrome badge', { timeout: 60000 }, async t => {
+  const { createFixture } = await import('../scripts/fixture.mts');
+  const fixture = await createFixture(); t.after(() => fixture.close());
+  const icon = await fetch(fixture.url + '/api/bots/alpha/avatar.png');
+  assert.equal(icon.status, 200);
+  assert.equal(icon.headers.get('content-type'), 'image/png');
+  assert.equal(icon.headers.get('content-security-policy'), "default-src 'none'");
+  assert.equal((await sharp(Buffer.from(await icon.arrayBuffer())).metadata()).width, 192);
+  const badge = await fetch(fixture.url + '/api/bots/alpha/badge.png');
+  assert.equal(badge.status, 200);
+  assert.equal((await sharp(Buffer.from(await badge.arrayBuffer())).metadata()).width, 96);
+  await fixture.request('/api/bots/alpha', 'PUT', { avatarImage: dataUrl(png) });
+  assert.equal((await fetch(fixture.url + '/api/bots/alpha/badge.png')).status, 404);
+  const pictureIcon = await fetch(fixture.url + '/api/bots/alpha/avatar.png');
+  assert.equal(pictureIcon.status, 200);
+  assert.equal((await sharp(Buffer.from(await pictureIcon.arrayBuffer())).metadata()).width, 192);
+  assert.equal((await fetch(fixture.url + '/api/bots/unknown/avatar.png')).status, 404);
+  // The Settings test reaches only the device that names itself: no form posts, no broadcast.
+  assert.equal((await fetch(fixture.url + '/api/push/test', { method: 'POST' })).status, 415);
+  assert.equal((await fixture.request('/api/push/test', 'POST', {})).status, 400);
+  assert.equal((await fixture.request('/api/push/test', 'POST', { endpoint: 'https://push.example/unknown' })).body.sent, 0);
+  // A worker renewing a rotated subscription: refused when the old one was turned off, swapped in otherwise.
+  const keys = { p256dh: 'p256dh-value-1234567890', auth: 'auth-value-1234' };
+  const old = { endpoint: 'https://push.example/device-old', keys };
+  const renewed = { endpoint: 'https://push.example/device-new', keys };
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: renewed, replaces: old.endpoint })).status, 409);
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: old })).status, 200);
+  assert.equal((await fixture.request('/api/push/subscribe', 'POST', { subscription: renewed, replaces: old.endpoint })).status, 200);
+  assert.equal((await fixture.request(`/api/push?endpoint=${encodeURIComponent(old.endpoint)}`)).body.registered, false);
+  assert.equal((await fixture.request(`/api/push?endpoint=${encodeURIComponent(renewed.endpoint)}`)).body.registered, true);
+});

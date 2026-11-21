@@ -73,6 +73,7 @@ import { applyChatPermissions } from "./chat-permissions.mts";
 import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
 import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
+import { APP_BADGE_URL, appBadgePng, botBadgePng, botFace, roomIdentity } from "./bot-icons.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
 type HttpError = Error & { status?: number; code?: string };
@@ -160,8 +161,15 @@ const roomEngine = createRoomEngine({
   defaults: launchDefaults,
   // One push per turn. It carries the room, so the device that has that room open is skipped the
   // same way a device looking at a Bot's conversation is.
-  notify: async (payload) => {
-    await pushStore.send({ ...payload, tag: payload.url });
+  notify: async ({ speaker, ...payload }) => {
+    // A room has no avatar of its own: the Bot that is waiting or spoke last is its face here.
+    const bot = speaker ? await getBot(speaker).catch(() => null) : null;
+    await pushStore.send({
+      ...payload,
+      tag: payload.url,
+      ...await roomIdentity(bot),
+      timestamp: Date.now(),
+    });
   },
   log: (line) => console.log(line),
 });
@@ -472,6 +480,24 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Outgo
   const isJson = typeof body !== "string" && !Buffer.isBuffer(body);
   res.writeHead(status, { "content-type": isJson ? "application/json" : "text/plain", "x-content-type-options": "nosniff", ...headers });
   res.end(isJson ? JSON.stringify(body) : body);
+}
+
+/** A Bot's notification image: its PNG, or 404 when a photo has no monochrome badge. */
+async function sendBotImage(res: ServerResponse, image: Promise<Buffer | { png: Buffer; fallback: boolean }>) {
+  try {
+    const result = await image;
+    const fallback = !Buffer.isBuffer(result) && result.fallback;
+    return send(res, 200, Buffer.isBuffer(result) ? result : result.png, {
+      "content-type": "image/png",
+      "content-security-policy": "default-src 'none'",
+      // A drawn stand-in for a picture that couldn't be read: nobody should keep it under the picture's URL.
+      "cache-control": fallback ? "no-store" : "private, max-age=300",
+      ...(fallback ? { "x-threebot-fallback": "drawn" } : {}),
+    });
+  } catch (error) {
+    if ((error as HttpError).status === 404 || (error as NodeJS.ErrnoException).code === "ENOENT") return send(res, 404, { error: "not found" });
+    throw error;
+  }
 }
 // A request's JSON body, as the client sent it; each route reads the fields it needs.
 async function readBody(req: IncomingMessage, limit = 1 << 20): Promise<any> {
@@ -1454,13 +1480,37 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       return send(res, 200, { bots: await mainBots.select(body?.slug) }, { "cache-control": "no-store" });
     }
+    if (p === "/api/push" && req.method === "GET") {
+      // With ?endpoint=, also whether the gateway holds this device's subscription (it may have refused it).
+      const endpoint = url.searchParams.get("endpoint");
+      return send(res, 200, { publicKey: await pushStore.publicKey(), devices: await pushStore.devices(), ...(endpoint ? { registered: await pushStore.has(endpoint) } : {}) }, { "cache-control": "no-store" });
+    }
+    if (p === APP_BADGE_URL && req.method === "GET") return await sendBotImage(res, appBadgePng());
     if (p === "/api/push/key" && req.method === "GET") {
       return send(res, 200, { publicKey: await pushStore.publicKey() }, { "cache-control": "no-store" });
     }
+    if (p === "/api/push/test" && req.method === "POST") {
+      // Only the device that asks: the pane sends its own endpoint, and nothing is broadcast.
+      requireJson(req);
+      const endpoint = (await readBody(req))?.endpoint;
+      if (typeof endpoint !== "string" || !endpoint) return send(res, 400, { error: "This device has no push subscription." });
+      const result = await pushStore.send({
+        title: "Threebot",
+        body: "Test notification",
+        tag: "test:notification",
+        url: "/",
+        icon: "/icon-192.png",
+        timestamp: Date.now(),
+      }, { endpoint });
+      return send(res, 200, result, { "cache-control": "no-store" });
+    }
     if (p === "/api/push/subscribe" && req.method === "POST") {
       requireJson(req);
-      const result = await pushStore.subscribe((await readBody(req))?.subscription, req.headers.origin);
-      if (!result.ok) return send(res, 400, { error: result.message });
+      const body = await readBody(req);
+      // The worker renewing a rotated subscription names the one it replaces: if that device turned
+      // push off (the gateway forgot it), the renewal is refused instead of quietly turning it back on.
+      const result = await pushStore.subscribe(body?.subscription, req.headers.origin, typeof body?.replaces === "string" ? body.replaces : undefined);
+      if (!result.ok) return send(res, "off" in result ? 409 : 400, { error: result.message });
       return send(res, 200, result, { "cache-control": "no-store" });
     }
     if (p === "/api/push/presence" && req.method === "POST") {
@@ -1575,6 +1625,17 @@ const server = http.createServer(async (req, res) => {
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
       }
       return send(res, 404, { error: "not found" });
+    }
+    // The notification image is one stable URL per Bot: the uploaded picture or its drawn avatar.
+    const botAvatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\.png$/);
+    if (botAvatar && req.method === "GET") {
+      const bot = await getBot(botAvatar[1]);
+      return bot ? await sendBotImage(res, botFace(bot)) : send(res, 404, { error: "not found" });
+    }
+    const botBadge = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/badge\.png$/);
+    if (botBadge && req.method === "GET") {
+      const bot = await getBot(botBadge[1]);
+      return bot ? await sendBotImage(res, botBadgePng(bot)) : send(res, 404, { error: "not found" });
     }
     const m = p.match(/^\/api\/bots\/([^/]+)$/);
     if (m && req.method === "GET") {
