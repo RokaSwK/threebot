@@ -384,7 +384,15 @@ export function ToolImage({ entry, threadId, botName }: { entry: Extract<Entry, 
   return (
     <CardShell className="max-w-[420px]">
       <CardHeader icon={<Monitor size={14} />} title="Computer" status="Done" />
-      <a href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner">
+      {/* The picture may be this device's copy; the original opens from a URL signed now. */}
+      <a href={url.startsWith("/t3/") ? url : "#"} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner" onClick={(event) => {
+        if (url.startsWith("/t3/")) return;
+        event.preventDefault();
+        const tab = window.open("", "_blank");
+        assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index })
+          .then((signed) => { if (!signed.startsWith("/t3/")) throw new Error("Invalid asset response"); if (tab) { tab.opener = null; tab.location.href = signed; } })
+          .catch(() => tab?.close());
+      }}>
         <img src={url} alt={`${botName}'s screen`} className="w-full" />
       </a>
     </CardShell>

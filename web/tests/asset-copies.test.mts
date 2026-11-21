@@ -105,8 +105,9 @@ test('a deleted conversation takes the pictures it showed with it, and a late fe
   assert.equal(await readAsset(key, storedBytes), null, 'owned by the conversation, so it goes with it');
   assert.notEqual(await localAssetUrl(key), drawn, 'and its handle is no longer handed out');
   // A fetch that started before the deletion lands afterwards.
-  await assetSource(async () => '/t3/assets/pic-deleted?sig=2', key, { owner: 'view:thread-with-picture' });
+  const late = await assetSource(async () => '/t3/assets/pic-deleted?sig=2', key, { owner: 'view:thread-with-picture' });
   assert.equal(await readAsset(key, storedBytes), null, 'the deleted conversation does not get its picture back');
+  assert.equal(late, '/t3/assets/pic-deleted?sig=2', 'and no handle to unkept bytes is handed out');
 });
 
 test('only raster pictures are kept: anything a browser could run stays on its signed URL', async () => {
@@ -136,4 +137,18 @@ test('a kept picture older than a sign-in lasts is not drawn', async () => {
   try { await assetSource(async () => '/t3/assets/old-pic', key); } finally { Date.now = real; }
   app.resetAssetCopies();
   assert.equal(await localAssetUrl(key), null);
+});
+
+test('a picture never outlives the conversation copy that showed it, even when that copy is evicted', async () => {
+  await clearCache();
+  const key = assetKey({ _tag: 'attachment', attachmentId: 'evicted-owner-pic' })!;
+  const view = (name: string) => ({ v: 1, key: name, savedAt: Date.now(), thread: null, items: [{ id: 'm1' }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false });
+  await app.writeView(view('thread-oldest'));
+  const drawn = await assetSource(async () => '/t3/assets/evicted-owner-pic', key, { owner: 'view:thread-oldest' });
+  assert.match(String(drawn), /^blob:/);
+  // Eight newer conversations push the oldest out of its budget.
+  for (let index = 0; index < 8; index++) await app.writeView(view(`thread-newer-${index}`));
+  assert.equal(await app.readView('thread-oldest'), null);
+  assert.equal(await readAsset(key, storedBytes), null, 'its picture went with it');
+  assert.notEqual(await localAssetUrl(key), drawn, 'and so did the handle');
 });

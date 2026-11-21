@@ -222,15 +222,17 @@ async function readIndex(store: Store): Promise<Index> {
 }
 
 /** Stores the record and drops what its kind can no longer keep: expired, over its count, or over its bytes. */
-async function writeRecord(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<void> {
+/** Resolves true when the record was stored; false when a sign-out or a deletion refused it. */
+async function writeRecord(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<boolean> {
   const mine = await tabGeneration();
   const bytes = knownBytes ?? bytesOf(value);
-  await storage().transact("readwrite", async (store) => {
+  let dropped: string[] = [];
+  const written = await storage().transact("readwrite", async (store) => {
     // Signed out since this tab started: what it holds belongs to the last sign-in. Deleted (in any
     // tab): a save queued before the deletion must not bring it back.
-    if (await store.get(GENERATION) !== mine || await store.get(`gone:${id}`) !== undefined) return;
+    if (await store.get(GENERATION) !== mine || await store.get(`gone:${id}`) !== undefined) return false;
     // Its conversation or room was deleted: the picture or member copy goes with it.
-    if (owner && await store.get(`gone:${owner}`) !== undefined) return;
+    if (owner && await store.get(`gone:${owner}`) !== undefined) return false;
     const index = await readIndex(store);
     const now = Date.now();
     index[id] = { savedAt: now, bytes, ...(owner ? { owner } : {}) };
@@ -255,13 +257,51 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
         total += entry.bytes;
       }
     }
+    // An evicted conversation or room takes what it owned, so a picture never outlives the copy that showed it.
+    const going = new Set(dropping);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const [key, entry] of Object.entries(kept)) {
+        if (key !== id && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
+      }
+    }
     await store.put(INDEX, kept);
-    for (const key of dropping) await store.remove(key);
+    for (const key of going) await store.remove(key);
     await store.put(id, value);
     // A deletion marker that ages out can no longer stop a save some tab queued long ago: every open
     // tab stops saving instead, and starts again under the new generation on its next launch.
     if (dropping.some((key) => kindOf(key) === "gone")) await store.put(GENERATION, newGeneration());
+    dropped = [...going];
+    return true;
   });
+  announceDropped(dropped);
+  return written;
+}
+
+/**
+ * Records that left the store (evicted, forgotten or deleted), told to this tab's listeners and to
+ * every other tab of this mount, so no page keeps drawing a picture the store no longer holds.
+ */
+const droppedListeners = new Set<(ids: string[]) => void>();
+let dropChannel: BroadcastChannel | null = null;
+function dropBroadcast(): BroadcastChannel | null {
+  if (dropChannel || typeof BroadcastChannel === "undefined") return dropChannel;
+  try {
+    dropChannel = new BroadcastChannel(`${DB_NAME}.dropped`);
+    dropChannel.onmessage = (event) => { if (Array.isArray(event.data)) for (const listener of droppedListeners) listener(event.data); };
+    // Node (the tests) keeps a process alive for an open channel; a browser page does not care.
+    (dropChannel as BroadcastChannel & { unref?: () => void }).unref?.();
+  } catch { dropChannel = null; }
+  return dropChannel;
+}
+function announceDropped(ids: string[]) {
+  if (!ids.length) return;
+  for (const listener of droppedListeners) listener(ids);
+  try { dropBroadcast()?.postMessage(ids); } catch { /* other tabs learn on their next read */ }
+}
+export function onRecordsDropped(listener: (ids: string[]) => void) {
+  droppedListeners.add(listener);
+  dropBroadcast();
 }
 
 /** Reads one record of a known shape, ignoring anything this version did not write. */
@@ -309,7 +349,7 @@ export async function forgetRecords(ids: string[], { deleted = false }: { delete
     await store.put(INDEX, index);
     for (const id of going) await store.remove(id);
     return [...going];
-  })).catch(() => [] as string[]);
+  })).then((gone) => { announceDropped(gone); return gone; }, () => [] as string[]);
 }
 
 /** Which of these records were deleted (in any tab), so a list fetched before the deletion can't name them. */
@@ -326,9 +366,9 @@ export async function deletedRecords(ids: string[]): Promise<Set<string>> {
 export const cacheStopped = () => stopped;
 
 /** Every write is best effort: a refused or full quota must never reach the caller. */
-async function writeQuietly(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<void> {
-  if (stopped) return;
-  await serial(() => writeRecord(id, value, knownBytes, owner)).catch(() => {});
+async function writeQuietly(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<boolean> {
+  if (stopped) return false;
+  return serial(() => writeRecord(id, value, knownBytes, owner)).catch(() => false);
 }
 
 const isView = (key: string) => (value: unknown): value is CachedView => {
@@ -409,8 +449,8 @@ export async function readAsset<T>(key: string, usable: (value: unknown) => valu
   return readRecord(`asset:${key}`, usable);
 }
 
-export async function writeAsset(key: string, value: unknown, owner?: string): Promise<void> {
+export async function writeAsset(key: string, value: unknown, owner?: string): Promise<boolean> {
   // A Blob is not JSON: its bytes are not in the record's serialized length, so the index needs them.
   const size = (value as { bytes?: unknown })?.bytes;
-  await writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined, owner);
+  return writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined, owner);
 }

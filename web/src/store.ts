@@ -655,7 +655,7 @@ const roomThreads = new Set<string>();
 /** Which room a member conversation belongs to, so the room's deletion takes its copy (former members too). */
 const roomOfThread = new Map<string, string>();
 function noteRoomMembers(room: RoomView) {
-  for (const member of room.members ?? []) if (typeof member.threadId === "string" && member.threadId) roomOfThread.set(member.threadId, room.id);
+  for (const member of [...(room.members ?? []), ...(room.formerMembers ?? [])]) if (typeof member.threadId === "string" && member.threadId) roomOfThread.set(member.threadId, room.id);
 }
 /** Rooms deleted while this page was open: a list fetched before the deletion must not name them. */
 const deletedRooms = new Set<string>();
@@ -980,7 +980,9 @@ export async function loadRooms() {
   await hydrateRooms();
   const fetched = await fetchRooms(deadline(GATEWAY_PATIENCE_MS)).catch(() => null);
   if (!fetched) return Object.values(get().rooms);
-  const list = fetched.filter((room) => !deletedRooms.has(room.id));
+  // A list fetched before a room was deleted (in this tab or another) must not bring it back.
+  const tombstoned = await deletedRecords(fetched.map((room) => `room:${room.id}`));
+  const list = fetched.filter((room) => !deletedRooms.has(room.id) && !tombstoned.has(`room:${room.id}`));
   set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
   void writeRooms(list);
   return list;
@@ -1047,6 +1049,9 @@ export function markRoomSeen(id: string) {
 export async function loadRoom(id: string, quiet = false) {
   try {
     const room = await fetchRoom(id, deadline(GATEWAY_PATIENCE_MS));
+    if (get().selectedRoom !== id) return;
+    // An answer that left before the room was found deleted is older than the deletion.
+    if (deletedRooms.has(id) || get().roomGone || (await deletedRecords([`room:${id}`])).size) return;
     if (get().selectedRoom !== id) return;
     const previous = get().roomView?.id === id ? get().roomView : null;
     noteRoomMembers(room);
@@ -1230,7 +1235,13 @@ export async function removeRoom(id: string) {
 }
 
 /** Start over: the room forgets its messages and every Bot opens a new session on its next answer. */
+/** A room on screen from its saved copy may have changed: nothing is changed in it until it is live. */
+function liveRoom(id: string) {
+  if (get().selectedRoom === id && get().roomStale) throw new Error("This room is a saved copy. Try again once it has loaded.");
+}
+
 export async function resetRoom(id: string) {
+  liveRoom(id);
   const room = await resetRoomApi(id);
   set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView, ...(s.selectedRoom === id ? { roomStale: false } : {}) }));
   void writeRoom(room);
@@ -1248,6 +1259,7 @@ export async function sendRoomMessage(id: string, text: string, mentions: string
 }
 
 export async function stopRoom(id: string) {
+  liveRoom(id);
   await stopRoomApi(id);
   await loadRoom(id, true);
   void loadRooms().catch(() => {});

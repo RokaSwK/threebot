@@ -10,7 +10,7 @@
 // anything a browser could execute (HTML, SVG, XML) stays on its signed, sandboxed URL. Documents are
 // never kept; opening or downloading an original always signs it afresh.
 
-import { cacheStopped, readAsset, writeAsset } from "./threadCache";
+import { cacheStopped, forgetRecords, onRecordsDropped, readAsset, writeAsset } from "./threadCache";
 
 /** One stored picture. `bytes` duplicates the Blob's size so the index can budget without reading it. */
 export type StoredAsset = { v: 1; key: string; savedAt: number; bytes: number; mimeType: string; blob: Blob };
@@ -36,18 +36,33 @@ export function promptly(sign: () => Promise<string>): Promise<string> {
 const immutable = (key: string) => !key.startsWith("workspace:");
 /** Fetches in flight, so two placements of the same picture share one request. */
 const pending = new Map<string, Promise<string | null>>();
-/** Object URLs are cheap but must be revoked; one per key while the page lives. */
-const urls = new Map<string, string>();
+/** Object URLs are cheap but must be revoked; one per key, and only while its record is fresh and stored. */
+const urls = new Map<string, { url: string; savedAt: number }>();
+/** Bumped whenever a key's record leaves the store, so a read or fetch already in flight can't hand it out again. */
+const epochs = new Map<string, number>();
+const epochOf = (key: string) => epochs.get(key) ?? 0;
+const EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
 
-function publish(key: string, blob: Blob): string | null {
-  // Signed out (in this tab or another) while this was in flight: hand nothing out.
-  if (cacheStopped()) return null;
-  const previous = urls.get(key);
+function alive(key: string): string | null {
+  const handle = urls.get(key);
+  if (!handle) return null;
+  if (Date.now() - handle.savedAt <= EXPIRES_MS && !cacheStopped()) return handle.url;
+  revokeAssetHandles([`asset:${key}`]);
+  return null;
+}
+
+function publish(key: string, blob: Blob, savedAt: number, epoch: number): string | null {
+  // Signed out (in this tab or another), or forgotten while this was in flight: hand nothing out.
+  if (cacheStopped() || epochOf(key) !== epoch) return null;
+  const previous = alive(key);
   if (previous) return previous;
   const url = URL.createObjectURL(blob);
-  urls.set(key, url);
+  urls.set(key, { url, savedAt });
   return url;
 }
+
+// Evicted, forgotten or deleted, here or in another tab: the handle stops working too.
+onRecordsDropped((ids) => revokeAssetHandles(ids));
 
 /** A stable key for one asset: the attachment id, or where the picture came from. */
 export function assetKey(resource: Record<string, unknown>, scope?: string): string | null {
@@ -62,21 +77,26 @@ const stored = (value: unknown): value is StoredAsset => !!value && typeof value
 
 /** A URL for a picture this device kept, or null when it has none. */
 export async function localAssetUrl(key: string): Promise<string | null> {
-  const alive = urls.get(key);
-  if (alive) return alive;
+  const handle = alive(key);
+  if (handle) return handle;
+  const epoch = epochOf(key);
   const record = await readAsset(key, stored);
-  return record ? publish(key, record.blob) : null;
+  return record ? publish(key, record.blob, record.savedAt, epoch) : null;
 }
 
 /** Reads a picture once, within a time and byte budget, and keeps it when it is a raster that fits. */
 async function keepPicture(key: string, signed: string, owner: string | undefined): Promise<string | null> {
+  const epoch = epochOf(key);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_PATIENCE_MS);
   try {
     const response = await fetch(signed, { credentials: "same-origin", signal: controller.signal });
     const type = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
-    if (!response.ok || !RASTER.test(type) || !response.body) return null;
-    if (Number(response.headers.get("content-length") ?? "0") > IMAGE_LIMIT) return null;
+    // Not keeping it: stop the transfer, the browser loads the signed URL itself.
+    if (!response.ok || !RASTER.test(type) || !response.body || Number(response.headers.get("content-length") ?? "0") > IMAGE_LIMIT) {
+      controller.abort();
+      return null;
+    }
     // The gateway may not say how big it is: count while reading and stop at the limit.
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -91,8 +111,10 @@ async function keepPicture(key: string, signed: string, owner: string | undefine
     if (size === 0) return null;
     // The Blob carries the checked raster type, so its object URL can only ever draw a picture.
     const blob = new Blob(chunks as BlobPart[], { type });
-    await writeAsset(key, { v: 1, key, savedAt: Date.now(), bytes: size, mimeType: type, blob }, owner);
-    return publish(key, blob);
+    const savedAt = Date.now();
+    // Refused (signed out, or its conversation or room deleted meanwhile): not kept, so not handed out either.
+    if (!(await writeAsset(key, { v: 1, key, savedAt, bytes: size, mimeType: type, blob }, owner))) return null;
+    return publish(key, blob, savedAt, epoch);
   } catch {
     return null;
   } finally {
@@ -103,7 +125,6 @@ async function keepPicture(key: string, signed: string, owner: string | undefine
 /** Bytes that would not decode are worse than none: the next attempt signs and fetches again. */
 export async function dropAsset(key: string): Promise<void> {
   revokeAssetHandles([`asset:${key}`]);
-  const { forgetRecords } = await import("./threadCache");
   await forgetRecords([`asset:${key}`]).catch(() => {});
 }
 
@@ -112,9 +133,10 @@ export function revokeAssetHandles(ids: string[]) {
   for (const id of ids) {
     if (!id.startsWith("asset:")) continue;
     const key = id.slice("asset:".length);
-    const url = urls.get(key);
-    if (!url) continue;
-    try { URL.revokeObjectURL(url); } catch { /* not every implementation revokes */ }
+    epochs.set(key, epochOf(key) + 1);
+    const handle = urls.get(key);
+    if (!handle) continue;
+    try { URL.revokeObjectURL(handle.url); } catch { /* not every implementation revokes */ }
     urls.delete(key);
   }
 }
@@ -130,8 +152,8 @@ export async function assetSource(
   { knownBytes, owner }: { knownBytes?: number; owner?: string } = {},
 ): Promise<string> {
   if (key) {
-    const alive = urls.get(key);
-    if (alive) return alive;
+    const handle = alive(key);
+    if (handle) return handle;
     // A picture already kept is neither signed nor fetched again.
     if (immutable(key)) {
       const copy = await localAssetUrl(key);
@@ -157,8 +179,9 @@ export async function assetSource(
 
 /** A fresh page, a sign-out (or a test) starts with no object URLs: the stored bytes stay, the handles do not. */
 export function resetAssetCopies() {
-  for (const url of urls.values()) {
-    try { URL.revokeObjectURL(url); } catch { /* not every implementation revokes */ }
+  for (const [key, handle] of urls) {
+    try { URL.revokeObjectURL(handle.url); } catch { /* not every implementation revokes */ }
+    epochs.set(key, epochOf(key) + 1);
   }
   urls.clear();
   pending.clear();

@@ -42,7 +42,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
   const room = useApp((s) => (s.roomView?.id === roomId ? s.roomView : null));
   const offline = useApp((s) => s.offline);
   // A live room index can still show replies painted from a member's saved copy: that is a copy too.
-  const stale = useApp((s) => s.selectedRoom === roomId && (s.roomStale || (s.roomView?.members ?? []).some((member) => !!member.threadId && s.threadData[member.threadId]?.stale === true)));
+  const stale = useApp((s) => s.selectedRoom === roomId && (s.roomStale || [...(s.roomView?.members ?? []), ...(s.roomView?.formerMembers ?? [])].some((member) => !!member.threadId && s.threadData[member.threadId]?.stale === true)));
   // Storage already answered that there is no copy: the page does not wait for the network to say so.
   const missing = useApp((s) => s.selectedRoom === roomId && s.roomMissing);
   // The gateway said the room is gone; its copy is not a way back in.
