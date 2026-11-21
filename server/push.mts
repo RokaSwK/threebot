@@ -183,6 +183,11 @@ export function createPushStore({
       return (await load()).subscriptions.length;
     },
 
+    /** Whether this exact endpoint is subscribed here (a refused registration is not). */
+    async has(endpoint: unknown): Promise<boolean> {
+      return typeof endpoint === "string" && (await load()).subscriptions.some((subscription) => subscription.endpoint === endpoint);
+    },
+
     async subscribe(value: unknown, origin?: unknown): Promise<{ ok: true; subscriptions: number } | { ok: false; message: string }> {
       const item = record(value);
       if (!item) return { ok: false, message: "The push subscription is invalid." };
@@ -235,50 +240,44 @@ export function createPushStore({
       // The app's own address when nothing is configured: Apple refuses a localhost contact.
       const vapidDetails = { subject: subject?.trim() || usableSubject(appUrl) || current.origin || FALLBACK_SUBJECT, publicKey: current.vapid.publicKey, privateKey: current.vapid.privateKey };
       let sent = 0;
-      let removed = 0;
       let skipped = 0;
-      const keep: PushSubscriptionRecord[] = [];
+      // Sends await the network: the live list may change meanwhile (an unsubscribe, a new device),
+      // so iterate a copy, skip what was removed, and prune only the endpoints that are gone.
+      const gone = new Set<string>();
       const time = now().getTime();
       // A push is about one thing: a room, or a Bot. With neither there is nothing to hold back.
       const target = payload.room ? `room:${payload.room}` : payload.bot ? `bot:${payload.bot}` : null;
-      for (const subscription of current.subscriptions) {
+      for (const subscription of [...current.subscriptions]) {
+        if (!current.subscriptions.includes(subscription)) continue;
         // The Settings test names the device that asked; every other subscription stays untouched.
-        if (options?.endpoint && subscription.endpoint !== options.endpoint) {
-          keep.push(subscription);
-          continue;
-        }
-        if (payload.kind === "resolved" && !quietClose(subscription.endpoint)) {
-          keep.push(subscription);
-          continue;
-        }
+        if (options?.endpoint && subscription.endpoint !== options.endpoint) continue;
+        if (payload.kind === "resolved" && !quietClose(subscription.endpoint)) continue;
         const seen = watching.get(subscription.endpoint);
         if (seen && seen.until <= time) watching.delete(subscription.endpoint);
-        else if (target && seen?.view === target) {
+        // A resolution is not held back: a device that just looked away may still show the notice.
+        else if (target && seen?.view === target && payload.kind !== "resolved") {
           skipped += 1;
-          keep.push(subscription);
           continue;
         }
         try {
           // The same topic as the "waiting" push it answers: a device that was offline gets only this one.
           await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: payload.kind === "resolved" ? "normal" : "high", vapidDetails, topic: pushTopic(payload.tag) });
           sent += 1;
-          keep.push(subscription);
         } catch (error) {
           const status = error instanceof WebPushError ? error.statusCode : 0;
           if (status === 404 || status === 410) {
-            removed += 1;
+            gone.add(subscription.endpoint);
             watching.delete(subscription.endpoint);
           } else {
-            keep.push(subscription);
             console.error("push: send failed", status || (error as Error).message);
           }
         }
       }
-      if (removed > 0) {
-        current.subscriptions = keep;
+      if (gone.size > 0) {
+        current.subscriptions = current.subscriptions.filter((subscription) => !gone.has(subscription.endpoint));
         await save();
       }
-      return { sent, removed, watching: skipped };
+      return { sent, removed: gone.size, watching: skipped };
     },
   };
 }
@@ -349,10 +348,20 @@ export function createPushNotifier({
 
   const sideChat = (thread: ShellThread) => thread.lineage?.sideChat === true;
 
-  async function ownerFor(thread: ShellThread): Promise<Bot | null> {
+  /** The Bot a thread notifies for. `any`: also a hidden or muted Bot, whose earlier notice still needs clearing. */
+  async function ownerFor(thread: ShellThread, any = false): Promise<Bot | null> {
     const mainThreadId = sideChat(thread) ? thread.lineage?.parentThreadId : thread.id;
     if (!mainThreadId) return null;
-    return (await bots()).find((bot) => !bot.hidden && bot.notifications !== false && bot.mainThreadId === mainThreadId) ?? null;
+    return (await bots()).find((bot) => (any || (!bot.hidden && bot.notifications !== false)) && bot.mainThreadId === mainThreadId) ?? null;
+  }
+
+  // One conversation's pushes go out in order: a "resolved" must reach the push service after the
+  // "waiting" it answers, since both share a Topic and the later one replaces the earlier.
+  const queues = new Map<string, Promise<void>>();
+  function inOrder(threadId: string, work: () => Promise<void>) {
+    const run = (queues.get(threadId) ?? Promise.resolve()).then(work).catch((error) => log(`push: ${(error as Error).message}`));
+    queues.set(threadId, run);
+    void run.finally(() => { if (queues.get(threadId) === run) queues.delete(threadId); });
   }
 
   async function notify(thread: ShellThread, kind: "finished" | "waiting") {
@@ -385,7 +394,7 @@ export function createPushNotifier({
 
   /** The request was answered, here or on another device: close its notification everywhere. */
   async function resolve(thread: ShellThread) {
-    const owner = await ownerFor(thread);
+    const owner = await ownerFor(thread, true);
     if (!owner) return;
     await send({
       // An older worker shows this instead of closing it, so it still reads correctly.
@@ -394,6 +403,7 @@ export function createPushNotifier({
       tag: waitingTag(owner.slug, thread.id),
       url: `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`,
       bot: owner.slug,
+      icon: botAvatarUrl(owner),
       kind: "resolved",
     });
     log(`push: resolved ${owner.slug}`);
@@ -401,6 +411,12 @@ export function createPushNotifier({
 
   function handle(event: ShellEvent) {
     if (event.kind === "snapshot") {
+      // After a reconnect: a request answered during the gap is resolved now. A thread missing from
+      // the snapshot may only be omitted, so only one that is present and no longer waits counts.
+      for (const thread of event.snapshot?.threads ?? []) {
+        const before = typeof thread?.id === "string" ? previous.get(thread.id) : undefined;
+        if (before?.pendingRuntimeRequest && !thread.pendingRuntimeRequest) inOrder(thread.id, () => resolve(thread));
+      }
       previous.clear();
       for (const thread of event.snapshot?.threads ?? []) if (typeof thread?.id === "string") previous.set(thread.id, thread);
       return;
@@ -410,18 +426,19 @@ export function createPushNotifier({
     const before = previous.get(next.id);
     previous.set(next.id, next);
     if (!before) return;
-    // Before the archive and snooze guards: an answered request's notice is stale either way.
-    if (before.pendingRuntimeRequest && !next.pendingRuntimeRequest) {
-      void resolve(next).catch((error) => log(`push: ${(error as Error).message}`));
+    const archived = event.location === "archive" || !!next.archivedAt;
+    // Before the archive and snooze guards: an answered (or archived) request's notice is stale either way.
+    if (before.pendingRuntimeRequest && !before.archivedAt && (!next.pendingRuntimeRequest || archived)) {
+      inOrder(next.id, () => resolve(next));
     }
-    if (event.location === "archive" || next.archivedAt) return;
+    if (archived) return;
     if (next.snoozedUntil && Date.parse(next.snoozedUntil) > now().getTime()) return;
     const wasActive = ACTIVE.has(before.activityRunStatus ?? before.status);
     const nowStatus = next.activityRunStatus ?? next.status;
     if (!before.pendingRuntimeRequest && next.pendingRuntimeRequest) {
-      void notify(next, "waiting").catch((error) => log(`push: ${(error as Error).message}`));
+      inOrder(next.id, () => notify(next, "waiting"));
     } else if (!sideChat(next) && wasActive && nowStatus === "completed" && !next.pendingRuntimeRequest) {
-      void notify(next, "finished").catch((error) => log(`push: ${(error as Error).message}`));
+      inOrder(next.id, () => notify(next, "finished"));
     }
   }
 

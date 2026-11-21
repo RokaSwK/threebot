@@ -1,6 +1,6 @@
 import sharp, { type SharpOptions } from 'sharp';
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, open } from 'node:fs/promises';
+import { mkdir, writeFile, open, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 
@@ -45,8 +45,16 @@ export async function storeAvatarImage({ workspaceRoot, slug }: { workspaceRoot:
 export async function readAvatarImage(bot: { workspaceRoot: string }, image: unknown) {
   const relative = avatarImageFile(image);
   if (!relative) throw fail('not found', 404);
-  const handle = await open(path.join(bot.workspaceRoot, relative), constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { return await handle.readFile(); } finally { await handle.close(); }
+  // Only the Bot's own folder: a symlinked `.bot` or `avatar-images` must not lead anywhere else.
+  const root = await realpath(bot.workspaceRoot);
+  const file = path.join(root, relative);
+  if (await realpath(file) !== file) throw fail('not found', 404);
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_AVATAR_BYTES) throw fail('not found', 404);
+    return await handle.readFile();
+  } finally { await handle.close(); }
 }
 
 /** Only the gateway may mint image references. Existing URLs can be retained,

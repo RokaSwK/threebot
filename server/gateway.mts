@@ -1475,20 +1475,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { bots: await mainBots.select(body?.slug) }, { "cache-control": "no-store" });
     }
     if (p === "/api/push" && req.method === "GET") {
-      return send(res, 200, { publicKey: await pushStore.publicKey(), devices: await pushStore.devices() }, { "cache-control": "no-store" });
+      // With ?endpoint=, also whether the gateway holds this device's subscription (it may have refused it).
+      const endpoint = url.searchParams.get("endpoint");
+      return send(res, 200, { publicKey: await pushStore.publicKey(), devices: await pushStore.devices(), ...(endpoint ? { registered: await pushStore.has(endpoint) } : {}) }, { "cache-control": "no-store" });
     }
     if (p === "/api/push/key" && req.method === "GET") {
       return send(res, 200, { publicKey: await pushStore.publicKey() }, { "cache-control": "no-store" });
     }
     if (p === "/api/push/test" && req.method === "POST") {
-      // The pane sends this device's endpoint; a client that sends no body still tests every device.
-      let endpoint: string | undefined;
-      if (req.headers["content-type"]?.includes("application/json")) {
-        try {
-          const body = await readBody(req);
-          if (typeof body?.endpoint === "string") endpoint = body.endpoint;
-        } catch { /* an empty body keeps the broadcast test */ }
-      }
+      // Only the device that asks: the pane sends its own endpoint, and nothing is broadcast.
+      requireJson(req);
+      const endpoint = (await readBody(req))?.endpoint;
+      if (typeof endpoint !== "string" || !endpoint) return send(res, 400, { error: "This device has no push subscription." });
       const result = await pushStore.send({
         title: "Threebot",
         body: "Test notification",
@@ -1622,12 +1620,12 @@ const server = http.createServer(async (req, res) => {
     const botAvatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\.png$/);
     if (botAvatar && req.method === "GET") {
       const bot = await getBot(botAvatar[1]);
-      return bot ? sendBotImage(res, botAvatarPng(bot)) : send(res, 404, { error: "not found" });
+      return bot ? await sendBotImage(res, botAvatarPng(bot)) : send(res, 404, { error: "not found" });
     }
     const botBadge = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/badge\.png$/);
     if (botBadge && req.method === "GET") {
       const bot = await getBot(botBadge[1]);
-      return bot ? sendBotImage(res, botBadgePng(bot)) : send(res, 404, { error: "not found" });
+      return bot ? await sendBotImage(res, botBadgePng(bot)) : send(res, 404, { error: "not found" });
     }
     const m = p.match(/^\/api\/bots\/([^/]+)$/);
     if (m && req.method === "GET") {

@@ -350,3 +350,54 @@ test("a completion push quotes only this run's own reply", async () => {
   assert.deepEqual(await finish("main", "completed", run), ["Finished"]);
   notifier.stop();
 });
+
+test("an endpoint unsubscribed while a send is in flight stays removed", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const other = { ...subscription, endpoint: "https://push.example/sub/2" };
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const store = createPushStore({
+    file,
+    generateKeys: () => keys,
+    sender: async (target) => {
+      if (target.endpoint === subscription.endpoint) { await gate; return; }
+      throw new WebPushError("gone", 410, {}, "", target.endpoint);
+    },
+  });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(other)).ok, true);
+  const sending = store.send({ title: "Bot", body: "Waiting", tag: "bot", url: "/", bot: "bot" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await store.unsubscribe(subscription.endpoint);
+  release();
+  assert.equal((await sending).removed, 1);
+  assert.equal(await store.devices(), 0, "neither the gone endpoint nor the unsubscribed one comes back");
+  const reloaded = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  assert.equal(await reloaded.devices(), 0, "and that is what was saved");
+});
+
+test("a muted Bot's request still resolves, and a reconnect resolves what was answered in the gap", async () => {
+  let handler: any = null;
+  const client = { stream(_tag: string, _payload: unknown, onItem: (event: any) => void) { handler = onItem; return { done: new Promise<void>(() => {}), cancel() {} }; } };
+  const bot = { slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "thread-1", notifications: true, hidden: false };
+  const sent: any[] = [];
+  const notifier = createPushNotifier({ connect: async () => client as any, bots: async () => [bot as any], send: async (payload) => { sent.push(payload); }, retryMs: 60_000, log: () => {} });
+  void notifier.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const side = (id: string, pending: boolean) => ({ id, projectId: "project", status: pending ? "waiting" : "running", pendingRuntimeRequest: pending ? { id: `r-${id}` } : null, lineage: { parentThreadId: "thread-1", sideChat: true } });
+  handler!({ kind: "snapshot", snapshot: { threads: [side("side-1", false), side("side-2", false)] } });
+  handler!({ kind: "thread.updated", thread: side("side-1", true) });
+  handler!({ kind: "thread.updated", thread: side("side-2", true) });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["waiting", "waiting:alpha:side-1"], ["waiting", "waiting:alpha:side-2"]]);
+  bot.notifications = false;
+  handler!({ kind: "thread.updated", thread: side("side-1", false) });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(sent.at(-1).kind === "resolved" && sent.at(-1).tag, "waiting:alpha:side-1", "muting the Bot later does not strand its notice");
+  // The stream drops; side chat 2 is answered meanwhile; the new snapshot says so.
+  handler!({ kind: "snapshot", snapshot: { threads: [side("side-2", false)] } });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual([sent.at(-1).kind, sent.at(-1).tag], ["resolved", "waiting:alpha:side-2"]);
+  assert.equal(sent.length, 4);
+  notifier.stop();
+});

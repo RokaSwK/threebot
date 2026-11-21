@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
@@ -41,4 +41,15 @@ test("a Bot with a picture uses it for the icon and has no monochrome badge", as
   assert.equal(meta.width, 192);
   assert.equal(botBadgeUrl(bot), null);
   await assert.rejects(botBadgePng(bot), (error: { status?: number }) => error.status === 404);
+});
+
+test("a symlinked .bot folder cannot lead the icon outside the Bot's folder", async () => {
+  const outside = await mkdtemp(path.join(tmpdir(), "threebot-outside-"));
+  const hash = "b".repeat(64);
+  await mkdir(path.join(outside, "avatar-images"), { recursive: true });
+  await writeFile(path.join(outside, `avatar-images/${hash}.png`), await sharp({ create: { width: 8, height: 8, channels: 4, background: "#000" } }).png().toBuffer());
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "threebot-icons-"));
+  await symlink(outside, path.join(workspaceRoot, ".bot"));
+  const bot = { slug: "linked", workspaceRoot, shape: "sphere", color: "teal", avatarImage: `/api/bots/linked/avatar/${hash}.png` };
+  await assert.rejects(botAvatarPng(bot), (error: { status?: number }) => error.status === 404);
 });

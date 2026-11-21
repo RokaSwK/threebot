@@ -493,6 +493,7 @@ function subscribeShell() {
       });
     } else if (it.kind === "thread.updated") {
       if (it.location === "archive") {
+        closeThreadNotices(it.thread.id);
         set((s) => ({ archivedThreads: { ...s.archivedThreads, [it.thread.id]: it.thread }, threads: { ...s.threads, [it.thread.id]: it.thread } }));
         return;
       }
@@ -502,6 +503,7 @@ function subscribeShell() {
       notifyIfNeeded(prev, it.thread);
     } else if (it.kind === "thread.removed") {
       forgetThreadCopy([it.threadId]);
+      closeThreadNotices(it.threadId);
       set((s) => {
         const threads = { ...s.threads };
         delete threads[it.threadId];
@@ -635,25 +637,44 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
     badge: kind === "waiting" ? botBadge(bot) : null,
     timestamp: Date.now(),
   });
+  // A request answered while the notice was still being shown (its icon loads first) must not stay.
+  const stale = () => kind === "waiting" && !get().threads[threadId]?.pendingRuntimeRequest;
   // Android has no page Notification constructor; only the worker can show one.
   const registration = await navigator.serviceWorker?.getRegistration();
-  if (registration) return registration.showNotification(title, options);
+  if (registration) {
+    await registration.showNotification(title, options);
+    if (stale()) void closeNotifications((tag) => tag === target.tag);
+    return;
+  }
   const notification = new Notification(title, options);
+  pageNotices.get(target.tag)?.close();
+  pageNotices.set(target.tag, notification);
+  notification.onclose = () => { if (pageNotices.get(target.tag) === notification) pageNotices.delete(target.tag); };
   notification.onclick = () => {
     window.focus();
-    select(bot.slug);
+    // A waiting notice opens its own conversation (a side chat), as the worker's click does.
+    if (kind === "waiting" && threadId !== bot.mainThreadId) selectThread(bot, threadId);
+    else select(bot.slug);
     notification.close();
   };
+  if (stale()) notification.close();
 }
+
+/** Notices made with the page's Notification constructor (no service worker, or the Mac app's bridge), by tag. */
+const pageNotices = new Map<string, Notification>();
 
 /** Best effort: iOS may accept this call and do nothing. */
 async function closeNotifications(match: (tag: string) => boolean) {
   try {
     const registration = typeof navigator === "undefined" ? undefined : await navigator.serviceWorker?.getRegistration();
+    for (const [tag, notification] of pageNotices) if (match(tag)) notification.close();
     if (!registration?.getNotifications) return;
     for (const notification of await registration.getNotifications()) if (match(notification.tag)) notification.close();
   } catch { /* A closed or unsupported notification is not an error worth showing. */ }
 }
+
+/** A thread that was archived or removed no longer waits for anyone. */
+const closeThreadNotices = (threadId: string) => void closeNotifications((tag) => waitingThread(tag) === threadId);
 
 export function requestNotificationPermission() {
   // Asked on a first message; a device where push was turned off in Settings stays off.

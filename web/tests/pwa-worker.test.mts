@@ -131,7 +131,7 @@ function worker(build, caches = cacheStorage()) {
     location: new URL(build.manifest.base + "sw.js", origin),
     clients: {
       async claim() { claimCalls++; },
-      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, async focus() {}, async navigate(target) { if (build.navigateFails) throw new Error("not controlled"); navigated.push(target); } })); },
+      async matchAll() { return (build.openWindows ?? []).map((url) => ({ url, visibilityState: build.visible ? "visible" : "hidden", async focus() {}, async navigate(target) { if (build.navigateFails) throw new Error("not controlled"); navigated.push(target); } })); },
       async openWindow(target: string) { opened.push(target); return null; },
     },
     registration: {
@@ -458,6 +458,25 @@ test("a resolved push closes that conversation's notice and shows nothing", asyn
   await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/?bot=alpha&thread=side-1", kind: "resolved" });
   assert.equal(runtime.shown.length, 2, "nothing new is shown");
   assert.deepEqual(runtime.tray.map((notice) => notice.tag), ["waiting:alpha:side-2"]);
+});
+
+test("resolving the last notice with no window in view leaves a quiet Answered notice, not Chromium's own", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:main", url: "/?bot=alpha&thread=main", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:main", url: "/?bot=alpha&thread=main", icon: "/api/bots/alpha/avatar.png", kind: "resolved" });
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.title]), [["waiting:alpha:main", "Alpha"]]);
+  const quiet = runtime.shown.at(-1)!;
+  assert.equal(quiet.options.body, "Answered");
+  assert.equal(quiet.options.silent, true);
+  assert.equal(quiet.options.icon, "/api/bots/alpha/avatar.png");
+});
+
+test("resolving the last notice while a window is in view just closes it", async () => {
+  const runtime = worker({ ...app, openWindows: ["http://127.0.0.1:4173/"], visible: true });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:main", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:main", url: "/", kind: "resolved" });
+  assert.deepEqual(runtime.tray, []);
+  assert.equal(runtime.shown.length, 1);
 });
 
 test("a push with no icon keeps the app icon and drops malformed extras", async () => {

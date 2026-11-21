@@ -74,6 +74,8 @@ export function ensurePushSubscription(): Promise<PushResult> {
         userVisibleOnly: true,
         applicationServerKey: keyBytes(publicKey),
       });
+      // Push may have been turned off (here or in another tab) while this was in flight.
+      if (pushTurnedOff()) return { ok: false, reason: "Push is off on this device." };
       const saved = await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -120,7 +122,11 @@ export async function pushDeviceStatus(): Promise<PushDeviceStatus> {
  * keeps its subscription, so a retry can still name it. Only then does the browser drop it.
  */
 export async function disablePushNotifications(): Promise<PushResult> {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) { setPushOff(true); return { ok: true }; }
+  // Off first, so a registration already in flight (this tab or another) stops before it posts, and
+  // wait for one in this tab to settle so its POST can't land after the removal below.
+  setPushOff(true);
+  await pending?.catch(() => undefined);
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return { ok: true };
   try {
     const registration = await navigator.serviceWorker.getRegistration();
     const subscription = await registration?.pushManager.getSubscription();
@@ -130,13 +136,16 @@ export async function disablePushNotifications(): Promise<PushResult> {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ endpoint: subscription.endpoint }),
       });
-      if (!response.ok) return { ok: false, reason: `The gateway could not remove the subscription (HTTP ${response.status}).` };
+      if (!response.ok) {
+        setPushOff(false);
+        return { ok: false, reason: `The gateway could not remove the subscription (HTTP ${response.status}).` };
+      }
     }
-    setPushOff(true);
     // The gateway no longer sends here; a browser that fails to drop the endpoint only keeps a dead one.
     await subscription?.unsubscribe().catch(() => false);
     return { ok: true };
   } catch (error) {
+    setPushOff(false);
     return { ok: false, reason: reason(error) };
   }
 }

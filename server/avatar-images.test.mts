@@ -96,4 +96,8 @@ test('notification images come from the drawn avatar, and a photo has no monochr
   assert.equal(pictureIcon.status, 200);
   assert.equal((await sharp(Buffer.from(await pictureIcon.arrayBuffer())).metadata()).width, 192);
   assert.equal((await fetch(fixture.url + '/api/bots/unknown/avatar.png')).status, 404);
+  // The Settings test reaches only the device that names itself: no form posts, no broadcast.
+  assert.equal((await fetch(fixture.url + '/api/push/test', { method: 'POST' })).status, 415);
+  assert.equal((await fixture.request('/api/push/test', 'POST', {})).status, 400);
+  assert.equal((await fixture.request('/api/push/test', 'POST', { endpoint: 'https://push.example/unknown' })).body.sent, 0);
 });

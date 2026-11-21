@@ -13,12 +13,12 @@ function memoryStorage() {
 }
 
 /** A browser with one push subscription; `log` records the order of gateway calls and unsubscribes. */
-function pushBrowser(gateway: (url: string) => Response) {
+function pushBrowser(gateway: (url: string) => Response, subscribing: Promise<void> = Promise.resolve()) {
   const log: string[] = [];
   let subscription: { endpoint: string; options: object; unsubscribe(): Promise<boolean>; toJSON(): object } | null = null;
   const make = () => ({ endpoint: "https://fcm.googleapis.com/wp/device", options: {}, async unsubscribe() { log.push("browser unsubscribe"); subscription = null; return true; }, toJSON() { return { endpoint: this.endpoint, keys: {} }; } });
   subscription = make();
-  const registration = { pushManager: { async getSubscription() { return subscription; }, async subscribe() { log.push("browser subscribe"); subscription = make(); return subscription; } } };
+  const registration = { pushManager: { async getSubscription() { return subscription; }, async subscribe() { await subscribing; log.push("browser subscribe"); subscription = make(); return subscription; } } };
   define("window", { PushManager: class {} });
   define("Notification", fakeNotification("granted", "granted"));
   define("localStorage", memoryStorage());
@@ -97,4 +97,18 @@ test("push stays off across a reload until Settings turns it on again", async ()
   assert.equal((await enablePushNotifications()).ok, true);
   assert.equal(pushTurnedOff(), false);
   assert.deepEqual(browser.log, ["gateway /api/push/key", "browser subscribe", "gateway /api/push/subscribe"]);
+});
+
+test("a subscription already in flight when push is turned off never reaches the gateway", async () => {
+  let release!: () => void;
+  const browser = pushBrowser((url) => url === "/api/push/key" ? Response.json({ publicKey: "AQAB" }) : Response.json({ ok: true }), new Promise<void>((resolve) => { release = resolve; }));
+  await browser.subscription!.unsubscribe();
+  browser.log.length = 0;
+  const refresh = ensurePushSubscription();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const off = disablePushNotifications();
+  release();
+  assert.equal((await refresh).ok, false);
+  assert.equal((await off).ok, true);
+  assert.equal(browser.log.includes("gateway /api/push/subscribe"), false, `log: ${browser.log.join(", ")}`);
 });

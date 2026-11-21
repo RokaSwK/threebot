@@ -8,13 +8,16 @@ import { avatarImageFile, readAvatarImage } from "./avatar-images.mts";
 const ICON_SIZE = 192;
 const BADGE_SIZE = 96;
 // One entry per Bot and image: a new look replaces the old one, so the cache never outgrows the Bots.
-const cache = new Map<string, { look: string; png: Buffer }>();
+// A render in flight is shared, and a failed one is dropped so the next request tries again.
+const cache = new Map<string, { look: string; png: Promise<Buffer> }>();
 
-async function cached(slot: string, key: string, render: () => Promise<Buffer>): Promise<Buffer> {
+function cached(slot: string, key: string, render: () => Promise<Buffer>): Promise<Buffer> {
   const hit = cache.get(slot);
   if (hit?.look === key) return hit.png;
-  const png = await render();
-  cache.set(slot, { look: key, png });
+  const png = render();
+  const entry = { look: key, png };
+  cache.set(slot, entry);
+  png.catch(() => { if (cache.get(slot) === entry) cache.delete(slot); });
   return png;
 }
 

@@ -175,9 +175,23 @@ self.addEventListener("push", (event) => {
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
   const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
   // A request answered here or elsewhere: close its notice. The gateway sends this only to push
-  // services that allow a push that shows nothing (not Safari or Firefox).
+  // services that allow it (not Safari or Firefox). Chromium still shows its own "updated in the
+  // background" notice when a push leaves nothing on screen, so when no other notice remains and no
+  // window is in view, the answered one is replaced, quietly, by a notice that says so.
   if (payload.kind === "resolved") {
-    event.waitUntil(self.registration.getNotifications({ tag }).then((open) => { for (const notification of open) notification.close(); }));
+    event.waitUntil((async () => {
+      for (const notification of await self.registration.getNotifications({ tag })) notification.close();
+      if ((await self.registration.getNotifications()).length) return;
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      if (windows.some((client) => client.visibilityState === "visible")) return;
+      await self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
+        body: typeof payload.body === "string" ? payload.body : "Answered",
+        tag,
+        silent: true,
+        icon: typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png",
+        data: { url: typeof payload.url === "string" ? payload.url : "./" },
+      });
+    })());
     return;
   }
   // The worker's DOM lib predates `timestamp`; the browser supports it.
