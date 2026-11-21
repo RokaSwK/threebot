@@ -56,6 +56,7 @@
     "tag": "waiting:beta:side-beta-1",
     "title": "Beta",
     "body": "Answered",
+    "icon": "/api/bots/beta/avatar.png",
     "url": "/?bot=beta&thread=side-beta-1"
   }
 ]
@@ -91,13 +92,15 @@
     "title": "Beta",
     "body": "A side chat is waiting for you",
     "tag": "waiting:beta:side-beta-2",
-    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png",
+    "silent": false
   },
   {
     "title": "Beta",
     "body": "A side chat is waiting for you",
     "tag": "waiting:beta:side-beta-3",
-    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png",
+    "silent": false
   }
 ]
 
@@ -110,6 +113,7 @@
     "tag": "waiting:beta:side-beta-3",
     "title": "Beta",
     "body": "Answered",
+    "icon": "/api/bots/beta/avatar.png",
     "url": "/?bot=beta&thread=side-beta-3"
   }
 ]
@@ -120,7 +124,33 @@
     "title": "Beta",
     "body": "A side chat is waiting for you",
     "tag": "waiting:beta:side-beta-2",
-    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png",
+    "silent": false
+  }
+]
+
+## 3b. no tab, last notice answered: pushes the gateway sent
+[
+  {
+    "topic": "0RzzFFdKrmaJ8leiuJ_tGZ0WAyCsffC5",
+    "urgency": "normal",
+    "kind": "resolved",
+    "tag": "waiting:beta:side-beta-2",
+    "title": "Beta",
+    "body": "Answered",
+    "icon": "/api/bots/beta/avatar.png",
+    "url": "/?bot=beta&thread=side-beta-2"
+  }
+]
+
+## 3b. no tab: tray (expect one quiet "Answered" in place of the waiting notice)
+[
+  {
+    "title": "Beta",
+    "body": "Answered",
+    "tag": "waiting:beta:side-beta-2",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png",
+    "silent": true
   }
 ]
 
