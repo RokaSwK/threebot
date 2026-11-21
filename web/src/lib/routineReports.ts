@@ -2,6 +2,7 @@
 // run's report, read from its thread. It is never a model turn, so it cannot wake the Bot.
 import { threadClient } from "./t3";
 import { findTidyTask } from "./memoryTidy";
+import { ROUTINE_THREAD_PREFIX } from "./routines";
 import type { Bot, ScheduledTask, ThreadShell, TurnItem } from "./types";
 
 export type RoutineReport = { id: string; at: string; title: string; summary: string; threadId: string; failed: boolean };
@@ -19,14 +20,14 @@ const firstParagraph = (text: string) => {
 };
 
 /**
- * Whether the routine's thread is a conversation of its own: a top-level thread of the Bot's project
- * that isn't archived. A Bot made from a project shares it with the user's own threads, so there it
- * also has to be the one started for the routine (T3 and Threebot both name it after the routine),
- * or the memory tidy's. Without the thread's shell nothing is known, so it leaves no line.
+ * Whether the routine's thread is a conversation of its own that has run: one Threebot started for it,
+ * or the memory tidy's (T3 starts that one). A routine bound to any other thread, a room or one of the
+ * user's own in a project Bot, leaves no line. A conversation it was just moved to has not run yet, so
+ * the run T3 last recorded happened somewhere else. Without the thread's shell nothing is known.
  */
-function ownConversation(bot: Bot, task: ScheduledTask, thread: ThreadShell | undefined, tidyId: string | undefined) {
-  if (!thread || thread.archivedAt || thread.lineage?.parentThreadId || thread.lineage?.sideChat) return false;
-  return !bot.adopted || task.id === tidyId || thread.title === task.title;
+function ownConversation(task: ScheduledTask, thread: ThreadShell | undefined, tidyId: string | undefined) {
+  if (!thread || thread.archivedAt || !thread.latestRunId) return false;
+  return task.id === tidyId || thread.id.startsWith(ROUTINE_THREAD_PREFIX);
 }
 
 /**
@@ -38,7 +39,7 @@ export function ownConversationRoutines(bot: Bot, tasks: ScheduledTask[], thread
   if (!bot.projectId) return [];
   const tidyId = findTidyTask(bot, tasks)?.id;
   return tasks
-    .filter((task) => task.projectId === bot.projectId && task.threadId && task.threadId !== bot.mainThreadId && (task.runCount ?? 0) > 0 && ownConversation(bot, task, threads[task.threadId], tidyId))
+    .filter((task) => task.projectId === bot.projectId && task.threadId && task.threadId !== bot.mainThreadId && (task.runCount ?? 0) > 0 && ownConversation(task, threads[task.threadId], tidyId))
     .sort((left, right) => (right.lastRunAt ?? "").localeCompare(left.lastRunAt ?? ""))
     .slice(0, Math.max(1, limit));
 }

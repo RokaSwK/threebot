@@ -408,7 +408,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const destinationNote = destination === "chat"
     ? `Runs with the model of ${bot.name}’s chat. Change it there and this routine follows.`
     : destination === "own"
-      ? task.runCount
+      ? ownThread?.latestRunId
         ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
         : `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
       : destination === "own-pending"
@@ -447,7 +447,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
         <p id="routine-destination-note" className="mt-1 text-[12px] leading-relaxed text-muted">{destinationNote}</p>
       </>}
       {destination === "own" && <div className="mt-1 flex flex-wrap items-center gap-x-4">
-        {!!task.runCount && <button type="button" className="flex min-h-10 items-center text-[13px] text-fg hover:underline max-sm:min-h-11" onClick={() => { if (task.threadId) selectThread(bot, task.threadId); }}>Open conversation</button>}
+        {!!ownThread?.latestRunId && <button type="button" className="flex min-h-10 items-center text-[13px] text-fg hover:underline max-sm:min-h-11" onClick={() => { if (task.threadId) selectThread(bot, task.threadId); }}>Open conversation</button>}
         <button ref={backAction} type="button" onClick={() => setConfirmBack(true)} disabled={running} className="flex min-h-10 items-center text-[13px] text-fg hover:underline disabled:text-muted disabled:hover:no-underline max-sm:min-h-11">Move it back to the chat</button>
       </div>}
       {running && destination !== "new-thread" && <p className="mt-1 text-[12px] text-muted">A run is in progress. You can move it when the run finishes.</p>}

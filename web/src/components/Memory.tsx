@@ -61,7 +61,8 @@ export function MemoryTab({ bot }: { bot: Bot }) {
   const [modelBusy, setModelBusy] = useState(false);
   const tidyModel = routine ? (routine.threadId ? threads[routine.threadId]?.modelSelection ?? routine.modelSelection ?? null : routine.modelSelection ?? null) : null;
   const changeTidyModel = async (selection: ModelSelection) => {
-    if (!routine || modelBusy) return;
+    // Both save the whole task; one at a time, so neither restores what the other just changed.
+    if (!routine || modelBusy || tidyBusy) return;
     setModelBusy(true);
     try {
       await setRoutineModel(routine, bot, selection);
@@ -71,7 +72,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
     } finally { setModelBusy(false); }
   };
   const changeTidy = async (next: TidyFrequency) => {
-    if (tidyBusy) return;
+    if (tidyBusy || modelBusy) return;
     setTidyBusy(next);
     try {
       await memoryApi.tidy(bot.slug, next);

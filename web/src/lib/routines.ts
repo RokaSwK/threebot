@@ -11,6 +11,8 @@ export type RoutineCreationSource = "web" | "mobile" | "mcp" | "provider" | "ser
 export type RoutineTask = Omit<ScheduledTask, "schedule"> & { schedule: RoutineSchedule; workspaceStrategy: WorkspaceStrategy; modelSelection: ModelSelection; runtimeMode: "approval-required" | "auto-accept-edits" | "full-access" | "auto"; interactionMode: "default" | "plan"; createdBy?: RoutineActor; creationSource?: RoutineCreationSource; lastRunError?: string | null; webhook?: { path: string; url: string | null; hasSecret: boolean } };
 export type RoutineInput = Pick<RoutineTask, "title" | "prompt" | "enabled" | "schedule" | "projectId" | "threadId" | "workspaceStrategy" | "modelSelection" | "runtimeMode" | "interactionMode"> & { threadMode?: ThreadMode; id?: string; requireExisting?: boolean; commandId: string; createdBy: RoutineActor; creationSource: RoutineCreationSource };
 export type ThreadMode = NonNullable<ScheduledTask["threadMode"]>;
+/** The id prefix of a conversation Threebot started for a routine of its own. */
+export const ROUTINE_THREAD_PREFIX = "threebot-routine:";
 /** Where T3 will run it: the Bot's chat, a conversation of its own, or one it creates on the first (or every) run. */
 export type RoutineDestination = "chat" | "own" | "own-pending" | "new-thread";
 /** As T3 reads it: servers before thread modes omit it, and their bound tasks continue the conversation. */
@@ -119,7 +121,8 @@ export async function setRoutineModel(task: ScheduledTask, bot: Bot, selection: 
     const chat = bot.mainThreadId ? useApp.getState().threads[bot.mainThreadId] : undefined;
     const runtimeMode = (chat?.runtimeMode as RoutineTask["runtimeMode"] | undefined) ?? existing.runtimeMode;
     const interactionMode = (chat?.interactionMode as RoutineTask["interactionMode"] | undefined) ?? existing.interactionMode;
-    const launched = record(await t3.call<unknown>("orchestration.launchThread", { commandId: uuid(), projectId: bot.projectId, title: existing.title, modelSelection: selection, runtimeMode, interactionMode, workspaceStrategy: { type: "root" } }));
+    // The id marks it as the routine's own conversation, so the chat knows whose runs to report.
+    const launched = record(await t3.call<unknown>("orchestration.launchThread", { commandId: uuid(), threadId: `${ROUTINE_THREAD_PREFIX}${uuid()}`, projectId: bot.projectId, title: existing.title, modelSelection: selection, runtimeMode, interactionMode, workspaceStrategy: { type: "root" } }));
     const threadId = nonempty(launched.threadId);
     try {
       return await saveRoutine(routineSaveInput(existing, { threadId, threadMode: threadMode(existing), workspaceStrategy: { type: "root" }, modelSelection: selection }));
