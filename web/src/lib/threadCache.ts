@@ -187,7 +187,8 @@ async function writeRecord(id: string, value: unknown): Promise<void> {
     const rule = RULES[kind] ?? { keep: 4, bytes: 4 * MB };
     const rows = Object.entries(index)
       .filter(([key]) => kindOf(key) === kind)
-      .sort((a, b) => (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
+      // The record being written counts first, so it never sits outside the budget.
+      .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
     let count = 0;
     let total = 0;
     for (const [key, entry] of rows) {
@@ -246,6 +247,8 @@ export async function writeView(view: CachedView, limit = VIEW_BYTES): Promise<v
   const trimmed: CachedView = { ...view, requests: view.requests.slice(0, 40), subagents: view.subagents.slice(0, 200) };
   while (bytesOf(trimmed) > limit && trimmed.items.length > 20) trimmed.items = trimmed.items.slice(Math.ceil(trimmed.items.length / 4));
   if (bytesOf(trimmed) > limit) trimmed.runs = trimmed.runs.slice(-40);
+  // A few rows too big to fit are not kept at all: an over-budget record would never be evicted fairly.
+  if (bytesOf(trimmed) > limit) return;
   await writeQuietly(`view:${view.key}`, trimmed);
 }
 

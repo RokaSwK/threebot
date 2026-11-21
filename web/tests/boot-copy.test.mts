@@ -146,3 +146,22 @@ test('a deleted conversation leaves no copy behind', async () => {
   assert.equal(await app.readView('thread-gone'), null);
   assert.ok(await app.readView('thread-stays'), 'only that conversation goes');
 });
+
+test('a conversation too big for its budget even after trimming is not kept', async () => {
+  resetCacheForTest();
+  const view = { v: 1, key: 'thread-huge', savedAt: Date.now(), thread: null, items: [{ id: 'm1', text: 'x'.repeat(3 * 1024 * 1024) }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false };
+  await app.writeView(view);
+  assert.equal(await app.readView('thread-huge'), null);
+});
+
+test('a request card painted from the saved copy cannot be answered', async () => {
+  useApp.setState({ threadData: { 'thread-saved': { items: {}, runs: {}, requests: {}, subagents: {}, loaded: true, stale: true } } });
+  let dispatched = 0;
+  const dispatch = t3.dispatch;
+  t3.dispatch = async () => { dispatched++; };
+  try {
+    await assert.rejects(app.respondRequest('thread-saved', 'request-1', 'accept'), /saved copy/);
+    await assert.rejects(app.answerQuestion('thread-saved', 'request-1', { layout: 'compact' }), /saved copy/);
+    assert.equal(dispatched, 0, 'nothing reaches T3 from a copy');
+  } finally { t3.dispatch = dispatch; }
+});

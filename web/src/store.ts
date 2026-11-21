@@ -244,8 +244,8 @@ async function initialize() {
  */
 async function confirmLaunch() {
   const session = await api.session().catch(() => null);
-  // Asked and unanswered: the gateway is not reachable, which is what "offline" means here.
-  if (!session) return set({ offline: true });
+  // Asked and unanswered: the gateway is not reachable, unless the socket opened in the meantime.
+  if (!session) return get().connection === "open" ? undefined : set({ offline: true });
   if (!session.authenticated) return signedOut(session);
   try {
     const [config, settings, bots, historical] = await initialData();
@@ -355,6 +355,9 @@ function startRuntime() {
   // A page that leaves keeps whatever is on screen: the next launch starts from it.
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCache(); });
   window.addEventListener("pagehide", flushCache);
+  try { forgetListener = new BroadcastChannel(FORGET_CHANNEL); forgetListener.onmessage = () => stopSaving();
+    // Node (the tests) keeps a process alive for an open channel; a browser page does not care.
+    (forgetListener as BroadcastChannel & { unref?: () => void }).unref?.(); } catch { /* a single tab is all there is */ }
   // The radio is the fastest and most reliable witness: it says "offline" before any request fails.
   window.addEventListener("offline", () => {
     if (!get().offline) announce(copied ? "Offline. Showing saved copies." : "Offline.");
@@ -386,11 +389,19 @@ export function announce(text: string) {
  * stops first: a page that leaves flushes what is on screen, and that must not undo the erase.
  */
 export async function forgetDeviceCopy() {
+  // Every other open tab stops saving too, so none writes a transcript back after the erase.
+  try { const channel = new BroadcastChannel(FORGET_CHANNEL); channel.postMessage("forget"); channel.close(); } catch { /* no other tabs to tell */ }
+  stopSaving();
+  await clearCache().catch(() => {});
+}
+
+const FORGET_CHANNEL = "threebot.view.forget";
+let forgetListener: BroadcastChannel | null = null;
+function stopSaving() {
   forgetting = true;
   for (const timer of cacheTimers.values()) clearTimeout(timer);
   cacheTimers.clear();
   stopCacheWrites();
-  await clearCache().catch(() => {});
 }
 
 export async function loadVault() {
@@ -405,7 +416,10 @@ export async function refreshBots() {
   const [bots, historical] = await Promise.all([api.bots(deadline(GATEWAY_PATIENCE_MS)).catch(() => null), api.botIdentities(deadline(GATEWAY_PATIENCE_MS)).catch(() => null)]);
   if (!bots) {
     const session = await api.session().catch(() => null);
-    if (session && !session.authenticated && session.accessLogin) signedOut(session);
+    if (session && !session.authenticated) {
+      // Whatever the sign-in screen, the copy goes; only Access takes over the screen here, as before.
+      if (session.accessLogin) signedOut(session); else void forgetDeviceCopy();
+    }
     return;
   }
   if (revision !== botsRevision || pendingBotMutations) return;
@@ -688,6 +702,11 @@ export function forgetThreadCopy(threadIds: string[]) {
     cacheTimers.delete(threadId);
   }
   void forgetRecords(threadIds.map((threadId) => `view:${threadId}`));
+  set((s) => {
+    const threadData = { ...s.threadData };
+    for (const threadId of threadIds) if (threadData[threadId]?.stale) delete threadData[threadId];
+    return { threadData };
+  });
 }
 
 function scheduleCache(threadId: string) {
@@ -737,7 +756,7 @@ async function hydrateThread(threadId: string, generation: number) {
     return;
   }
   // A snapshot that landed while the read was in flight, or a stream that replaced this one, is the truth.
-  if (get().threadData[threadId]?.loaded || streamGenerations.get(threadId) !== generation) return;
+  if (get().threadData[threadId]?.loaded || streamGenerations.get(threadId) !== generation || forgottenThreads.has(threadId)) return;
   if (view.thread && !get().threads[view.thread.id]) set((s) => ({ threads: { ...s.threads, [view.thread!.id]: view.thread! } }));
   patchThread(threadId, (data) => data.loaded ? data : {
     items: Object.fromEntries(view.items.flatMap((item) => item && typeof item.id === "string" ? [[item.id, item] as const] : [])),
@@ -755,7 +774,8 @@ async function hydrateThread(threadId: string, generation: number) {
 const olderLoads = new Set<string>();/** Prepends the next page of older rows of a bounded thread. Resolves true when rows were added. */
 export async function loadOlderMessages(threadId: string): Promise<boolean> {
   const data = get().threadData[threadId];
-  if (!data?.hasMoreHistory || !data.historyCursor || olderLoads.has(threadId)) return false;
+  // A saved copy's cursor is old news: older rows load once the live snapshot is in.
+  if (!data?.hasMoreHistory || !data.historyCursor || data.stale || olderLoads.has(threadId)) return false;
   olderLoads.add(threadId);
   const generation = snapshotGenerations.get(threadId);
   try {
@@ -1304,6 +1324,7 @@ export function deleteBot(slug: string) {
     // The gateway must accept deletion before any T3 conversation/project is stopped.
     const { bots } = await api.deleteBot(slug);
     publishBots(bots);
+    keepBoot({ botsRoot: get().botsRoot, executorUrl: get().executorUrl, settings: get().settings, bots, historical: Object.values(get().historicalBots) });
     forgetThreadCopy(Object.values(get().threads).filter((thread) => thread.id === bot.mainThreadId || (bot.projectId && thread.projectId === bot.projectId)).map((thread) => thread.id).concat(bot.mainThreadId ? [bot.mainThreadId] : []));
     set((s) => ({ selected: s.selected === slug ? null : s.selected, selectedThreadId: s.selected === slug ? null : s.selectedThreadId, exchangeBotSlug: s.exchangeBotSlug === slug ? null : s.exchangeBotSlug }));
     if (bot.mainThreadId) set((s) => ({ historicalBots: { ...s.historicalBots, [`archived:${bot.mainThreadId}`]: { ...bot, hidden: true, pinned: false, primary: false, notifications: false } } }));
@@ -1382,19 +1403,28 @@ export async function forceStopThread(threadId: string, runId: string) {
   else if (result?.outcome === "shared") toast("Stopped. The agent process kept running because other threads share it.");
 }
 
+/** A request card painted from the saved copy may already be answered: act only on the live one. */
+function liveOnly(threadId: string) {
+  if (get().threadData[threadId]?.stale) throw new Error("This is a saved copy. Try again once the conversation has loaded.");
+}
+
 export async function respondRequest(threadId: string, requestId: string, decision: "accept" | "acceptForSession" | "acceptAlways" | "decline" | "cancel") {
+  liveOnly(threadId);
   await threadClient(threadId).dispatch({ type: "runtime-request.respond", threadId: threadTarget(threadId).threadId, requestId, decision });
 }
 
 export async function answerQuestion(threadId: string, requestId: string, answers: Record<string, unknown>) {
+  liveOnly(threadId);
   await threadClient(threadId).dispatch({ type: "runtime-request.respond", threadId: threadTarget(threadId).threadId, requestId, answers });
 }
 
 export async function dismissQuestion(threadId: string, requestId: string) {
+  liveOnly(threadId);
   await threadClient(threadId).dispatch({ type: "thread.user-input.dismiss", threadId: threadTarget(threadId).threadId, requestId });
 }
 
 export async function answerSecret(threadId: string, turnItemId: string, secret: string | null) {
+  liveOnly(threadId);
   await threadClient(threadId).call("secrets.answerRequest", { threadId: threadTarget(threadId).threadId, turnItemId, answer: secret === null ? { type: "decline" } : { type: "save", secret } });
 }
 

@@ -229,7 +229,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {greeting && !embedded && (
             <BotBubble text={`Hey${settings?.userName ? ` ${settings.userName}` : ""}, good to meet you. What do you want me around for? Anything concrete, or more of a general sidekick?`} />
           )}
-          {(hiddenCount > 0 || (data?.hasMoreHistory && !offline)) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
+          {(hiddenCount > 0 || (data?.hasMoreHistory && !offline && !data.stale)) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
               <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />
