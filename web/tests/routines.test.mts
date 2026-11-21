@@ -336,6 +336,9 @@ test('Details promises a line in the chat only where one will appear',async()=>{
  assert.doesNotMatch(host.textContent,/one-line summary/,'a routine bound to a room reports there, not in the chat');
  await render(h(RoutineDetail,{bot,task:{...task,threadId:R+'b'},onBack(){},onEdit(){}}));
  assert.match(host.textContent,/chat gets a one-line summary/);
+ useApp.setState({threads:{...useApp.getState().threads,[R+'b']:{id:R+'b',modelSelection:own2,latestRunId:'run-1',archivedAt:'2026-11-20T00:00:00Z'}}});
+ await render(h(RoutineDetail,{bot,task:{...task,threadId:R+'b'},onBack(){},onEdit(){}}));
+ assert.doesNotMatch(host.textContent,/one-line summary/,'an archived conversation leaves no line either');
  await render(h(RoutineDetail,{bot,task:{...task,threadId:null,threadMode:'new_thread'},onBack(){},onEdit(){}}));
  assert.doesNotMatch(host.textContent,/one-line summary/,'a thread per run leaves no line');
 });

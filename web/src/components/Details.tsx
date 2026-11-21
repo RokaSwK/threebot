@@ -414,7 +414,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     : destination === "own"
       ? !ownThread?.latestRunId
         ? `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
-        : reportsToChat(task, tidyId)
+        : reportsToChat(task, tidyId) && !ownThread.archivedAt
           ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
           : `Runs on ${nameOf(model)} in its own conversation.`
       : destination === "own-pending"
