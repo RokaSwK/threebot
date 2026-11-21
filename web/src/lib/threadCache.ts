@@ -246,6 +246,9 @@ async function writeRecord(id: string, value: unknown): Promise<void> {
     await store.put(INDEX, kept);
     for (const key of dropping) await store.remove(key);
     await store.put(id, value);
+    // A deletion marker that ages out can no longer stop a save some tab queued long ago: every open
+    // tab stops saving instead, and starts again under the new generation on its next launch.
+    if (dropping.some((key) => kindOf(key) === "gone")) await store.put(GENERATION, newGeneration());
   });
 }
 

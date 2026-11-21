@@ -168,3 +168,14 @@ test('a request card painted from the saved copy cannot be answered', async () =
     assert.equal(dispatched, 0, 'nothing reaches T3 from a copy');
   } finally { t3.dispatch = dispatch; }
 });
+
+test('a deletion marker that ages out stops every tab saving instead of letting a deleted copy back', async () => {
+  resetCacheForTest();
+  const view = { v: 1, key: 'thread-deleted-long-ago', savedAt: Date.now(), thread: null, items: [{ id: 'm1', text: 'gone' }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false };
+  await app.forgetRecords(['view:thread-deleted-long-ago'], { deleted: true });
+  for (let index = 0; index < 500; index++) await app.forgetRecords([`view:other-${index}`], { deleted: true });
+  // An unrelated save prunes the oldest marker, the one that guarded this conversation.
+  await app.writeView({ ...view, key: 'thread-unrelated' });
+  await app.writeView(view);
+  assert.equal(await app.readView('thread-deleted-long-ago'), null, 'the queued save of a deleted conversation still lands nowhere');
+});
