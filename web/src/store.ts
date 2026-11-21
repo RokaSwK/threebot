@@ -9,8 +9,8 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { FORGET_CHANNEL, ROOM_VIEW_BYTES, clearCache, forgetRecords, forgetRoom, readBoot, readRoom, readRooms, readView, stopCacheWrites, writeBoot, writeRoom, writeRooms, writeView, type CachedBoot } from "./lib/threadCache";
-import { resetAssetCopies } from "./lib/assetCopies";
+import { FORGET_CHANNEL, ROOM_VIEW_BYTES, clearCache, deletedRecords, forgetRecords, forgetRoom, readBoot, readRoom, readRooms, readView, stopCacheWrites, writeBoot, writeRoom, writeRooms, writeView, type CachedBoot } from "./lib/threadCache";
+import { resetAssetCopies, revokeAssetHandles } from "./lib/assetCopies";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -652,6 +652,13 @@ const snapshotGenerations = new Map<string, number>();
 const streamGenerations = new Map<string, number>();
 /** Threads a room reads in full. Their copy keeps less: the room shows the recent turns. */
 const roomThreads = new Set<string>();
+/** Which room a member conversation belongs to, so the room's deletion takes its copy (former members too). */
+const roomOfThread = new Map<string, string>();
+function noteRoomMembers(room: RoomView) {
+  for (const member of room.members ?? []) if (typeof member.threadId === "string" && member.threadId) roomOfThread.set(member.threadId, room.id);
+}
+/** Rooms deleted while this page was open: a list fetched before the deletion must not name them. */
+const deletedRooms = new Set<string>();
 
 /** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
 function openThreadStream(threadId: string, bounded = true): StreamHandle {
@@ -726,7 +733,8 @@ export function forgetThreadCopy(threadIds: string[]) {
     clearTimeout(cacheTimers.get(threadId));
     cacheTimers.delete(threadId);
   }
-  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`), { deleted: true });
+  // Its kept pictures go too, and the handles already drawn from them stop working.
+  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`), { deleted: true }).then(revokeAssetHandles);
   set((s) => {
     const threadData = { ...s.threadData };
     for (const threadId of threadIds) if (threadData[threadId]?.stale) delete threadData[threadId];
@@ -759,7 +767,7 @@ async function saveThread(threadId: string) {
     subagents: Object.values(data.subagents ?? {}),
     historyCursor: data.historyCursor ?? null,
     hasMoreHistory: data.hasMoreHistory === true,
-  }, roomThreads.has(threadId) ? ROOM_VIEW_BYTES : undefined);
+  }, roomThreads.has(threadId) ? ROOM_VIEW_BYTES : undefined, roomOfThread.has(threadId) ? `room:${roomOfThread.get(threadId)}` : undefined);
 }
 
 function flushCache() {
@@ -970,8 +978,9 @@ const deadline = (ms: number) => (typeof AbortSignal !== "undefined" && typeof A
  */
 export async function loadRooms() {
   await hydrateRooms();
-  const list = await fetchRooms(deadline(GATEWAY_PATIENCE_MS)).catch(() => null);
-  if (!list) return Object.values(get().rooms);
+  const fetched = await fetchRooms(deadline(GATEWAY_PATIENCE_MS)).catch(() => null);
+  if (!fetched) return Object.values(get().rooms);
+  const list = fetched.filter((room) => !deletedRooms.has(room.id));
   set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
   void writeRooms(list);
   return list;
@@ -980,8 +989,12 @@ export async function loadRooms() {
 /** Paints the kept list once, before any request: a cold start with no network still names the rooms. */
 async function hydrateRooms() {
   if (Object.keys(get().rooms).length) return;
-  const kept = await readRooms().catch(() => null);
-  if (!kept || Object.keys(get().rooms).length) return;
+  const saved = await readRooms().catch(() => null);
+  if (!saved || Object.keys(get().rooms).length) return;
+  // Another tab may have deleted a room after this list was saved.
+  const gone = await deletedRecords(saved.map((room) => `room:${room.id}`));
+  const kept = saved.filter((room) => !gone.has(`room:${room.id}`) && !deletedRooms.has(room.id));
+  if (Object.keys(get().rooms).length) return;
   set({ rooms: Object.fromEntries(kept.map((room) => [room.id, room])) });
 }
 
@@ -1036,10 +1049,10 @@ export async function loadRoom(id: string, quiet = false) {
     const room = await fetchRoom(id, deadline(GATEWAY_PATIENCE_MS));
     if (get().selectedRoom !== id) return;
     const previous = get().roomView?.id === id ? get().roomView : null;
-    if (previous && roomFingerprint(previous) === roomFingerprint(room)) {
-      // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
-      // The copy on screen is still this room as it is now, so it stops being a copy.
-      if (get().roomStale) set({ roomStale: false });
+    noteRoomMembers(room);
+    // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
+    // A saved copy is always replaced by the first live answer: its fingerprint does not cover everything it shows.
+    if (previous && !get().roomStale && roomFingerprint(previous) === roomFingerprint(room)) {
       if (!quiet && get().roomError) set({ roomError: null });
       return;
     }
@@ -1075,6 +1088,7 @@ export async function loadRoom(id: string, quiet = false) {
     const kept = await readRoom(id);
     if (get().selectedRoom !== id) return;
     // A room this device opened before opens again from its copy; the poll keeps trying to go live.
+    if (kept) noteRoomMembers(kept);
     if (kept) return set({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: get().rooms[id] ? { ...get().rooms, [id]: summaryPatch(kept, get().rooms[id]) } : get().rooms });
     set({ roomMissing: true, roomError: error instanceof Error ? error.message : "Couldn't load the room" });
   }
@@ -1082,9 +1096,13 @@ export async function loadRoom(id: string, quiet = false) {
 
 /** A deleted room leaves nothing behind: its copy, and the copies of the conversations it held. */
 async function forgetRoomCopy(id: string) {
+  deletedRooms.add(id);
   const room = get().roomView?.id === id ? get().roomView : await readRoom(id).catch(() => null);
-  forgetThreadCopy((room?.members ?? []).flatMap((member) => typeof member.threadId === "string" && member.threadId ? [member.threadId] : []));
-  await forgetRoom(id);
+  const members = new Set((room?.members ?? []).flatMap((member) => typeof member.threadId === "string" && member.threadId ? [member.threadId] : []));
+  for (const [threadId, roomId] of roomOfThread) if (roomId === id) members.add(threadId);
+  forgetThreadCopy([...members]);
+  // Member copies saved for this room (former members too) and the pictures it showed go with it.
+  revokeAssetHandles(await forgetRoom(id));
 }
 
 /**
@@ -1096,6 +1114,7 @@ async function hydrateRoom(id: string) {
   const kept = await readRoom(id);
   if (get().selectedRoom !== id || get().roomView || get().roomGone) return;
   if (!kept) return set({ roomMissing: true });
+  noteRoomMembers(kept);
   set((s) => ({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: s.rooms[id] ? { ...s.rooms, [id]: summaryPatch(kept, s.rooms[id]) } : s.rooms }));
 }
 

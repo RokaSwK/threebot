@@ -50,7 +50,8 @@ function attachmentsFrom(values: unknown[]): ChatAttachment[] {
   });
 }
 
-export function ChatAttachmentList({ attachments, align = "end", onAsk }: { attachments: unknown[]; align?: "start" | "end"; onAsk?: (fileName: string, text: string) => void }) {
+/** `owner`: the conversation (`view:<thread>`) or room (`room:<id>`) showing these, so its deletion takes the kept pictures. */
+export function ChatAttachmentList({ attachments, align = "end", onAsk, owner }: { attachments: unknown[]; align?: "start" | "end"; onAsk?: (fileName: string, text: string) => void; owner?: string }) {
   const items = useMemo(() => attachmentsFrom(attachments), [attachments]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = items.find((item) => item.id === selectedId);
@@ -60,14 +61,14 @@ export function ChatAttachmentList({ attachments, align = "end", onAsk }: { atta
     : null;
   return <>
     <div className={clsx("chat-attachments mb-1 flex min-w-0 flex-wrap gap-1.5", align === "start" ? "justify-start" : "justify-end")}>
-      {items.map((attachment) => <Attachment key={attachment.id} attachment={attachment} onOpen={() => setSelectedId(attachment.id)} />)}
+      {items.map((attachment) => <Attachment key={attachment.id} attachment={attachment} owner={owner} onOpen={() => setSelectedId(attachment.id)} />)}
     </div>
     {selected && <WorkspaceResourceViewer key={selected.id} resource={resource} title={selected.name} fileKind={selected.fileKind} onClose={() => setSelectedId(null)}
       onAsk={onAsk ? (text) => onAsk(selected.name, text) : undefined} />}
   </>;
 }
 
-function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen: () => void }) {
+function Attachment({ attachment, onOpen, owner }: { attachment: ChatAttachment; onOpen: () => void; owner?: string }) {
   const [thumbnail, setThumbnail] = useState<string | null>(attachment.previewUrl ?? null);
   const [downloadState, setDownloadState] = useState<"idle" | "preparing" | "started" | "error">("idle");
   const operation = useRef<symbol | null>(null);
@@ -78,8 +79,7 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
       assetSource(
         () => assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "inline" }),
         assetKey({ _tag: "attachment", attachmentId: attachment.id }),
-        "image",
-        attachment.sizeBytes ?? undefined,
+        { knownBytes: attachment.sizeBytes ?? undefined, owner },
       ).then((url) => {
         if (!isAssetSource(url)) throw new Error("Invalid asset response");
         if (live) setThumbnail(url);
@@ -91,14 +91,10 @@ function Attachment({ attachment, onOpen }: { attachment: ChatAttachment; onOpen
     if (operation.current) return;
     const token = Symbol(); operation.current = token; setDownloadState("preparing");
     try {
-      const url = await assetSource(
-        () => assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "attachment" }),
-        assetKey({ _tag: "attachment", attachmentId: attachment.id }),
-        "file",
-        attachment.sizeBytes ?? undefined,
-      );
+      // A download is the original, signed now: a kept copy is only ever drawn, never handed out.
+      const url = await assetUrl({ _tag: "attachment", attachmentId: attachment.id, disposition: "attachment" });
       if (operation.current !== token) return;
-      if (!isAssetSource(url)) throw new Error("Invalid asset response");
+      if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
       const link = document.createElement("a");
       link.href = url; link.download = attachment.name; link.hidden = true;
       document.body.appendChild(link);

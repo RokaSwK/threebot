@@ -1,5 +1,5 @@
 // What this device kept from the last time it could reach the gateway: each Bot's window, the rooms,
-// and the image bytes already seen.
+// and the pictures already seen.
 //
 // A paint cache, never a source of truth: T3's snapshot replaces a view whole, nothing is dispatched
 // from one, and everything here is written from what the store already holds. A conversation keeps
@@ -63,7 +63,8 @@ const RULES: Record<string, { keep: number; bytes: number }> = {
   gone: { keep: 500, bytes: 1 * MB },
 };
 
-type Entry = { savedAt: number; bytes: number };
+/** `owner`: the conversation (`view:<thread>`) or room (`room:<id>`) whose deletion takes this record with it. */
+type Entry = { savedAt: number; bytes: number; owner?: string };
 type Index = Record<string, Entry>;
 
 /** One store's operations inside a transaction: everything a write does commits together or not at all. */
@@ -214,23 +215,25 @@ async function readIndex(store: Store): Promise<Index> {
   const out: Index = {};
   for (const [id, entry] of Object.entries(value as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object") continue;
-    const { savedAt, bytes } = entry as Entry;
-    if (typeof savedAt === "number" && typeof bytes === "number") out[id] = { savedAt, bytes };
+    const { savedAt, bytes, owner } = entry as Entry;
+    if (typeof savedAt === "number" && typeof bytes === "number") out[id] = { savedAt, bytes, ...(typeof owner === "string" ? { owner } : {}) };
   }
   return out;
 }
 
 /** Stores the record and drops what its kind can no longer keep: expired, over its count, or over its bytes. */
-async function writeRecord(id: string, value: unknown, knownBytes?: number): Promise<void> {
+async function writeRecord(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<void> {
   const mine = await tabGeneration();
   const bytes = knownBytes ?? bytesOf(value);
   await storage().transact("readwrite", async (store) => {
     // Signed out since this tab started: what it holds belongs to the last sign-in. Deleted (in any
     // tab): a save queued before the deletion must not bring it back.
     if (await store.get(GENERATION) !== mine || await store.get(`gone:${id}`) !== undefined) return;
+    // Its conversation or room was deleted: the picture or member copy goes with it.
+    if (owner && await store.get(`gone:${owner}`) !== undefined) return;
     const index = await readIndex(store);
     const now = Date.now();
-    index[id] = { savedAt: now, bytes };
+    index[id] = { savedAt: now, bytes, ...(owner ? { owner } : {}) };
     const dropping: string[] = [];
     const kept: Index = {};
     for (const kind of new Set(Object.keys(index).map(kindOf))) {
@@ -267,7 +270,12 @@ export async function readRecord<T>(id: string, usable: (value: unknown) => valu
   // Reading pins this tab to the sign-in whose copy it paints; a later sign-in's records are not its to read.
   const mine = await tabGeneration().catch(() => null);
   if (!mine) return null;
-  const value = await storage().transact("readonly", async (store) => await store.get(GENERATION) === mine ? store.get(id) : null).catch(() => null);
+  const value = await storage().transact("readonly", async (store) => {
+    if (await store.get(GENERATION) !== mine) return null;
+    // Older than a sign-in lasts: never painted, even on an offline launch where no write evicts it.
+    const entry = (await readIndex(store))[id];
+    return entry && fresh(entry.savedAt) ? store.get(id) : null;
+  }).catch(() => null);
   return !stopped && usable(value) ? value : null;
 }
 
@@ -275,30 +283,52 @@ export async function readRecord<T>(id: string, usable: (value: unknown) => valu
  * Forgets these records now, index first. `deleted`: the thing itself is gone (a deleted conversation
  * or room), so a marker keeps any tab's later save from writing it back.
  */
-export async function forgetRecords(ids: string[], { deleted = false }: { deleted?: boolean } = {}): Promise<void> {
-  if (!ids.length) return;
-  await serial(() => storage().transact("readwrite", async (store) => {
+export async function forgetRecords(ids: string[], { deleted = false }: { deleted?: boolean } = {}): Promise<string[]> {
+  if (!ids.length) return [];
+  return serial(() => storage().transact("readwrite", async (store) => {
     const index = await readIndex(store);
     const now = Date.now();
-    // A deleted conversation takes the pictures and files it showed with it.
-    const assets = deleted ? await assetsOf(store, index, ids) : [];
-    for (const id of ids) {
-      delete index[id];
-      if (deleted) {
+    // A deleted conversation or room takes what it owned (its pictures, a room's member copies, and theirs).
+    const going = new Set(ids);
+    if (deleted) {
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const [key, entry] of Object.entries(index)) {
+          if (entry.owner && going.has(entry.owner) && !going.has(key)) { going.add(key); grew = true; }
+        }
+      }
+    }
+    for (const id of going) delete index[id];
+    if (deleted) {
+      for (const id of going) {
+        if (id.startsWith("asset:")) continue;
         index[`gone:${id}`] = { savedAt: now, bytes: 0 };
         await store.put(`gone:${id}`, now);
       }
     }
-    for (const id of assets) delete index[id];
     await store.put(INDEX, index);
-    for (const id of [...ids, ...assets]) await store.remove(id);
-  })).catch(() => {});
+    for (const id of going) await store.remove(id);
+    return [...going];
+  })).catch(() => [] as string[]);
 }
 
+/** Which of these records were deleted (in any tab), so a list fetched before the deletion can't name them. */
+export async function deletedRecords(ids: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (!ids.length) return found;
+  await storage().transact("readonly", async (store) => {
+    for (const id of ids) if (await store.get(`gone:${id}`) !== undefined) found.add(id);
+  }).catch(() => {});
+  return found;
+}
+
+/** Signed out in this tab (or told so by another): nothing kept may be handed out any more. */
+export const cacheStopped = () => stopped;
+
 /** Every write is best effort: a refused or full quota must never reach the caller. */
-async function writeQuietly(id: string, value: unknown, knownBytes?: number): Promise<void> {
+async function writeQuietly(id: string, value: unknown, knownBytes?: number, owner?: string): Promise<void> {
   if (stopped) return;
-  await serial(() => writeRecord(id, value, knownBytes)).catch(() => {});
+  await serial(() => writeRecord(id, value, knownBytes, owner)).catch(() => {});
 }
 
 const isView = (key: string) => (value: unknown): value is CachedView => {
@@ -312,14 +342,15 @@ export async function readView(key: string): Promise<CachedView | null> {
   return readRecord(`view:${key}`, isView(key));
 }
 
-export async function writeView(view: CachedView, limit = VIEW_BYTES): Promise<void> {
+/** `owner`: the room a member conversation belongs to, so deleting the room takes this copy too. */
+export async function writeView(view: CachedView, limit = VIEW_BYTES, owner?: string): Promise<void> {
   // Keep the newest rows when one conversation outgrows its budget: a cold start wants the tail, not the head.
   const trimmed: CachedView = { ...view, requests: view.requests.slice(0, 40), subagents: view.subagents.slice(0, 200) };
   while (bytesOf(trimmed) > limit && trimmed.items.length > 20) trimmed.items = trimmed.items.slice(Math.ceil(trimmed.items.length / 4));
   if (bytesOf(trimmed) > limit) trimmed.runs = trimmed.runs.slice(-40);
   // A few rows too big to fit are not kept at all: an over-budget record would never be evicted fairly.
   if (bytesOf(trimmed) > limit) return;
-  await writeQuietly(`view:${view.key}`, trimmed);
+  await writeQuietly(`view:${view.key}`, trimmed, undefined, owner);
 }
 
 /** The Bot list and settings the app opened with, for a launch with no gateway. */
@@ -342,7 +373,10 @@ export async function readRooms(): Promise<RoomSummary[] | null> {
 }
 
 export async function writeRooms(rooms: RoomSummary[]): Promise<void> {
-  await writeQuietly("rooms", { v: 1, savedAt: Date.now(), rooms });
+  const record = { v: 1, savedAt: Date.now(), rooms };
+  // A list too big for its budget is not kept: an over-budget record would never be evicted fairly.
+  if (bytesOf(record) > RULES.rooms.bytes) return;
+  await writeQuietly("rooms", record);
 }
 
 /** One room's turn index and members. The replies stay in the members' own cached windows. */
@@ -363,48 +397,20 @@ export async function writeRoom(room: RoomView): Promise<void> {
   while (bytesOf(trimmed) > ROOM_VIEW_BYTES && trimmed.turns.length > 20) {
     trimmed.turns = trimmed.turns.slice(Math.ceil(trimmed.turns.length / 4));
   }
+  if (bytesOf(trimmed) > ROOM_VIEW_BYTES) return;
   await writeQuietly(`room:${room.id}`, { v: 1, id: room.id, savedAt: Date.now(), room: trimmed });
 }
 
-/** Drops one record: a deleted room must not come back, and a broken file must not be served twice. */
-export const forgetRecord = (id: string) => forgetRecords([id]);
-
 /** A deleted room stays deleted, like a deleted conversation. */
 export const forgetRoom = (id: string) => forgetRecords([`room:${id}`], { deleted: true });
-
-/** The kept files a conversation's copy points at: its attachments, and whatever is keyed by its thread. */
-async function assetsOf(store: Store, index: Index, ids: string[]): Promise<string[]> {
-  const found = new Set<string>();
-  for (const id of ids) {
-    if (!id.startsWith("view:")) continue;
-    const thread = id.slice("view:".length);
-    for (const key of Object.keys(index)) {
-      if (["tool-image", "workspace", "file"].some((kind) => key.startsWith(`asset:${kind}:${thread}:`))) found.add(key);
-    }
-    const attachmentIds = new Set<string>();
-    const visit = (value: unknown, depth: number) => {
-      if (!value || typeof value !== "object" || depth > 4) return;
-      if (Array.isArray(value)) { for (const entry of value) visit(entry, depth + 1); return; }
-      const record = value as Record<string, unknown>;
-      if (typeof record.attachmentId === "string") attachmentIds.add(record.attachmentId);
-      if (Array.isArray(record.attachments)) for (const attachment of record.attachments) {
-        if (attachment && typeof attachment === "object" && typeof (attachment as { id?: unknown }).id === "string") attachmentIds.add((attachment as { id: string }).id);
-      }
-      for (const entry of Object.values(record)) if (entry && typeof entry === "object") visit(entry, depth + 1);
-    };
-    visit((await store.get(id) as { items?: unknown } | undefined)?.items, 0);
-    for (const attachmentId of attachmentIds) if (index[`asset:attachment:${attachmentId}`]) found.add(`asset:attachment:${attachmentId}`);
-  }
-  return [...found];
-}
 
 /** Bytes this device kept for a file it has already shown, keyed by whatever identifies the asset. */
 export async function readAsset<T>(key: string, usable: (value: unknown) => value is T): Promise<T | null> {
   return readRecord(`asset:${key}`, usable);
 }
 
-export async function writeAsset(key: string, value: unknown): Promise<void> {
+export async function writeAsset(key: string, value: unknown, owner?: string): Promise<void> {
   // A Blob is not JSON: its bytes are not in the record's serialized length, so the index needs them.
   const size = (value as { bytes?: unknown })?.bytes;
-  await writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined);
+  await writeQuietly(`asset:${key}`, value, typeof size === "number" ? size : undefined, owner);
 }

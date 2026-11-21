@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
-import { isAssetSource } from "../lib/assetCopies";
+import { assetKey, localAssetUrl, promptly } from "../lib/assetCopies";
 import type { LibraryResource } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
 import "./ImageViewer.css";
@@ -58,7 +58,7 @@ const DOUBLE_TAP_SCALE = 2.5;
 async function signedUrl(resource: LibraryResource, scopeThreadId: string | null) {
   if (resource._tag === "workspace-file") workspaceClient(resource.threadId);
   const url = await workspaceAssetUrl(resource, scopeThreadId);
-  if (!isAssetSource(url)) throw new Error("Invalid asset response");
+  if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
   return url;
 }
 
@@ -117,7 +117,11 @@ export function ImageViewer({ images, initialIndex, onClose, scopeThreadId = nul
     if (!image.resource) { setState(image.src ? { kind: "ready", url: image.src } : { kind: "error" }); return; }
     let live = true;
     setState({ kind: "loading" });
-    signedUrl(image.resource, scopeThreadId).then((url) => { if (live) setState({ kind: "ready", url }); }).catch(() => { if (live) setState({ kind: "error" }); });
+    const resource = image.resource;
+    promptly(() => signedUrl(resource, scopeThreadId))
+      // Offline, the picture this device kept is drawn instead; opening or downloading the original still signs.
+      .catch(async (error) => { const key = assetKey(resource as unknown as Record<string, unknown>, scopeThreadId ?? undefined); const copy = key ? await localAssetUrl(key) : null; if (copy) return copy; throw error; })
+      .then((url) => { if (live) setState({ kind: "ready", url }); }).catch(() => { if (live) setState({ kind: "error" }); });
     return () => { live = false; };
   }, [resourceKey, image.src, attempt, scopeThreadId]);
 

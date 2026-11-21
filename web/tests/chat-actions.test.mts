@@ -215,17 +215,12 @@ test("attachment failures retry with a new signed URL and unsupported formats ke
 test("Download uses the attachment disposition and handles signing failure with explicit retry", async () => {
   let attempts = 0; rpc = async () => { if (++attempts === 1) throw new Error("Private signing diagnostic"); return { relativeUrl: "/assets/fresh-download" }; };
   await renderAttachments([file]); await click(button("Download report.pdf"));
-  // Without a signature the copy is looked for first, which is one turn of the loop later than a bare failure.
-  await act(async () => { await flush(); });
   assert.match(document.querySelector('[role="alert"]').textContent, /Couldn't download.*Try again/);
   assert.doesNotMatch(document.body.textContent, /Private signing diagnostic|Download started/);
   assert.deepEqual(downloads, []);
   await click(button("Download report.pdf"));
   assert.deepEqual(calls.map((call) => call.payload.resource), Array(2).fill({ _tag: "attachment", attachmentId: file.id, disposition: "attachment" }));
-  // The bytes are fetched once and kept, so the download comes from them.
-  assert.equal(downloads.length, 1);
-  assert.match(String(downloads[0].href), /^blob:/);
-  assert.equal(downloads[0].name, file.name);
+  assert.deepEqual(downloads, [{ href: "/t3/assets/fresh-download", name: file.name }]);
   assert.match(document.querySelector('[role="status"]').textContent, /Download started/);
 });
 

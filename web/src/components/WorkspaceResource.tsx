@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ArrowUp, Download, ZoomIn, ZoomOut } from "lucide-react";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
-import { assetKey, assetSource, dropAsset, isAssetSource, keepFetchedAsset } from "../lib/assetCopies";
+import { assetKey, assetSource, dropAsset, isAssetSource } from "../lib/assetCopies";
 import { workspaceFileKind, workspaceLinkPath, type LibraryResource } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
 import { themedWorkspacePage } from "../lib/workspacePage";
@@ -34,7 +34,7 @@ export function WorkspaceMessageImage({ src, alt }: { src?: string | Blob; alt?:
       workspaceClient(threadId);
       // An inline picture is kept on sight: one request, and it is there on the next cold start.
       const resource = { _tag: "workspace-file" as const, threadId, path };
-      return assetSource(() => workspaceAssetUrl(resource), assetKey(resource, threadId), "image");
+      return assetSource(() => workspaceAssetUrl(resource), assetKey(resource, threadId), { owner: `view:${threadId}` });
     }).then((source) => {
       if (!isAssetSource(source)) throw new Error("Invalid asset response");
       if (live) setUrl(source);
@@ -105,7 +105,7 @@ function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeTh
     (async () => {
       if (resource._tag === "workspace-file") workspaceClient(resource.threadId);
       const url = await workspaceAssetUrl(resource, ownerThreadId);
-      if (!isAssetSource(url)) throw new Error("Invalid asset response");
+      if (!url.startsWith("/t3/")) throw new Error("Invalid asset response");
       // Media elements report HTTP/decode failures themselves and support
       // streaming/range requests. Do not prefetch or buffer the complete file.
       if (["image", "video", "audio"].includes(resolvedFileKind)) {
@@ -116,8 +116,6 @@ function ResourceSheet({ resource, title, fileKind, onClose, renderText, scopeTh
       stage = "fetch";
       const response = await fetch(url, { signal: controller.signal, redirect: "error" });
       if (!response.ok) throw new Error(`Asset HTTP ${response.status}`);
-      // The viewer read the bytes anyway: keep them for a launch with no gateway.
-      void keepFetchedAsset(assetKey(resource as unknown as Record<string, unknown>, ownerThreadId ?? undefined), response);
       if (["pdf", "sheet", "doc"].includes(resolvedFileKind)) {
         const bytes = await response.arrayBuffer();
         if (live) setState({ kind: "ready", url, content: null, bytes });

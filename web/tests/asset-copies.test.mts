@@ -12,7 +12,7 @@ const src = fileURLToPath(new URL('../src/', import.meta.url));
 const bundle = await buildOnce({ configFile: false, logLevel: 'silent', plugins: [{ name: 'asset-copies', resolveId: (id) => id.endsWith('virtual:asset-copies') ? '\0asset-copies' : undefined, load: (id) => id === '\0asset-copies' ? `export * from ${JSON.stringify(src + 'lib/assetCopies.ts')}; export * from ${JSON.stringify(src + 'lib/threadCache.ts')};` : undefined }], ssr: { noExternal: true }, build: { ssr: 'virtual:asset-copies', write: false } });
 const entry = entryChunk(bundle);
 const app = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString('base64')}`);
-const { assetKey, assetSource, signedAsset, localAssetUrl, clearCache, readAsset, writeAsset } = app;
+const { assetKey, assetSource, localAssetUrl, clearCache, readAsset, writeAsset } = app;
 
 const network = globalThis.fetch;
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -27,17 +27,17 @@ test('a picture is fetched once, kept, and comes back from the device when the g
   const key = assetKey({ _tag: 'attachment', attachmentId: 'pic-1' })!;
   assert.equal(key, 'attachment:pic-1');
   requests = [];
-  const online = await assetSource(async () => '/t3/assets/pic-1?sig=abc', key, 'image');
+  const online = await assetSource(async () => '/t3/assets/pic-1?sig=abc', key);
   assert.deepEqual(requests, ['/t3/assets/pic-1?sig=abc'], 'one request: the bytes that render are the bytes that are kept');
   assert.match(String(online), /^blob:/, 'and the picture renders from those bytes');
   assert.equal((await readAsset(key, storedBytes))?.bytes, 1024);
 
-  const again = await assetSource(async () => '/t3/assets/pic-1?sig=def', key, 'image');
+  const again = await assetSource(async () => '/t3/assets/pic-1?sig=def', key);
   assert.equal(again, online, 'a kept picture is not requested or signed twice');
   assert.deepEqual(requests, ['/t3/assets/pic-1?sig=abc']);
 
   // Offline: the RPC that issues the URL fails, and the copy answers instead.
-  const offline = await assetSource(async () => { throw new TypeError('Failed to fetch'); }, key, 'image');
+  const offline = await assetSource(async () => { throw new TypeError('Failed to fetch'); }, key);
   assert.equal(offline, online, 'the same object URL serves the last copy');
   assert.equal(await localAssetUrl(key), offline);
 });
@@ -46,26 +46,15 @@ test('a file past the budget is not kept, and its signed URL still renders', asy
   globalThis.fetch = async (url: unknown) => { requests.push(String(url)); return picture(9 * 1024 * 1024, 'image/png'); };
   requests = [];
   const key = assetKey({ _tag: 'attachment', attachmentId: 'huge' })!;
-  const source = await assetSource(async () => '/t3/assets/huge', key, 'image');
+  const source = await assetSource(async () => '/t3/assets/huge', key);
   assert.equal(source, '/t3/assets/huge', 'too big to keep, so the browser loads it the way it always did');
   assert.equal(await readAsset(key, storedBytes), null);
   globalThis.fetch = async (url: unknown) => { requests.push(String(url)); return picture(1024); };
 });
 
-test('signing a document is not downloading it', async () => {
-  requests = [];
-  const card = assetKey({ _tag: 'workspace-file', threadId: 'thread-a', path: 'docs/report.pdf' }, 'thread-a')!;
-  assert.equal(await signedAsset(async () => '/t3/assets/report.pdf', card), '/t3/assets/report.pdf');
-  await settle();
-  assert.deepEqual(requests, [], 'a card signer never fetches the file it points at');
-  assert.equal(await localAssetUrl(card), null);
-  // Offline, a document nobody opened has no copy to fall back to: the caller keeps its error.
-  await assert.rejects(signedAsset(async () => { throw new TypeError('Failed to fetch'); }, card));
-});
-
 test('signing out forgets the bytes as well as the transcripts', async () => {
   const key = assetKey({ _tag: 'attachment', attachmentId: 'pic-2' })!;
-  await assetSource(async () => '/t3/assets/pic-2', key, 'image');
+  await assetSource(async () => '/t3/assets/pic-2', key);
   assert.ok(await readAsset(key, storedBytes));
   await clearCache();
   await settle();
@@ -75,7 +64,7 @@ test('signing out forgets the bytes as well as the transcripts', async () => {
 test('a file too big to keep is signed, not downloaded on the way through', async () => {
   requests = [];
   const key = assetKey({ _tag: 'attachment', attachmentId: 'huge' })!;
-  const url = await assetSource(async () => '/t3/assets/huge', key, 'file', 9 * 1024 * 1024);
+  const url = await assetSource(async () => '/t3/assets/huge', key, { knownBytes: 9 * 1024 * 1024 });
   assert.equal(url, '/t3/assets/huge');
   assert.deepEqual(requests, [], 'the caller downloads it once; keeping it would have downloaded it first');
 });
@@ -94,12 +83,12 @@ test('assets are budgeted by their bytes, not by the length of their metadata', 
 
 test('offline, a sign that never answers does not hold a kept file back', async () => {
   const key = assetKey({ _tag: 'workspace-file', threadId: 'thread-w', path: 'notes/chart.png' })!;
-  await assetSource(async () => '/t3/assets/chart?sig=1', key, 'image');
+  await assetSource(async () => '/t3/assets/chart?sig=1', key);
   app.resetAssetCopies();
   Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value: false });
   try {
     const started = Date.now();
-    const url = await assetSource(() => new Promise<string>(() => {}), key, 'image');
+    const url = await assetSource(() => new Promise<string>(() => {}), key);
     assert.match(String(url), /^blob:/);
     assert.ok(Date.now() - started < 1000, 'the copy answers at once instead of waiting on a socket');
   } finally {
@@ -107,11 +96,44 @@ test('offline, a sign that never answers does not hold a kept file back', async 
   }
 });
 
-test('a deleted conversation takes the pictures it showed with it', async () => {
+test('a deleted conversation takes the pictures it showed with it, and a late fetch cannot bring one back', async () => {
   const key = assetKey({ _tag: 'attachment', attachmentId: 'pic-deleted' })!;
-  await assetSource(async () => '/t3/assets/pic-deleted?sig=1', key, 'image');
-  await app.writeView({ v: 1, key: 'thread-with-picture', savedAt: Date.now(), thread: null, items: [{ id: 'm1', attachments: [{ id: 'pic-deleted' }] }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false });
+  const drawn = await assetSource(async () => '/t3/assets/pic-deleted?sig=1', key, { owner: 'view:thread-with-picture' });
   assert.ok(await readAsset(key, storedBytes));
-  await app.forgetRecords(['view:thread-with-picture'], { deleted: true });
+  const gone = await app.forgetRecords(['view:thread-with-picture'], { deleted: true });
+  app.revokeAssetHandles(gone);
+  assert.equal(await readAsset(key, storedBytes), null, 'owned by the conversation, so it goes with it');
+  assert.notEqual(await localAssetUrl(key), drawn, 'and its handle is no longer handed out');
+  // A fetch that started before the deletion lands afterwards.
+  await assetSource(async () => '/t3/assets/pic-deleted?sig=2', key, { owner: 'view:thread-with-picture' });
+  assert.equal(await readAsset(key, storedBytes), null, 'the deleted conversation does not get its picture back');
+});
+
+test('only raster pictures are kept: anything a browser could run stays on its signed URL', async () => {
+  for (const type of ['image/svg+xml', 'text/html', 'application/pdf']) {
+    globalThis.fetch = async (url: unknown) => { requests.push(String(url)); return picture(512, type); };
+    const key = assetKey({ _tag: 'attachment', attachmentId: `active-${type}` })!;
+    assert.equal(await assetSource(async () => `/t3/assets/active?sig=${type}`, key), `/t3/assets/active?sig=${type}`, type);
+    assert.equal(await readAsset(key, storedBytes), null, `${type} is not kept`);
+  }
+  globalThis.fetch = async (url: unknown) => { requests.push(String(url)); return picture(1024); };
+});
+
+test('a picture whose size is not declared stops downloading at the budget', async () => {
+  let pulled = 0;
+  globalThis.fetch = async () => new Response(new ReadableStream({ pull(controller) { pulled += 1024 * 1024; controller.enqueue(new Uint8Array(1024 * 1024)); } }), { status: 200, headers: { 'content-type': 'image/png' } });
+  const key = assetKey({ _tag: 'attachment', attachmentId: 'endless' })!;
+  assert.equal(await assetSource(async () => '/t3/assets/endless', key), '/t3/assets/endless');
+  assert.ok(pulled <= 6 * 1024 * 1024, `stopped after ${pulled} bytes`);
   assert.equal(await readAsset(key, storedBytes), null);
+  globalThis.fetch = async (url: unknown) => { requests.push(String(url)); return picture(1024); };
+});
+
+test('a kept picture older than a sign-in lasts is not drawn', async () => {
+  const real = Date.now;
+  const key = assetKey({ _tag: 'attachment', attachmentId: 'old-pic' })!;
+  Date.now = () => real() - 31 * 24 * 60 * 60 * 1000;
+  try { await assetSource(async () => '/t3/assets/old-pic', key); } finally { Date.now = real; }
+  app.resetAssetCopies();
+  assert.equal(await localAssetUrl(key), null);
 });

@@ -1,29 +1,32 @@
-// The bytes of files this device has already shown, so a conversation keeps its pictures when the
-// gateway is out of reach.
+// The pictures this device has already shown, so a conversation keeps them when the gateway is out
+// of reach.
 //
 // A signed asset URL cannot be relied on offline: the URL itself comes from an RPC, and the service
-// worker deliberately leaves `/t3/` alone. So the file is fetched once, from the same signed URL that
+// worker deliberately leaves `/t3/` alone. So a picture is fetched once, from the same signed URL that
 // would have rendered it, kept as a Blob in IndexedDB (available on a plain LAN origin, where caches
-// and OPFS are not) and handed back as an object URL.
+// and OPFS are not) and handed back as an object URL. The signed URL itself is never stored.
 //
-// One request, never two: a kept file renders from its bytes, and a file too big to keep renders from
-// the signed URL, which the browser then loads natively as it always did.
+// Only raster pictures are kept, and only to draw them: an object URL runs as this app's origin, so
+// anything a browser could execute (HTML, SVG, XML) stays on its signed, sandboxed URL. Documents are
+// never kept; opening or downloading an original always signs it afresh.
 
-import { forgetRecord, readAsset, writeAsset } from "./threadCache";
+import { cacheStopped, readAsset, writeAsset } from "./threadCache";
 
-/** One stored file. `bytes` duplicates the Blob's size so the index can budget without reading it. */
+/** One stored picture. `bytes` duplicates the Blob's size so the index can budget without reading it. */
 export type StoredAsset = { v: 1; key: string; savedAt: number; bytes: number; mimeType: string; blob: Blob };
 
-/** A picture from a message. Above this, keeping it would cost more than it is worth. */
+/** Above this, keeping a picture would cost more than it is worth. */
 const IMAGE_LIMIT = 4 * 1024 * 1024;
-/** A file the user opened or downloaded on purpose (a PDF, a document). */
-const FILE_LIMIT = 8 * 1024 * 1024;
+/** Formats a browser only ever draws. */
+const RASTER = /^image\/(png|jpeg|gif|webp|avif)$/;
+/** A picture that does not arrive in this long is left to the browser, which loads it natively. */
+const FETCH_PATIENCE_MS = 15_000;
 /**
  * Signing is an RPC over T3's socket, which waits for a connection that may never come: offline or
  * slow, the kept copy answers instead.
  */
 const SIGN_PATIENCE_MS = 5_000;
-function promptly(sign: () => Promise<string>): Promise<string> {
+export function promptly(sign: () => Promise<string>): Promise<string> {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.reject(new Error("Offline"));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Signing timed out")), SIGN_PATIENCE_MS); });
@@ -36,63 +39,95 @@ const pending = new Map<string, Promise<string | null>>();
 /** Object URLs are cheap but must be revoked; one per key while the page lives. */
 const urls = new Map<string, string>();
 
+function publish(key: string, blob: Blob): string | null {
+  // Signed out (in this tab or another) while this was in flight: hand nothing out.
+  if (cacheStopped()) return null;
+  const previous = urls.get(key);
+  if (previous) return previous;
+  const url = URL.createObjectURL(blob);
+  urls.set(key, url);
+  return url;
+}
+
 /** A stable key for one asset: the attachment id, or where the picture came from. */
 export function assetKey(resource: Record<string, unknown>, scope?: string): string | null {
   if (typeof resource._tag !== "string") return null;
   if (typeof resource.attachmentId === "string" && resource.attachmentId) return `attachment:${resource.attachmentId}`;
   if (resource._tag === "tool-output-image" && typeof resource.itemId === "string") return `tool-image:${String(resource.threadId ?? scope ?? "")}:${resource.itemId}:${String(resource.index ?? 0)}`;
   if (resource._tag === "workspace-file" && typeof resource.path === "string") return `workspace:${String(resource.threadId ?? scope ?? "")}:${resource.path}`;
-  if (typeof resource.fileName === "string" && typeof resource.itemId === "string") return `file:${String(resource.threadId ?? scope ?? "")}:${resource.itemId}:${resource.fileName}`;
   return null;
 }
 
-const stored = (value: unknown): value is StoredAsset => !!value && typeof value === "object" && (value as StoredAsset).v === 1 && (value as StoredAsset).blob instanceof Blob;
+const stored = (value: unknown): value is StoredAsset => !!value && typeof value === "object" && (value as StoredAsset).v === 1 && (value as StoredAsset).blob instanceof Blob && RASTER.test((value as StoredAsset).blob.type);
 
-/** A URL for a file this device kept, or null when it has none. */
+/** A URL for a picture this device kept, or null when it has none. */
 export async function localAssetUrl(key: string): Promise<string | null> {
   const alive = urls.get(key);
   if (alive) return alive;
   const record = await readAsset(key, stored);
-  if (!record) return null;
-  const url = URL.createObjectURL(record.blob);
-  urls.set(key, url);
-  return url;
+  return record ? publish(key, record.blob) : null;
 }
 
-/** Reads a response once, keeps it when it fits, and returns an object URL (or null when it does not). */
-async function keepResponse(key: string, response: Response, kind: "image" | "file"): Promise<string | null> {
-  if (!response.ok) return null;
-  const type = response.headers.get("content-type") ?? "";
-  const limit = kind === "image" || type.startsWith("image/") ? IMAGE_LIMIT : FILE_LIMIT;
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > limit) return null;
-  const blob = await response.blob();
-  if (blob.size === 0 || blob.size > limit) return null;
-  await writeAsset(key, { v: 1, key, savedAt: Date.now(), bytes: blob.size, mimeType: blob.type || type, blob });
-  const url = URL.createObjectURL(blob);
-  urls.set(key, url);
-  return url;
+/** Reads a picture once, within a time and byte budget, and keeps it when it is a raster that fits. */
+async function keepPicture(key: string, signed: string, owner: string | undefined): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_PATIENCE_MS);
+  try {
+    const response = await fetch(signed, { credentials: "same-origin", signal: controller.signal });
+    const type = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase();
+    if (!response.ok || !RASTER.test(type) || !response.body) return null;
+    if (Number(response.headers.get("content-length") ?? "0") > IMAGE_LIMIT) return null;
+    // The gateway may not say how big it is: count while reading and stop at the limit.
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > IMAGE_LIMIT) { controller.abort(); return null; }
+      chunks.push(value);
+    }
+    if (size === 0) return null;
+    // The Blob carries the checked raster type, so its object URL can only ever draw a picture.
+    const blob = new Blob(chunks as BlobPart[], { type });
+    await writeAsset(key, { v: 1, key, savedAt: Date.now(), bytes: size, mimeType: type, blob }, owner);
+    return publish(key, blob);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Bytes that would not decode are worse than none: the next attempt signs and fetches again. */
 export async function dropAsset(key: string): Promise<void> {
-  const url = urls.get(key);
-  if (url) {
+  revokeAssetHandles([`asset:${key}`]);
+  const { forgetRecords } = await import("./threadCache");
+  await forgetRecords([`asset:${key}`]).catch(() => {});
+}
+
+/** Forgotten records (a deleted conversation, a sign-out) take their object URLs with them. */
+export function revokeAssetHandles(ids: string[]) {
+  for (const id of ids) {
+    if (!id.startsWith("asset:")) continue;
+    const key = id.slice("asset:".length);
+    const url = urls.get(key);
+    if (!url) continue;
     try { URL.revokeObjectURL(url); } catch { /* not every implementation revokes */ }
     urls.delete(key);
   }
-  await forgetRecord(`asset:${key}`).catch(() => {});
 }
 
 /**
- * The source to render for one asset: the bytes, kept on the way through, or the copy this device
- * already holds when the gateway cannot sign a URL. One request in the happy path.
+ * The source to draw one picture: a copy this device kept, or the signed URL with the bytes kept on
+ * the way through. `owner` is the conversation (`view:<thread>`) or room (`room:<id>`) that shows it,
+ * so deleting that takes the picture too. One request in the happy path.
  */
 export async function assetSource(
   sign: () => Promise<string>,
   key: string | null,
-  kind: "image" | "file" = "image",
-  knownBytes?: number,
+  { knownBytes, owner }: { knownBytes?: number; owner?: string } = {},
 ): Promise<string> {
   if (key) {
     const alive = urls.get(key);
@@ -107,49 +142,20 @@ export async function assetSource(
   if (signed) {
     // Only over http(s): a blob or data URL has no bytes worth fetching again.
     if (!key || !/^(https?:)?\//.test(signed)) return signed;
-    // A file too big to keep must not be downloaded here and then again by the caller.
-    if (knownBytes !== undefined && knownBytes > (kind === "image" ? IMAGE_LIMIT : FILE_LIMIT)) return signed;
+    // A picture too big to keep must not be downloaded here and then again by the caller.
+    if (knownBytes !== undefined && knownBytes > IMAGE_LIMIT) return signed;
     const shared = pending.get(key);
     if (shared) return (await shared) ?? signed;
-    const work = (async () => {
-      try {
-        return await keepResponse(key, await fetch(signed, { credentials: "same-origin" }), kind);
-      } catch {
-        return null;
-      } finally {
-        pending.delete(key);
-      }
-    })();
+    const work = keepPicture(key, signed, owner).finally(() => pending.delete(key));
     pending.set(key, work);
     return (await work) ?? signed;
   }
   const copy = key ? await localAssetUrl(key) : null;
   if (copy) return copy;
-  throw new Error("Couldn't load this file");
+  throw new Error("Couldn't load this picture");
 }
 
-/**
- * Signs a resource for something that will fetch it itself (a document viewer), falling back to the
- * copy this device kept. Nothing is downloaded here: signing a card is not reading it.
- */
-export async function signedAsset(sign: () => Promise<string>, key: string | null): Promise<string> {
-  try {
-    return await promptly(sign);
-  } catch (error) {
-    const copy = key ? await localAssetUrl(key) : null;
-    if (copy) return copy;
-    throw error;
-  }
-}
-
-/** Keeps bytes a viewer already read, so the next launch does not need the gateway for them. */
-export async function keepFetchedAsset(key: string | null, response: Response): Promise<void> {
-  if (!key || !response.ok) return;
-  const copy = response.clone();
-  void keepResponse(key, copy, "file").catch(() => {});
-}
-
-/** A fresh page (or a test) starts with no object URLs: the stored bytes stay, the handles do not. */
+/** A fresh page, a sign-out (or a test) starts with no object URLs: the stored bytes stay, the handles do not. */
 export function resetAssetCopies() {
   for (const url of urls.values()) {
     try { URL.revokeObjectURL(url); } catch { /* not every implementation revokes */ }
@@ -158,5 +164,5 @@ export function resetAssetCopies() {
   pending.clear();
 }
 
-/** A signed URL or a copy this device kept: both render and download the same way. */
+/** A signed URL or a picture this device kept: both draw the same way. */
 export const isAssetSource = (url: string) => url.startsWith("/t3/") || url.startsWith("blob:");

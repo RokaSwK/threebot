@@ -41,7 +41,8 @@ type TimelineRow =
 export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => void }) {
   const room = useApp((s) => (s.roomView?.id === roomId ? s.roomView : null));
   const offline = useApp((s) => s.offline);
-  const stale = useApp((s) => s.selectedRoom === roomId && s.roomStale);
+  // A live room index can still show replies painted from a member's saved copy: that is a copy too.
+  const stale = useApp((s) => s.selectedRoom === roomId && (s.roomStale || (s.roomView?.members ?? []).some((member) => !!member.threadId && s.threadData[member.threadId]?.stale === true)));
   // Storage already answered that there is no copy: the page does not wait for the network to say so.
   const missing = useApp((s) => s.selectedRoom === roomId && s.roomMissing);
   // The gateway said the room is gone; its copy is not a way back in.
@@ -274,7 +275,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
 
           {timeline.map((row) => row.kind === "user" ? (
             <div key={row.id} className="fade-up mt-3 flex flex-col items-end">
-              {!!row.turn.attachments?.length && <ChatAttachmentList attachments={row.turn.attachments} align="end" />}
+              {!!row.turn.attachments?.length && <ChatAttachmentList attachments={row.turn.attachments} align="end" owner={`room:${roomId}`} />}
               {row.turn.text.trim() !== "" && (
                 <div data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap" style={{ background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}>
                   <UserMessageText text={row.turn.text} muted />
@@ -411,6 +412,8 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
   onStop: () => void;
 }) {
   const offline = useApp((s) => s.offline);
+  // A saved room's members may have changed: nothing is sent until the room itself is live.
+  const savedCopy = useApp((s) => s.selectedRoom === roomId && s.roomStale);
   const mobile = useMobileChat();
   const initialDraft = useMemo(() => readRoomDraft(roomId), [roomId]);
   const [text, setText] = useState(initialDraft.text);
@@ -505,7 +508,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
 
   const submit = async () => {
     // Enter reaches this too, so the offline guard belongs here and not only on the Send button.
-    if (offline) return;
+    if (offline || savedCopy) return;
     const trimmed = text.trim();
     if ((!trimmed && attachments.ready.length === 0) || sending || resetting || attachments.busy) return;
     const names = members.map((member) => member.name);
@@ -677,7 +680,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
               </IconButton>
             )}
             {(text.trim().length > 0 || attachments.items.length > 0 || sending) && (
-              <IconButton onClick={() => void submit()} disabled={offline || sending || resetting || attachments.busy || (!text.trim() && attachments.ready.length === 0)} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title={offline ? "You're offline. Reconnect to send." : "Send"} aria-label={offline ? "You're offline. Reconnect to send." : "Send"}>
+              <IconButton onClick={() => void submit()} disabled={offline || savedCopy || sending || resetting || attachments.busy || (!text.trim() && attachments.ready.length === 0)} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title={offline ? "You're offline. Reconnect to send." : "Send"} aria-label={offline ? "You're offline. Reconnect to send." : "Send"}>
                 {sending ? <Spinner /> : <ArrowUp size={17} />}
               </IconButton>
             )}
