@@ -1052,7 +1052,7 @@ export async function loadRoom(id: string, quiet = false) {
     if (get().selectedRoom !== id) return;
     // An answer that left before the room was found deleted is older than the deletion.
     if (deletedRooms.has(id) || get().roomGone || (await deletedRecords([`room:${id}`])).size) return;
-    if (get().selectedRoom !== id) return;
+    if (get().selectedRoom !== id || deletedRooms.has(id) || get().roomGone) return;
     const previous = get().roomView?.id === id ? get().roomView : null;
     noteRoomMembers(room);
     // The 2 s poll is for turns other devices start; an identical room must not re-render the page.

@@ -152,3 +152,14 @@ test('a picture never outlives the conversation copy that showed it, even when t
   assert.equal(await readAsset(key, storedBytes), null, 'its picture went with it');
   assert.notEqual(await localAssetUrl(key), drawn, 'and so did the handle');
 });
+
+test('a picture whose owner expires while it is fetched is neither kept nor handed out', async () => {
+  await clearCache();
+  const real = Date.now;
+  const key = assetKey({ _tag: 'attachment', attachmentId: 'orphaned-pic' })!;
+  Date.now = () => real() - 31 * 24 * 60 * 60 * 1000;
+  try { await app.writeView({ v: 1, key: 'thread-expired', savedAt: Date.now(), thread: null, items: [], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false }); } finally { Date.now = real; }
+  const source = await assetSource(async () => '/t3/assets/orphaned-pic', key, { owner: 'view:thread-expired' });
+  assert.equal(source, '/t3/assets/orphaned-pic');
+  assert.equal(await readAsset(key, storedBytes), null);
+});

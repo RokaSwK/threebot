@@ -385,8 +385,8 @@ export function ToolImage({ entry, threadId, botName }: { entry: Extract<Entry, 
     <CardShell className="max-w-[420px]">
       <CardHeader icon={<Monitor size={14} />} title="Computer" status="Done" />
       {/* The picture may be this device's copy; the original opens from a URL signed now. */}
-      <a href={url.startsWith("/t3/") ? url : "#"} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner" onClick={(event) => {
-        if (url.startsWith("/t3/")) return;
+      <a href="#" target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner" onClick={(event) => {
+        // Signed on every click: the URL behind the thumbnail may have expired, or be this device's copy.
         event.preventDefault();
         const tab = window.open("", "_blank");
         assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index })

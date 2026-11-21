@@ -272,8 +272,11 @@ export function ImageViewer({ images, initialIndex, onClose, scopeThreadId = nul
           style={{ transform: `translate3d(${view.x + swipe}px, ${view.y}px, 0) scale(${view.scale})` }} onError={() => {
             // A signed picture that will not load (offline, expired) is drawn from this device's copy once.
             const key = image.resource && state.url.startsWith("/t3/") ? assetKey(image.resource as unknown as Record<string, unknown>, scopeThreadId ?? undefined) : null;
-            if (!key) return setState({ kind: "error" });
-            void localAssetUrl(key).then((copy) => setState(copy ? { kind: "ready", url: copy } : { kind: "error" }));
+            const failed = state.url;
+            const stillShowing = (current: { kind: string; url?: string }) => current.kind === "ready" && current.url === failed;
+            if (!key) return setState((current) => stillShowing(current) ? { kind: "error" } : current);
+            // Applied only if this image is still the one on screen: the user may have moved on meanwhile.
+            void localAssetUrl(key).then((copy) => setState((current) => stillShowing(current) ? (copy ? { kind: "ready", url: copy } : { kind: "error" }) : current));
           }} />}
         {many && <>
           <button type="button" className="image-viewer-button image-viewer-nav" data-side="prev" onClick={() => go(-1)} aria-label="Previous image" title="Previous image"><ChevronLeft size={22} aria-hidden="true" /></button>

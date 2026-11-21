@@ -265,8 +265,12 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
         if (key !== id && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
       }
     }
+    // The owner itself was just evicted (expired, over budget): the record it would have owned is not kept.
+    const orphan = !!owner && going.has(owner);
+    if (orphan) { going.add(id); delete kept[id]; }
     await store.put(INDEX, kept);
     for (const key of going) await store.remove(key);
+    if (orphan) { dropped = [...going]; return false; }
     await store.put(id, value);
     // A deletion marker that ages out can no longer stop a save some tab queued long ago: every open
     // tab stops saving instead, and starts again under the new generation on its next launch.
