@@ -37,6 +37,12 @@ export function waitingTag(slug: string, threadId: string): string {
   return `waiting:${slug}:${threadId}`;
 }
 
+/** The thread a "waiting" tag names, or null for any other tag. A slug has no colon; an id may. */
+export function waitingThread(tag: string): string | null {
+  const match = /^waiting:[^:]+:(.+)$/su.exec(tag);
+  return match ? match[1] : null;
+}
+
 export function notificationTarget(slug: string, kind: "finished" | "waiting", threadId: string): { tag: string; url: string } {
   const bot = encodeURIComponent(slug);
   return kind === "waiting"

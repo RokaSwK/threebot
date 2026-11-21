@@ -18,6 +18,9 @@ test("a drawn Bot gets a stable PNG icon and a monochrome badge", async () => {
   assert.equal(meta.width, 192);
   assert.equal(meta.height, 192);
   assert.equal(await botAvatarPng(bot), icon, "the same look is rendered once");
+  const recolored = await botAvatarPng({ ...bot, color: "pink" });
+  assert.notEqual(recolored, icon, "a new look replaces the cached icon");
+  assert.equal(await botAvatarPng({ ...bot, color: "pink" }), recolored);
   const badge = await botBadgePng(bot);
   const badgeMeta = await sharp(badge).metadata();
   assert.equal(badgeMeta.width, 96);

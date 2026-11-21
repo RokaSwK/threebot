@@ -44,7 +44,8 @@ export type PushPayload = {
   badge?: string;
   /** When the event happened, for clients that show it. */
   timestamp?: number;
-  kind?: "finished" | "waiting";
+  /** "resolved" closes the notification with this tag instead of showing one (see quietClose). */
+  kind?: "finished" | "waiting" | "resolved";
 };
 
 // What a presence report may name: a Bot reference as the page keeps it (a slug, or
@@ -110,6 +111,18 @@ export function usableSubject(value: unknown): string | null {
  */
 export function pushTopic(tag: string): string {
   return /^[A-Za-z0-9_-]{1,32}$/.test(tag) ? tag : createHash("sha256").update(tag).digest("base64url").slice(0, 32);
+}
+
+/**
+ * Whether this push service may get a push that shows nothing (a "resolved" one only closes a
+ * notification). Safari revokes a subscription after a few such pushes, and Firefox spends a quota on
+ * them, so those devices keep the stale notice until the app opens and clears it.
+ */
+export function quietClose(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname;
+    return !/(^|\.)push\.apple\.com$/u.test(host) && !/(^|\.)push\.services\.mozilla\.com$/u.test(host);
+  } catch { return false; }
 }
 
 /** VAPID keys and push subscriptions. The private key never leaves this file or the server. */
@@ -234,6 +247,10 @@ export function createPushStore({
           keep.push(subscription);
           continue;
         }
+        if (payload.kind === "resolved" && !quietClose(subscription.endpoint)) {
+          keep.push(subscription);
+          continue;
+        }
         const seen = watching.get(subscription.endpoint);
         if (seen && seen.until <= time) watching.delete(subscription.endpoint);
         else if (target && seen?.view === target) {
@@ -242,7 +259,8 @@ export function createPushStore({
           continue;
         }
         try {
-          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: "high", vapidDetails, topic: pushTopic(payload.tag) });
+          // The same topic as the "waiting" push it answers: a device that was offline gets only this one.
+          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: payload.kind === "resolved" ? "normal" : "high", vapidDetails, topic: pushTopic(payload.tag) });
           sent += 1;
           keep.push(subscription);
         } catch (error) {
@@ -365,6 +383,22 @@ export function createPushNotifier({
     log(`push: ${kind} ${owner.slug}`);
   }
 
+  /** The request was answered, here or on another device: close its notification everywhere. */
+  async function resolve(thread: ShellThread) {
+    const owner = await ownerFor(thread);
+    if (!owner) return;
+    await send({
+      // An older worker shows this instead of closing it, so it still reads correctly.
+      title: owner.name,
+      body: "Answered",
+      tag: waitingTag(owner.slug, thread.id),
+      url: `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`,
+      bot: owner.slug,
+      kind: "resolved",
+    });
+    log(`push: resolved ${owner.slug}`);
+  }
+
   function handle(event: ShellEvent) {
     if (event.kind === "snapshot") {
       previous.clear();
@@ -375,8 +409,12 @@ export function createPushNotifier({
     const next = event.thread;
     const before = previous.get(next.id);
     previous.set(next.id, next);
-    if (event.location === "archive" || next.archivedAt) return;
     if (!before) return;
+    // Before the archive and snooze guards: an answered request's notice is stale either way.
+    if (before.pendingRuntimeRequest && !next.pendingRuntimeRequest) {
+      void resolve(next).catch((error) => log(`push: ${(error as Error).message}`));
+    }
+    if (event.location === "archive" || next.archivedAt) return;
     if (next.snoozedUntil && Date.parse(next.snoozedUntil) > now().getTime()) return;
     const wasActive = ACTIVE.has(before.activityRunStatus ?? before.status);
     const nowStatus = next.activityRunStatus ?? next.status;

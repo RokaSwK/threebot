@@ -23,6 +23,16 @@ let pending: Promise<PushResult> | null = null;
 // Set by startPushPresence: says again what this device is looking at.
 let resendPresence = () => {};
 
+// Set when the user turns push off on this device, so a reload or a first message doesn't quietly
+// subscribe it again while the browser's permission is still "granted". Settings › Notifications clears it.
+const PUSH_OFF = "threebot.push.off";
+export function pushTurnedOff(): boolean {
+  try { return localStorage.getItem(PUSH_OFF) === "1"; } catch { return false; }
+}
+function setPushOff(off: boolean) {
+  try { if (off) localStorage.setItem(PUSH_OFF, "1"); else localStorage.removeItem(PUSH_OFF); } catch { /* Storage may be unavailable; the gateway already knows. */ }
+}
+
 /** A subscription made for another server key cannot receive this gateway's pushes. */
 function sameKey(subscription: PushSubscription, publicKey: string): boolean {
   const key = subscription.options?.applicationServerKey;
@@ -37,8 +47,9 @@ function reason(error: unknown): string {
   return String(error);
 }
 
-/** Subscribe this browser to push when permission is already granted. Safe to call often. */
+/** Subscribe this browser to push when permission is already granted, unless push was turned off here. Safe to call often. */
 export function ensurePushSubscription(): Promise<PushResult> {
+  if (pushTurnedOff()) return Promise.resolve({ ok: false, reason: "Push is off on this device." });
   if (pending) return pending;
   pending = (async (): Promise<PushResult> => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
@@ -94,7 +105,7 @@ export async function pushDeviceStatus(): Promise<PushDeviceStatus> {
     try {
       const registration = await navigator.serviceWorker.getRegistration();
       const subscription = await registration?.pushManager.getSubscription();
-      subscribed = Boolean(subscription);
+      subscribed = Boolean(subscription) && !pushTurnedOff();
       if (subscription) {
         endpoint = subscription.endpoint;
         try { endpointHost = new URL(subscription.endpoint).host; } catch { /* A malformed endpoint still counts as subscribed. */ }
@@ -104,21 +115,26 @@ export async function pushDeviceStatus(): Promise<PushDeviceStatus> {
   return { supported, secure: typeof isSecureContext === "boolean" ? isSecureContext : true, permission, subscribed, endpoint, endpointHost };
 }
 
-/** Remove this browser's subscription locally and from the gateway. */
+/**
+ * Turn push off on this device. The gateway forgets the endpoint first: if that fails, the browser
+ * keeps its subscription, so a retry can still name it. Only then does the browser drop it.
+ */
 export async function disablePushNotifications(): Promise<PushResult> {
-  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return { ok: true };
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) { setPushOff(true); return { ok: true }; }
   try {
     const registration = await navigator.serviceWorker.getRegistration();
     const subscription = await registration?.pushManager.getSubscription();
-    if (!subscription) return { ok: true };
-    const endpoint = subscription.endpoint;
-    await subscription.unsubscribe();
-    const response = await fetch("/api/push/unsubscribe", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ endpoint }),
-    });
-    if (!response.ok) return { ok: false, reason: `The gateway could not remove the subscription (HTTP ${response.status}).` };
+    if (subscription) {
+      const response = await fetch("/api/push/unsubscribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: subscription.endpoint }),
+      });
+      if (!response.ok) return { ok: false, reason: `The gateway could not remove the subscription (HTTP ${response.status}).` };
+    }
+    setPushOff(true);
+    // The gateway no longer sends here; a browser that fails to drop the endpoint only keeps a dead one.
+    await subscription?.unsubscribe().catch(() => false);
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: reason(error) };
@@ -178,7 +194,10 @@ export function enablePushNotifications(): Promise<PushResult> {
   if (typeof Notification === "undefined") return Promise.resolve({ ok: false, reason: "Notifications are not available in this app." });
   // Without the Push API (the Mac app's web view), granted permission still turns on the page's own
   // notifications, so it counts as enabled.
-  const subscribe = () => "PushManager" in window ? ensurePushSubscription() : Promise.resolve<PushResult>({ ok: true });
+  const subscribe = () => {
+    setPushOff(false);
+    return "PushManager" in window ? ensurePushSubscription() : Promise.resolve<PushResult>({ ok: true });
+  };
   if (Notification.permission === "granted") return subscribe();
   if (Notification.permission === "denied") {
     return Promise.resolve({ ok: false, reason: "Notifications are blocked for this site. Allow them in the browser's site settings and try again." });

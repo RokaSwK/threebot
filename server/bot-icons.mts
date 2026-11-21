@@ -7,8 +7,16 @@ import { avatarImageFile, readAvatarImage } from "./avatar-images.mts";
 // so a notification and the sidebar show the same character.
 const ICON_SIZE = 192;
 const BADGE_SIZE = 96;
-const icons = new Map<string, Buffer>();
-const badges = new Map<string, Buffer>();
+// One entry per Bot and image: a new look replaces the old one, so the cache never outgrows the Bots.
+const cache = new Map<string, { look: string; png: Buffer }>();
+
+async function cached(slot: string, key: string, render: () => Promise<Buffer>): Promise<Buffer> {
+  const hit = cache.get(slot);
+  if (hit?.look === key) return hit.png;
+  const png = await render();
+  cache.set(slot, { look: key, png });
+  return png;
+}
 
 export type IconBot = AvatarBot & { slug: string; workspaceRoot: string; avatarImage?: unknown };
 
@@ -29,34 +37,26 @@ function look(bot: IconBot): string {
 
 export async function botAvatarPng(bot: IconBot): Promise<Buffer> {
   const picture = avatarImageFile(bot.avatarImage);
-  const key = `avatar:${bot.slug}:${picture ?? look(bot)}`;
-  const hit = icons.get(key);
-  if (hit) return hit;
-  const png = picture
+  return cached(`avatar:${bot.slug}`, picture ?? look(bot), async () => picture
     ? await sharp(await readAvatarImage(bot, bot.avatarImage)).resize(ICON_SIZE, ICON_SIZE).png().toBuffer()
-    : await sharp(Buffer.from(renderBotAvatar(bot))).resize(ICON_SIZE, ICON_SIZE).png().toBuffer();
-  icons.set(key, png);
-  return png;
+    : await sharp(Buffer.from(renderBotAvatar(bot))).resize(ICON_SIZE, ICON_SIZE).png().toBuffer());
 }
 
 export async function botBadgePng(bot: IconBot): Promise<Buffer> {
   if (avatarImageFile(bot.avatarImage)) throw Object.assign(new Error("not found"), { status: 404 });
-  const key = `badge:${look(bot)}`;
-  const hit = badges.get(key);
-  if (hit) return hit;
-  // Android draws the badge through the alpha channel: keep the silhouette, paint it white.
-  const { data, info } = await sharp(Buffer.from(renderBotAvatar(bot)))
-    .resize(BADGE_SIZE, BADGE_SIZE)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const white = Buffer.from(data);
-  for (let index = 0; index < white.length; index += 4) {
-    white[index] = 255;
-    white[index + 1] = 255;
-    white[index + 2] = 255;
-  }
-  const png = await sharp(white, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
-  badges.set(key, png);
-  return png;
+  return cached(`badge:${bot.slug}`, look(bot), async () => {
+    // Android draws the badge through the alpha channel: keep the silhouette, paint it white.
+    const { data, info } = await sharp(Buffer.from(renderBotAvatar(bot)))
+      .resize(BADGE_SIZE, BADGE_SIZE)
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const white = Buffer.from(data);
+    for (let index = 0; index < white.length; index += 4) {
+      white[index] = 255;
+      white[index + 1] = 255;
+      white[index + 2] = 255;
+    }
+    return sharp(white, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  });
 }

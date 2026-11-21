@@ -2,8 +2,8 @@ import { create } from "zustand";
 import { api } from "./lib/api";
 import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
-import { enablePushNotifications } from "./lib/push";
-import { botBadge, notificationContent, notificationTarget, waitingTag } from "./lib/notification";
+import { enablePushNotifications, pushTurnedOff } from "./lib/push";
+import { botBadge, notificationContent, notificationTarget, waitingTag, waitingThread } from "./lib/notification";
 import { allT3Clients, t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -482,6 +482,7 @@ function subscribeShell() {
         threads: { ...Object.fromEntries(Object.entries(s.threads).filter(([id]) => familyThreadIds.has(id) || mainThreadIds(s).has(id))), ...s.archivedThreads, ...Object.fromEntries(snap.threads.map((t: ThreadShell) => [t.id, t])) },
       }));
       schedulePreviews();
+      closeAnsweredNotifications();
     } else if (it.kind === "project.updated") {
       set((s) => ({ projects: { ...s.projects, [it.project.id]: it.project } }));
     } else if (it.kind === "project.removed") {
@@ -588,16 +589,26 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   const side = isSideChat(next);
   const ownerThreadId = side ? next.lineage.parentThreadId : next.id;
   const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
-  if (!bot || bot.notifications === false || bot.hidden) return;
+  if (!bot) return;
+  // The request is gone: its notification is a stale reminder, even (above all) when it was answered
+  // right here in the Bot this page is looking at.
+  if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) void closeNotifications((tag) => tag === waitingTag(bot.slug, next.id));
+  if (bot.notifications === false || bot.hidden) return;
   if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
   if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) {
     void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you", "waiting", next.id);
-  } else {
-    // The request is gone: its notification is a stale reminder of something already answered.
-    if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) void closeNotification(waitingTag(bot.slug, next.id));
-    if (side) return;
-    if (ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") void completionNotification(bot, next).catch(() => {});
+  } else if (!side && ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") {
+    void completionNotification(bot, next).catch(() => {});
   }
+}
+
+/** On a fresh shell: close "waiting" notices whose request was answered while this page was closed. */
+function closeAnsweredNotifications() {
+  const threads = get().threads;
+  void closeNotifications((tag) => {
+    const id = waitingThread(tag);
+    return id !== null && !!threads[id] && !threads[id].pendingRuntimeRequest;
+  });
 }
 
 export async function completionNotification(bot: Bot, completed: ThreadShell) {
@@ -636,15 +647,17 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
 }
 
 /** Best effort: iOS may accept this call and do nothing. */
-async function closeNotification(tag: string) {
+async function closeNotifications(match: (tag: string) => boolean) {
   try {
-    const registration = await navigator.serviceWorker?.getRegistration();
+    const registration = typeof navigator === "undefined" ? undefined : await navigator.serviceWorker?.getRegistration();
     if (!registration?.getNotifications) return;
-    for (const notification of await registration.getNotifications({ tag })) notification.close();
+    for (const notification of await registration.getNotifications()) if (match(notification.tag)) notification.close();
   } catch { /* A closed or unsupported notification is not an error worth showing. */ }
 }
 
 export function requestNotificationPermission() {
+  // Asked on a first message; a device where push was turned off in Settings stays off.
+  if (pushTurnedOff()) return;
   void enablePushNotifications();
 }
 

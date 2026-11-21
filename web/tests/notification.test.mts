@@ -50,3 +50,11 @@ test("a photo has no monochrome badge; a drawn avatar does", () => {
   assert.equal(botBadge({ slug: "alpha" }), "/api/bots/alpha/badge.png");
   assert.equal(botBadge({ slug: "alpha", avatarImage: "/api/bots/alpha/avatar/abc.png" }), null);
 });
+
+test("a waiting tag names its thread; other tags name none", async () => {
+  const { waitingThread, waitingTag } = await import("../src/lib/notification.ts");
+  assert.equal(waitingThread(waitingTag("alpha", "thread-1")), "thread-1");
+  assert.equal(waitingThread(waitingTag("alpha", "a:b")), "a:b");
+  assert.equal(waitingThread("alpha"), null);
+  assert.equal(waitingThread("test:notification"), null);
+});

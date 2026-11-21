@@ -125,6 +125,8 @@ function worker(build, caches = cacheStorage()) {
   const navigated = [];
   const opened: string[] = [];
   const shown: { title: string; options: NotificationOptions }[] = [];
+  // What the tray still holds: a notification replaces one with its tag, and close() removes it.
+  const tray: { tag: string; title: string; close(): void }[] = [];
   const self = {
     location: new URL(build.manifest.base + "sw.js", origin),
     clients: {
@@ -133,7 +135,15 @@ function worker(build, caches = cacheStorage()) {
       async openWindow(target: string) { opened.push(target); return null; },
     },
     registration: {
-      async showNotification(title: string, options: NotificationOptions) { shown.push({ title, options }); },
+      async showNotification(title: string, options: NotificationOptions) {
+        shown.push({ title, options });
+        const tag = options.tag ?? "";
+        const kept = tray.filter((notice) => notice.tag !== tag || !tag);
+        tray.splice(0, tray.length, ...kept);
+        const notice = { tag, title, close() { const index = tray.indexOf(notice); if (index >= 0) tray.splice(index, 1); } };
+        tray.push(notice);
+      },
+      async getNotifications({ tag }: { tag?: string } = {}) { return tray.filter((notice) => !tag || notice.tag === tag); },
     },
     skipWaiting() { skipCalls++; },
     addEventListener(name, listener) { listeners.set(name, listener); },
@@ -143,7 +153,7 @@ function worker(build, caches = cacheStorage()) {
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
-    caches, navigated, opened, shown, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
+    caches, navigated, opened, shown, tray, get claimCalls() { return claimCalls; }, get skipCalls() { return skipCalls; },
     async lifecycle(name) {
       const pending = [];
       listeners.get(name)({ waitUntil(promise) { pending.push(promise); } });
@@ -438,6 +448,16 @@ test("a push shows the Bot's icon, badge and timestamp", async () => {
   assert.equal(options.timestamp, 1_700_000_000_000);
   assert.equal((options.data as { url?: string }).url, "/?bot=alpha&thread=thread-1");
   assert.equal("renotify" in options, false, "a replacement stays quiet");
+});
+
+test("a resolved push closes that conversation's notice and shows nothing", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "A side chat is waiting for you", tag: "waiting:alpha:side-1", url: "/?bot=alpha&thread=side-1", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "A side chat is waiting for you", tag: "waiting:alpha:side-2", url: "/?bot=alpha&thread=side-2", kind: "waiting" });
+  assert.deepEqual(runtime.tray.map((notice) => notice.tag), ["waiting:alpha:side-1", "waiting:alpha:side-2"], "two waiting side chats stay visible");
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/?bot=alpha&thread=side-1", kind: "resolved" });
+  assert.equal(runtime.shown.length, 2, "nothing new is shown");
+  assert.deepEqual(runtime.tray.map((notice) => notice.tag), ["waiting:alpha:side-2"]);
 });
 
 test("a push with no icon keeps the app icon and drops malformed extras", async () => {

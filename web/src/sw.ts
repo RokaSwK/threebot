@@ -170,10 +170,16 @@ self.addEventListener("push", (event) => {
   // is a classic script with no imports, so the option guards are repeated from lib/notification.ts.
   let payload: {
     title?: unknown; body?: unknown; tag?: unknown; url?: unknown;
-    icon?: unknown; badge?: unknown; timestamp?: unknown;
+    icon?: unknown; badge?: unknown; timestamp?: unknown; kind?: unknown;
   } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
   const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
+  // A request answered here or elsewhere: close its notice. The gateway sends this only to push
+  // services that allow a push that shows nothing (not Safari or Firefox).
+  if (payload.kind === "resolved") {
+    event.waitUntil(self.registration.getNotifications({ tag }).then((open) => { for (const notification of open) notification.close(); }));
+    return;
+  }
   // The worker's DOM lib predates `timestamp`; the browser supports it.
   const options: NotificationOptions & { timestamp?: number } = {
     body: typeof payload.body === "string" ? payload.body : "Finished",

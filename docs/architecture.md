@@ -156,6 +156,19 @@ the latest notice per conversation instead of a burst. Safari ignores the icon, 
 and iOS still stacks notifications because it does not coalesce tags. The page builds the same
 options for its own notifications, so the two replace each other.
 
+When a request is answered, here or on another device, the gateway sends a `resolved` push with
+the same tag (and so the same topic): the worker closes that notice and shows nothing, and a device
+that was offline gets the `resolved` push in place of the stale `waiting` one. It goes only to push
+services that allow a push that shows nothing: Safari (`push.apple.com`) revokes a subscription
+after a few, and Firefox (`push.services.mozilla.com`) spends a quota on them. Those devices, and
+any notice a push missed, are cleared by the page: it closes a `waiting` notice when that request
+disappears, and on every shell snapshot it closes the ones whose thread no longer waits.
+
+Settings › Notifications turns push on or off for one device. Off tells the gateway to forget the
+endpoint first (so a failed request leaves the browser subscription in place to retry), then drops
+the browser subscription, and remembers the choice on the device so a reload or a first message
+does not subscribe it again while the browser's permission is still granted.
+
 A tag only replaces notifications inside one client. A browser tab and an installed app, or two
 browsers on the same machine, are separate notification surfaces: the web app cannot make one
 replace the other, and the server cannot dedupe across browsers because each subscription is

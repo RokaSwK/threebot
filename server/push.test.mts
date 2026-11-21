@@ -116,8 +116,29 @@ test("the notifier ignores the first snapshot and pushes completions and request
   assert.equal(sent[1].tag, "waiting:alpha:thread-1");
   assert.equal(sent[1].url, "/?bot=alpha&thread=thread-1");
   assert.equal(sent[1].kind, "waiting");
+  // Answered (here or on another device): every device closes that conversation's notice.
+  handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "running", activityRunStatus: "running", pendingRuntimeRequest: null } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sent.length, 3);
+  assert.equal(sent[2].kind, "resolved");
+  assert.equal(sent[2].tag, sent[1].tag, "the same tag, and so the same push topic, as the waiting notice");
   notifier.stop();
   assert.equal(cancelled, true);
+});
+
+test("a resolved push reaches only push services that allow a push that shows nothing", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: Array<{ endpoint: string; urgency?: string; topic?: string }> = [];
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async (target, _payload, options) => { delivered.push({ endpoint: target.endpoint, urgency: options?.urgency, topic: options?.topic }); } });
+  const apple = { ...subscription, endpoint: "https://web.push.apple.com/device" };
+  const mozilla = { ...subscription, endpoint: "https://updates.push.services.mozilla.com/wpush/v2/device" };
+  for (const item of [subscription, apple, mozilla]) assert.equal((await store.subscribe(item)).ok, true);
+  const tag = "waiting:alpha:thread-1";
+  assert.equal((await store.send({ title: "Alpha", body: "Waiting for you", tag, url: "/", bot: "alpha", kind: "waiting" })).sent, 3);
+  delivered.length = 0;
+  assert.equal((await store.send({ title: "Alpha", body: "Answered", tag, url: "/", bot: "alpha", kind: "resolved" })).sent, 1);
+  assert.deepEqual(delivered, [{ endpoint: subscription.endpoint, urgency: "normal", topic: pushTopic(tag) }]);
+  assert.equal(await store.devices(), 3, "skipped devices keep their subscription");
 });
 
 test("disabled Bots and a first thread update do not notify", async () => {
