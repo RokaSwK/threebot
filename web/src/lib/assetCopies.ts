@@ -18,6 +18,19 @@ export type StoredAsset = { v: 1; key: string; savedAt: number; bytes: number; m
 const IMAGE_LIMIT = 4 * 1024 * 1024;
 /** A file the user opened or downloaded on purpose (a PDF, a document). */
 const FILE_LIMIT = 8 * 1024 * 1024;
+/**
+ * Signing is an RPC over T3's socket, which waits for a connection that may never come: offline or
+ * slow, the kept copy answers instead.
+ */
+const SIGN_PATIENCE_MS = 5_000;
+function promptly(sign: () => Promise<string>): Promise<string> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return Promise.reject(new Error("Offline"));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Signing timed out")), SIGN_PATIENCE_MS); });
+  return Promise.race([sign(), late]).finally(() => clearTimeout(timer));
+}
+/** A workspace file can change under the same path; attachments and tool images never do. */
+const immutable = (key: string) => !key.startsWith("workspace:");
 /** Fetches in flight, so two placements of the same picture share one request. */
 const pending = new Map<string, Promise<string | null>>();
 /** Object URLs are cheap but must be revoked; one per key while the page lives. */
@@ -84,8 +97,13 @@ export async function assetSource(
   if (key) {
     const alive = urls.get(key);
     if (alive) return alive;
+    // A picture already kept is neither signed nor fetched again.
+    if (immutable(key)) {
+      const copy = await localAssetUrl(key);
+      if (copy) return copy;
+    }
   }
-  const signed = await sign().catch(() => null);
+  const signed = await promptly(sign).catch(() => null);
   if (signed) {
     // Only over http(s): a blob or data URL has no bytes worth fetching again.
     if (!key || !/^(https?:)?\//.test(signed)) return signed;
@@ -116,7 +134,7 @@ export async function assetSource(
  */
 export async function signedAsset(sign: () => Promise<string>, key: string | null): Promise<string> {
   try {
-    return await sign();
+    return await promptly(sign);
   } catch (error) {
     const copy = key ? await localAssetUrl(key) : null;
     if (copy) return copy;

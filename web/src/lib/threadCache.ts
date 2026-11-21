@@ -280,6 +280,8 @@ export async function forgetRecords(ids: string[], { deleted = false }: { delete
   await serial(() => storage().transact("readwrite", async (store) => {
     const index = await readIndex(store);
     const now = Date.now();
+    // A deleted conversation takes the pictures and files it showed with it.
+    const assets = deleted ? await assetsOf(store, index, ids) : [];
     for (const id of ids) {
       delete index[id];
       if (deleted) {
@@ -287,8 +289,9 @@ export async function forgetRecords(ids: string[], { deleted = false }: { delete
         await store.put(`gone:${id}`, now);
       }
     }
+    for (const id of assets) delete index[id];
     await store.put(INDEX, index);
-    for (const id of ids) await store.remove(id);
+    for (const id of [...ids, ...assets]) await store.remove(id);
   })).catch(() => {});
 }
 
@@ -366,7 +369,34 @@ export async function writeRoom(room: RoomView): Promise<void> {
 /** Drops one record: a deleted room must not come back, and a broken file must not be served twice. */
 export const forgetRecord = (id: string) => forgetRecords([id]);
 
-export const forgetRoom = (id: string) => forgetRecord(`room:${id}`);
+/** A deleted room stays deleted, like a deleted conversation. */
+export const forgetRoom = (id: string) => forgetRecords([`room:${id}`], { deleted: true });
+
+/** The kept files a conversation's copy points at: its attachments, and whatever is keyed by its thread. */
+async function assetsOf(store: Store, index: Index, ids: string[]): Promise<string[]> {
+  const found = new Set<string>();
+  for (const id of ids) {
+    if (!id.startsWith("view:")) continue;
+    const thread = id.slice("view:".length);
+    for (const key of Object.keys(index)) {
+      if (["tool-image", "workspace", "file"].some((kind) => key.startsWith(`asset:${kind}:${thread}:`))) found.add(key);
+    }
+    const attachmentIds = new Set<string>();
+    const visit = (value: unknown, depth: number) => {
+      if (!value || typeof value !== "object" || depth > 4) return;
+      if (Array.isArray(value)) { for (const entry of value) visit(entry, depth + 1); return; }
+      const record = value as Record<string, unknown>;
+      if (typeof record.attachmentId === "string") attachmentIds.add(record.attachmentId);
+      if (Array.isArray(record.attachments)) for (const attachment of record.attachments) {
+        if (attachment && typeof attachment === "object" && typeof (attachment as { id?: unknown }).id === "string") attachmentIds.add((attachment as { id: string }).id);
+      }
+      for (const entry of Object.values(record)) if (entry && typeof entry === "object") visit(entry, depth + 1);
+    };
+    visit((await store.get(id) as { items?: unknown } | undefined)?.items, 0);
+    for (const attachmentId of attachmentIds) if (index[`asset:attachment:${attachmentId}`]) found.add(`asset:attachment:${attachmentId}`);
+  }
+  return [...found];
+}
 
 /** Bytes this device kept for a file it has already shown, keyed by whatever identifies the asset. */
 export async function readAsset<T>(key: string, usable: (value: unknown) => value is T): Promise<T | null> {

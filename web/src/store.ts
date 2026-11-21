@@ -1062,12 +1062,13 @@ export async function loadRoom(id: string, quiet = false) {
     if ((error as { status?: number })?.status === 404 && !get().roomGone) {
       stopRoomPoll();
       void forgetRoom(id);
-      return set((s) => {
+      set((s) => {
         const rooms = { ...s.rooms };
         delete rooms[id];
         return { rooms, roomView: null, roomStale: false, roomMissing: false, roomGone: true, roomError: null };
       });
       void writeRooms(Object.values(get().rooms));
+      return;
     }
     // A poll failure is transient; only the first load replaces the view with an error.
     if (quiet) return;
@@ -1194,6 +1195,8 @@ export async function removeRoom(id: string) {
     delete rooms[id];
     return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
   });
+  // The saved sidebar list must not name a deleted room on the next launch.
+  void writeRooms(Object.values(get().rooms));
   return result;
 }
 

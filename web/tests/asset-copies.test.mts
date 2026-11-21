@@ -91,3 +91,27 @@ test('assets are budgeted by their bytes, not by the length of their metadata', 
   assert.ok(await readAsset('big-2', storedBytes));
   assert.ok(await readAsset('big-3', storedBytes));
 });
+
+test('offline, a sign that never answers does not hold a kept file back', async () => {
+  const key = assetKey({ _tag: 'workspace-file', threadId: 'thread-w', path: 'notes/chart.png' })!;
+  await assetSource(async () => '/t3/assets/chart?sig=1', key, 'image');
+  app.resetAssetCopies();
+  Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value: false });
+  try {
+    const started = Date.now();
+    const url = await assetSource(() => new Promise<string>(() => {}), key, 'image');
+    assert.match(String(url), /^blob:/);
+    assert.ok(Date.now() - started < 1000, 'the copy answers at once instead of waiting on a socket');
+  } finally {
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, value: true });
+  }
+});
+
+test('a deleted conversation takes the pictures it showed with it', async () => {
+  const key = assetKey({ _tag: 'attachment', attachmentId: 'pic-deleted' })!;
+  await assetSource(async () => '/t3/assets/pic-deleted?sig=1', key, 'image');
+  await app.writeView({ v: 1, key: 'thread-with-picture', savedAt: Date.now(), thread: null, items: [{ id: 'm1', attachments: [{ id: 'pic-deleted' }] }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false });
+  assert.ok(await readAsset(key, storedBytes));
+  await app.forgetRecords(['view:thread-with-picture'], { deleted: true });
+  assert.equal(await readAsset(key, storedBytes), null);
+});
