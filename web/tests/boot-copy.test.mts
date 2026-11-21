@@ -101,6 +101,7 @@ test('a password that changed elsewhere wins over the copy', async () => {
   assert.equal(useApp.getState().auth, 'ready', 'the copy paints first');
   await new Promise((resolve) => setTimeout(resolve, 120));
   assert.equal(useApp.getState().auth, 'password', 'and the gateway answer takes over');
+  assert.equal(await app.readBoot(), null, 'whoever signs in next is not shown what the last session kept');
 });
 
 test('a warm launch still asks for the Vault and the machines it does not cache', async () => {
@@ -125,4 +126,23 @@ test('signing out refuses the saves that are still on their way', async () => {
   await app.writeView(view);
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(await app.readView('thread-signout'), null, 'nothing on screen is saved after signing out');
+});
+
+test('a copy past its sign-in lifetime is never painted', async () => {
+  resetCacheForTest();
+  const old = { v: 1, key: 'thread-old', savedAt: Date.now() - 31 * 24 * 60 * 60 * 1000, thread: null, items: [{ id: 'm1', text: 'old' }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false };
+  await app.writeView(old);
+  assert.equal(await app.readView('thread-old'), null);
+});
+
+test('a deleted conversation leaves no copy behind', async () => {
+  resetCacheForTest();
+  resetBootForTest();
+  const view = { v: 1, key: 'thread-gone', savedAt: Date.now(), thread: null, items: [{ id: 'm1', text: 'kept' }], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false };
+  await app.writeView(view);
+  await app.writeView({ ...view, key: 'thread-stays' });
+  app.forgetThreadCopy(['thread-gone']);
+  await settle();
+  assert.equal(await app.readView('thread-gone'), null);
+  assert.ok(await app.readView('thread-stays'), 'only that conversation goes');
 });

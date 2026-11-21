@@ -120,7 +120,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   const signOut = async () => {
     if (signingOut) return;
     setSigningOut(true);
-    try { const target = await signOutTarget(); await api.logout(); await forgetDeviceCopy(); location.href = target; }
+    try { const target = await signOutTarget(); await forgetDeviceCopy(); await api.logout(); location.href = target; }
     catch { setSigningOut(false); toast("Couldn't sign out. Try again."); }
   };
   return <div className="settings-home pt-16">

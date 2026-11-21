@@ -463,9 +463,9 @@ function AccountMenu({ x, y, onClose }: { x: number; y: number; onClose: () => v
           icon: <LogOut size={14} />,
           onSelect: async () => {
             const target = await signOutTarget();
-            await api.logout();
-            // What this device kept is readable without a password: signing out forgets it too.
+            // What this device kept is readable without a password: forget it before the session goes.
             await forgetDeviceCopy();
+            await api.logout();
             location.href = target;
           },
         },

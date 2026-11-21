@@ -33,15 +33,18 @@ export type CachedBoot = {
   historical: Bot[];
 };
 
-const DB_NAME = "threebot.view";
+// One store per app mount: two gateways served from one origin under different paths keep apart.
+const BASE = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+const DB_NAME = BASE === "/" ? "threebot.view" : `threebot.view:${BASE}`;
 const DB_VERSION = 1;
 const STORE = "views";
 const INDEX = "index";
 const MB = 1024 * 1024;
 /** One conversation's window. A bounded snapshot tops out at 1 MiB in T3; this leaves room for runs and requests. */
 export const VIEW_BYTES = 2 * MB;
-/** A late write never counts as "last seen" for the next launch, so a forgotten device does not keep everything. */
+/** A copy older than a sign-in lasts is never painted, and is dropped on the next write. */
 const EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
+const fresh = (savedAt: unknown) => typeof savedAt === "number" && Date.now() - savedAt <= EXPIRES_MS;
 
 /** Per record kind: how many to keep and how many bytes they may take together. */
 const RULES: Record<string, { keep: number; bytes: number }> = {
@@ -209,6 +212,18 @@ export async function readRecord<T>(id: string, usable: (value: unknown) => valu
   return usable(value) ? value : null;
 }
 
+/** Forgets these records now, index first, so a deleted conversation or room is never painted again. */
+export async function forgetRecords(ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  await serial(async () => {
+    const store = storage();
+    const index = await readIndex(store);
+    for (const id of ids) delete index[id];
+    await store.put(INDEX, index);
+    await store.remove(ids);
+  }).catch(() => {});
+}
+
 /** Every write is best effort: a refused or full quota must never reach the caller. */
 async function writeQuietly(id: string, value: unknown): Promise<void> {
   if (stopped) return;
@@ -218,7 +233,7 @@ async function writeQuietly(id: string, value: unknown): Promise<void> {
 const isView = (key: string) => (value: unknown): value is CachedView => {
   if (!value || typeof value !== "object") return false;
   const view = value as Partial<CachedView>;
-  return view.v === 1 && view.key === key && typeof view.savedAt === "number" && Array.isArray(view.items) && Array.isArray(view.runs);
+  return view.v === 1 && view.key === key && fresh(view.savedAt) && Array.isArray(view.items) && Array.isArray(view.runs);
 };
 
 /** The last copy of one conversation, or null when this device never painted it. */
@@ -239,7 +254,7 @@ export async function readBoot(): Promise<CachedBoot | null> {
   return readRecord("boot", (value): value is CachedBoot => {
     if (!value || typeof value !== "object") return false;
     const boot = value as Partial<CachedBoot>;
-    return boot.v === 1 && Array.isArray(boot.bots) && typeof boot.botsRoot === "string";
+    return boot.v === 1 && fresh(boot.savedAt) && Array.isArray(boot.bots) && typeof boot.botsRoot === "string";
   });
 }
 

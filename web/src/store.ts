@@ -9,7 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { clearCache, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
+import { clearCache, forgetRecords, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -221,7 +221,7 @@ async function initialize() {
       return;
     }
     const session = await api.session();
-    if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+    if (!session.authenticated) return signedOut(session);
     const [config, settings, bots, historical] = await initialData();
     set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
     keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
@@ -246,7 +246,7 @@ async function confirmLaunch() {
   const session = await api.session().catch(() => null);
   // Asked and unanswered: the gateway is not reachable, which is what "offline" means here.
   if (!session) return set({ offline: true });
-  if (!session.authenticated) return set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
+  if (!session.authenticated) return signedOut(session);
   try {
     const [config, settings, bots, historical] = await initialData();
     if (get().auth !== "ready") return;
@@ -293,6 +293,15 @@ function openFromCopy(boot: CachedBoot) {
 /** What the next launch needs when the gateway cannot be reached. Best effort: a full quota changes nothing here. */
 function keepBoot(boot: Omit<CachedBoot, "v" | "savedAt">) {
   void writeBoot(boot);
+}
+
+/**
+ * The gateway no longer knows this browser (signed out elsewhere, a changed password, an expired
+ * sign-in): whoever signs in next must not be shown what the last session kept.
+ */
+function signedOut(session: { accessLogin: boolean; passwordRequired: boolean }) {
+  void forgetDeviceCopy();
+  set({ auth: session.accessLogin ? "access" : session.passwordRequired ? "password" : "error" });
 }
 
 /** This launch painted a copy before asking: the one thing that makes an offline claim honest later. */
@@ -396,7 +405,7 @@ export async function refreshBots() {
   const [bots, historical] = await Promise.all([api.bots(deadline(GATEWAY_PATIENCE_MS)).catch(() => null), api.botIdentities(deadline(GATEWAY_PATIENCE_MS)).catch(() => null)]);
   if (!bots) {
     const session = await api.session().catch(() => null);
-    if (session && !session.authenticated && session.accessLogin) set({ auth: "access" });
+    if (session && !session.authenticated && session.accessLogin) signedOut(session);
     return;
   }
   if (revision !== botsRevision || pendingBotMutations) return;
@@ -455,6 +464,7 @@ function subscribeShell() {
       schedulePreviews();
       notifyIfNeeded(prev, it.thread);
     } else if (it.kind === "thread.removed") {
+      forgetThreadCopy([it.threadId]);
       set((s) => {
         const threads = { ...s.threads };
         delete threads[it.threadId];
@@ -667,15 +677,27 @@ function openThreadStream(threadId: string, bounded = true): StreamHandle {
 // ---------- the device's own copy ----------
 /** A write pending per conversation, so a streaming turn saves at most once a second instead of per frame. */
 const cacheTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Conversations deleted while this page was open: a late frame must not save them back. */
+const forgottenThreads = new Set<string>();
+
+/** A deleted conversation leaves no copy on this device. */
+export function forgetThreadCopy(threadIds: string[]) {
+  for (const threadId of threadIds) {
+    forgottenThreads.add(threadId);
+    clearTimeout(cacheTimers.get(threadId));
+    cacheTimers.delete(threadId);
+  }
+  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`));
+}
 
 function scheduleCache(threadId: string) {
-  if (forgetting || cacheTimers.has(threadId)) return;
+  if (forgetting || cacheTimers.has(threadId) || forgottenThreads.has(threadId)) return;
   cacheTimers.set(threadId, setTimeout(() => { cacheTimers.delete(threadId); void saveThread(threadId); }, 1200));
 }
 
 /** Keeps the newest window for the next cold start. Never the source of a paint: the snapshot always replaces it. */
 async function saveThread(threadId: string) {
-  if (forgetting) return;
+  if (forgetting || forgottenThreads.has(threadId)) return;
   // A linked machine keeps its history in its own T3; this cache is for this machine's threads.
   if (threadTarget(threadId).environmentId) return;
   const data = get().threadData[threadId];
@@ -1282,6 +1304,7 @@ export function deleteBot(slug: string) {
     // The gateway must accept deletion before any T3 conversation/project is stopped.
     const { bots } = await api.deleteBot(slug);
     publishBots(bots);
+    forgetThreadCopy(Object.values(get().threads).filter((thread) => thread.id === bot.mainThreadId || (bot.projectId && thread.projectId === bot.projectId)).map((thread) => thread.id).concat(bot.mainThreadId ? [bot.mainThreadId] : []));
     set((s) => ({ selected: s.selected === slug ? null : s.selected, selectedThreadId: s.selected === slug ? null : s.selectedThreadId, exchangeBotSlug: s.exchangeBotSlug === slug ? null : s.exchangeBotSlug }));
     if (bot.mainThreadId) set((s) => ({ historicalBots: { ...s.historicalBots, [`archived:${bot.mainThreadId}`]: { ...bot, hidden: true, pinned: false, primary: false, notifications: false } } }));
     if (bot.mainThreadId) await t3.dispatch({ type: "thread.stop", threadId: bot.mainThreadId }).catch(() => {});
@@ -1532,6 +1555,7 @@ export async function bringBackSideChat(threadId: string, parentThreadId: string
 
 export async function deleteSideChat(threadId: string) {
   await t3.dispatch({ type: "thread.delete", threadId });
+  forgetThreadCopy([threadId]);
   if (get().sideChat?.threadId === threadId) set({ sideChat: null });
 }
 
