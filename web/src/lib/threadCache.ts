@@ -50,6 +50,8 @@ const fresh = (savedAt: unknown) => typeof savedAt === "number" && Date.now() - 
 const RULES: Record<string, { keep: number; bytes: number }> = {
   view: { keep: 8, bytes: 30 * MB },
   boot: { keep: 1, bytes: 1 * MB },
+  // Markers for deleted records: small, and kept long enough to outlive any save another tab queued.
+  gone: { keep: 500, bytes: 1 * MB },
 };
 
 type Entry = { savedAt: number; bytes: number };
@@ -214,8 +216,9 @@ async function writeRecord(id: string, value: unknown): Promise<void> {
   const mine = await tabGeneration();
   const bytes = bytesOf(value);
   await storage().transact("readwrite", async (store) => {
-    // Signed out since this tab started: what it holds belongs to the last sign-in.
-    if (await store.get(GENERATION) !== mine) return;
+    // Signed out since this tab started: what it holds belongs to the last sign-in. Deleted (in any
+    // tab): a save queued before the deletion must not bring it back.
+    if (await store.get(GENERATION) !== mine || await store.get(`gone:${id}`) !== undefined) return;
     const index = await readIndex(store);
     const now = Date.now();
     index[id] = { savedAt: now, bytes };
@@ -256,12 +259,22 @@ export async function readRecord<T>(id: string, usable: (value: unknown) => valu
   return !stopped && usable(value) ? value : null;
 }
 
-/** Forgets these records now, index first, so a deleted conversation or room is never painted again. */
-export async function forgetRecords(ids: string[]): Promise<void> {
+/**
+ * Forgets these records now, index first. `deleted`: the thing itself is gone (a deleted conversation
+ * or room), so a marker keeps any tab's later save from writing it back.
+ */
+export async function forgetRecords(ids: string[], { deleted = false }: { deleted?: boolean } = {}): Promise<void> {
   if (!ids.length) return;
   await serial(() => storage().transact("readwrite", async (store) => {
     const index = await readIndex(store);
-    for (const id of ids) delete index[id];
+    const now = Date.now();
+    for (const id of ids) {
+      delete index[id];
+      if (deleted) {
+        index[`gone:${id}`] = { savedAt: now, bytes: 0 };
+        await store.put(`gone:${id}`, now);
+      }
+    }
     await store.put(INDEX, index);
     for (const id of ids) await store.remove(id);
   })).catch(() => {});

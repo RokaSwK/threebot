@@ -145,6 +145,9 @@ test('a deleted conversation leaves no copy behind', async () => {
   await settle();
   assert.equal(await app.readView('thread-gone'), null);
   assert.ok(await app.readView('thread-stays'), 'only that conversation goes');
+  // A save another tab queued before the deletion lands afterwards: it must not bring the transcript back.
+  await app.writeView(view);
+  assert.equal(await app.readView('thread-gone'), null, 'a deleted conversation stays deleted');
 });
 
 test('a conversation too big for its budget even after trimming is not kept', async () => {

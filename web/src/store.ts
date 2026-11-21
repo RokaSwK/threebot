@@ -702,7 +702,7 @@ export function forgetThreadCopy(threadIds: string[]) {
     clearTimeout(cacheTimers.get(threadId));
     cacheTimers.delete(threadId);
   }
-  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`));
+  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`), { deleted: true });
   set((s) => {
     const threadData = { ...s.threadData };
     for (const threadId of threadIds) if (threadData[threadId]?.stale) delete threadData[threadId];
