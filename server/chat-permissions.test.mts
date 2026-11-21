@@ -19,9 +19,12 @@ Old wording.
 <!-- threebot:chat-permissions end -->`;
 
 test("provider files follow CODEX_HOME and CLAUDE_CONFIG_DIR, else the home folder", () => {
-  assert.deepEqual(agentInstructionFiles({}, "/home/sam"), ["/home/sam/.codex/AGENTS.md", "/home/sam/.claude/CLAUDE.md"]);
-  assert.deepEqual(agentInstructionFiles({ CODEX_HOME: "/x/codex", CLAUDE_CONFIG_DIR: "/y/claude" }, "/home/sam"), ["/x/codex/AGENTS.md", "/y/claude/CLAUDE.md"]);
-  assert.deepEqual(agentInstructionFiles({ CODEX_HOME: "  " }, "/home/sam")[0], "/home/sam/.codex/AGENTS.md");
+  const home = path.join(path.sep, "home", "sam");
+  assert.deepEqual(agentInstructionFiles({}, home), [path.join(home, ".codex", "AGENTS.md"), path.join(home, ".claude", "CLAUDE.md")]);
+  const codexHome = path.join(path.sep, "x", "codex");
+  const claudeHome = path.join(path.sep, "y", "claude");
+  assert.deepEqual(agentInstructionFiles({ CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome }, home), [path.join(codexHome, "AGENTS.md"), path.join(claudeHome, "CLAUDE.md")]);
+  assert.deepEqual(agentInstructionFiles({ CODEX_HOME: "  " }, home)[0], path.join(home, ".codex", "AGENTS.md"));
 });
 
 test("adding keeps the user's text and appends one block", () => {
@@ -68,7 +71,8 @@ test("applyChatPermissions writes, rewrites and cleans up real files", async () 
     assert.deepEqual(first.map((r) => r.changed), [true, true]);
     assert.equal(await readFile(codex, "utf8"), `${CHAT_PERMISSIONS_BLOCK}\n`);
     assert.equal(await readFile(claude, "utf8"), `# Claude rules\n\n${CHAT_PERMISSIONS_BLOCK}\n`);
-    assert.equal((await stat(claude)).mode & 0o777, 0o600);
+    // Windows has no POSIX permission bits to keep.
+    if (process.platform !== "win32") assert.equal((await stat(claude)).mode & 0o777, 0o600);
 
     const again = await applyChatPermissions(true, [codex, claude]);
     assert.deepEqual(again.map((r) => r.changed), [false, false]);
