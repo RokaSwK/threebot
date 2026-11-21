@@ -254,7 +254,7 @@ export type ScheduledTask = {
   runtimeMode?: string;
   interactionMode?: string;
   workspaceStrategy?: unknown;
-  /** Unattended runs keep whatever created them; edits must not turn them into the user's messages. */
+  /** Stamped on each run's message. T3 keeps createdBy from creation but overwrites creationSource on every save, so edits send back what is stored. */
   createdBy?: "user" | "agent" | "system";
   creationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   nextRunAt?: string | null;

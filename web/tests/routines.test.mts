@@ -211,7 +211,7 @@ test('a routine with its own conversation can go back to the chat',async()=>{
  assert.equal(calls.some(c=>c.tag==='dispatch'||c.tag==='orchestration.launchThread'),false);
  await assert.rejects(r.moveRoutineToChat({...task,threadId:'thread'},bot),/already runs in the chat/);
 });
-test('edits keep who created the routine, so its runs stay unattended',()=>{
+test('edits keep who created the routine and where it came from',()=>{
  const task={...original,createdBy:'agent',creationSource:'mcp',threadId:'thread',threadMode:'continue'};
  assert.equal(r.routineDestination(task,bot),'chat');
  const parsed=r.parseRoutineTask(task);assert.equal(parsed.createdBy,'agent');assert.equal(parsed.creationSource,'mcp');
@@ -280,23 +280,48 @@ test('cancelling the move keeps the routine in the chat and moves no focus or da
  assert.equal(calls.some(c=>c.tag==='scheduledTasks.upsert'),false);
  assert.equal(document.activeElement?.textContent?.trim(),'Use its own model…');
 });
+const own=(id,extra={})=>({id,title:'Check example',status:'completed',latestRunId:`${id}-run`,latestRunCompletedAt:'2026-11-19T03:31:00Z',pendingRuntimeRequest:null,archivedAt:null,lineage:{parentThreadId:null,relationshipToParent:null,rootThreadId:id},...extra});
 test('a routine in its own conversation reports one line with time and the last text',async()=>{
  const task={...original,threadId:'routine',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ const threads={routine:own('routine'),'routine-empty':own('routine-empty')};
  transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text:'Tidied three lines.\n\nDetails.'}]}:{};
- const reports=await r.readRoutineReports(bot,[task]);
+ const reports=await r.readRoutineReports(bot,[task],threads);
  assert.deepEqual(reports,[{id:task.id,at:task.lastRunAt,title:task.title,summary:'Tidied three lines.',threadId:'routine',failed:false}]);
- assert.equal((await r.readRoutineReports(bot,[{...task,threadId:'thread'}])).length,0,'a routine in the chat leaves no line');
+ assert.equal((await r.readRoutineReports(bot,[{...task,threadId:'thread'}],threads)).length,0,'a routine in the chat leaves no line');
  transport=async()=>({turnItems:[]});
- const empty=await r.readRoutineReports(bot,[{...task,id:'routine-empty',threadId:'routine-empty'}]);
+ const empty=await r.readRoutineReports(bot,[{...task,id:'routine-empty',threadId:'routine-empty'}],threads);
  assert.equal(empty[0].summary,'Ran in its own conversation.','a run without text still leaves a line');
 });
-test('another project\u2019s routines and a Bot without a project leave no line in this chat',async()=>{
+test('the line follows the run in its conversation, not only T3\u2019s dispatch record',async()=>{
+ // T3 records "succeeded" as soon as the prompt is sent; the reply lands later in the thread.
+ const task={...original,id:'routine-live',threadId:'live',threadMode:'continue',runCount:3,lastRunAt:'2026-11-20T03:30:00Z',lastRunStatus:'succeeded'};
+ let text='Yesterday\u2019s report.';
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text}]}:{};
+ const running={live:own('live',{status:'running',latestRunId:'run-3',latestRunCompletedAt:null})};
+ assert.equal((await r.readRoutineReports(bot,[task],running))[0].summary,'Running now, in its own conversation.');
+ text='Today\u2019s report.';
+ const done={live:own('live',{status:'completed',latestRunId:'run-3',latestRunCompletedAt:'2026-11-20T03:31:00Z'})};
+ assert.notEqual(r.reportKey(task,running.live),r.reportKey(task,done.live),'the reply landing is a new key');
+ assert.equal((await r.readRoutineReports(bot,[task],done))[0].summary,'Today\u2019s report.');
+ const asking={live:own('live',{status:'running',latestRunId:'run-3',latestRunCompletedAt:null,pendingRuntimeRequest:{id:'req',kind:'approval',blocking:true}})};
+ assert.equal((await r.readRoutineReports(bot,[task],asking))[0].summary,'Waiting for you in its own conversation.');
+ const failed=await r.readRoutineReports(bot,[{...task,lastRunStatus:'failed',lastRunError:'Provider instance gone is disabled for project project'}],done);
+ assert.deepEqual([failed[0].failed,failed[0].summary],[true,'The run failed: Provider instance gone is disabled for project project']);
+});
+test('only a conversation of the routine\u2019s own leaves a line in this chat',async()=>{
  const task={...original,threadId:'routine',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
- transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text:'Tidied three lines.'}]}:{};
- assert.deepEqual(r.ownConversationRoutines(bot,[{...task,projectId:'someone-else'}]),[],'a routine of another project is not this Bot\u2019s');
- assert.equal((await r.readRoutineReports(bot,[{...task,projectId:'someone-else'}])).length,0);
- assert.deepEqual(r.ownConversationRoutines({...bot,projectId:null},[task]),[],'a Bot with no project owns no routine');
- assert.deepEqual(r.ownConversationRoutines(bot,[task]).map(t=>t.threadId),['routine'],'its own routine still reports');
+ const threads={routine:own('routine')};
+ assert.deepEqual(r.ownConversationRoutines(bot,[{...task,projectId:'someone-else'}],threads),[],'a routine of another project is not this Bot\u2019s');
+ assert.deepEqual(r.ownConversationRoutines({...bot,projectId:null},[task],threads),[],'a Bot with no project owns no routine');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],threads).map(t=>t.threadId),['routine'],'its own routine still reports');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],{}),[],'an unknown thread leaves no line');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],{routine:own('routine',{archivedAt:'2026-11-19T04:00:00Z'})}),[],'an archived conversation leaves no line');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],{routine:own('routine',{lineage:{parentThreadId:'thread',relationshipToParent:'side',rootThreadId:'thread',sideChat:true}})}),[],'a side chat is not its own conversation');
+ // A Bot made from a project shares it with the user's threads: only the routine's own one counts.
+ const adopted={...bot,adopted:true};
+ assert.deepEqual(r.ownConversationRoutines(adopted,[task],{routine:own('routine',{title:'Fix the build'})}),[],'the user\u2019s own thread is not the Bot\u2019s');
+ assert.deepEqual(r.ownConversationRoutines(adopted,[task],threads).map(t=>t.id),[task.id]);
+ assert.deepEqual(r.ownConversationRoutines({...adopted,memoryTidyRoutineId:task.id},[task],{routine:own('routine',{title:'Renamed'})}).map(t=>t.id),[task.id],'the memory tidy always counts');
 });
 
 test('a failed move archives the conversation it started and leaves the routine in the chat',async()=>{

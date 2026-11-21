@@ -34,7 +34,7 @@ import { MachineBadge } from "./MachineBadge";
 import { loadedRunFloor, runOrdinal, supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
-import { ownConversationRoutines, readRoutineReports, type RoutineReport } from "../lib/routineReports";
+import { ownConversationRoutines, readRoutineReports, reportKey, type RoutineReport } from "../lib/routineReports";
 import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
@@ -93,13 +93,14 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const isChild = !!threadId && threadId !== bot.mainThreadId;
   const tasks = useApp((s) => s.tasks);
   // Routines that run in their own conversation leave one line each here; the latest few only.
-  const ownRoutines = useMemo(() => ownConversationRoutines(bot, tasks), [bot.mainThreadId, tasks]);
-  const ownRoutineKey = ownRoutines.map((task) => `${task.id}:${task.threadId}:${task.lastRunAt}:${task.runCount ?? 0}:${task.lastRunStatus}`).join("|");
+  const ownRoutines = useMemo(() => ownConversationRoutines(bot, tasks, threads), [bot, tasks, threads]);
+  // The threads' run state is part of the key: T3 marks the task done once the prompt is sent, before the reply.
+  const ownRoutineKey = ownRoutines.map((task) => reportKey(task, task.threadId ? threads[task.threadId] : undefined)).join("|");
   const [routineReports, setRoutineReports] = useState<RoutineReport[]>([]);
   useEffect(() => {
     if (threadId !== bot.mainThreadId || ownRoutines.length === 0) { setRoutineReports([]); return; }
     let live = true;
-    readRoutineReports(bot, tasks).then((reports) => { if (live) setRoutineReports(reports); }).catch(() => { if (live) setRoutineReports([]); });
+    readRoutineReports(bot, tasks, threads).then((reports) => { if (live) setRoutineReports(reports); }).catch(() => { if (live) setRoutineReports([]); });
     return () => { live = false; };
   }, [bot.slug, bot.mainThreadId, threadId, ownRoutineKey]);
   const detailsOpen = useApp((s) => s.detailsOpen);
