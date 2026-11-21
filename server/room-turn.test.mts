@@ -568,7 +568,7 @@ test("a reply sends one push with the room deep link", async () => {
   await waitFor(() => runtime.dispatched.length === 1, "the dispatch");
   runtime.complete("thread-alpha", "listo, revisado");
   await waitFor(() => pushed.length === 1, "the push");
-  assert.deepEqual(pushed[0], { title: "#Design", body: "listo, revisado", url: `/?room=${room.id}`, room: room.id, kind: "finished" });
+  assert.deepEqual(pushed[0], { title: "#Design", body: "listo, revisado", url: `/?room=${room.id}`, room: room.id, kind: "finished", speaker: "alpha" });
   await done();
 });
 

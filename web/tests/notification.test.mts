@@ -46,9 +46,9 @@ test("one tag per waiting conversation, one per Bot for a completion", () => {
   });
 });
 
-test("a photo has no monochrome badge; a drawn avatar does", () => {
+test("a drawn avatar has its own badge; a photo has Threebot's", () => {
   assert.equal(botBadge({ slug: "alpha" }), "/api/bots/alpha/badge.png");
-  assert.equal(botBadge({ slug: "alpha", avatarImage: "/api/bots/alpha/avatar/abc.png" }), null);
+  assert.equal(botBadge({ slug: "alpha", avatarImage: "/api/bots/alpha/avatar/abc.png" }), "/api/push/badge.png", "a photo falls back to Threebot's own badge");
 });
 
 test("a waiting tag names its thread; other tags name none", async () => {

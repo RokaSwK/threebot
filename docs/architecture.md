@@ -149,8 +149,16 @@ wins when both arrive); any other value is refused with a 400, and an older page
 `bot` keeps working. A completion keeps the Bot's own tag, so three finished runs leave one notice.
 A push that needs the user gets one tag per conversation (`waiting:<slug>:<threadId>`) and
 deep-links to that thread, so a side chat's request is not replaced by that Bot's completion or by
-another side chat. Both carry the Bot's picture or drawn avatar from `/api/bots/<slug>/avatar.png`;
-a wait also carries the monochrome `/badge.png` for Android's status bar and the event time. Each
+another side chat. Every Bot push (a completion, a wait, a room's) shows a Bot's face: its uploaded
+picture or its drawn avatar from `/api/bots/<slug>/avatar.png?v=<look>`, and as Android's status-bar
+badge its white silhouette from `/badge.png`, or Threebot's own monochrome badge
+(`/api/push/badge.png`) for a Bot with a photo. A room has no avatar of its own, so a room push shows
+the Bot that is waiting or spoke last. The `v` changes with the look, so no cache keeps an old face.
+The worker hands the browser these images as `data:` URLs (from its own `bot-icons-` cache, or
+fetched once with the session cookie), so Android never fetches them at display time, when it may be
+offline or signed out of Access and would draw a letter. A push also carries small copies of both
+(`iconData`, `badgeData`, about 2 KB, dropped first if a message would pass the push services' 4 KB),
+for a device that has nothing cached and cannot fetch. Each
 push also carries an RFC 8030 `Topic` derived from the tag, so a device that was offline receives
 the latest notice per conversation instead of a burst. Safari ignores the icon, badge and timestamp,
 and iOS still stacks notifications because it does not coalesce tags. The page builds the same

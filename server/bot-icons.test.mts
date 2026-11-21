@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { botAvatarPng, botAvatarUrl, botBadgePng, botBadgeUrl } from "./bot-icons.mts";
+import { APP_BADGE_URL, appBadgePng, botAvatarPng, botAvatarUrl, botBadgePng, botBadgeUrl, botIconData, roomIdentity } from "./bot-icons.mts";
 
 const PNG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -25,8 +25,9 @@ test("a drawn Bot gets a stable PNG icon and a monochrome badge", async () => {
   const badgeMeta = await sharp(badge).metadata();
   assert.equal(badgeMeta.width, 96);
   assert.equal(badgeMeta.hasAlpha, true);
-  assert.equal(botAvatarUrl(bot), "/api/bots/alpha/avatar.png");
-  assert.equal(botBadgeUrl(bot), "/api/bots/alpha/badge.png");
+  assert.match(botAvatarUrl(bot), /^\/api\/bots\/alpha\/avatar\.png\?v=[\w-]{12}$/);
+  assert.match(botBadgeUrl(bot), /^\/api\/bots\/alpha\/badge\.png\?v=[\w-]{12}$/);
+  assert.notEqual(botAvatarUrl({ ...bot, color: "#39ff14" }), botAvatarUrl(bot), "a new look (custom colour too) is a new URL");
 });
 
 test("a Bot with a picture uses it for the icon and has no monochrome badge", async () => {
@@ -39,7 +40,12 @@ test("a Bot with a picture uses it for the icon and has no monochrome badge", as
   const icon = await botAvatarPng(bot);
   const meta = await sharp(icon).metadata();
   assert.equal(meta.width, 192);
-  assert.equal(botBadgeUrl(bot), null);
+  assert.equal(botBadgeUrl(bot), APP_BADGE_URL, "a photo falls back to Threebot's own monochrome badge");
+  const embedded = await botIconData(bot);
+  assert.match(embedded.iconData, /^data:image\/webp;base64,/);
+  assert.equal((await sharp(Buffer.from(embedded.badgeData.split(",")[1], "base64")).metadata()).width, 36);
+  const app = await sharp(await appBadgePng()).raw().toBuffer({ resolveWithObject: true });
+  assert.ok([...app.data].every((value, index) => index % 4 === 3 || value === 255), "the app badge is white");
   await assert.rejects(botBadgePng(bot), (error: { status?: number }) => error.status === 404);
 });
 
@@ -51,5 +57,17 @@ test("a symlinked .bot folder cannot lead the icon outside the Bot's folder", as
   const workspaceRoot = await mkdtemp(path.join(tmpdir(), "threebot-icons-"));
   await symlink(outside, path.join(workspaceRoot, ".bot"));
   const bot = { slug: "linked", workspaceRoot, shape: "sphere", color: "teal", avatarImage: `/api/bots/linked/avatar/${hash}.png` };
-  await assert.rejects(botAvatarPng(bot), (error: { status?: number }) => error.status === 404);
+  const icon = await botAvatarPng(bot);
+  const drawn = await botAvatarPng({ ...bot, slug: "drawn", avatarImage: null });
+  assert.ok(icon.equals(drawn), "the outside picture is never read: the Bot's drawn face stands in");
+});
+
+test("a room push shows the Bot that spoke, with its badge and embedded copies", async () => {
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "threebot-icons-"));
+  const speaker = { slug: "alpha", workspaceRoot, shape: "blob", color: "#e8590c" };
+  const identity = await roomIdentity(speaker);
+  assert.equal(identity.icon, botAvatarUrl(speaker));
+  assert.equal(identity.badge, botBadgeUrl(speaker));
+  assert.match(identity.iconData ?? "", /^data:image\/webp;base64,/);
+  assert.deepEqual(await roomIdentity(null), { icon: "/icon-192.png", badge: APP_BADGE_URL }, "only a room push with no speaker keeps the app's");
 });

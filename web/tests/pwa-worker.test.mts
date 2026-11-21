@@ -17,6 +17,9 @@ const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let temporary, app, nested, update, later, sameLazy, origin, server;
 let files, offline = false, failure, edgeTokens = 0;
+// Stand-in bytes for a Bot's avatar or badge PNG, and the small copy a push carries.
+const BOT_PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
+const EMBEDDED = "data:image/webp;base64,UklGRg==";
 const seen = [];
 async function tree(directory) {
   const files = new Map();
@@ -69,6 +72,8 @@ before(async () => {
       }
       response.setHeader("content-type", "text/html"); response.end('<title>Cloudflare Access login</title>'); return;
     }
+    // A Bot's notification images, as the gateway serves them.
+    if (/^\/api\/bots\/[a-z0-9-]+\/(avatar|badge)\.png(\?|$)/.test(request.url)) { response.writeHead(200, { "content-type": "image/png" }); response.end(BOT_PNG); return; }
     const bytes = files?.get(filename);
     response.writeHead(bytes ? 200 : 404);
     response.end(bytes ?? "not found");
@@ -113,6 +118,8 @@ function cacheStorage() {
           }
           return new Response(stored.body.slice(0), { status: stored.status, headers: stored.headers });
         },
+        async keys() { return [...data.values()].map((stored) => stored.request); },
+        async delete(request) { return data.delete(key(request)); },
       };
     },
     async keys() { return [...stores.keys()]; },
@@ -154,7 +161,7 @@ function worker(build, caches = cacheStorage()) {
     addEventListener(name, listener) { listeners.set(name, listener); },
   };
   vm.runInNewContext(build.source, {
-    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout,
+    self, caches, URL, Request, Response, Uint8Array, crypto: webcrypto, setTimeout, AbortSignal, btoa,
     fetch: async (request) => { if (offline) throw new TypeError("Network offline"); return fetch(request); },
   }, { filename: "produced-sw.js" });
   return {
@@ -452,8 +459,9 @@ test("a push shows the Bot's icon, badge and timestamp", async () => {
   assert.equal(notice.title, "Alpha");
   assert.equal(options.body, "Waiting for you");
   assert.equal(options.tag, "waiting:alpha:thread-1");
-  assert.equal(options.icon, "/api/bots/alpha/avatar.png");
-  assert.equal(options.badge, "/api/bots/alpha/badge.png");
+  // Fetched once, then handed over as data, so Android never fetches it at display time.
+  assert.equal(options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+  assert.equal(options.badge, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
   assert.equal(options.timestamp, 1_700_000_000_000);
   assert.equal((options.data as { url?: string }).url, "/?bot=alpha&thread=thread-1");
   assert.equal("renotify" in options, false, "a replacement stays quiet");
@@ -477,7 +485,7 @@ test("resolving the last notice with no window in view leaves a quiet Answered n
   const quiet = runtime.shown.at(-1)!;
   assert.equal(quiet.options.body, "Answered");
   assert.equal(quiet.options.silent, true);
-  assert.equal(quiet.options.icon, "/api/bots/alpha/avatar.png");
+  assert.equal(quiet.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`, "still the Bot's own face");
 });
 
 test("a resolution that arrives while its waiting notice is still loading closes it afterwards", async () => {
@@ -516,6 +524,37 @@ test("resolving the last notice while a window is in view just closes it", async
   await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:main", url: "/", kind: "resolved" });
   assert.deepEqual(runtime.tray, []);
   assert.equal(runtime.shown.length, 1);
+});
+
+test("offline with nothing cached, the push's own small copies show the Bot", async () => {
+  const runtime = worker(app);
+  offline = true;
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", badge: "/api/bots/alpha/badge.png?v=one", iconData: EMBEDDED, badgeData: "data:image/png;base64,iVBORw==", kind: "finished" });
+  offline = false;
+  assert.equal(notice!.options.icon, EMBEDDED);
+  assert.equal(notice!.options.badge, "data:image/png;base64,iVBORw==");
+});
+
+test("once fetched, a Bot's icon shows offline at full size, and a new look replaces the old one", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  offline = true;
+  const cached = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  offline = false;
+  assert.equal(cached!.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+  await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=two", kind: "finished" });
+  const icons = [...runtime.caches.stores.entries()].find(([name]) => name.startsWith("bot-icons-"))![1];
+  assert.deepEqual([...icons.keys()].map((url) => new URL(url).search), ["?v=two"]);
+});
+
+test("a sign-in page instead of the image falls back to the push's own copy, and is not kept", async () => {
+  const runtime = worker(app);
+  failure = { url: "/api/bots/alpha/avatar.png?v=signed-out", kind: "login-html" };
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=signed-out", iconData: EMBEDDED, kind: "finished" });
+  failure = undefined;
+  assert.equal(notice!.options.icon, EMBEDDED);
+  const icons = [...runtime.caches.stores.entries()].find(([name]) => name.startsWith("bot-icons-"))?.[1];
+  assert.equal(icons?.size ?? 0, 0);
 });
 
 test("a push with no icon keeps the app icon and drops malformed extras", async () => {

@@ -7,7 +7,7 @@ import path from "node:path";
 import { generateVAPIDKeys, sendNotification, WebPushError } from "web-push";
 import type { Bot } from "./main-bot.mts";
 import type { T3Client } from "./t3rpc.mts";
-import { botAvatarUrl, botBadgeUrl } from "./bot-icons.mts";
+import { botIdentity } from "./bot-icons.mts";
 
 const MAX_SUBSCRIPTIONS = 20;
 const MAX_ENDPOINT = 2_048;
@@ -40,8 +40,11 @@ export type PushPayload = {
   room?: string;
   /** The Bot's picture or drawn avatar, served by the gateway. */
   icon?: string;
-  /** Android's monochrome status-bar icon; absent for a Bot with a photo. */
+  /** Android's monochrome status-bar icon: the Bot's silhouette, or Threebot's for a photo. */
   badge?: string;
+  /** Small data: copies of icon and badge, shown when the device can't fetch them (offline, signed out). */
+  iconData?: string;
+  badgeData?: string;
   /** When the event happened, for clients that show it. */
   timestamp?: number;
   /** "resolved" closes the notification with this tag instead of showing one (see quietClose). */
@@ -109,6 +112,19 @@ export function usableSubject(value: unknown): string | null {
  * this topic, so it wakes up with one notice instead of a burst. The notification tag is the same
  * identifier; a value that does not fit the 32-character base64url limit is hashed.
  */
+// Push services take about 4 KB of payload; encryption adds about 100 bytes. The small embedded
+// images go first when a message would not fit (the full-size URLs remain).
+const MAX_PAYLOAD = 3_500;
+export function fitPayload(payload: PushPayload): PushPayload {
+  let fitted = payload;
+  for (const field of ["iconData", "badgeData"] as const) {
+    if (Buffer.byteLength(JSON.stringify(fitted)) <= MAX_PAYLOAD) break;
+    const { [field]: _dropped, ...rest } = fitted;
+    fitted = rest;
+  }
+  return fitted;
+}
+
 export function pushTopic(tag: string): string {
   return /^[A-Za-z0-9_-]{1,32}$/.test(tag) ? tag : createHash("sha256").update(tag).digest("base64url").slice(0, 32);
 }
@@ -242,7 +258,8 @@ export function createPushStore({
       return { ok: true, watching: true };
     },
 
-    async send(payload: PushPayload, options?: { endpoint?: string }): Promise<{ sent: number; removed: number; watching: number }> {
+    async send(message: PushPayload, options?: { endpoint?: string }): Promise<{ sent: number; removed: number; watching: number }> {
+      const payload = fitPayload(message);
       const current = await load();
       if (!current.subscriptions.length) return { sent: 0, removed: 0, watching: 0 };
       // The app's own address when nothing is configured: Apple refuses a localhost contact.
@@ -389,7 +406,6 @@ export function createPushNotifier({
       if (value?.role === "assistant" && value.text.trim() && value.at && (!runStarted || value.at >= runStarted)) body = value.text.trim().slice(0, 140);
     }
     const waiting = kind === "waiting";
-    const badge = botBadgeUrl(owner);
     await send({
       title: owner.name,
       body,
@@ -398,8 +414,7 @@ export function createPushNotifier({
         ? `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`
         : `/?bot=${encodeURIComponent(owner.slug)}`,
       bot: owner.slug,
-      icon: botAvatarUrl(owner),
-      ...(badge ? { badge } : {}),
+      ...await botIdentity(owner),
       timestamp: Date.parse(thread.updatedAt ?? "") || Date.now(),
       kind,
     });
@@ -417,7 +432,8 @@ export function createPushNotifier({
       tag: waitingTag(owner.slug, thread.id),
       url: `/?bot=${encodeURIComponent(owner.slug)}&thread=${encodeURIComponent(thread.id)}`,
       bot: owner.slug,
-      icon: botAvatarUrl(owner),
+      // The "Answered" a browser may be left with is still this Bot's.
+      ...await botIdentity(owner),
       kind: "resolved",
     });
     log(`push: resolved ${owner.slug}`);

@@ -645,7 +645,7 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
     tag: target.tag,
     url: target.url,
     icon: `/api/bots/${encodeURIComponent(bot.slug)}/avatar.png`,
-    badge: kind === "waiting" ? botBadge(bot) : null,
+    badge: botBadge(bot),
     timestamp: Date.now(),
   });
   // A request answered while the notice was still being shown (its icon loads first) must not stay.

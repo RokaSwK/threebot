@@ -7,6 +7,8 @@ import { generateVAPIDKeys, WebPushError } from "web-push";
 import { createPushNotifier, createPushStore, pushTopic, usableSubject, type PushPreview } from "./push.mts";
 
 const keys = generateVAPIDKeys();
+/** Pushes render their Bot's embedded icon first, so wait for them rather than for one tick. */
+const until = async (check: () => boolean) => { for (let i = 0; i < 400 && !check(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5)); };
 const subscription = {
   endpoint: "https://push.example/sub/1",
   keys: { p256dh: "p256dh-value-1234567890", auth: "auth-value-1234" },
@@ -102,23 +104,27 @@ test("the notifier ignores the first snapshot and pushes completions and request
   assert.ok(handler);
   handler!({ kind: "snapshot", snapshot: { threads: [{ id: "thread-1", projectId: "project", status: "running", activityRunStatus: "running", pendingRuntimeRequest: null }] } });
   handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "completed", activityRunStatus: "completed", pendingRuntimeRequest: null, updatedAt: "2026-11-10T10:00:00.000Z" } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await until(() => sent.length === 1);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].body, "Finished");
   handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "waiting", activityRunStatus: "waiting", pendingRuntimeRequest: { id: "request-1" } } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await until(() => sent.length === 2);
   assert.equal(sent.length, 2);
   assert.equal(sent[1].body, "Waiting for you");
   assert.equal(sent[0].tag, "alpha");
-  assert.equal(sent[0].icon, "/api/bots/alpha/avatar.png");
-  assert.equal(sent[0].badge, "/api/bots/alpha/badge.png");
+  assert.match(sent[0].icon, /^\/api\/bots\/alpha\/avatar\.png\?v=[\w-]{12}$/);
+  assert.match(sent[0].badge, /^\/api\/bots\/alpha\/badge\.png\?v=[\w-]{12}$/);
+  // The push itself carries small copies, for a device that can't fetch at display time.
+  assert.match(sent[0].iconData, /^data:image\/webp;base64,/);
+  assert.match(sent[0].badgeData, /^data:image\/png;base64,/);
+  assert.ok(Buffer.byteLength(JSON.stringify(sent[0])) < 3_500, "fits a push service's 4 KB limit");
   assert.equal(typeof sent[0].timestamp, "number");
   assert.equal(sent[1].tag, "waiting:alpha:thread-1");
   assert.equal(sent[1].url, "/?bot=alpha&thread=thread-1");
   assert.equal(sent[1].kind, "waiting");
   // Answered (here or on another device): every device closes that conversation's notice.
   handler!({ kind: "thread.updated", thread: { id: "thread-1", projectId: "project", status: "running", activityRunStatus: "running", pendingRuntimeRequest: null } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await until(() => sent.length === 3);
   assert.equal(sent.length, 3);
   assert.equal(sent[2].kind, "resolved");
   assert.equal(sent[2].tag, sent[1].tag, "the same tag, and so the same push topic, as the waiting notice");
@@ -391,15 +397,15 @@ test("a muted Bot's request still resolves, and a reconnect resolves what was an
   handler!({ kind: "snapshot", snapshot: { threads: [side("side-1", false), side("side-2", false)] } });
   handler!({ kind: "thread.updated", thread: side("side-1", true) });
   handler!({ kind: "thread.updated", thread: side("side-2", true) });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await until(() => sent.length === 2);
   assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["waiting", "waiting:alpha:side-1"], ["waiting", "waiting:alpha:side-2"]]);
   bot.notifications = false;
   handler!({ kind: "thread.updated", thread: side("side-1", false) });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await until(() => sent.length === 3);
   assert.deepEqual(sent.at(-1).kind === "resolved" && sent.at(-1).tag, "waiting:alpha:side-1", "muting the Bot later does not strand its notice");
   // The stream drops; side chat 2 is answered meanwhile; the new snapshot says so.
   handler!({ kind: "snapshot", snapshot: { threads: [side("side-2", false)] } });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await until(() => sent.length === 4);
   assert.deepEqual([sent.at(-1).kind, sent.at(-1).tag], ["resolved", "waiting:alpha:side-2"]);
   assert.equal(sent.length, 4);
   notifier.stop();
@@ -446,7 +452,7 @@ test("a removed thread that was waiting resolves its notice", async () => {
   // A project-only enrichment snapshot is not the roster and must not forget the waiting thread.
   handler!({ kind: "snapshot", resolvedRepositoryIdentityRoots: {}, snapshot: { projects: [], threads: [] } });
   handler!({ kind: "thread.removed", threadId: "side-1" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await until(() => sent.length === 1);
   assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["resolved", "waiting:alpha:side-1"]]);
   notifier.stop();
 });

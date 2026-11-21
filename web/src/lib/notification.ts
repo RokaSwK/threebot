@@ -50,7 +50,7 @@ export function notificationTarget(slug: string, kind: "finished" | "waiting", t
     : { tag: slug, url: `/?bot=${bot}` };
 }
 
-/** A photo has no silhouette worth drawing on Android's status bar, so it keeps the app's badge. */
-export function botBadge(bot: { slug: string; avatarImage?: string | null }): string | null {
-  return typeof bot.avatarImage === "string" && bot.avatarImage ? null : `/api/bots/${encodeURIComponent(bot.slug)}/badge.png`;
+/** Android's status-bar badge: the Bot's white silhouette, or Threebot's own for a photo (never Chrome's letter). */
+export function botBadge(bot: { slug: string; avatarImage?: string | null }): string {
+  return typeof bot.avatarImage === "string" && bot.avatarImage ? "/api/push/badge.png" : `/api/bots/${encodeURIComponent(bot.slug)}/badge.png`;
 }

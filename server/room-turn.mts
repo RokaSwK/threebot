@@ -9,7 +9,8 @@ import { validateAttachments, type Room, type RoomAttachment, type RoomMember, t
 
 export type RoomMessage = { text: string; mentions?: string[]; replyTo?: string | null; attachments?: RoomAttachment[] };
 
-export type RoomNotification = { title: string; body: string; url: string; room: string; kind: "waiting" | "finished" };
+/** `speaker`: the Bot that is waiting or spoke last; its avatar is the notification's (a room has none of its own). */
+export type RoomNotification = { title: string; body: string; url: string; room: string; kind: "waiting" | "finished"; speaker?: string };
 
 export type EngineRpc = RoomRpc & { dispatch(command: object): Promise<unknown> };
 
@@ -364,6 +365,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
               url: `/?room=${room.id}`,
               room: room.id,
               kind: "waiting",
+              speaker: member.slug,
             })).catch(() => {});
           },
         });
@@ -445,6 +447,7 @@ export function createRoomEngine({ rooms, rpc, bots, defaults, notify, log = () 
           url: `/?room=${room.id}`,
           room: room.id,
           kind: "finished",
+          speaker: last.slug,
         })).catch(() => {});
       }
     } catch (err) {

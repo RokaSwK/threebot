@@ -162,6 +162,38 @@ self.addEventListener("fetch", (event) => {
   }));
 });
 
+// A Bot's icon and badge, as the notification gets them: the full-size image from this cache, or
+// fetched (same origin, with the session cookie) and kept here, or the small copy the push carries.
+// Always a data: image, so Android never fetches at display time, where it may be offline or signed
+// out and would draw a letter instead. Kept apart from the shell caches, which updates replace.
+const ICONS = "bot-icons-" + scopeKey;
+async function imageData(url: unknown, embedded: unknown): Promise<string | undefined> {
+  const fallback = typeof embedded === "string" && embedded.startsWith("data:image/") ? embedded : undefined;
+  if (typeof url !== "string" || !url.startsWith("/")) return fallback;
+  try {
+    const key = new URL(url, SCOPE).href;
+    const cache = await caches.open(ICONS);
+    let response = await cache.match(key);
+    if (!response) {
+      const fresh = await fetch(key, { credentials: "same-origin", signal: AbortSignal.timeout(4_000) }).catch(() => null);
+      // A sign-in page answers with HTML: only an image is kept.
+      if (fresh?.ok && fresh.headers.get("content-type")?.startsWith("image/")) {
+        const path = new URL(key).pathname;
+        for (const old of await cache.keys()) if (new URL(old.url).pathname === path) await cache.delete(old);
+        await cache.put(key, fresh.clone());
+        response = fresh;
+      }
+    }
+    if (!response) return fallback;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return `data:${response.headers.get("content-type") ?? "image/png"};base64,${btoa(binary)}`;
+  } catch {
+    return fallback;
+  }
+}
+
 // One notice's operations run in arrival order: a "resolved" push must not finish before the
 // "waiting" one it answers is shown (showing waits for the icon to load).
 const noticeTurns = new Map<string, Promise<unknown>>();
@@ -181,12 +213,17 @@ self.addEventListener("push", (event) => {
   let payload: {
     title?: unknown; body?: unknown; tag?: unknown; url?: unknown;
     icon?: unknown; badge?: unknown; timestamp?: unknown; kind?: unknown; show?: unknown;
+    iconData?: unknown; badgeData?: unknown;
   } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
   const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
   const title = typeof payload.title === "string" && payload.title ? payload.title : "Threebot";
-  const icon = typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png";
   const data = { url: typeof payload.url === "string" ? payload.url : "./" };
+  // The Bot's own images (a push from an older gateway has none: the app's icon, as before).
+  const images = async () => {
+    const [icon, badge] = await Promise.all([imageData(payload.icon, payload.iconData), imageData(payload.badge, payload.badgeData)]);
+    return { icon: icon ?? "/icon-192.png", ...(badge ? { badge } : {}) };
+  };
   // A request answered here or elsewhere: close its notice (the gateway sends no Safari device this).
   // Chromium shows its own "updated in the background" notice when a push leaves nothing on screen,
   // and Firefox spends a quota on such a push (the gateway sets `show` there), so in those cases the
@@ -201,7 +238,7 @@ self.addEventListener("push", (event) => {
         const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
         if (windows.some((client) => client.visibilityState === "visible")) return;
       }
-      await self.registration.showNotification(title, { body: typeof payload.body === "string" ? payload.body : "Answered", tag, silent: true, icon, data });
+      await self.registration.showNotification(title, { body: typeof payload.body === "string" ? payload.body : "Answered", tag, silent: true, data, ...await images() });
     })));
     return;
   }
@@ -209,12 +246,10 @@ self.addEventListener("push", (event) => {
   const options: NotificationOptions & { timestamp?: number } = {
     body: typeof payload.body === "string" ? payload.body : "Finished",
     tag,
-    icon,
     data,
   };
-  if (typeof payload.badge === "string" && payload.badge) options.badge = payload.badge;
   if (typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)) options.timestamp = payload.timestamp;
-  event.waitUntil(inTurn(tag, () => self.registration.showNotification(title, options)));
+  event.waitUntil(inTurn(tag, async () => self.registration.showNotification(title, { ...options, ...await images() })));
 });
 
 

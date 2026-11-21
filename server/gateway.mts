@@ -73,7 +73,7 @@ import { applyChatPermissions } from "./chat-permissions.mts";
 import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
 import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
-import { botAvatarPng, botBadgePng } from "./bot-icons.mts";
+import { APP_BADGE_URL, appBadgePng, botAvatarPng, botBadgePng, roomIdentity } from "./bot-icons.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
 type HttpError = Error & { status?: number; code?: string };
@@ -161,11 +161,13 @@ const roomEngine = createRoomEngine({
   defaults: launchDefaults,
   // One push per turn. It carries the room, so the device that has that room open is skipped the
   // same way a device looking at a Bot's conversation is.
-  notify: async (payload) => {
+  notify: async ({ speaker, ...payload }) => {
+    // A room has no avatar of its own: the Bot that is waiting or spoke last is its face here.
+    const bot = speaker ? await getBot(speaker).catch(() => null) : null;
     await pushStore.send({
       ...payload,
       tag: payload.url,
-      icon: "/icon-192.png",
+      ...await roomIdentity(bot),
       timestamp: Date.now(),
     });
   },
@@ -1479,6 +1481,7 @@ const server = http.createServer(async (req, res) => {
       const endpoint = url.searchParams.get("endpoint");
       return send(res, 200, { publicKey: await pushStore.publicKey(), devices: await pushStore.devices(), ...(endpoint ? { registered: await pushStore.has(endpoint) } : {}) }, { "cache-control": "no-store" });
     }
+    if (p === APP_BADGE_URL && req.method === "GET") return await sendBotImage(res, appBadgePng());
     if (p === "/api/push/key" && req.method === "GET") {
       return send(res, 200, { publicKey: await pushStore.publicKey() }, { "cache-control": "no-store" });
     }
