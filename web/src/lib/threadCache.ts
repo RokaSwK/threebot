@@ -235,46 +235,53 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
     if (owner && await store.get(`gone:${owner}`) !== undefined) return false;
     const index = await readIndex(store);
     const now = Date.now();
-    index[id] = { savedAt: now, bytes, ...(owner ? { owner } : {}) };
-    const dropping: string[] = [];
-    const kept: Index = {};
-    for (const kind of new Set(Object.keys(index).map(kindOf))) {
-      const rule = RULES[kind] ?? { keep: 4, bytes: 4 * MB };
-      const rows = Object.entries(index)
-        .filter(([key]) => kindOf(key) === kind)
-        // The record being written counts first, so it never sits outside the budget.
-        .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
-      let count = 0;
-      let total = 0;
-      for (const [key, entry] of rows) {
-        // The record being written always survives: its caller already trimmed it.
-        const overAge = now - entry.savedAt > EXPIRES_MS;
-        const overCount = count >= rule.keep;
-        const overBytes = count > 0 && total + entry.bytes > rule.bytes;
-        if (key !== id && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
-        kept[key] = entry;
-        count++;
-        total += entry.bytes;
+    /** What the store keeps and drops, with or without the incoming record. */
+    const plan = (incoming: boolean) => {
+      const rows0: Index = { ...index, ...(incoming ? { [id]: { savedAt: now, bytes, ...(owner ? { owner } : {}) } } : {}) };
+      const dropping: string[] = [];
+      const kept: Index = {};
+      for (const kind of new Set(Object.keys(rows0).map(kindOf))) {
+        const rule = RULES[kind] ?? { keep: 4, bytes: 4 * MB };
+        const rows = Object.entries(rows0)
+          .filter(([key]) => kindOf(key) === kind)
+          // The record being written counts first, so it never sits outside the budget.
+          .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
+        let count = 0;
+        let total = 0;
+        for (const [key, entry] of rows) {
+          // The record being written always survives: its caller already trimmed it.
+          const overAge = now - entry.savedAt > EXPIRES_MS;
+          const overCount = count >= rule.keep;
+          const overBytes = count > 0 && total + entry.bytes > rule.bytes;
+          if (key !== id && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
+          kept[key] = entry;
+          count++;
+          total += entry.bytes;
+        }
       }
-    }
-    // An evicted conversation or room takes what it owned, so a picture never outlives the copy that showed it.
-    const going = new Set(dropping);
-    for (let grew = true; grew;) {
-      grew = false;
-      for (const [key, entry] of Object.entries(kept)) {
-        if (key !== id && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
+      // An evicted conversation or room takes what it owned, so a picture never outlives the copy that showed it.
+      const going = new Set(dropping);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const [key, entry] of Object.entries(kept)) {
+          if (key !== id && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
+        }
       }
-    }
-    // The owner itself was just evicted (expired, over budget): the record it would have owned is not kept.
+      return { kept, going };
+    };
+    let { kept, going } = plan(true);
+    // The owner itself is being evicted (expired, over budget): the record it would own is not kept,
+    // and it takes no one else's place either.
     const orphan = !!owner && going.has(owner);
-    if (orphan) { going.add(id); delete kept[id]; }
+    if (orphan) ({ kept, going } = plan(false));
     await store.put(INDEX, kept);
     for (const key of going) await store.remove(key);
-    if (orphan) { dropped = [...going]; return false; }
-    await store.put(id, value);
+    if (!orphan) await store.put(id, value);
     // A deletion marker that ages out can no longer stop a save some tab queued long ago: every open
     // tab stops saving instead, and starts again under the new generation on its next launch.
-    if (dropping.some((key) => kindOf(key) === "gone")) await store.put(GENERATION, newGeneration());
+    if ([...going].some((key) => kindOf(key) === "gone")) await store.put(GENERATION, newGeneration());
+    dropped = [...going];
+    if (orphan) return false;
     dropped = [...going];
     return true;
   });

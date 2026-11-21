@@ -381,20 +381,20 @@ export function ToolImage({ entry, threadId, botName }: { entry: Extract<Entry, 
     ).then(setUrl).catch(() => setUrl(null));
   }, [threadId, entry.item.id, entry.index]);
   if (!url) return null;
+  // Signed on every open: the URL behind the thumbnail may have expired, or be this device's copy.
+  const openOriginal = () => {
+    const tab = window.open("", "_blank");
+    assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index })
+      .then((signed) => { if (!signed.startsWith("/t3/")) throw new Error("Invalid asset response"); if (tab) { tab.opener = null; tab.location.href = signed; } })
+      .catch(() => tab?.close());
+  };
   return (
     <CardShell className="max-w-[420px]">
       <CardHeader icon={<Monitor size={14} />} title="Computer" status="Done" />
       {/* The picture may be this device's copy; the original opens from a URL signed now. */}
-      <a href="#" target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner" onClick={(event) => {
-        // Signed on every click: the URL behind the thumbnail may have expired, or be this device's copy.
-        event.preventDefault();
-        const tab = window.open("", "_blank");
-        assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index })
-          .then((signed) => { if (!signed.startsWith("/t3/")) throw new Error("Invalid asset response"); if (tab) { tab.opener = null; tab.location.href = signed; } })
-          .catch(() => tab?.close());
-      }}>
+      <button type="button" aria-label={`Open ${botName}'s screen`} className="block w-full cursor-pointer overflow-hidden rounded-[13px] bg-card-inner p-0" onClick={openOriginal} onAuxClick={(event) => { if (event.button === 1) openOriginal(); }}>
         <img src={url} alt={`${botName}'s screen`} className="w-full" />
-      </a>
+      </button>
     </CardShell>
   );
 }
