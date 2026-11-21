@@ -55,22 +55,25 @@ const RULES: Record<string, { keep: number; bytes: number }> = {
 type Entry = { savedAt: number; bytes: number };
 type Index = Record<string, Entry>;
 
-type Backend = {
+/** One store's operations inside a transaction: everything a write does commits together or not at all. */
+type Store = {
   get(id: string): Promise<unknown>;
   put(id: string, value: unknown): Promise<void>;
-  remove(ids: string[]): Promise<void>;
+  remove(id: string): Promise<void>;
   clear(): Promise<void>;
 };
+type Backend = { transact<T>(mode: IDBTransactionMode, work: (store: Store) => Promise<T>): Promise<T> };
 
 /** Used when the origin has no usable IndexedDB (an insecure origin, a blocked open, a test process). */
 function memoryBackend(): Backend {
   const rows = new Map<string, unknown>();
-  return {
+  const store: Store = {
     get: async (id) => rows.get(id),
     put: async (id, value) => void rows.set(id, value),
-    remove: async (ids) => { for (const id of ids) rows.delete(id); },
-    clear: async () => { rows.clear(); },
+    remove: async (id) => void rows.delete(id),
+    clear: async () => rows.clear(),
   };
+  return { transact: (_mode, work) => work(store) };
 }
 
 function indexedBackend(): Backend {
@@ -82,32 +85,36 @@ function indexedBackend(): Backend {
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error("Another tab holds an older cache"));
   }));
-  const run = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
-    const db = await open();
-    return new Promise<T>((resolve, reject) => {
-      const transaction = db.transaction(STORE, mode);
-      const request = action(transaction.objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-      transaction.onabort = () => reject(transaction.error ?? new Error("Cache write aborted"));
-    });
-  };
   return {
-    get: (id) => run("readonly", (store) => store.get(id)),
-    put: async (id, value) => void (await run("readwrite", (store) => store.put(value, id))),
-    remove: async (ids) => {
-      if (!ids.length) return;
+    async transact(mode, work) {
       const db = await open();
-      return new Promise<void>((resolve, reject) => {
-        const transaction = db.transaction(STORE, "readwrite");
-        const store = transaction.objectStore(STORE);
-        for (const id of ids) store.delete(id);
+      const transaction = db.transaction(STORE, mode);
+      const objects = transaction.objectStore(STORE);
+      const done = new Promise<void>((resolve, reject) => {
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error ?? new Error("Cache write aborted"));
       });
+      // Each request settles inside the transaction's own event, so awaiting it keeps the transaction open.
+      const ask = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const store: Store = {
+        get: (id) => ask(objects.get(id)),
+        put: async (id, value) => void (await ask(objects.put(value, id))),
+        remove: async (id) => void (await ask(objects.delete(id))),
+        clear: async () => void (await ask(objects.clear())),
+      };
+      try {
+        const result = await work(store);
+        await done;
+        return result;
+      } catch (error) {
+        try { transaction.abort(); } catch { /* already finished */ }
+        throw error;
+      }
     },
-    clear: async () => { await run("readwrite", (store) => store.clear()); },
   };
 }
 
@@ -115,14 +122,32 @@ function indexedBackend(): Backend {
 let backend: Backend | null = null;
 
 /**
- * Writes go one at a time: the index is read, trimmed and written whole, so two saves at once would
- * lose one of the entries and leave a record nobody budgets or forgets.
+ * Writes go one at a time within a tab; across tabs, each write is one transaction, so two tabs
+ * cannot lose each other's index entries.
  */
 let writes: Promise<unknown> = Promise.resolve();
 function serial<T>(work: () => Promise<T>): Promise<T> {
   const run = writes.then(work, work);
   writes = run.catch(() => {});
   return run;
+}
+
+/**
+ * Which sign-in this tab saves for. Signing out (in any tab) replaces the stored generation in the
+ * same transaction that erases the store, so a save another tab already queued finds a different
+ * generation and writes nothing.
+ */
+const GENERATION = "generation";
+let generation: Promise<string> | null = null;
+const newGeneration = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+function tabGeneration(): Promise<string> {
+  return (generation ??= storage().transact("readwrite", async (store) => {
+    const stored = await store.get(GENERATION);
+    if (typeof stored === "string") return stored;
+    const fresh = newGeneration();
+    await store.put(GENERATION, fresh);
+    return fresh;
+  }));
 }
 
 /** Signing out stops the cache: a pending timer or a late render must not write back what was just forgotten. */
@@ -142,17 +167,25 @@ function storage(): Backend {
 /** For a test, or to forget everything this device kept. */
 export function resetCacheForTest() {
   backend = null;
+  generation = null;
   stopped = false;
   writes = Promise.resolve();
 }
+
+/** The name other tabs of this mount listen on for a sign-out. */
+export const FORGET_CHANNEL = `${DB_NAME}.forget`;
 
 /**
  * Logging out (or a sign-in as someone else) must not leave a readable transcript behind. The whole
  * store goes, not only what the index names: an interrupted write may have left a record unindexed.
  */
 export async function clearCache(): Promise<void> {
-  await serial(() => storage().clear()).catch(() => {});
+  await serial(() => storage().transact("readwrite", async (store) => {
+    await store.clear();
+    await store.put(GENERATION, newGeneration());
+  })).catch(() => {});
   backend = null;
+  generation = null;
 }
 
 const bytesOf = (value: unknown) => {
@@ -162,7 +195,7 @@ const bytesOf = (value: unknown) => {
 /** `view:<thread>`, `room:<id>`, `rooms`, `boot` or `asset:<key>`: the prefix is the kind that budgets it. */
 const kindOf = (id: string) => id.split(":")[0] ?? id;
 
-async function readIndex(store: Backend): Promise<Index> {
+async function readIndex(store: Store): Promise<Index> {
   const value = await store.get(INDEX);
   if (!value || typeof value !== "object") return {};
   const out: Index = {};
@@ -176,53 +209,58 @@ async function readIndex(store: Backend): Promise<Index> {
 
 /** Stores the record and drops what its kind can no longer keep: expired, over its count, or over its bytes. */
 async function writeRecord(id: string, value: unknown): Promise<void> {
-  const store = storage();
+  const mine = await tabGeneration();
   const bytes = bytesOf(value);
-  const index = await readIndex(store);
-  const now = Date.now();
-  index[id] = { savedAt: now, bytes };
-  const dropping: string[] = [];
-  const kept: Index = {};
-  for (const kind of new Set(Object.keys(index).map(kindOf))) {
-    const rule = RULES[kind] ?? { keep: 4, bytes: 4 * MB };
-    const rows = Object.entries(index)
-      .filter(([key]) => kindOf(key) === kind)
-      // The record being written counts first, so it never sits outside the budget.
-      .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
-    let count = 0;
-    let total = 0;
-    for (const [key, entry] of rows) {
-      // The record being written always survives: its caller already trimmed it.
-      const overAge = now - entry.savedAt > EXPIRES_MS;
-      const overCount = count >= rule.keep;
-      const overBytes = count > 0 && total + entry.bytes > rule.bytes;
-      if (key !== id && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
-      kept[key] = entry;
-      count++;
-      total += entry.bytes;
+  await storage().transact("readwrite", async (store) => {
+    // Signed out since this tab started: what it holds belongs to the last sign-in.
+    if (await store.get(GENERATION) !== mine) return;
+    const index = await readIndex(store);
+    const now = Date.now();
+    index[id] = { savedAt: now, bytes };
+    const dropping: string[] = [];
+    const kept: Index = {};
+    for (const kind of new Set(Object.keys(index).map(kindOf))) {
+      const rule = RULES[kind] ?? { keep: 4, bytes: 4 * MB };
+      const rows = Object.entries(index)
+        .filter(([key]) => kindOf(key) === kind)
+        // The record being written counts first, so it never sits outside the budget.
+        .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
+      let count = 0;
+      let total = 0;
+      for (const [key, entry] of rows) {
+        // The record being written always survives: its caller already trimmed it.
+        const overAge = now - entry.savedAt > EXPIRES_MS;
+        const overCount = count >= rule.keep;
+        const overBytes = count > 0 && total + entry.bytes > rule.bytes;
+        if (key !== id && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
+        kept[key] = entry;
+        count++;
+        total += entry.bytes;
+      }
     }
-  }
-  await store.put(INDEX, kept);
-  if (dropping.length) await store.remove(dropping);
-  await store.put(id, value);
+    await store.put(INDEX, kept);
+    for (const key of dropping) await store.remove(key);
+    await store.put(id, value);
+  });
 }
 
 /** Reads one record of a known shape, ignoring anything this version did not write. */
 export async function readRecord<T>(id: string, usable: (value: unknown) => value is T): Promise<T | null> {
-  const value = await storage().get(id).catch(() => null);
+  // Reading pins this tab to the sign-in whose copy it paints.
+  void tabGeneration().catch(() => {});
+  const value = await storage().transact("readonly", (store) => store.get(id)).catch(() => null);
   return usable(value) ? value : null;
 }
 
 /** Forgets these records now, index first, so a deleted conversation or room is never painted again. */
 export async function forgetRecords(ids: string[]): Promise<void> {
   if (!ids.length) return;
-  await serial(async () => {
-    const store = storage();
+  await serial(() => storage().transact("readwrite", async (store) => {
     const index = await readIndex(store);
     for (const id of ids) delete index[id];
     await store.put(INDEX, index);
-    await store.remove(ids);
-  }).catch(() => {});
+    for (const id of ids) await store.remove(id);
+  })).catch(() => {});
 }
 
 /** Every write is best effort: a refused or full quota must never reach the caller. */

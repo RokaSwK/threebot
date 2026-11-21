@@ -9,7 +9,7 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { clearCache, forgetRecords, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
+import { FORGET_CHANNEL, clearCache, forgetRecords, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -248,10 +248,15 @@ async function confirmLaunch() {
   if (!session) return get().connection === "open" ? undefined : set({ offline: true });
   if (!session.authenticated) return signedOut(session);
   try {
+    const revision = botsRevision;
     const [config, settings, bots, historical] = await initialData();
     if (get().auth !== "ready") return;
-    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
-    keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    set({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings });
+    // A Bot created or deleted while this was in flight is newer than the roster it fetched.
+    if (revision === botsRevision && !pendingBotMutations) {
+      set({ bots: Object.fromEntries(bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
+      keepBoot({ botsRoot: config.botsRoot, executorUrl: config.executorUrl ?? null, settings, bots, historical });
+    }
     // A Bot or room the copy did not know about (added on another device) is still reachable by URL.
     openRoute(bots, historical);
     void loadRooms().catch(() => {});
@@ -395,7 +400,6 @@ export async function forgetDeviceCopy() {
   await clearCache().catch(() => {});
 }
 
-const FORGET_CHANNEL = "threebot.view.forget";
 let forgetListener: BroadcastChannel | null = null;
 function stopSaving() {
   forgetting = true;
@@ -416,10 +420,7 @@ export async function refreshBots() {
   const [bots, historical] = await Promise.all([api.bots(deadline(GATEWAY_PATIENCE_MS)).catch(() => null), api.botIdentities(deadline(GATEWAY_PATIENCE_MS)).catch(() => null)]);
   if (!bots) {
     const session = await api.session().catch(() => null);
-    if (session && !session.authenticated) {
-      // Whatever the sign-in screen, the copy goes; only Access takes over the screen here, as before.
-      if (session.accessLogin) signedOut(session); else void forgetDeviceCopy();
-    }
+    if (session && !session.authenticated) signedOut(session);
     return;
   }
   if (revision !== botsRevision || pendingBotMutations) return;
