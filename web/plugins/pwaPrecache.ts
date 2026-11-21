@@ -9,7 +9,7 @@ const hash = (source: string | Uint8Array) => createHash("sha256").update(source
 const WORKER = fileURLToPath(new URL("../src/sw.ts", import.meta.url));
 const MARKER = "BOT_BUILD_PRECACHE";
 
-/** Embed exact build bytes, installing the core shell and caching lazy chunks on demand. */
+/** Embed exact build bytes in the worker: the core shell it installs, and the lazy chunks it may cache on demand. */
 export function pwaPrecache(): Plugin {
   let config: ResolvedConfig;
   return {
@@ -53,34 +53,30 @@ export function pwaPrecache(): Plugin {
       const manifestSource = JSON.stringify(manifest, null, 2) + "\n";
       files.set("manifest.webmanifest", manifestSource);
       this.emitFile({ type: "asset", fileName: "manifest.webmanifest", source: manifestSource });
-      const coreFiles = new Set<string>(["index.html", "manifest.webmanifest", ...PUBLIC_ASSETS]);
+      // The core shell installs before activation: the page, what it loads, everything those import
+      // statically, and the woff2 fonts their CSS names (math in a saved conversation paints offline).
+      // Dynamic imports (diagrams, PDF, highlighting) stay optional: the worker caches them on first use.
       const initialAssets = Array.from(
         Buffer.from(files.get("index.html") ?? "").toString().matchAll(/(?:src|href)="([^"]*\/assets\/[^"?]+)"/g),
         (match) => match[1],
       );
-      for (const assetUrl of initialAssets) {
-        const decoded = decodeURIComponent(assetUrl);
-        const rel = decoded.startsWith(base) ? decoded.slice(base.length) : decoded.replace(/^\.?\//, "");
-        coreFiles.add(rel);
-      }
-      const queue = [...coreFiles];
+      const relative = (url: string) => {
+        const decoded = decodeURIComponent(url);
+        return decoded.startsWith(base) ? decoded.slice(base.length) : decoded.replace(/^\.?\//, "");
+      };
+      const coreFiles = new Set<string>(["index.html", "manifest.webmanifest", ...PUBLIC_ASSETS]);
+      const queue = initialAssets.map(relative);
       while (queue.length > 0) {
         const fileName = queue.pop()!;
+        if (coreFiles.has(fileName)) continue;
+        coreFiles.add(fileName);
         const item = bundle[fileName];
-        if (!item || item.type !== "chunk") continue;
-        for (const imp of item.imports ?? []) {
-          if (!coreFiles.has(imp)) {
-            coreFiles.add(imp);
-            queue.push(imp);
-          }
-        }
-        const cssList = (item as { viteMetadata?: { importedCss?: Set<string> } }).viteMetadata?.importedCss;
-        if (cssList) {
-          for (const css of cssList) {
-            if (!coreFiles.has(css)) {
-              coreFiles.add(css);
-              queue.push(css);
-            }
+        if (item?.type === "chunk") {
+          queue.push(...item.imports, ...(item.viteMetadata?.importedCss ?? []));
+        } else if (fileName.endsWith(".css")) {
+          const css = Buffer.from(files.get(fileName) ?? "").toString();
+          for (const [, url] of css.matchAll(/url\(\s*["']?([^"')]+\.woff2)["']?\s*\)/g)) {
+            if (!url.startsWith("data:")) queue.push(relative(url));
           }
         }
       }

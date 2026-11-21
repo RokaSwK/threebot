@@ -1,8 +1,9 @@
 // The PWA service worker. plugins/pwaPrecache.ts compiles it to /sw.js and embeds the exact
-// build revisions in place of BOT_BUILD_PRECACHE, so it never installs a partial shell.
+// build revisions in place of BOT_BUILD_PRECACHE, so it never installs a partial core shell. Lazy
+// chunks it names (diagrams, PDF, highlighting) are cached on first use, checked against the same hashes.
 // API, T3, login and Cloudflare traffic stay online.
 
-/** A file the worker precaches: its bytes' SHA-256, or for index.html the asset URLs it must load. */
+/** A file of this build: its bytes' SHA-256, or for index.html the asset URLs it must load. `optional` waits for first use. */
 type PrecacheEntry = { url: string; sha256: string; markers?: string[]; optional?: boolean };
 type Build = { revision: string; base: string; entries: PrecacheEntry[] };
 
