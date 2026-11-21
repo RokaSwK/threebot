@@ -13,9 +13,9 @@
     "tag": "alpha",
     "icon": "/api/bots/alpha/avatar.png?v=SBmY0cAubFUd",
     "badge": "/api/bots/alpha/badge.png?v=SBmY0cAubFUd",
-    "iconData": "data:image/webp;base64,UklGRk4",
+    "iconData": "data:image/webp;base64,UklGRjY",
     "badgeData": "data:image/png;base64,iVBORw0K",
-    "bytes": 2163
+    "bytes": 2131
   }
 ]
 
@@ -35,9 +35,9 @@
     "tag": "gamma",
     "icon": "/api/bots/gamma/avatar.png?v=N1fH-1wK7xyE",
     "badge": "/api/bots/gamma/badge.png?v=N1fH-1wK7xyE",
-    "iconData": "data:image/webp;base64,UklGRg4",
+    "iconData": "data:image/webp;base64,UklGRv4",
     "badgeData": "data:image/png;base64,iVBORw0K",
-    "bytes": 1643
+    "bytes": 1619
   }
 ]
 
