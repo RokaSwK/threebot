@@ -315,7 +315,11 @@ test('Library uses a fixed tab order, real transcript links, Image/Video thumbna
   useApp.setState({ threadData: { main: { loaded: true, items: { message: message('[Documentation](https://example.com/docs) https://example.com/docs javascript:alert(1)') }, runs: {}, requests: {} } } });
   await mount(h(Library, { bot }));
   assert.deepEqual([...document.querySelectorAll('[role=tab]')].map(e => e.textContent), ['All', 'Pages', 'Media', 'Links', 'Files']);
+  assert.equal(document.querySelector('[role=tab][aria-selected="true"]')?.getAttribute('tabindex'), '0');
+  assert.equal(document.querySelectorAll('[role=tab][aria-selected="false"][tabindex="-1"]').length, 4);
   assert.equal(document.querySelectorAll('.library-row').length, 5);
+  assert.ok(document.querySelector('.library-list:not(.px-4)'), 'library-list leaves padding to rows so hover spans edge-to-edge');
+  assert.ok(document.querySelector('.library-row.px-4.hover\\:bg-hover'), 'library-row carries horizontal padding and hover highlight');
   await click(button('Media'));
   assert.equal(document.querySelectorAll('.library-row').length, 2);
   assert.match(container.textContent, /Image/); assert.match(container.textContent, /Video/);
@@ -332,6 +336,33 @@ test('Library uses a fixed tab order, real transcript links, Image/Video thumbna
   assert.match(links[0].textContent, /example.com/);
   await act(async () => { useApp.setState({ threadData: { main: { loaded: true, items: {}, runs: {}, requests: {} } } }); await flush(); });
   assert.equal(document.querySelectorAll('.library-row').length, 0, 'no invented links when the transcript has none');
+});
+
+test('Library filters move with arrow keys, Home and End as one tab stop', async () => {
+  rpc = async () => ({ entries: [], truncated: false });
+  useApp.setState({ threadData: { main: { loaded: true, items: {}, runs: {}, requests: {} } } });
+  await mount(h(Library, { bot }));
+  const key = async (name) => { await act(async () => { document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })); await flush(); }); };
+  const selected = () => document.querySelector('[role=tab][aria-selected="true"]');
+  button('All').focus();
+  await key('ArrowRight');
+  assert.equal(selected().textContent, 'Pages');
+  assert.equal(document.activeElement, selected());
+  assert.equal(selected().getAttribute('tabindex'), '0');
+  await key('End');
+  assert.equal(selected().textContent, 'Files');
+  await key('ArrowRight');
+  assert.equal(selected().textContent, 'All', 'ArrowRight wraps to the first filter');
+  await key('ArrowLeft');
+  assert.equal(selected().textContent, 'Files', 'ArrowLeft wraps to the last filter');
+  await key('Home');
+  assert.equal(selected().textContent, 'All');
+  assert.equal(document.activeElement, selected());
+  assert.equal(document.querySelectorAll('[role=tab][tabindex="0"]').length, 1);
+  const panel = document.querySelector('[role=tabpanel]');
+  assert.equal(selected().getAttribute('aria-controls'), panel.id);
+  assert.equal(panel.getAttribute('aria-labelledby'), selected().id);
+  assert.equal(panel.getAttribute('tabindex'), '0', 'an empty panel is still reachable by Tab');
 });
 
 

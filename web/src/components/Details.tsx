@@ -90,7 +90,7 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   return (
     <aside className={clsx("bot-details flex h-full shrink-0 flex-col border-l border-line bg-details", (showRoutines || openRoutine) && "routine-page")} style={{ width }} aria-label="Conversation details">
       <div className="details-header flex h-[52px] shrink-0 items-center justify-end px-3">
-        <IconButton onClick={() => { if (openRoutine) { setRoutine(null); return; } if (tab !== "details" || showRoutines) { useApp.setState({ detailsTab: "details" }); setShowRoutines(false); } else setDetailsOpen(false); }} title="Back" className="details-back mr-auto hidden"><ChevronLeft size={20} /></IconButton>
+        <IconButton onClick={() => { if (openRoutine) { setRoutine(null); return; } if (tab !== "details" || showRoutines) { useApp.setState({ detailsTab: "details" }); setShowRoutines(false); } else setDetailsOpen(false); }} title="Back" aria-label="Back" className="details-back mr-auto hidden"><ChevronLeft size={20} /></IconButton>
         <span className="details-page-title hidden flex-1 text-center text-[17px] font-medium">{openRoutine ? "Routine" : tab === "library" ? "Library" : tab === "computer" ? "Computer" : tab === "memory" ? "Memory" : tab === "instructions" ? "Instructions" : showRoutines ? "Routines" : ""}</span>
         <IconButton onClick={() => setDetailsOpen(false)} title="Hide details" className="details-close"><ChevronsRight size={16} /></IconButton>
       </div>

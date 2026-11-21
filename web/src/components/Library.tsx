@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import { FileText, Globe, Image, Video, PanelsTopLeft, Library as LibraryIcon } from "lucide-react";
 import clsx from "clsx";
 import { useApp, watchThread } from "../store";
@@ -10,12 +10,15 @@ import { workspaceAssetUrl } from "../lib/workspaceAssets";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
 import type { Bot } from "../lib/types";
 
+const LIBRARY_FILTERS = ["All", "Pages", "Media", "Links", "Files"];
+
 export function Library({ bot }: { bot: Bot }) {
   const [filter, setFilter] = useState("All");
   const [files, setFiles] = useState<LibraryEntry[] | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [opened, setOpened] = useState<Exclude<LibraryEntry, { kind: "link" }> | null>(null);
   const [error, setError] = useState(false);
+  const ids = useId();
   const data = useApp((s) => bot.mainThreadId ? s.threadData[bot.mainThreadId] : undefined);
   useEffect(() => { try { workspaceClient(bot.mainThreadId); return bot.mainThreadId ? watchThread(bot.mainThreadId, false) : undefined; } catch { return undefined; } }, [bot.mainThreadId]);
   useEffect(() => {
@@ -32,21 +35,32 @@ export function Library({ bot }: { bot: Bot }) {
   const items = useMemo(() => conversationLibrary(Object.values(data?.items ?? {}), { workspaceRoot: bot.workspaceRoot, threadId: bot.mainThreadId, libraryDir: botLibraryDir(bot) }), [data?.items, bot.workspaceRoot, bot.mainThreadId, bot.adopted]);
   const source = mergeLibraryEntries(items, files ?? []);
   const visible = filterLibraryEntries(source, filter);
+  // A tablist is one tab stop: arrow keys, Home and End move between the filters (as in Details).
+  const onFilterKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = LIBRARY_FILTERS.length - 1;
+    const next = event.key === "ArrowRight" ? (index === last ? 0 : index + 1) : event.key === "ArrowLeft" ? (index === 0 ? last : index - 1) : event.key === "Home" ? 0 : event.key === "End" ? last : null;
+    if (next === null) return;
+    event.preventDefault();
+    setFilter(LIBRARY_FILTERS[next]);
+    (event.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+  };
   return <div className="library-view">
-    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{["All", "Pages", "Media", "Links", "Files"].map((name) => <button key={name} role="tab" aria-selected={filter === name} onClick={() => setFilter(name)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
+    <div className="library-filters mb-5 flex gap-2" role="tablist" aria-label="Library filters">{LIBRARY_FILTERS.map((name, index) => <button key={name} id={`${ids}-tab-${name}`} type="button" role="tab" aria-selected={filter === name} aria-controls={`${ids}-panel`} tabIndex={filter === name ? 0 : -1} onClick={() => setFilter(name)} onKeyDown={(event) => onFilterKeyDown(event, index)} className={clsx("shrink-0 rounded-full px-3 py-2 text-[14px]", filter === name ? "bg-pill text-pill-fg" : "bg-active text-fg")}>{name}</button>)}</div>
+    <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-tab-${filter}`} tabIndex={visible.length ? undefined : 0}>
     {libraryGroups(visible).map(group => <section key={group.label} className="library-time-group">
       {group.label && <h3 className="mb-2 px-4 text-[14px] font-normal text-faint">{group.label}</h3>}
-      <div className="library-list overflow-hidden rounded-[20px] bg-card px-4">
+      <div className="library-list overflow-hidden rounded-[20px] bg-card">
         {group.entries.map((item) => {
           const age = libraryAge(item.at);
           const content = <><span className="grid size-6 shrink-0 place-items-center text-muted">{isLibraryPage(item) ? <PanelsTopLeft size={20} /> : item.kind === "link" ? <Globe size={20} /> : item.kind === "media" ? <LibraryThumbnail item={item} threadId={bot.mainThreadId} /> : <FileText size={20} />}</span><span className="min-w-0 flex-1"><span className="block truncate text-[14px]">{item.title}</span><span className="mt-1 block truncate text-[12px] text-muted">{isLibraryPage(item) ? <><span>Canvas</span>{" · "}<span>Private</span></> : item.detail === "Workspace file" ? "File" : item.detail}{item.kind !== "link" && age && ` · ${age}`}</span></span></>;
-          const row = "library-row flex w-full items-center gap-3 border-b border-line py-4 text-left last:border-0 hover:bg-hover";
+          const row = "library-row flex w-full items-center gap-3 border-b border-line px-4 py-4 text-left transition-colors last:border-0 hover:bg-hover";
           return item.kind === "link" ? <a key={item.id} className={row} href={item.href} target="_blank" rel="noreferrer">{content}</a> : <button key={item.id} className={row} onClick={() => setOpened(item)}>{content}</button>;
         })}
       </div>
     </section>)}
     {files === null ? <div className="py-6 text-center text-[13px] text-muted">Loading…</div> : !visible.length ? <div className="rounded-2xl bg-card px-5 py-10 text-center text-[14px] text-muted"><LibraryIcon size={26} className="mx-auto mb-3" />{filter === "All" ? `Files and Pages shared with ${bot.name} appear here.` : `No ${filter.toLowerCase()} yet.`}</div> : null}
     {error && <p role="status" className="mt-3 text-[13px] text-muted">Couldn't load workspace files. Conversation links and attachments are still available. <button className="underline" onClick={() => setAttempt((value) => value + 1)}>Retry</button></p>}
+    </div>
     {opened && <WorkspaceResourceViewer scopeThreadId={bot.mainThreadId} resource={opened.resource} title={opened.title} fileKind={opened.kind === "media" ? opened.detail === "Video" ? "video" : "image" : undefined} onClose={() => setOpened(null)} />}
   </div>;
 }
