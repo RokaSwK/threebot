@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, Download, ExternalLink, X } from "lucide-react";
 import { workspaceAssetUrl } from "../lib/workspaceAssets";
+import { assetKey, localAssetUrl, promptly } from "../lib/assetCopies";
 import type { LibraryResource } from "../lib/workspaceLinks";
 import { workspaceClient } from "../lib/workspaceTransport";
 import "./ImageViewer.css";
@@ -116,7 +117,11 @@ export function ImageViewer({ images, initialIndex, onClose, scopeThreadId = nul
     if (!image.resource) { setState(image.src ? { kind: "ready", url: image.src } : { kind: "error" }); return; }
     let live = true;
     setState({ kind: "loading" });
-    signedUrl(image.resource, scopeThreadId).then((url) => { if (live) setState({ kind: "ready", url }); }).catch(() => { if (live) setState({ kind: "error" }); });
+    const resource = image.resource;
+    promptly(() => signedUrl(resource, scopeThreadId))
+      // Offline, the picture this device kept is drawn instead; opening or downloading the original still signs.
+      .catch(async (error) => { const key = assetKey(resource as unknown as Record<string, unknown>, scopeThreadId ?? undefined); const copy = key ? await localAssetUrl(key) : null; if (copy) return copy; throw error; })
+      .then((url) => { if (live) setState({ kind: "ready", url }); }).catch(() => { if (live) setState({ kind: "error" }); });
     return () => { live = false; };
   }, [resourceKey, image.src, attempt, scopeThreadId]);
 
@@ -264,7 +269,15 @@ export function ImageViewer({ images, initialIndex, onClose, scopeThreadId = nul
         {state.kind === "loading" && <p role="status" className="image-viewer-note">Loading image…</p>}
         {state.kind === "error" && <div role="alert" className="image-viewer-note"><p>Couldn't open this image. It may be unavailable or access may have expired.</p><button type="button" className="image-viewer-retry" onClick={() => setAttempt((value) => value + 1)}>Retry</button></div>}
         {state.kind === "ready" && <img ref={picture} key={state.url} src={state.url} alt={image.alt} draggable={false} className="image-viewer-image" data-gesturing={gesturing ? "" : undefined}
-          style={{ transform: `translate3d(${view.x + swipe}px, ${view.y}px, 0) scale(${view.scale})` }} onError={() => setState({ kind: "error" })} />}
+          style={{ transform: `translate3d(${view.x + swipe}px, ${view.y}px, 0) scale(${view.scale})` }} onError={() => {
+            // A signed picture that will not load (offline, expired) is drawn from this device's copy once.
+            const key = image.resource && state.url.startsWith("/t3/") ? assetKey(image.resource as unknown as Record<string, unknown>, scopeThreadId ?? undefined) : null;
+            const failed = state.url;
+            const stillShowing = (current: { kind: string; url?: string }) => current.kind === "ready" && current.url === failed;
+            if (!key) return setState((current) => stillShowing(current) ? { kind: "error" } : current);
+            // Applied only if this image is still the one on screen: the user may have moved on meanwhile.
+            void localAssetUrl(key).then((copy) => setState((current) => stillShowing(current) ? (copy ? { kind: "ready", url: copy } : { kind: "error" }) : current));
+          }} />}
         {many && <>
           <button type="button" className="image-viewer-button image-viewer-nav" data-side="prev" onClick={() => go(-1)} aria-label="Previous image" title="Previous image"><ChevronLeft size={22} aria-hidden="true" /></button>
           <button type="button" className="image-viewer-button image-viewer-nav" data-side="next" onClick={() => go(1)} aria-label="Next image" title="Next image"><ChevronRight size={22} aria-hidden="true" /></button>

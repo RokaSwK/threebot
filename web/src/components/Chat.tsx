@@ -455,7 +455,8 @@ function MessageLink({ href, children }: { href?: string; children?: React.React
 
 
 function AttachmentList({ attachments, align, onAsk }: { attachments: unknown[]; align?: "start" | "end"; onAsk?: (fileName: string, text: string) => void }) {
-  return <ChatAttachmentList attachments={attachments} align={align} onAsk={onAsk} />;
+  const threadId = useContext(WorkspaceFileContext)?.threadId;
+  return <ChatAttachmentList attachments={attachments} align={align} onAsk={onAsk} owner={threadId ? `view:${threadId}` : undefined} />;
 }
 
 /** What the agent is doing right now, shown under its name. Quiet states show nothing. */

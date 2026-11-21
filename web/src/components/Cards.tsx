@@ -8,6 +8,7 @@ import { sameTaskBot } from "../lib/threadFamily";
 import { Pill, Spinner } from "./ui";
 import { answerQuestion, answerSecret, assetUrl, dismissQuestion, openDialog, respondRequest, selectThread, useApp } from "../store";
 import { timeAgo } from "../lib/projects";
+import { assetKey, assetSource } from "../lib/assetCopies";
 import type { Entry } from "../lib/transcript";
 import type { Bot } from "../lib/types";
 import { approvalDecision, approvalOptions, questionAnswers, requestQuestions, requestStatus, secretLink, secretStatus, type ApprovalDecision, type QuestionAnswers } from "../lib/runtimeRequests";
@@ -373,15 +374,27 @@ export function FileCard({ entry, bot, onOpen }: { entry: Extract<Entry, { kind:
 export function ToolImage({ entry, threadId, botName }: { entry: Extract<Entry, { kind: "image" }>; threadId: string; botName: string }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
-    assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }).then(setUrl).catch(() => setUrl(null));
+    assetSource(
+      () => assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }),
+      assetKey({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index }),
+      { owner: `view:${threadId}` },
+    ).then(setUrl).catch(() => setUrl(null));
   }, [threadId, entry.item.id, entry.index]);
   if (!url) return null;
+  // Signed on every open: the URL behind the thumbnail may have expired, or be this device's copy.
+  const openOriginal = () => {
+    const tab = window.open("", "_blank");
+    assetUrl({ _tag: "tool-output-image", threadId, itemId: entry.item.id, index: entry.index })
+      .then((signed) => { if (!signed.startsWith("/t3/")) throw new Error("Invalid asset response"); if (tab) { tab.opener = null; tab.location.href = signed; } })
+      .catch(() => tab?.close());
+  };
   return (
     <CardShell className="max-w-[420px]">
       <CardHeader icon={<Monitor size={14} />} title="Computer" status="Done" />
-      <a href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-[13px] bg-card-inner">
+      {/* The picture may be this device's copy; the original opens from a URL signed now. */}
+      <button type="button" aria-label={`Open ${botName}'s screen`} className="block w-full cursor-pointer overflow-hidden rounded-[13px] bg-card-inner p-0" onClick={openOriginal} onAuxClick={(event) => { if (event.button === 1) openOriginal(); }}>
         <img src={url} alt={`${botName}'s screen`} className="w-full" />
-      </a>
+      </button>
     </CardShell>
   );
 }

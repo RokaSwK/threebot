@@ -70,7 +70,8 @@ test("chat images are labelled thumbnail buttons; text and links around them are
   assert.equal(chart.tagName, "BUTTON");
   assert.equal(chart.type, "button");
   assert.ok(chart.classList.contains("chat-inline-image"));
-  assert.equal(chart.querySelector("img").getAttribute("src"), "/t3/assets/signed-2");
+  // Its own signature: the attachment beside it looks for a kept copy first, so either may sign first.
+  assert.match(chart.querySelector("img").getAttribute("src"), /^\/t3\/assets\/signed-[12]$/);
   assert.equal(chart.querySelector("img").alt, "Weekly chart");
   assert.equal(button("Open image: Remote picture").querySelector("img").getAttribute("src"), "https://example.com/remote.png");
   assert.equal(host.querySelector("p").textContent, " and ");

@@ -9,7 +9,8 @@ import { columnWidth, type Column } from "./lib/layout";
 import { createRoom as createRoomApi, deleteRoom as deleteRoomApi, fetchRoom, fetchRooms, resetRoom as resetRoomApi, sendRoomMessage as sendRoomMessageApi, stopRoom as stopRoomApi, updateRoom as updateRoomApi, type CreateRoomInput, type RoomSummary, type RoomView, type RoomTurn, type UpdateRoomInput } from "./lib/rooms";
 import { clearRoomDraft } from "./lib/roomDrafts";
 import { agentStatus, isProjectEnrichment } from "./lib/threadFamily";
-import { FORGET_CHANNEL, clearCache, forgetRecords, readBoot, readView, stopCacheWrites, writeBoot, writeView, type CachedBoot } from "./lib/threadCache";
+import { FORGET_CHANNEL, ROOM_VIEW_BYTES, clearCache, deletedRecords, forgetRecords, forgetRoom, readBoot, readRoom, readRooms, readView, stopCacheWrites, writeBoot, writeRoom, writeRooms, writeView, type CachedBoot } from "./lib/threadCache";
+import { resetAssetCopies, revokeAssetHandles } from "./lib/assetCopies";
 import { canStartSideChat, isSideChat, sideChatTitle } from "./lib/sideChats";
 import { DRAWING_JOB_TITLE, DRAWING_OPTIONS, drawingModel, drawingsOf, drawingPending, drawingPrompt, drawingResult, drawingTitle, fixPrompt, isDrawingJob, type DrawingOption } from "./lib/avatarDrawing";
 import type { Bot, DetailsTab, Machine, ModelSelection, ProjectShell, Provider, ProviderModelPreferences, Run, RuntimeRequest, ScheduledTask, Settings, SnoozePreset, RuntimeFeatures, Subagent, ThreadMeta, ThreadPreview, ThreadShell, TurnItem } from "./lib/types";
@@ -60,6 +61,12 @@ type State = {
   connection: "connecting" | "open" | "closed";
   /** This page opened from what the device kept, or lost a socket it had: what is on screen is the last copy. */
   offline: boolean;
+  /** The open room is the copy this device kept; its poll has not answered yet. */
+  roomStale: boolean;
+  /** This device has no copy of the open room: what is missing is on the server, not on its way. */
+  roomMissing: boolean;
+  /** The gateway says the open room is gone (deleted on another device); its copy must not come back. */
+  roomGone: boolean;
   /** One short line for the live region: only state changes say anything, never the first paint. */
   announcement: string;
   botsRoot: string;
@@ -127,6 +134,9 @@ export const useApp = create<State>(() => ({
   auth: "unknown",
   connection: "closed",
   offline: false,
+  roomStale: false,
+  roomMissing: false,
+  roomGone: false,
   announcement: "",
   botsRoot: "",
   executorUrl: null,
@@ -268,7 +278,11 @@ async function confirmLaunch() {
   }
 }
 
-/** Where the URL points: a Bot, a thread on a linked machine, the Projects page, or a room. */
+/**
+ * Where the URL points: a Bot, a thread on a linked machine, the Projects page, or a room.
+ * The URL's room is opened once per launch: asking the gateway again must not close what is on screen.
+ */
+let routeRoomOpened = false;
 function openRoute(bots: Bot[], historical: Bot[]) {
   const route = new URLSearchParams(location.search);
   const routeRoom = /^[A-Za-z0-9_-]{1,64}$/.test(route.get("room")?.trim() ?? "") ? route.get("room")!.trim() : null;
@@ -276,7 +290,10 @@ function openRoute(bots: Bot[], historical: Bot[]) {
   if (!routeBot && route.get("environment") && route.get("thread")) set({ selected: bots.find((bot) => bot.slug === get().selected)?.slug ?? bots.find((bot) => bot.primary)?.slug ?? bots[0]?.slug ?? null, selectedThreadId: threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) });
   if (route.get("page") === "projects" || route.get("item")) set({ page: "projects", projectItemId: /^[a-z0-9]{4,24}$/.test(route.get("item") ?? "") ? route.get("item") : null });
   if (routeBot) set({ selected: bots.includes(routeBot) ? routeBot.slug : `archived:${routeBot.mainThreadId}`, selectedThreadId: route.get("thread") && route.get("environment") ? threadKey({ environmentId: route.get("environment")!, threadId: route.get("thread")! }) : route.get("thread"), exchangeBotSlug: bots.some((b) => b.slug === route.get("exchange")) ? route.get("exchange") : null });
-  if (routeRoom) selectRoom(routeRoom);
+  if (routeRoom && !routeRoomOpened) {
+    routeRoomOpened = true;
+    selectRoom(routeRoom);
+  }
 }
 
 /**
@@ -288,6 +305,7 @@ function openFromCopy(boot: CachedBoot) {
   set({ botsRoot: boot.botsRoot, executorUrl: boot.executorUrl, settings: boot.settings, bots: Object.fromEntries(boot.bots.map((b) => [b.slug, b])), historicalBots: Object.fromEntries(boot.historical.map((b) => [`archived:${b.mainThreadId}`, b])) });
   // The URL still points where the user was: a room opens from its copy, a thread from its view.
   openRoute(boot.bots, boot.historical);
+  void hydrateRooms();
   void loadRooms().catch(() => {});
   startRuntime();
   t3.connect();
@@ -377,6 +395,7 @@ function startRuntime() {
 export function resetBootForTest() {
   booted = false;
   bootRequest = null;
+  routeRoomOpened = false;
   forgetting = false;
 }
 
@@ -406,6 +425,7 @@ function stopSaving() {
   for (const timer of cacheTimers.values()) clearTimeout(timer);
   cacheTimers.clear();
   stopCacheWrites();
+  resetAssetCopies();
 }
 
 export async function loadVault() {
@@ -630,11 +650,22 @@ const snapshotGenerations = new Map<string, number>();
 
 /** The newest stream opened per thread; a replaced stream's late frames are ignored. */
 const streamGenerations = new Map<string, number>();
+/** Threads a room reads in full. Their copy keeps less: the room shows the recent turns. */
+const roomThreads = new Set<string>();
+/** Which room a member conversation belongs to, so the room's deletion takes its copy (former members too). */
+const roomOfThread = new Map<string, string>();
+function noteRoomMembers(room: RoomView) {
+  for (const member of [...(room.members ?? []), ...(room.formerMembers ?? [])]) if (typeof member.threadId === "string" && member.threadId) roomOfThread.set(member.threadId, room.id);
+}
+/** Rooms deleted while this page was open: a list fetched before the deletion must not name them. */
+const deletedRooms = new Set<string>();
+
 /** bounded: open with recent rows only. Rooms read whole member histories, so they pass false. */
 function openThreadStream(threadId: string, bounded = true): StreamHandle {
   const target = threadTarget(threadId);
   const stream = (streamGenerations.get(threadId) ?? 0) + 1;
   streamGenerations.set(threadId, stream);
+  if (bounded) roomThreads.delete(threadId); else roomThreads.add(threadId);
   if (target.environmentId) familyThreadIds.add(threadId);
   // acceptBoundedSnapshot: a long thread opens with its recent rows only (older T3 ignores it and sends everything).
   // acceptCompactTurnItems: the rows a chat shows lead the full list, so T3 leaves their items out of turnItems
@@ -702,7 +733,8 @@ export function forgetThreadCopy(threadIds: string[]) {
     clearTimeout(cacheTimers.get(threadId));
     cacheTimers.delete(threadId);
   }
-  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`), { deleted: true });
+  // Its kept pictures go too, and the handles already drawn from them stop working.
+  void forgetRecords(threadIds.map((threadId) => `view:${threadId}`), { deleted: true }).then(revokeAssetHandles);
   set((s) => {
     const threadData = { ...s.threadData };
     for (const threadId of threadIds) if (threadData[threadId]?.stale) delete threadData[threadId];
@@ -735,7 +767,7 @@ async function saveThread(threadId: string) {
     subagents: Object.values(data.subagents ?? {}),
     historyCursor: data.historyCursor ?? null,
     hasMoreHistory: data.hasMoreHistory === true,
-  });
+  }, roomThreads.has(threadId) ? ROOM_VIEW_BYTES : undefined, roomOfThread.has(threadId) ? `room:${roomOfThread.get(threadId)}` : undefined);
 }
 
 function flushCache() {
@@ -917,7 +949,7 @@ export function runtimeMode(s = get()) {
 // ---------- actions ----------
 export function select(slug: string | null) {
   stopRoomPoll();
-  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null, selectedRoom: null, roomView: null, roomError: null });
+  set({ selected: slug, selectedThreadId: null, exchangeBotSlug: null, page: null, projectItemId: null, selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null });
   if (slug) localStorage.setItem("bot.selected", slug);
   const bot = slug ? get().bots[slug] : null;
   if (bot?.mainThreadId) t3.dispatch({ type: "thread.visit", threadId: bot.mainThreadId, visitedAt: new Date().toISOString() }).catch(() => {});
@@ -940,10 +972,32 @@ export function stopRoomPoll() {
 const GATEWAY_PATIENCE_MS = 8_000;
 const deadline = (ms: number) => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(ms) : undefined);
 
+/**
+ * The sidebar's room list: what this device kept answers first, the gateway refreshes behind it.
+ * A phone that cannot reach the network does not hold the list until a request times out.
+ */
 export async function loadRooms() {
-  const list = await fetchRooms();
+  await hydrateRooms();
+  const fetched = await fetchRooms(deadline(GATEWAY_PATIENCE_MS)).catch(() => null);
+  if (!fetched) return Object.values(get().rooms);
+  // A list fetched before a room was deleted (in this tab or another) must not bring it back.
+  const tombstoned = await deletedRecords(fetched.map((room) => `room:${room.id}`));
+  const list = fetched.filter((room) => !deletedRooms.has(room.id) && !tombstoned.has(`room:${room.id}`));
   set({ rooms: Object.fromEntries(list.map((room) => [room.id, room])) });
+  void writeRooms(list);
   return list;
+}
+
+/** Paints the kept list once, before any request: a cold start with no network still names the rooms. */
+async function hydrateRooms() {
+  if (Object.keys(get().rooms).length) return;
+  const saved = await readRooms().catch(() => null);
+  if (!saved || Object.keys(get().rooms).length) return;
+  // Another tab may have deleted a room after this list was saved.
+  const gone = await deletedRecords(saved.map((room) => `room:${room.id}`));
+  const kept = saved.filter((room) => !gone.has(`room:${room.id}`) && !deletedRooms.has(room.id));
+  if (Object.keys(get().rooms).length) return;
+  set({ rooms: Object.fromEntries(kept.map((room) => [room.id, room])) });
 }
 
 /** Everything the room view renders; a poll that changes none of it must not replace the object. */
@@ -994,16 +1048,24 @@ export function markRoomSeen(id: string) {
 
 export async function loadRoom(id: string, quiet = false) {
   try {
-    const room = await fetchRoom(id);
+    const room = await fetchRoom(id, deadline(GATEWAY_PATIENCE_MS));
     if (get().selectedRoom !== id) return;
+    // An answer that left before the room was found deleted is older than the deletion.
+    if (deletedRooms.has(id) || get().roomGone || (await deletedRecords([`room:${id}`])).size) return;
+    if (get().selectedRoom !== id || deletedRooms.has(id) || get().roomGone) return;
     const previous = get().roomView?.id === id ? get().roomView : null;
-    if (previous && roomFingerprint(previous) === roomFingerprint(room)) {
-      // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
+    noteRoomMembers(room);
+    // The 2 s poll is for turns other devices start; an identical room must not re-render the page.
+    // A saved copy is always replaced by the first live answer: its fingerprint does not cover everything it shows.
+    if (previous && !get().roomStale && roomFingerprint(previous) === roomFingerprint(room)) {
       if (!quiet && get().roomError) set({ roomError: null });
       return;
     }
     set((s) => ({
       roomView: room,
+      roomStale: false,
+      roomMissing: false,
+      roomGone: false,
       roomError: null,
       // Keep the sidebar row in step without another list request.
       rooms: s.rooms[room.id] ? { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id]) } : s.rooms,
@@ -1011,22 +1073,66 @@ export async function loadRoom(id: string, quiet = false) {
     // A reply that arrives while the room is open has been seen; leaving the room must not mark
     // the row unread for something the user just read.
     if (get().selectedRoom === id) markRoomSeen(id);
+    void writeRoom(room);
   } catch (error) {
     if (get().selectedRoom !== id) return;
+    // Deleted on another device: the copy is not a way back in, and retrying will not bring it back.
+    if ((error as { status?: number })?.status === 404 && !get().roomGone) {
+      stopRoomPoll();
+      void forgetRoomCopy(id);
+      set((s) => {
+        const rooms = { ...s.rooms };
+        delete rooms[id];
+        return { rooms, roomView: null, roomStale: false, roomMissing: false, roomGone: true, roomError: null };
+      });
+      void writeRooms(Object.values(get().rooms));
+      return;
+    }
     // A poll failure is transient; only the first load replaces the view with an error.
-    if (!quiet) set({ roomError: error instanceof Error ? error.message : "Couldn't load the room" });
+    if (quiet) return;
+    const kept = await readRoom(id);
+    if (get().selectedRoom !== id) return;
+    // A room this device opened before opens again from its copy; the poll keeps trying to go live.
+    if (kept) noteRoomMembers(kept);
+    if (kept) return set({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: get().rooms[id] ? { ...get().rooms, [id]: summaryPatch(kept, get().rooms[id]) } : get().rooms });
+    set({ roomMissing: true, roomError: error instanceof Error ? error.message : "Couldn't load the room" });
   }
+}
+
+/** A deleted room leaves nothing behind: its copy, and the copies of the conversations it held. */
+async function forgetRoomCopy(id: string) {
+  deletedRooms.add(id);
+  const room = get().roomView?.id === id ? get().roomView : await readRoom(id).catch(() => null);
+  const members = new Set((room?.members ?? []).flatMap((member) => typeof member.threadId === "string" && member.threadId ? [member.threadId] : []));
+  for (const [threadId, roomId] of roomOfThread) if (roomId === id) members.add(threadId);
+  forgetThreadCopy([...members]);
+  // Member copies saved for this room (former members too) and the pictures it showed go with it.
+  revokeAssetHandles(await forgetRoom(id));
+}
+
+/**
+ * Paints the room this device kept while the gateway answers; the poll replaces it whole.
+ * Finding nothing is an answer too, and it comes from storage: the page must not wait for a
+ * network timeout to say the room is not here.
+ */
+async function hydrateRoom(id: string) {
+  const kept = await readRoom(id);
+  if (get().selectedRoom !== id || get().roomView || get().roomGone) return;
+  if (!kept) return set({ roomMissing: true });
+  noteRoomMembers(kept);
+  set((s) => ({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: s.rooms[id] ? { ...s.rooms, [id]: summaryPatch(kept, s.rooms[id]) } : s.rooms }));
 }
 
 /** Opens a room. The view polls every 2 s until another Bot or page is selected. */
 export function selectRoom(id: string | null) {
   stopRoomPoll();
   if (!id) {
-    set({ selectedRoom: null, roomView: null, roomError: null, page: get().page === "room" ? null : get().page });
+    set({ selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: get().page === "room" ? null : get().page });
     return;
   }
-  set({ selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  set({ selectedRoom: id, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
   markRoomSeen(id);
+  void hydrateRoom(id);
   void loadRoom(id);
   startRoomPoll(id);
 }
@@ -1053,13 +1159,18 @@ export function ensureRoom(id: string) {
 function startRoomPoll(id: string) {
   stopRoomPoll();
   roomPollId = id;
+  let resumed = false;
   roomPoll = window.setInterval(() => {
+    // With no network the poll only burns requests; the socket coming back (or a manual retry) resumes it.
+    if (get().offline || navigator.onLine === false) { resumed = true; return; }
     if (roomPollId !== id || get().selectedRoom !== id || document.visibilityState !== "visible" || roomPollBusy) return;
     roomPollTick += 1;
     // While a turn is in flight the view needs 2 s; an idle room only needs to notice a message
     // another device sent, and 10 s is enough for that.
     const active = (get().roomView?.turns ?? []).some((turn) => turn.status === "running" || turn.status === "queued");
-    if (!active && roomPollTick % 5 !== 0) return;
+    // Back from offline, the copy on screen is replaced at once rather than on the idle cadence.
+    if (!active && roomPollTick % 5 !== 0 && !resumed) return;
+    resumed = false;
     roomPollBusy = true;
     void loadRoom(id, true).finally(() => { roomPollBusy = false; });
   }, 2_000);
@@ -1079,8 +1190,9 @@ export async function createRoom(input: CreateRoomInput) {
  */
 export function showRoom(id: string) {
   stopRoomPoll();
-  set({ dialog: null, selectedRoom: id, roomView: null, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
+  set({ dialog: null, selectedRoom: id, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: "room", projectItemId: null, exchangeBotSlug: null });
   markRoomSeen(id);
+  void hydrateRoom(id);
   void loadRoom(id);
   startRoomPoll(id);
 }
@@ -1094,13 +1206,16 @@ export async function saveRoom(id: string, input: UpdateRoomInput) {
   set((s) => ({
     rooms: { ...s.rooms, [room.id]: summaryPatch(room, s.rooms[room.id] ?? fallback) },
     roomView: s.selectedRoom === room.id ? room : s.roomView,
+    ...(s.selectedRoom === room.id ? { roomStale: false } : {}),
   }));
+  void writeRoom(room);
   return room;
 }
 
 export async function removeRoom(id: string) {
   const result = await deleteRoomApi(id);
   clearRoomDraft(id);
+  void forgetRoomCopy(id);
   try {
     const roomSeen = { ...get().roomSeen };
     delete roomSeen[id];
@@ -1112,15 +1227,24 @@ export async function removeRoom(id: string) {
   set((s) => {
     const rooms = { ...s.rooms };
     delete rooms[id];
-    return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
+    return { rooms, ...(leaving ? { selectedRoom: null, roomView: null, roomStale: false, roomMissing: false, roomGone: false, roomError: null, page: s.page === "room" ? null : s.page } : {}) };
   });
+  // The saved sidebar list must not name a deleted room on the next launch.
+  void writeRooms(Object.values(get().rooms));
   return result;
 }
 
 /** Start over: the room forgets its messages and every Bot opens a new session on its next answer. */
+/** A room on screen from its saved copy may have changed: nothing is changed in it until it is live. */
+function liveRoom(id: string) {
+  if (get().selectedRoom === id && get().roomStale) throw new Error("This room is a saved copy. Try again once it has loaded.");
+}
+
 export async function resetRoom(id: string) {
+  liveRoom(id);
   const room = await resetRoomApi(id);
-  set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView }));
+  set((s) => ({ roomView: s.selectedRoom === id ? room : s.roomView, ...(s.selectedRoom === id ? { roomStale: false } : {}) }));
+  void writeRoom(room);
   await loadRooms().catch(() => {});
   return room;
 }
@@ -1135,6 +1259,7 @@ export async function sendRoomMessage(id: string, text: string, mentions: string
 }
 
 export async function stopRoom(id: string) {
+  liveRoom(id);
   await stopRoomApi(id);
   await loadRoom(id, true);
   void loadRooms().catch(() => {});

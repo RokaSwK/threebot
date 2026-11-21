@@ -40,6 +40,13 @@ type TimelineRow =
  */
 export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => void }) {
   const room = useApp((s) => (s.roomView?.id === roomId ? s.roomView : null));
+  const offline = useApp((s) => s.offline);
+  // A live room index can still show replies painted from a member's saved copy: that is a copy too.
+  const stale = useApp((s) => s.selectedRoom === roomId && (s.roomStale || [...(s.roomView?.members ?? []), ...(s.roomView?.formerMembers ?? [])].some((member) => !!member.threadId && s.threadData[member.threadId]?.stale === true)));
+  // Storage already answered that there is no copy: the page does not wait for the network to say so.
+  const missing = useApp((s) => s.selectedRoom === roomId && s.roomMissing);
+  // The gateway said the room is gone; its copy is not a way back in.
+  const gone = useApp((s) => s.selectedRoom === roomId && s.roomGone);
   const error = useApp((s) => (s.selectedRoom === roomId ? s.roomError : null));
   const threadData = useApp((s) => s.threadData);
   const threads = useApp((s) => s.threads);
@@ -179,13 +186,32 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
       <section className="chat-view relative flex h-full min-w-0 flex-1 flex-col bg-chat">
         <div className="flex h-[52px] shrink-0 items-center gap-2 px-3">
           {onBack && <IconButton onClick={onBack} className="chat-back" aria-label="Back"><ChevronLeft size={24} /></IconButton>}
-          <span className="truncate text-[13.5px] text-muted">{error ? "Room unavailable" : "Loading room…"}</span>
+          <span className="truncate text-[13.5px] text-muted">{offline ? "Offline" : gone || error ? "Room unavailable" : "Loading room…"}</span>
         </div>
         <div className="grid min-h-0 flex-1 place-items-center px-6 text-center">
-          {error ? (
-            <div>
-              <p role="alert" className="max-w-[420px] text-[13.5px] text-muted">{error}</p>
+          {gone ? (
+            // Deleted on another device: the copy was forgotten, so this page will not come back.
+            <div className="mx-auto flex w-full max-w-[320px] flex-col items-center" role="status">
+              <h2 className="text-[16px] font-medium">This room no longer exists</h2>
+              <p className="mt-1 text-[13.5px] text-muted">It may have been deleted on another device.</p>
+              {onBack && <button type="button" onClick={onBack} className="mt-3 rounded-full bg-pill px-4 py-1.5 text-[13px] text-pill-fg">Go back</button>}
+            </div>
+          ) : missing && offline ? (
+            // Nothing kept for this room: it comes from the gateway, and the gateway is not answering.
+            <div className="mx-auto flex w-full max-w-[320px] flex-col items-center" role="status">
+              <h2 className="text-[16px] font-medium">Not on this device yet</h2>
+              <p className="mt-1 text-[13.5px] text-muted">It will load when the gateway is reachable.</p>
+            </div>
+          ) : error ? (
+            // The gateway answered, and not with a room: keep the raw error for whoever needs it.
+            <div className="mx-auto flex w-full max-w-[320px] flex-col items-center">
+              <h2 className="text-[16px] font-medium">Couldn't load this room</h2>
+              <p className="mt-1 text-[13.5px] text-muted">Try again in a moment.</p>
               <button type="button" onClick={() => void loadRoom(roomId)} className="mt-3 rounded-full bg-pill px-4 py-1.5 text-[13px] text-pill-fg">Try again</button>
+              <details className="mt-3 w-full text-left">
+                <summary className="cursor-pointer text-[12px] text-muted hover:text-fg">Technical details</summary>
+                <pre className="mt-1 max-h-40 overflow-auto rounded bg-card p-2 font-mono text-[11px] text-muted">{error}</pre>
+              </details>
             </div>
           ) : <Spinner size={18} />}
         </div>
@@ -218,7 +244,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
           <GroupAvatar members={room.members} size={onBack ? 26 : 24} />
           <span className="chat-title-text min-w-0">
             <span className="chat-title-name flex min-w-0 items-center gap-1.5 text-[13.5px]"><span className="truncate">{room.name}</span></span>
-            <span className="chat-status block truncate text-[11px] text-muted">{modeLabel} · {room.members.length} {room.members.length === 1 ? "Bot" : "Bots"}</span>
+            <span className="chat-status block truncate text-[11px] text-muted">{offline ? (stale ? "Offline · Saved copy" : "Offline") : stale ? "Saved copy" : `${modeLabel} · ${room.members.length} ${room.members.length === 1 ? "Bot" : "Bots"}`}</span>
           </span>
         </button>
       </header>
@@ -249,7 +275,7 @@ export function RoomView({ roomId, onBack }: { roomId: string; onBack?: () => vo
 
           {timeline.map((row) => row.kind === "user" ? (
             <div key={row.id} className="fade-up mt-3 flex flex-col items-end">
-              {!!row.turn.attachments?.length && <ChatAttachmentList attachments={row.turn.attachments} align="end" />}
+              {!!row.turn.attachments?.length && <ChatAttachmentList attachments={row.turn.attachments} align="end" owner={`room:${roomId}`} />}
               {row.turn.text.trim() !== "" && (
                 <div data-message-body="plain" className="bubble rounded-[18px] px-3.5 py-[7px] text-[14px] leading-[22px] whitespace-pre-wrap" style={{ background: "var(--bubble-user)", color: "var(--bubble-user-fg)" }}>
                   <UserMessageText text={row.turn.text} muted />
@@ -385,6 +411,9 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
   stopping: boolean;
   onStop: () => void;
 }) {
+  const offline = useApp((s) => s.offline);
+  // A saved room's members may have changed: nothing is sent until the room itself is live.
+  const savedCopy = useApp((s) => s.selectedRoom === roomId && s.roomStale);
   const mobile = useMobileChat();
   const initialDraft = useMemo(() => readRoomDraft(roomId), [roomId]);
   const [text, setText] = useState(initialDraft.text);
@@ -478,6 +507,8 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
   }, [text]);
 
   const submit = async () => {
+    // Enter reaches this too, so the offline guard belongs here and not only on the Send button.
+    if (offline || savedCopy) return;
     const trimmed = text.trim();
     if ((!trimmed && attachments.ready.length === 0) || sending || resetting || attachments.busy) return;
     const names = members.map((member) => member.name);
@@ -585,6 +616,9 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
             </div>
           )}
           <PendingAttachments items={attachments.items} onRemove={attachments.remove} />
+          {offline && (
+            <p className="px-3 pt-1.5 text-[11.5px] text-muted">You're offline. Your draft is kept here until the connection is back.</p>
+          )}
           <div className="composer-controls flex items-end gap-1.5 p-1.5">
             <ComposerActions
               mobile={mobile}
@@ -646,7 +680,7 @@ function RoomComposer({ roomId, members, mentionPolicy, lead, defaultResponder, 
               </IconButton>
             )}
             {(text.trim().length > 0 || attachments.items.length > 0 || sending) && (
-              <IconButton onClick={() => void submit()} disabled={sending || resetting || attachments.busy || (!text.trim() && attachments.ready.length === 0)} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title="Send" aria-label="Send">
+              <IconButton onClick={() => void submit()} disabled={offline || savedCopy || sending || resetting || attachments.busy || (!text.trim() && attachments.ready.length === 0)} className="size-9 bg-pill text-pill-fg hover:bg-pill hover:text-pill-fg hover:opacity-90" title={offline ? "You're offline. Reconnect to send." : "Send"} aria-label={offline ? "You're offline. Reconnect to send." : "Send"}>
                 {sending ? <Spinner /> : <ArrowUp size={17} />}
               </IconButton>
             )}
