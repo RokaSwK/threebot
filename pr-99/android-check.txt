@@ -1,0 +1,82 @@
+
+## looks
+{
+  "alpha": "blob",
+  "gamma": "object:ghost",
+  "beta": true
+}
+
+## alpha: pushes the gateway sent
+[
+  {
+    "kind": "finished",
+    "tag": "alpha",
+    "icon": "/api/bots/alpha/avatar.png?v=SBmY0cAubFUd",
+    "badge": "/api/bots/alpha/badge.png?v=SBmY0cAubFUd",
+    "iconData": "data:image/webp;base64,UklGRk4",
+    "badgeData": "data:image/png;base64,iVBORw0K",
+    "bytes": 2163
+  }
+]
+
+## alpha: what Chromium holds
+{
+  "title": "Alpha",
+  "body": "Finished",
+  "tag": "alpha",
+  "icon": "data:image/png;base64,iVBORw0KGgoAAAANSU",
+  "badge": "data:image/png;base64,iVBORw0KGgoAAAANSU"
+}
+
+## gamma: pushes the gateway sent
+[
+  {
+    "kind": "finished",
+    "tag": "gamma",
+    "icon": "/api/bots/gamma/avatar.png?v=N1fH-1wK7xyE",
+    "badge": "/api/bots/gamma/badge.png?v=N1fH-1wK7xyE",
+    "iconData": "data:image/webp;base64,UklGRg4",
+    "badgeData": "data:image/png;base64,iVBORw0K",
+    "bytes": 1643
+  }
+]
+
+## gamma: what Chromium holds
+{
+  "title": "Gamma",
+  "body": "Finished",
+  "tag": "gamma",
+  "icon": "data:image/png;base64,iVBORw0KGgoAAAANSU",
+  "badge": "data:image/png;base64,iVBORw0KGgoAAAANSU"
+}
+
+## beta: pushes the gateway sent
+[
+  {
+    "kind": "finished",
+    "tag": "beta",
+    "icon": "/api/bots/beta/avatar.png?v=jB8EdWeKR67q",
+    "badge": "/api/push/badge.png",
+    "iconData": "data:image/webp;base64,UklGRlY",
+    "badgeData": "data:image/png;base64,iVBORw0K",
+    "bytes": 1101
+  }
+]
+
+## beta: what Chromium holds
+{
+  "title": "Beta",
+  "body": "Finished",
+  "tag": "beta",
+  "icon": "data:image/png;base64,iVBORw0KGgoAAAANSU",
+  "badge": "data:image/png;base64,iVBORw0KGgoAAAANSU"
+}
+
+## beta, fresh phone offline: what Chromium holds
+{
+  "title": "Beta",
+  "body": "Finished",
+  "tag": "beta",
+  "icon": "data:image/webp;base64,UklGRlYBAABXRUJQV",
+  "badge": "data:image/png;base64,iVBORw0KGgoAAAANSU"
+}
