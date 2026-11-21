@@ -609,9 +609,10 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
 
 /** On a fresh shell: close "waiting" notices whose request was answered while this page was closed. */
 function closeAnsweredNotifications() {
-  const { threads, bots } = get();
   const waits = (thread?: ThreadShell) => !!thread?.pendingRuntimeRequest && !thread.archivedAt;
+  // State is read per notice, after the tray read: a conversation that starts waiting meanwhile keeps its notice.
   void closeNotifications((tag, body) => {
+    const { threads, bots } = get();
     const id = waitingThread(tag);
     if (id !== null) return !!threads[id] && !waits(threads[id]);
     // Before per-conversation tags, a wait used the Bot's own tag: close it once none of that Bot's

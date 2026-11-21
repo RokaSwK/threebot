@@ -450,3 +450,22 @@ test("a removed thread that was waiting resolves its notice", async () => {
   assert.deepEqual(sent.map((p) => [p.kind, p.tag]), [["resolved", "waiting:alpha:side-1"]]);
   notifier.stop();
 });
+
+test("a rotated subscription renews in one step, and never after push was turned off, also across a restart", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  const rotated = { ...subscription, endpoint: "https://push.example/sub/rotated" };
+  // Renewal first, then off (the page now holds the rotated endpoint and removes that one).
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.subscribe(rotated, undefined, subscription.endpoint)).ok, true);
+  assert.deepEqual([await store.has(subscription.endpoint), await store.has(rotated.endpoint)], [false, true], "swapped in one step");
+  await store.unsubscribe(rotated.endpoint);
+  // Off first, then a late renewal of the endpoint that was turned off.
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  await store.unsubscribe(subscription.endpoint);
+  const late = await store.subscribe(rotated, undefined, subscription.endpoint);
+  assert.equal(late.ok, false);
+  assert.equal("off" in late && late.off, true);
+  const restarted = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
+  assert.equal(await restarted.devices(), 0, "still off after a restart");
+});

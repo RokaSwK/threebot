@@ -190,19 +190,25 @@ export function createPushStore({
       return typeof endpoint === "string" && (await load()).subscriptions.some((subscription) => subscription.endpoint === endpoint);
     },
 
-    async subscribe(value: unknown, origin?: unknown): Promise<{ ok: true; subscriptions: number } | { ok: false; message: string }> {
+    /**
+     * `replaces`: the worker renewing a rotated subscription. The check and the swap happen in one
+     * step: if that endpoint is gone (the device turned push off), the renewal is refused.
+     */
+    async subscribe(value: unknown, origin?: unknown, replaces?: string): Promise<{ ok: true; subscriptions: number } | { ok: false; message: string; off?: true }> {
       const item = record(value);
       if (!item) return { ok: false, message: "The push subscription is invalid." };
       const current = await load();
+      if (replaces !== undefined && !current.subscriptions.some((subscription) => subscription.endpoint === replaces)) {
+        return { ok: false, message: "Push is off on this device.", off: true };
+      }
       const from = usableSubject(origin);
       if (from) current.origin = from;
-      if (!current.subscriptions.some((subscription) => subscription.endpoint === item.endpoint) && current.subscriptions.length >= MAX_SUBSCRIPTIONS) {
+      const others = current.subscriptions.filter((subscription) => subscription.endpoint !== item.endpoint && subscription.endpoint !== replaces);
+      if (others.length >= MAX_SUBSCRIPTIONS) {
         return { ok: false, message: "This install already has the maximum number of push devices." };
       }
-      current.subscriptions = [
-        ...current.subscriptions.filter((subscription) => subscription.endpoint !== item.endpoint),
-        { ...item, createdAt: now().toISOString() },
-      ];
+      if (replaces !== undefined && replaces !== item.endpoint) watching.delete(replaces);
+      current.subscriptions = [...others, { ...item, createdAt: now().toISOString() }];
       await save();
       return { ok: true, subscriptions: current.subscriptions.length };
     },

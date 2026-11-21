@@ -1502,10 +1502,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       // The worker renewing a rotated subscription names the one it replaces: if that device turned
       // push off (the gateway forgot it), the renewal is refused instead of quietly turning it back on.
-      if (typeof body?.replaces === "string" && !(await pushStore.has(body.replaces))) return send(res, 409, { error: "Push is off on this device." });
-      const result = await pushStore.subscribe(body?.subscription, req.headers.origin);
-      if (result.ok && typeof body?.replaces === "string" && body.replaces !== body.subscription?.endpoint) await pushStore.unsubscribe(body.replaces);
-      if (!result.ok) return send(res, 400, { error: result.message });
+      const result = await pushStore.subscribe(body?.subscription, req.headers.origin, typeof body?.replaces === "string" ? body.replaces : undefined);
+      if (!result.ok) return send(res, "off" in result ? 409 : 400, { error: result.message });
       return send(res, 200, result, { "cache-control": "no-store" });
     }
     if (p === "/api/push/presence" && req.method === "POST") {
