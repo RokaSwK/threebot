@@ -20,7 +20,7 @@ export function IconButton({ className, children, ref, ...rest }: ButtonHTMLAttr
   );
 }
 
-export function RoundButton({ className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement>) {
+export function RoundButton({ className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { ref?: Ref<HTMLButtonElement> }) {
   return (
     <button
       type="button"
