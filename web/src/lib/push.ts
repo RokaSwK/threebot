@@ -33,6 +33,15 @@ function setPushOff(off: boolean) {
   try { if (off) localStorage.setItem(PUSH_OFF, "1"); else localStorage.removeItem(PUSH_OFF); } catch { /* Storage may be unavailable; the gateway already knows. */ }
 }
 
+/**
+ * Registering and turning off run one at a time across this device's tabs (Web Locks), so another
+ * tab's registration can't post after this one removed the endpoint. Without the API, just run.
+ */
+function exclusive<T>(work: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === "undefined" ? undefined : (navigator as Navigator & { locks?: LockManager }).locks;
+  return locks?.request ? locks.request("threebot.push", work) as Promise<T> : work();
+}
+
 /** A subscription made for another server key cannot receive this gateway's pushes. */
 function sameKey(subscription: PushSubscription, publicKey: string): boolean {
   const key = subscription.options?.applicationServerKey;
@@ -51,7 +60,7 @@ function reason(error: unknown): string {
 export function ensurePushSubscription(): Promise<PushResult> {
   if (pushTurnedOff()) return Promise.resolve({ ok: false, reason: "Push is off on this device." });
   if (pending) return pending;
-  pending = (async (): Promise<PushResult> => {
+  pending = exclusive(async (): Promise<PushResult> => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
       return { ok: false, reason: "This browser cannot receive push notifications." };
     }
@@ -92,7 +101,7 @@ export function ensurePushSubscription(): Promise<PushResult> {
       console.error("[push] subscription failed", error);
       return { ok: false, reason: reason(error) };
     }
-  })().finally(() => { pending = null; });
+  }).finally(() => { pending = null; });
   return pending;
 }
 
@@ -127,6 +136,10 @@ export async function disablePushNotifications(): Promise<PushResult> {
   setPushOff(true);
   await pending?.catch(() => undefined);
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return { ok: true };
+  return exclusive(() => removeSubscription());
+}
+
+async function removeSubscription(): Promise<PushResult> {
   try {
     const registration = await navigator.serviceWorker.getRegistration();
     const subscription = await registration?.pushManager.getSubscription();

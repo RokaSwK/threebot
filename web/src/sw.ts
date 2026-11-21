@@ -162,6 +162,16 @@ self.addEventListener("fetch", (event) => {
   }));
 });
 
+// One notice's operations run in arrival order: a "resolved" push must not finish before the
+// "waiting" one it answers is shown (showing waits for the icon to load).
+const noticeTurns = new Map<string, Promise<unknown>>();
+function inTurn(tag: string, operation: () => Promise<unknown>): Promise<unknown> {
+  const run = (noticeTurns.get(tag) ?? Promise.resolve()).then(operation, operation);
+  noticeTurns.set(tag, run);
+  void run.finally(() => { if (noticeTurns.get(tag) === run) noticeTurns.delete(tag); }).catch(() => {});
+  return run;
+}
+
 self.addEventListener("push", (event) => {
   // Payload shape comes from server/push.mts. Every push is shown: browsers require it, and Safari
   // drops a subscription after three pushes that showed nothing. The gateway is the one that holds
@@ -170,44 +180,41 @@ self.addEventListener("push", (event) => {
   // is a classic script with no imports, so the option guards are repeated from lib/notification.ts.
   let payload: {
     title?: unknown; body?: unknown; tag?: unknown; url?: unknown;
-    icon?: unknown; badge?: unknown; timestamp?: unknown; kind?: unknown;
+    icon?: unknown; badge?: unknown; timestamp?: unknown; kind?: unknown; show?: unknown;
   } = {};
   try { payload = event.data?.json() ?? {}; } catch { /* A push without JSON still gets a generic notification. */ }
   const tag = typeof payload.tag === "string" && payload.tag ? payload.tag : "threebot";
-  // A request answered here or elsewhere: close its notice. The gateway sends this only to push
-  // services that allow it (not Safari or Firefox). Chromium still shows its own "updated in the
-  // background" notice when a push leaves nothing on screen, so when no other notice remains and no
-  // window is in view, the answered one is replaced, quietly, by a notice that says so.
+  const title = typeof payload.title === "string" && payload.title ? payload.title : "Threebot";
+  const icon = typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png";
+  const data = { url: typeof payload.url === "string" ? payload.url : "./" };
+  // A request answered here or elsewhere: close its notice (the gateway sends no Safari device this).
+  // Chromium shows its own "updated in the background" notice when a push leaves nothing on screen,
+  // and Firefox spends a quota on such a push (the gateway sets `show` there), so in those cases the
+  // answered notice is replaced, quietly, by one that says so.
   if (payload.kind === "resolved") {
-    event.waitUntil((async () => {
+    event.waitUntil(inTurn(tag, async () => {
       for (const notification of await self.registration.getNotifications({ tag })) notification.close();
-      if ((await self.registration.getNotifications()).length) return;
-      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      if (windows.some((client) => client.visibilityState === "visible")) return;
-      await self.registration.showNotification(typeof payload.title === "string" && payload.title ? payload.title : "Threebot", {
-        body: typeof payload.body === "string" ? payload.body : "Answered",
-        tag,
-        silent: true,
-        icon: typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png",
-        data: { url: typeof payload.url === "string" ? payload.url : "./" },
-      });
-    })());
+      if (payload.show !== true) {
+        if ((await self.registration.getNotifications()).length) return;
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        if (windows.some((client) => client.visibilityState === "visible")) return;
+      }
+      await self.registration.showNotification(title, { body: typeof payload.body === "string" ? payload.body : "Answered", tag, silent: true, icon, data });
+    }));
     return;
   }
   // The worker's DOM lib predates `timestamp`; the browser supports it.
   const options: NotificationOptions & { timestamp?: number } = {
     body: typeof payload.body === "string" ? payload.body : "Finished",
     tag,
-    icon: typeof payload.icon === "string" && payload.icon ? payload.icon : "/icon-192.png",
-    data: { url: typeof payload.url === "string" ? payload.url : "./" },
+    icon,
+    data,
   };
   if (typeof payload.badge === "string" && payload.badge) options.badge = payload.badge;
   if (typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)) options.timestamp = payload.timestamp;
-  event.waitUntil(self.registration.showNotification(
-    typeof payload.title === "string" && payload.title ? payload.title : "Threebot",
-    options,
-  ));
+  event.waitUntil(inTurn(tag, () => self.registration.showNotification(title, options)));
 });
+
 
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil((async () => {

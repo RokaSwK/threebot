@@ -606,12 +606,19 @@ function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
 
 /** On a fresh shell: close "waiting" notices whose request was answered while this page was closed. */
 function closeAnsweredNotifications() {
-  const threads = get().threads;
-  void closeNotifications((tag) => {
+  const { threads, bots } = get();
+  const waits = (thread?: ThreadShell) => !!thread?.pendingRuntimeRequest && !thread.archivedAt;
+  void closeNotifications((tag, body) => {
     const id = waitingThread(tag);
-    return id !== null && !!threads[id] && !threads[id].pendingRuntimeRequest;
+    if (id !== null) return !!threads[id] && !waits(threads[id]);
+    // Before per-conversation tags, a wait used the Bot's own tag: close it once none of that Bot's
+    // conversations waits. A completion (any other text) keeps its notice.
+    const bot = Object.values(bots).find((b) => b.slug === tag);
+    if (!bot || !LEGACY_WAITING.has(body)) return false;
+    return !Object.values(threads).some((thread) => waits(thread) && (thread.id === bot.mainThreadId || (isSideChat(thread) && thread.lineage.parentThreadId === bot.mainThreadId)));
   });
 }
+const LEGACY_WAITING = new Set(["Waiting for you", "A side chat is waiting for you"]);
 
 export async function completionNotification(bot: Bot, completed: ThreadShell) {
   // Require output from this run; a stale cache or the user's prompt is not a completion body.
@@ -638,7 +645,10 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
     timestamp: Date.now(),
   });
   // A request answered while the notice was still being shown (its icon loads first) must not stay.
-  const stale = () => kind === "waiting" && !get().threads[threadId]?.pendingRuntimeRequest;
+  const stale = () => {
+    const thread = get().threads[threadId];
+    return kind === "waiting" && (!thread?.pendingRuntimeRequest || !!thread.archivedAt);
+  };
   // Android has no page Notification constructor; only the worker can show one.
   const registration = await navigator.serviceWorker?.getRegistration();
   if (registration) {
@@ -664,12 +674,12 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
 const pageNotices = new Map<string, Notification>();
 
 /** Best effort: iOS may accept this call and do nothing. */
-async function closeNotifications(match: (tag: string) => boolean) {
+async function closeNotifications(match: (tag: string, body: string) => boolean) {
   try {
     const registration = typeof navigator === "undefined" ? undefined : await navigator.serviceWorker?.getRegistration();
-    for (const [tag, notification] of pageNotices) if (match(tag)) notification.close();
+    for (const [tag, notification] of pageNotices) if (match(tag, notification.body)) notification.close();
     if (!registration?.getNotifications) return;
-    for (const notification of await registration.getNotifications()) if (match(notification.tag)) notification.close();
+    for (const notification of await registration.getNotifications()) if (match(notification.tag, notification.body)) notification.close();
   } catch { /* A closed or unsupported notification is not an error worth showing. */ }
 }
 

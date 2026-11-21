@@ -126,7 +126,7 @@ function worker(build, caches = cacheStorage()) {
   const opened: string[] = [];
   const shown: { title: string; options: NotificationOptions }[] = [];
   // What the tray still holds: a notification replaces one with its tag, and close() removes it.
-  const tray: { tag: string; title: string; close(): void }[] = [];
+  const tray: { tag: string; title: string; body?: string; close(): void }[] = [];
   const self = {
     location: new URL(build.manifest.base + "sw.js", origin),
     clients: {
@@ -136,11 +136,13 @@ function worker(build, caches = cacheStorage()) {
     },
     registration: {
       async showNotification(title: string, options: NotificationOptions) {
+        // A notice waits for its icon before it shows; a test can slow that down.
+        if (build.showDelay && options.icon && !options.silent) await new Promise((resolve) => setTimeout(resolve, build.showDelay));
         shown.push({ title, options });
         const tag = options.tag ?? "";
         const kept = tray.filter((notice) => notice.tag !== tag || !tag);
         tray.splice(0, tray.length, ...kept);
-        const notice = { tag, title, close() { const index = tray.indexOf(notice); if (index >= 0) tray.splice(index, 1); } };
+        const notice = { tag, title, body: options.body, close() { const index = tray.indexOf(notice); if (index >= 0) tray.splice(index, 1); } };
         tray.push(notice);
       },
       async getNotifications({ tag }: { tag?: string } = {}) { return tray.filter((notice) => !tag || notice.tag === tag); },
@@ -165,10 +167,14 @@ function worker(build, caches = cacheStorage()) {
       await Promise.all(pending);
     },
     async push(payload: unknown) {
+      await this.pushStarted(payload);
+      return shown.at(-1);
+    },
+    /** Dispatches a push and returns its waitUntil work without waiting for it. */
+    pushStarted(payload: unknown) {
       const pending: Promise<unknown>[] = [];
       listeners.get("push")({ data: { json: () => payload }, waitUntil(promise: Promise<unknown>) { pending.push(promise); } });
-      await Promise.all(pending);
-      return shown.at(-1);
+      return Promise.all(pending);
     },
     async request(pathname: string, { method = "GET", navigate = false, headers }: { method?: string; navigate?: boolean; headers?: HeadersInit } = {}) {
       const request = new Request(new URL(pathname, origin), { method, headers });
@@ -469,6 +475,25 @@ test("resolving the last notice with no window in view leaves a quiet Answered n
   assert.equal(quiet.options.body, "Answered");
   assert.equal(quiet.options.silent, true);
   assert.equal(quiet.options.icon, "/api/bots/alpha/avatar.png");
+});
+
+test("a resolution that arrives while its waiting notice is still loading closes it afterwards", async () => {
+  const runtime = worker({ ...app, showDelay: 30 });
+  const waiting = runtime.pushStarted({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", icon: "/api/bots/alpha/avatar.png", kind: "waiting" });
+  const resolved = runtime.pushStarted({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved" });
+  await Promise.all([waiting, resolved]);
+  // Out of order, the waiting notice would land last and stay; in turn, the answer has the last word.
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.body]), [["waiting:alpha:side-1", "Answered"]]);
+});
+
+test("Firefox's resolution always leaves a quiet notice, so it never spends push quota", async () => {
+  const runtime = worker(app);
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-1", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Waiting for you", tag: "waiting:alpha:side-2", url: "/", kind: "waiting" });
+  await runtime.push({ title: "Alpha", body: "Answered", tag: "waiting:alpha:side-1", url: "/", kind: "resolved", show: true });
+  assert.deepEqual(runtime.tray.map((notice) => [notice.tag, notice.title]), [["waiting:alpha:side-2", "Alpha"], ["waiting:alpha:side-1", "Alpha"]]);
+  assert.equal(runtime.shown.at(-1)!.options.body, "Answered");
+  assert.equal(runtime.shown.at(-1)!.options.silent, true);
 });
 
 test("resolving the last notice while a window is in view just closes it", async () => {

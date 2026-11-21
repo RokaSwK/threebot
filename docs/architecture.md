@@ -156,13 +156,18 @@ the latest notice per conversation instead of a burst. Safari ignores the icon, 
 and iOS still stacks notifications because it does not coalesce tags. The page builds the same
 options for its own notifications, so the two replace each other.
 
-When a request is answered, here or on another device, the gateway sends a `resolved` push with
-the same tag (and so the same topic): the worker closes that notice and shows nothing, and a device
-that was offline gets the `resolved` push in place of the stale `waiting` one. It goes only to push
-services that allow a push that shows nothing: Safari (`push.apple.com`) revokes a subscription
-after a few, and Firefox (`push.services.mozilla.com`) spends a quota on them. Those devices, and
-any notice a push missed, are cleared by the page: it closes a `waiting` notice when that request
-disappears, and on every shell snapshot it closes the ones whose thread no longer waits.
+When a request is answered, here or on another device (or its thread is archived or removed), the
+gateway sends a `resolved` push with the same tag, and so the same topic, after the `waiting` one:
+a device that was offline gets the `resolved` push in place of the stale `waiting` one. The worker
+handles one tag's pushes in arrival order and closes that notice. Browsers do not let a push leave
+nothing behind: Chromium shows its own "updated in the background" notice when no notification and
+no window remain, and Firefox spends a quota on such a push. So when nothing else is on screen in
+Chromium, and always in Firefox, the answered notice is replaced, silently, by one that says
+"Answered". Safari gets no `resolved` push: it revokes a subscription after a few pushes that show
+nothing and does not coalesce tags, so a replacement would stack. The page clears what pushes cannot:
+it closes a `waiting` notice when that request disappears or its thread is archived or removed, and
+on every shell snapshot it closes the ones whose thread no longer waits (and, after the update, the
+older per-Bot waiting notices of a Bot that no longer waits).
 
 Settings › Notifications turns push on or off for one device. Off tells the gateway to forget the
 endpoint first (so a failed request leaves the browser subscription in place to retry), then drops

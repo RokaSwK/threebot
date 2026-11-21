@@ -114,15 +114,17 @@ export function pushTopic(tag: string): string {
 }
 
 /**
- * Whether this push service may get a push that shows nothing (a "resolved" one only closes a
- * notification). Safari revokes a subscription after a few such pushes, and Firefox spends a quota on
- * them, so those devices keep the stale notice until the app opens and clears it.
+ * Whether this push service may get a "resolved" push. Safari revokes a subscription after a few
+ * pushes that show nothing and ignores tags (a replacement would stack), so a Safari device keeps the
+ * stale notice until the app opens and clears it.
  */
 export function quietClose(endpoint: string): boolean {
-  try {
-    const host = new URL(endpoint).hostname;
-    return !/(^|\.)push\.apple\.com$/u.test(host) && !/(^|\.)push\.services\.mozilla\.com$/u.test(host);
-  } catch { return false; }
+  try { return !/(^|\.)push\.apple\.com$/u.test(new URL(endpoint).hostname); } catch { return false; }
+}
+
+/** Firefox spends a quota on a push that shows nothing, so there a resolution always leaves a quiet notice. */
+function mustShow(endpoint: string): boolean {
+  try { return /(^|\.)push\.services\.mozilla\.com$/u.test(new URL(endpoint).hostname); } catch { return false; }
 }
 
 /** VAPID keys and push subscriptions. The private key never leaves this file or the server. */
@@ -243,12 +245,14 @@ export function createPushStore({
       let skipped = 0;
       // Sends await the network: the live list may change meanwhile (an unsubscribe, a new device),
       // so iterate a copy, skip what was removed, and prune only the endpoints that are gone.
-      const gone = new Set<string>();
+      const gone = new Set<PushSubscriptionRecord>();
       const time = now().getTime();
       // A push is about one thing: a room, or a Bot. With neither there is nothing to hold back.
       const target = payload.room ? `room:${payload.room}` : payload.bot ? `bot:${payload.bot}` : null;
-      for (const subscription of [...current.subscriptions]) {
-        if (!current.subscriptions.includes(subscription)) continue;
+      for (const { endpoint } of [...current.subscriptions]) {
+        // The record as it is now: removed meanwhile (skip it), or replaced by a fresh registration.
+        const subscription = current.subscriptions.find((record) => record.endpoint === endpoint);
+        if (!subscription) continue;
         // The Settings test names the device that asked; every other subscription stays untouched.
         if (options?.endpoint && subscription.endpoint !== options.endpoint) continue;
         if (payload.kind === "resolved" && !quietClose(subscription.endpoint)) continue;
@@ -261,12 +265,12 @@ export function createPushStore({
         }
         try {
           // The same topic as the "waiting" push it answers: a device that was offline gets only this one.
-          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload), { TTL: 3_600, urgency: payload.kind === "resolved" ? "normal" : "high", vapidDetails, topic: pushTopic(payload.tag) });
+          await sender(subscription as unknown as PushSubscription, JSON.stringify(payload.kind === "resolved" && mustShow(subscription.endpoint) ? { ...payload, show: true } : payload), { TTL: 3_600, urgency: payload.kind === "resolved" ? "normal" : "high", vapidDetails, topic: pushTopic(payload.tag) });
           sent += 1;
         } catch (error) {
           const status = error instanceof WebPushError ? error.statusCode : 0;
           if (status === 404 || status === 410) {
-            gone.add(subscription.endpoint);
+            gone.add(subscription);
             watching.delete(subscription.endpoint);
           } else {
             console.error("push: send failed", status || (error as Error).message);
@@ -274,7 +278,8 @@ export function createPushStore({
         }
       }
       if (gone.size > 0) {
-        current.subscriptions = current.subscriptions.filter((subscription) => !gone.has(subscription.endpoint));
+        // Only the records that failed: a registration made since then is a new, working one.
+        current.subscriptions = current.subscriptions.filter((subscription) => !gone.has(subscription));
         await save();
       }
       return { sent, removed: gone.size, watching: skipped };
@@ -304,6 +309,7 @@ type ShellEvent = {
   kind: string;
   snapshot?: { threads?: ShellThread[] };
   thread?: ShellThread;
+  threadId?: string;
   location?: string;
 };
 
@@ -415,10 +421,16 @@ export function createPushNotifier({
       // the snapshot may only be omitted, so only one that is present and no longer waits counts.
       for (const thread of event.snapshot?.threads ?? []) {
         const before = typeof thread?.id === "string" ? previous.get(thread.id) : undefined;
-        if (before?.pendingRuntimeRequest && !thread.pendingRuntimeRequest) inOrder(thread.id, () => resolve(thread));
+        if (before?.pendingRuntimeRequest && !before.archivedAt && (!thread.pendingRuntimeRequest || thread.archivedAt)) inOrder(thread.id, () => resolve(thread));
       }
       previous.clear();
       for (const thread of event.snapshot?.threads ?? []) if (typeof thread?.id === "string") previous.set(thread.id, thread);
+      return;
+    }
+    if (event.kind === "thread.removed" && typeof event.threadId === "string") {
+      const before = previous.get(event.threadId);
+      previous.delete(event.threadId);
+      if (before?.pendingRuntimeRequest && !before.archivedAt) inOrder(before.id, () => resolve(before));
       return;
     }
     if (event.kind !== "thread.updated" || !event.thread || typeof event.thread.id !== "string") return;

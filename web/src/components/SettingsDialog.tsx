@@ -380,16 +380,18 @@ function NotificationsPane() {
   const [problem, setProblem] = useState("");
   const refresh = async () => {
     const device = await pushDeviceStatus();
+    // On only when the gateway confirms it holds this endpoint: one it refused, forgot or can't be
+    // asked about shows Off, and the switch can register it again.
+    let registered = false;
     try {
       const response = await fetch(`/api/push${device.endpoint ? `?endpoint=${encodeURIComponent(device.endpoint)}` : ""}`, { cache: "no-store" });
       if (response.ok) {
         const body = await response.json() as { devices?: unknown; registered?: unknown };
         if (typeof body.devices === "number") setDevices(body.devices);
-        // A browser endpoint the gateway refused (or forgot) is not on: the switch can retry it.
-        if (body.registered === false) device.subscribed = false;
+        registered = body.registered === true;
       }
     } catch { /* the device count is informational */ }
-    setStatus(device);
+    setStatus({ ...device, subscribed: device.subscribed && registered });
   };
   useEffect(() => { void refresh(); }, []);
   const enable = async () => {

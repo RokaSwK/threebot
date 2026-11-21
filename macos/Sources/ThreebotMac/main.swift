@@ -81,6 +81,10 @@ private let notificationScript = """
     ServiceWorkerRegistration.prototype.showNotification = async function (title, options) {
       new NativeNotification(title, options).fromWorker = true;
     };
+    // The page closes an answered request's notice by tag; these are the ones macOS shows.
+    ServiceWorkerRegistration.prototype.getNotifications = async function (filter = {}) {
+      return [...shown.values()].filter((notification) => !filter.tag || notification.tag === filter.tag);
+    };
   }
   window.__threebotNotifications = {
     // false: the app opens the notification's URL itself, as the service worker would.
