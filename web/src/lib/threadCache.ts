@@ -245,7 +245,7 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
         const rows = Object.entries(rows0)
           .filter(([key]) => kindOf(key) === kind)
           // The record being written counts first, so it never sits outside the budget.
-          .sort((a, b) => Number(b[0] === id) - Number(a[0] === id) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
+          .sort((a, b) => (incoming ? Number(b[0] === id) - Number(a[0] === id) : 0) || (b[1].savedAt - a[1].savedAt) || (a[0] < b[0] ? -1 : 1));
         let count = 0;
         let total = 0;
         for (const [key, entry] of rows) {
@@ -253,7 +253,8 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
           const overAge = now - entry.savedAt > EXPIRES_MS;
           const overCount = count >= rule.keep;
           const overBytes = count > 0 && total + entry.bytes > rule.bytes;
-          if (key !== id && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
+          // Only an incoming record is exempt: without it, an older copy under the same id is judged like any other.
+          if (!(incoming && key === id) && (overAge || overCount || overBytes)) { dropping.push(key); continue; }
           kept[key] = entry;
           count++;
           total += entry.bytes;
@@ -264,7 +265,7 @@ async function writeRecord(id: string, value: unknown, knownBytes?: number, owne
       for (let grew = true; grew;) {
         grew = false;
         for (const [key, entry] of Object.entries(kept)) {
-          if (key !== id && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
+          if (!(incoming && key === id) && entry.owner && going.has(entry.owner)) { going.add(key); delete kept[key]; grew = true; }
         }
       }
       return { kept, going };

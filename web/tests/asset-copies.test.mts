@@ -163,3 +163,21 @@ test('a picture whose owner expires while it is fetched is neither kept nor hand
   assert.equal(source, '/t3/assets/orphaned-pic');
   assert.equal(await readAsset(key, storedBytes), null);
 });
+
+test('replacing a kept picture whose owner has expired drops the old copy too', async () => {
+  await clearCache();
+  const real = Date.now;
+  const day = 24 * 60 * 60 * 1000;
+  const key = assetKey({ _tag: 'workspace-file', threadId: 'thread-ageing', path: 'charts/replaced.png' })!;
+  // The conversation copy is nearly a month old; its picture was kept today.
+  Date.now = () => real() - 29.5 * day;
+  try { await app.writeView({ v: 1, key: 'thread-ageing', savedAt: Date.now(), thread: null, items: [], runs: [], requests: [], subagents: [], historyCursor: null, hasMoreHistory: false }); } finally { Date.now = real; }
+  await assetSource(async () => '/t3/assets/replaced-pic', key, { owner: 'view:thread-ageing' });
+  app.resetAssetCopies();
+  // A day later the conversation copy has expired while the picture is still fresh; it is fetched again.
+  Date.now = () => real() + day;
+  try {
+    assert.equal(await assetSource(async () => '/t3/assets/replaced-pic?again', key, { owner: 'view:thread-ageing' }), '/t3/assets/replaced-pic?again');
+    assert.equal(await readAsset(key, storedBytes), null, 'neither the new nor the old copy outlives its owner');
+  } finally { Date.now = real; }
+});
