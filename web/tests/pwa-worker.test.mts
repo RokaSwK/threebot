@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 // this proves cache/event behavior, not browser install UI, rendering or eviction.
 const web = fileURLToPath(new URL("../", import.meta.url));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-let temporary, app, nested, update, later, origin, server;
+let temporary, app, nested, update, later, sameLazy, origin, server;
 let files, offline = false, failure, edgeTokens = 0;
 const seen = [];
 async function tree(directory) {
@@ -31,12 +31,12 @@ function produced(directory, files) {
   const manifest = JSON.parse(source.match(/^const BUILD = (\{.+\});$/m)[1]);
   return { directory, files, source, manifest };
 }
-async function fixtureBuild(base, revision) {
+async function fixtureBuild(base, revision, lazy = revision) {
   const root = path.join(temporary, revision);
   await mkdir(root);
   await writeFile(path.join(root, "index.html"), '<!doctype html><html><head><title>Fixture</title></head><body><div id="root">' + revision + '</div><script type="module" src="./main.js"></script></body></html>' );
   await writeFile(path.join(root, "main.js"), 'import "./style.css"; window.loadDiagram = () => import("./lazy.js");');
-  await writeFile(path.join(root, "lazy.js"), 'export const diagram = "' + revision + '";');
+  await writeFile(path.join(root, "lazy.js"), 'export const diagram = "' + lazy + '";');
   await writeFile(path.join(root, "style.css"), 'body { background: #121212; }');
   const outDir = path.join(root, "built");
   await build({ root, configFile: false, publicDir: path.join(web, "public"), base, plugins: [pwaPrecache()], logLevel: "silent", build: { outDir } });
@@ -50,6 +50,7 @@ before(async () => {
   nested = await fixtureBuild("/nested/bot/", "nested-one");
   update = await fixtureBuild("/", "updated-two");
   later = await fixtureBuild("/", "updated-three");
+  sameLazy = await fixtureBuild("/", "updated-four", "updated-two");
   server = http.createServer((request, response) => {
     seen.push(request.url);
     response.setHeader("Vary", "Origin"); // Vite preview varies even same-origin static responses.
@@ -155,38 +156,55 @@ function serve(build) {
   files = new Map([...build.files].map(([name, bytes]) => [build.manifest.base.slice(1) + name, bytes]));
   seen.length = 0; offline = false; failure = undefined;
 }
+const coreEntries = (manifest) => manifest.entries.filter((entry) => !entry.optional);
+const optionalEntries = (manifest) => manifest.entries.filter((entry) => entry.optional);
 
-test("actual app build precaches every exact lazy asset before any controlled page fetch", async (t) => {
+test("actual app build precaches core shell on install and caches optional assets on demand", async (t) => {
   serve(app);
   const emitted = [...app.files].filter(([name]) => name === "index.html" || name.startsWith("assets/"));
   for (const [name, bytes] of emitted) {
     const entry = app.manifest.entries.find((entry) => entry.url === "/" + name);
-    assert.ok(entry, `${name} is available on the first offline launch`);
+    assert.ok(entry, `${name} is indexed in manifest entries`);
     assert.equal(entry.sha256, digest(bytes), name + " digest matches final output");
   }
-  assert.ok(emitted.some(([name]) => /mermaid|diagram|flowchart/i.test(name)), "real lazy diagram engine is covered");
+  const core = coreEntries(app.manifest);
+  const optional = optionalEntries(app.manifest);
+  assert.ok(core.length > 0 && optional.length > 0, "entries are partitioned into core and optional");
+  assert.ok(optional.some((entry) => /mermaid|diagram|flowchart/i.test(entry.url)), "real lazy diagram engine is optional");
+  assert.ok(optional.some((entry) => /pdf\.worker/.test(entry.url)), "the PDF worker is optional");
+  assert.ok(core.some((entry) => entry.url.endsWith(".woff2")), "math fonts the core CSS names install with the shell");
   const runtime = worker(app);
   await runtime.lifecycle("install");
   assert.equal(runtime.claimCalls, 0, "installation must finish before activation claims pages");
   assert.equal(runtime.skipCalls, 1, "a verified update applies without waiting for every window to close");
-  // The worker never requests `/`; local tools can probe any newly opened port.
-  assert.deepEqual(seen.filter((url) => url !== "/").sort(), app.manifest.entries.map((entry) => entry.url).sort());
+  // The worker only installs core entries; lazy chunks stay unrequested.
+  assert.deepEqual(seen.filter((url) => url !== "/").sort(), core.map((entry) => entry.url).sort());
   assert.equal(runtime.caches.stores.size, 1);
-  assert.equal([...runtime.caches.stores.values()][0].size, app.manifest.entries.length);
+  assert.equal([...runtime.caches.stores.values()][0].size, core.length);
   await runtime.lifecycle("activate");
   assert.equal(runtime.claimCalls, 1);
   offline = true;
   const shell = await runtime.request("/?thread=example", { navigate: true });
   assert.deepEqual(Buffer.from(await shell.arrayBuffer()), app.files.get("index.html"));
-  for (const entry of app.manifest.entries) {
+  for (const entry of core) {
     const response = await runtime.request(entry.url);
-    assert.equal(digest(Buffer.from(await response.arrayBuffer())), entry.sha256, `${entry.url} loads offline without a second visit`);
+    assert.equal(digest(Buffer.from(await response.arrayBuffer())), entry.sha256, `${entry.url} loads offline immediately`);
   }
+  // Optional asset loads on demand when online, then becomes available offline.
+  offline = false; seen.length = 0;
+  const lazyEntry = optional.find((entry) => entry.url.endsWith(".js"));
+  assert.ok(lazyEntry);
+  const lazyOnline = await runtime.request(lazyEntry.url);
+  assert.equal(digest(Buffer.from(await lazyOnline.arrayBuffer())), lazyEntry.sha256);
+  assert.equal(seen.includes(lazyEntry.url), true);
+  assert.equal([...runtime.caches.stores.values()][0].size, core.length + 1);
+  offline = true; seen.length = 0;
+  const lazyOffline = await runtime.request(lazyEntry.url);
+  assert.equal(digest(Buffer.from(await lazyOffline.arrayBuffer())), lazyEntry.sha256);
+  assert.equal(seen.length, 0, "subsequent load uses the stored cache without network");
   const total = app.manifest.entries.reduce((sum, entry) => sum + app.files.get(decodeURIComponent(entry.url.slice(1))).length, 0);
-  const html = app.files.get("index.html").toString();
-  const initialUrls = [...html.matchAll(/(?:src|href)="(\/assets\/[^"?]+)"/g)].map((match) => match[1]);
-  const entryBytes = app.files.get("index.html").length + initialUrls.reduce((sum, url) => sum + app.files.get(url.slice(1)).length, 0);
-  t.diagnostic(`Precache ${app.manifest.entries.length} files / ${total} bytes; HTML + its direct script/style references ${entryBytes} bytes (excludes transitive imports).`);
+  const coreBytes = core.reduce((sum, entry) => sum + app.files.get(decodeURIComponent(entry.url.slice(1))).length, 0);
+  t.diagnostic(`Total assets ${app.manifest.entries.length} (${total} bytes); Core precache ${core.length} files (${coreBytes} bytes); Optional ${optional.length} files.`);
 });
 
 test("API, T3, auth, cross-origin, unknown static and mutations never enter shell cache", async () => {
@@ -199,8 +217,8 @@ test("API, T3, auth, cross-origin, unknown static and mutations never enter shel
     if (!pathname.includes("private.png") && !pathname.includes("external")) assert.equal(await runtime.request(pathname, { navigate: true }), undefined, pathname + " navigation");
   }
   assert.equal(await runtime.request("/", { method: "POST", navigate: true }), undefined);
-  assert.equal(await runtime.request(app.manifest.entries.find((entry) => entry.url.endsWith(".js")).url + "?private=token"), undefined);
-  assert.equal([...runtime.caches.stores.values()][0].size, app.manifest.entries.length);
+  assert.equal(await runtime.request(coreEntries(app.manifest).find((entry) => entry.url.endsWith(".js")).url + "?private=token"), undefined);
+  assert.equal([...runtime.caches.stores.values()][0].size, coreEntries(app.manifest).length);
 });
 
 test("SHA-verified static JS and CSS load offline even when request Origin differs from precaching", async () => {
@@ -210,7 +228,7 @@ test("SHA-verified static JS and CSS load offline even when request Origin diffe
   const cache = await runtime.caches.open((await runtime.caches.keys())[0]);
   offline = true;
   for (const suffix of [".js", ".css"]) {
-    const entry = app.manifest.entries.find((entry) => entry.url.endsWith(suffix));
+    const entry = coreEntries(app.manifest).find((entry) => entry.url.endsWith(suffix));
     assert.ok(entry);
     const query = new Request(origin + entry.url, { headers: { Origin: origin } });
     assert.equal(query.headers.get("origin"), origin, "the simulated fetch-event request actually carries Origin");
@@ -224,7 +242,7 @@ test("SHA-verified static JS and CSS load offline even when request Origin diffe
 
 for (const kind of ["missing", "redirect", "login-html"]) test(`first install rejects ${kind} asset and leaves prior caches intact`, async () => {
   serve(app);
-  failure = { url: kind === "login-html" ? "/index.html" : app.manifest.entries.find((entry) => entry.url.endsWith(".js")).url, kind };
+  failure = { url: kind === "login-html" ? "/index.html" : coreEntries(app.manifest).find((entry) => entry.url.endsWith(".js")).url, kind };
   const caches = cacheStorage(); await caches.open("bot-shell-v7"); await caches.open("unrelated-app-cache");
   const runtime = worker(app, caches);
   await assert.rejects(runtime.lifecycle("install"));
@@ -240,33 +258,34 @@ test("an edge rewriting the page per request cannot block an update", async () =
   const runtime = worker(app);
   await runtime.lifecycle("install");
   assert.equal(runtime.skipCalls, 1);
-  assert.equal([...runtime.caches.stores.values()][0].size, app.manifest.entries.length);
+  assert.equal([...runtime.caches.stores.values()][0].size, coreEntries(app.manifest).length);
   offline = true;
   assert.match(await (await runtime.request("/", { navigate: true })).text(), /__CF\$cv\$params/);
 });
 
 test("a dropped connection retries the file instead of abandoning the update", async () => {
   serve(app);
-  failure = { url: app.manifest.entries.find((entry) => entry.url.endsWith(".js")).url, kind: "flaky" };
+  failure = { url: coreEntries(app.manifest).find((entry) => entry.url.endsWith(".js")).url, kind: "flaky" };
   const runtime = worker(app);
   await runtime.lifecycle("install");
   assert.equal(failure.drops, 3);
-  assert.equal([...runtime.caches.stores.values()][0].size, app.manifest.entries.length);
+  assert.equal([...runtime.caches.stores.values()][0].size, coreEntries(app.manifest).length);
 });
 
 test("an interrupted install resumes without downloading verified files again", async () => {
   serve(app);
   const caches = cacheStorage();
   const key = "bot-shell2-" + encodeURIComponent(app.manifest.base) + "-" + app.manifest.revision;
-  const first = app.manifest.entries[0];
+  const core = coreEntries(app.manifest);
+  const first = core[0];
   const cache = await caches.open(key);
-  const second = app.manifest.entries[1];
+  const second = core[1];
   await cache.put(new URL(first.url, origin), new Response(app.files.get(decodeURIComponent(first.url.slice(1)))));
   await cache.put(new URL(second.url, origin), new Response("interrupted entry"));
   await worker(app, caches).lifecycle("install");
   assert.equal(seen.includes(first.url), false);
   assert.equal(seen.includes(second.url), true);
-  assert.equal(seen.filter((url) => url !== "/").length, app.manifest.entries.length - 1);
+  assert.equal(seen.filter((url) => url !== "/").length, core.length - 1);
 });
 
 test("activating an update reloads open windows once, and a first install does not", async () => {
@@ -293,7 +312,7 @@ test("content revisions migrate only this app's caches on activation, leaving ol
   assert.notEqual(app.manifest.revision, update.manifest.revision);
   serve(update);
   const next = worker(update, caches);
-  const changed = update.manifest.entries.filter((entry) => !app.manifest.entries.some((old) => old.url === entry.url && old.sha256 === entry.sha256));
+  const changed = coreEntries(update.manifest).filter((entry) => !coreEntries(app.manifest).some((old) => old.url === entry.url && old.sha256 === entry.sha256));
   failure = { url: changed.find((entry) => entry.url.endsWith(".js")).url, kind: "missing" };
   await assert.rejects(next.lifecycle("install"));
   assert.deepEqual(Buffer.from(await (await old.request("/", { navigate: true })).arrayBuffer()), app.files.get("index.html"));
@@ -334,4 +353,49 @@ test("non-root base emits scoped manifest, cache and offline navigation without 
   assert.equal(await runtime.request("/nested/bot/api/session", { navigate: true }), undefined);
   assert.equal(await runtime.request("/nested/other/", { navigate: true }), undefined);
   assert.equal(await runtime.request("/", { navigate: true }), undefined);
+});
+
+test("unfetched optional assets fail gracefully when offline without crashing shell", async () => {
+  serve(app);
+  const runtime = worker(app);
+  await runtime.lifecycle("install"); await runtime.lifecycle("activate");
+  offline = true;
+  const unvisited = optionalEntries(app.manifest).find((entry) => entry.url.endsWith(".js"));
+  assert.ok(unvisited);
+  await assert.rejects(runtime.request(unvisited.url));
+  // Core navigation remains fully functional
+  const shell = await runtime.request("/", { navigate: true });
+  assert.deepEqual(Buffer.from(await shell.arrayBuffer()), app.files.get("index.html"));
+});
+
+test("an update serves a lazy chunk the previous shell cached on demand, and never other bytes under its name", async () => {
+  serve(update);
+  const caches = cacheStorage();
+  const first = worker(update, caches);
+  await first.lifecycle("install"); await first.lifecycle("activate");
+  const lazy = optionalEntries(update.manifest).find((entry) => entry.url.endsWith(".js"));
+  assert.ok(lazy);
+  await (await first.request(lazy.url)).arrayBuffer();
+  serve(sameLazy);
+  assert.ok(optionalEntries(sameLazy.manifest).some((entry) => entry.url === lazy.url && entry.sha256 === lazy.sha256), "the chunk is unchanged across these builds");
+  const next = worker(sameLazy, caches);
+  await next.lifecycle("install"); await next.lifecycle("activate");
+  offline = true;
+  const reusedChunk = await next.request(lazy.url);
+  assert.equal(digest(Buffer.from(await reusedChunk.arrayBuffer())), lazy.sha256, "first use offline after the update still loads");
+
+  // Another release's bytes stored under this build's name are refused, offline and online.
+  offline = false;
+  serve(later);
+  const tampered = cacheStorage();
+  const laterLazy = optionalEntries(later.manifest).find((entry) => entry.url.endsWith(".js"));
+  await (await tampered.open("bot-shell2-%2F-older")).put(new URL(laterLazy.url, origin).href, new Response('export const diagram = "older";'));
+  const third = worker(later, tampered);
+  await third.lifecycle("install"); await third.lifecycle("activate");
+  offline = true;
+  await assert.rejects(third.request(laterLazy.url));
+  offline = false; seen.length = 0;
+  const fresh = await third.request(laterLazy.url);
+  assert.equal(digest(Buffer.from(await fresh.arrayBuffer())), laterLazy.sha256);
+  assert.deepEqual(seen, [laterLazy.url]);
 });
