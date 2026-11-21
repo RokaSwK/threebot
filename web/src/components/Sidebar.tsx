@@ -37,14 +37,15 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
   const compact = useApp((s) => s.sidebarCompact);
   const restoreToggleFocus = useRef(false);
   const sidebarToggleRef = useCallback((button: HTMLButtonElement | null) => {
-    if (!button || !restoreToggleFocus.current) return;
-    restoreToggleFocus.current = false;
-    button.focus();
+    if (!button) return;
+    if (restoreToggleFocus.current) {
+      restoreToggleFocus.current = false;
+      button.focus();
+    }
+    return () => {
+      restoreToggleFocus.current = button === document.activeElement;
+    };
   }, []);
-  const toggleSidebar = () => {
-    restoreToggleFocus.current = true;
-    setSidebarCompact(!compact);
-  };
   const width = useApp((s) => s.sidebarWidth);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [deletingSection, setDeletingSection] = useState<string | null>(null);
@@ -204,7 +205,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
 
   if (!wide && compact) return <aside className="compact-sidebar flex h-full w-[88px] shrink-0 flex-col bg-sidebar" aria-label="Bots" aria-description="Toggle compact sidebar" aria-keyshortcuts="Meta+B">
     <div className="flex h-[60px] shrink-0 items-end justify-center">
-      <RoundButton ref={sidebarToggleRef} className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={toggleSidebar} title="Expand sidebar (⌘B)" aria-label="Expand sidebar" aria-keyshortcuts="Meta+B"><PanelLeftOpen size={16} /></RoundButton>
+      <RoundButton ref={sidebarToggleRef} className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={() => setSidebarCompact(false)} title="Expand sidebar (⌘B)" aria-label="Expand sidebar" aria-keyshortcuts="Meta+B"><PanelLeftOpen size={16} /></RoundButton>
     </div>
     <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4">
       {[pinned, ...groups.map((g) => g.bots)].filter((group) => group.length).map((group, index) => <div key={index} className="flex flex-col items-center gap-2 border-b border-line py-3 last:border-0">{group.map((bot) => {
@@ -228,7 +229,7 @@ export function Sidebar({ wide = false }: { wide?: boolean }) {
           ? <button className="mobile-account grid size-11 place-items-center rounded-full border border-line bg-elevated text-[18px] font-semibold" aria-label="Settings" onClick={() => { useApp.setState({ settingsPane: "overview" }); openDialog("settings"); }}>{(settings?.userName || "You")[0].toUpperCase()}</button>
           : <>
               <RoundButton className="new-bot-button" onClick={openCreate} title="Create" aria-label="Create"><Plus size={16} /></RoundButton>
-              <RoundButton ref={sidebarToggleRef} className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={toggleSidebar} title="Collapse sidebar (⌘B)" aria-label="Collapse sidebar" aria-keyshortcuts="Meta+B"><PanelLeftClose size={16} /></RoundButton>
+              <RoundButton ref={sidebarToggleRef} className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={() => setSidebarCompact(true)} title="Collapse sidebar (⌘B)" aria-label="Collapse sidebar" aria-keyshortcuts="Meta+B"><PanelLeftClose size={16} /></RoundButton>
             </>}
       </div>
 
