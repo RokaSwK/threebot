@@ -125,7 +125,7 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
   for (const item of items) {
     const key = commandKey(item);
     if (item.type === "command_execution" && key && typeof item.input === "string" && item.input.trim()) {
-      commandInputs.set(key, commandInputs.has(key) ? null : { input: item.input.trim(), title: item.title });
+      commandInputs.set(key, commandInputs.has(key) ? null : { input: item.input, title: item.title });
     }
   }
   // T3 can append the resumed message before the question's answer update.
