@@ -75,6 +75,7 @@ test('gateway permissions deny writes and reads outside fixture and deny subproc
     await writeFile(sentinel, 'unchanged');
     const { command, args, env } = gatewayInvocation(fixture.root, 12345, 12346);
     assert.equal(env.HOME, path.join(fixture.root, 'home'));
+    assert.equal(env.USERPROFILE, path.join(fixture.root, 'home'));
     assert.equal(env.CODEX_HOME, path.join(fixture.root, 'codex'));
     assert.equal(env.HOST, '127.0.0.1');
     assert.equal(env.T3_URL, 'http://127.0.0.1:12346');
