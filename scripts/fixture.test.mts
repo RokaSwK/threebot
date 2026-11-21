@@ -75,6 +75,7 @@ test('gateway permissions deny writes and reads outside fixture and deny subproc
     await writeFile(sentinel, 'unchanged');
     const { command, args, env } = gatewayInvocation(fixture.root, 12345, 12346);
     assert.equal(env.HOME, path.join(fixture.root, 'home'));
+    assert.equal(env.USERPROFILE, path.join(fixture.root, 'home'));
     assert.equal(env.CODEX_HOME, path.join(fixture.root, 'codex'));
     assert.equal(env.HOST, '127.0.0.1');
     assert.equal(env.T3_URL, 'http://127.0.0.1:12346');
@@ -1206,4 +1207,26 @@ test('with Beta → Settle Bot threads on, the gateway settles quiet Bot threads
     assert.ok(done, `every Bot main thread is settled: ${JSON.stringify(await Promise.all(ids.map(state)))}\n${fixture.logs.slice(-3000)}`);
     assert.equal(await state('thread-app-1'), null, "a thread in the user's own project stays active");
   } finally { rpc?.close(); await fixture.close(); }
+});
+
+test('chats can give permissions: the gateway keeps the block in each provider\'s global instructions in step with the switch', { timeout: 30000 }, async () => {
+  const fixture = await createFixture();
+  const codex = path.join(fixture.root, 'codex', 'AGENTS.md');
+  const claude = path.join(fixture.root, 'home', '.claude', 'CLAUDE.md');
+  try {
+    // On by default, written at startup, where the fixture's T3 providers read them (CODEX_HOME, HOME/.claude).
+    assert.equal((await fixture.request('/api/settings')).body.chatPermissions, true);
+    for (const file of [codex, claude]) assert.match(await readFile(file, 'utf8'), /threebot:chat-permissions start[\s\S]*carry the user's permission[\s\S]*threebot:chat-permissions end/);
+    assert.equal((await fixture.request('/api/settings', 'PUT', { chatPermissions: 'yes' })).status, 400);
+    // Off removes the block; a file holding only the block goes away, the user's own text stays.
+    await writeFile(claude, `# Mine\n\n${await readFile(claude, 'utf8')}`);
+    assert.equal((await fixture.request('/api/settings', 'PUT', { chatPermissions: false })).body.chatPermissions, false);
+    assert.equal(existsSync(codex), false);
+    assert.equal(await readFile(claude, 'utf8'), '# Mine\n');
+    // Stays off across a restart, and on again puts it back once.
+    await fixture.restart();
+    assert.equal(existsSync(codex), false);
+    await fixture.request('/api/settings', 'PUT', { chatPermissions: true });
+    assert.equal((await readFile(claude, 'utf8')).split('threebot:chat-permissions end').length, 2);
+  } finally { await fixture.close(); }
 });

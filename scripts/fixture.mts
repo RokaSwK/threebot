@@ -72,7 +72,8 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
     env: {
       PATH: [path.dirname(process.execPath), ...(gitBinary ? [path.dirname(gitBinary)] : [])].join(path.delimiter),
       ...(gitBinary ? { GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(root, 'home', '.config') } : {}),
-      HOME: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
+      // os.homedir() reads USERPROFILE on Windows, HOME elsewhere.
+      HOME: path.join(root, 'home'), USERPROFILE: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
       TMPDIR: path.join(root, 'tmp'), TMP: path.join(root, 'tmp'), TEMP: path.join(root, 'tmp'),
       OPENSSL_CONF: path.join(root, 'tmp', 'openssl.cnf'),
       HOST: '127.0.0.1', PORT: String(port), BOTS_ROOT: path.join(root, 'bots'), STATIC_DIR: staticDir,

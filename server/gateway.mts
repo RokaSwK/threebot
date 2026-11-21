@@ -69,6 +69,7 @@ import { createRoomRoutes } from "./rooms-routes.mts";
 import { PROJECT_TOOLS, createProjectTools } from "./projects-mcp.mts";
 import { createProjectRoutes } from "./projects-routes.mts";
 import { BETA_DEFAULTS, betaSettings, patchBeta, settleBetaDefaults } from "./beta.mts";
+import { applyChatPermissions } from "./chat-permissions.mts";
 import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
 import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
@@ -526,6 +527,8 @@ const DEFAULT_SETTINGS = {
   accent: "bot",
   timezone: "",
   autoReview: true,
+  // Requests relayed from the user's other chats and Bots carry their permission (see chat-permissions.mts).
+  chatPermissions: true,
   rules: { alwaysAsk: [], allowWithoutAsking: [] },
   sections: [],
   defaultModel: null,
@@ -546,6 +549,15 @@ async function getSettings() {
   const saved = (await readJson(settingsPath, {})) ?? {};
   return { ...DEFAULT_SETTINGS, ...saved, beta: betaSettings(saved.beta) };
 }
+/** Keep the "chats can give permissions" block in each provider's global instructions in step with the switch. */
+async function syncChatPermissions(enabled: boolean) {
+  for (const result of await applyChatPermissions(enabled !== false)) {
+    if (result.error) console.error(`chat permissions: couldn't update ${result.file}: ${result.error}`);
+    else if (result.changed) console.log(`chat permissions: ${enabled !== false ? "added to" : "removed from"} ${result.file}`);
+  }
+}
+// On every start (including right after an install or update), so the block matches the saved switch.
+await syncChatPermissions((await getSettings()).chatPermissions);
 /** The Projects board is a beta feature; off hides its routes, its Bot tools and its AGENTS.md section. */
 const projectsOn = async () => (await getSettings()).beta.projects;
 function botDir(slug: string) {
@@ -1428,7 +1440,9 @@ const server = http.createServer(async (req, res) => {
       const next = { ...current, ...patch };
       if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
       if ("codingWork" in patch) next.codingWork = codingWorkPatch(patch.codingWork);
+      if ("chatPermissions" in patch && typeof patch.chatPermissions !== "boolean") return send(res, 400, { error: "chatPermissions must be true or false" });
       await writeJson(settingsPath, next);
+      if (next.chatPermissions !== current.chatPermissions) await syncChatPermissions(next.chatPermissions);
       if (!next.beta.projects) projectRoutes.closeStreams();
       if (next.beta.settleBotThreads && !current.beta.settleBotThreads) settleBots();
       if ("rules" in patch || "userName" in patch || "timezone" in patch || "codingWork" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
