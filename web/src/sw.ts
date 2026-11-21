@@ -47,9 +47,9 @@ async function matches(entry: PrecacheEntry, response: Response): Promise<boolea
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("") === entry.sha256;
 }
 
-async function verifiedResponse(entry: PrecacheEntry): Promise<Response> {
+async function verifiedResponse(entry: PrecacheEntry, cache: RequestCache = "reload"): Promise<Response> {
   const request = new Request(new URL(entry.url, self.location.origin), {
-    credentials: "same-origin", cache: "reload", redirect: "error",
+    credentials: "same-origin", cache, redirect: "error",
   });
   const response = await fetch(request);
   if (!response.ok || response.redirected || response.type !== "basic" || response.url !== request.url) {
@@ -151,8 +151,10 @@ self.addEventListener("fetch", (event) => {
     const previous = await Promise.all((await caches.keys())
       .filter((k) => k !== SHELL && isShell(k))
       .map((k) => caches.open(k)));
-    const kept = await reused(entry, url, previous);
-    const response = kept ?? await verifiedResponse(entry);
+    // A chunk the page loaded before this worker controlled it may sit in the HTTP cache: offline,
+    // that copy (checked like any other) is the only one there is.
+    const response = await reused(entry, url, previous)
+      ?? await verifiedResponse(entry, "force-cache").catch(() => verifiedResponse(entry));
     try {
       await cache.put(key, response.clone());
     } catch { /* Quota exceeded or cache write failure must not break the current view */ }
