@@ -23,6 +23,8 @@ import { chatDraft } from "../lib/chatDrafts";
 import { enablePushNotifications } from "../lib/push";
 import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
 import "./routines.css";
+import { findTidyTask } from "../lib/memoryTidy";
+import { reportsToChat } from "../lib/routineReports";
 import { changeRoutineEnabled, changeRoutineFreshSession, chatModelFrom, copyWebhookUrl, displayTimezone, moveRoutineToChat, removeRoutine, routineDate, routineDestination, routineHistory, scheduleText, setRoutineModel, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
 
@@ -342,6 +344,8 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const project = useApp((s) => (bot.projectId ? s.projects[bot.projectId] : undefined));
   const chatModel = chatModelFrom(bot, chatThread, project);
   const providers = useApp((s) => s.providers);
+  // Only a conversation started for the routine (or the memory tidy's) reports to the chat.
+  const tidyId = useApp((s) => findTidyTask(bot, s.tasks)?.id);
   const nameOf = (selection: ModelSelection | null | undefined) => modelDisplayName(selection, providers) || "its model";
   const model = destination === "own" ? ownThread?.modelSelection ?? task.modelSelection ?? null : destination === "chat" ? chatModel : task.modelSelection ?? null;
   // A run in progress owns the thread until it ends; moving the routine then is a change nobody asked for.
@@ -408,12 +412,14 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const destinationNote = destination === "chat"
     ? `Runs with the model of ${bot.name}’s chat. Change it there and this routine follows.`
     : destination === "own"
-      ? ownThread?.latestRunId
-        ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
-        : `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
+      ? !ownThread?.latestRunId
+        ? `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
+        : reportsToChat(task, tidyId)
+          ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
+          : `Runs on ${nameOf(model)} in its own conversation.`
       : destination === "own-pending"
         ? "The first run starts its own conversation with this model."
-        : `Each run starts a new thread with this model. ${bot.name}’s chat gets a one-line summary.`;
+        : "Each run starts a new thread with this model.";
   const freshNote = mode === "fresh_session"
     ? destination === "chat"
       ? `Each run starts a fresh session instead of re-reading the whole chat. ${bot.name} keeps its memory and files, and your next message carries on from the run.`

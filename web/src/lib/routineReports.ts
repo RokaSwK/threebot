@@ -7,6 +7,9 @@ import type { Bot, ScheduledTask, ThreadShell, TurnItem } from "./types";
 
 export type RoutineReport = { id: string; at: string; title: string; summary: string; threadId: string; failed: boolean };
 type Threads = Record<string, ThreadShell | undefined>;
+/** A message of T3's thread projection; `scheduledTaskId` is set on the ones a routine sent. */
+type ProjectionMessage = { id: string; runId?: string | null; scheduledTaskId?: string | null };
+
 
 const ACTIVE = new Set(["preparing", "queued", "starting", "running", "waiting"]);
 
@@ -27,7 +30,12 @@ const firstParagraph = (text: string) => {
  */
 function ownConversation(task: ScheduledTask, thread: ThreadShell | undefined, tidyId: string | undefined) {
   if (!thread || thread.archivedAt || !thread.latestRunId) return false;
-  return task.id === tidyId || thread.id.startsWith(ROUTINE_THREAD_PREFIX);
+  return reportsToChat(task, tidyId);
+}
+
+/** Whether this routine's runs report to the Bot's chat once its conversation has run. */
+export function reportsToChat(task: Pick<ScheduledTask, "id" | "threadId">, tidyId: string | undefined) {
+  return !!task.threadId && (task.id === tidyId || task.threadId.startsWith(ROUTINE_THREAD_PREFIX));
 }
 
 /**
@@ -79,8 +87,10 @@ export async function readRoutineReport(task: ScheduledTask, thread?: ThreadShel
   }
   if (!task.lastRunAt) return null;
   try {
-    const projection = await threadClient(task.threadId).call<{ turnItems?: TurnItem[] }>("orchestration.getThreadProjection", { threadId: task.threadId });
-    const message = [...(projection?.turnItems ?? [])].reverse().find((item) => item.type === "assistant_message" && typeof item.text === "string" && item.text.trim());
+    const projection = await threadClient(task.threadId).call<{ messages?: ProjectionMessage[]; turnItems?: TurnItem[] }>("orchestration.getThreadProjection", { threadId: task.threadId });
+    // The routine's last run, by the message T3 sent for it: a reply the user got there by chatting is not its report.
+    const runId = [...(projection?.messages ?? [])].reverse().find((item) => item.scheduledTaskId === task.id && item.runId)?.runId;
+    const message = [...(projection?.turnItems ?? [])].reverse().find((item) => item.type === "assistant_message" && (runId === undefined || item.runId === runId) && typeof item.text === "string" && item.text.trim());
     const text = typeof message?.text === "string" ? message.text.trim() : "";
     // A moved routine always leaves one line: silence would claim nothing ran.
     return remember(key, { ...base, at: task.lastRunAt, summary: text ? firstParagraph(text) : "Ran in its own conversation.", failed: false });

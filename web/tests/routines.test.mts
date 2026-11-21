@@ -320,6 +320,25 @@ test('the line follows the run in its conversation, not only T3\u2019s dispatch 
  const failed=await r.readRoutineReports(bot,[{...task,lastRunStatus:'failed',lastRunError:'Provider instance gone is disabled for project project'}],done);
  assert.deepEqual([failed[0].failed,failed[0].summary],[true,'The run failed: Provider instance gone is disabled for project project']);
 });
+test('the line is the routine\u2019s own run, not a reply the user got there by chatting',async()=>{
+ const id=R+'chatty';
+ const task={...original,id:'routine-chatty',threadId:id,threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{
+  messages:[{id:'m1',runId:'r1',scheduledTaskId:task.id},{id:'m2',runId:'r2',scheduledTaskId:null}],
+  turnItems:[{type:'assistant_message',runId:'r1',text:'The routine\u2019s report.'},{type:'assistant_message',runId:'r2',text:'A reply to the user.'}]}:{};
+ assert.equal((await r.readRoutineReports(bot,[task],{[id]:own(id)}))[0].summary,'The routine\u2019s report.');
+});
+test('Details promises a line in the chat only where one will appear',async()=>{
+ const own2={instanceId:'pi',model:'cheap',options:[]};
+ const task={...original,threadId:'room',threadMode:'continue',modelSelection:own2,runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({threads:{thread:{id:'thread',modelSelection:model},room:{id:'room',modelSelection:own2,latestRunId:'run-1'},[R+'b']:{id:R+'b',modelSelection:own2,latestRunId:'run-1'}},providers:[]});
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
+ assert.doesNotMatch(host.textContent,/one-line summary/,'a routine bound to a room reports there, not in the chat');
+ await render(h(RoutineDetail,{bot,task:{...task,threadId:R+'b'},onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/chat gets a one-line summary/);
+ await render(h(RoutineDetail,{bot,task:{...task,threadId:null,threadMode:'new_thread'},onBack(){},onEdit(){}}));
+ assert.doesNotMatch(host.textContent,/one-line summary/,'a thread per run leaves no line');
+});
 test('only a conversation started for the routine, once it has run, leaves a line in this chat',async()=>{
  const task={...original,threadId:R+'a',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
  const threads={[R+'a']:own(R+'a')};
