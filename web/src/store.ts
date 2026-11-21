@@ -1061,7 +1061,7 @@ export async function loadRoom(id: string, quiet = false) {
     // Deleted on another device: the copy is not a way back in, and retrying will not bring it back.
     if ((error as { status?: number })?.status === 404 && !get().roomGone) {
       stopRoomPoll();
-      void forgetRoom(id);
+      void forgetRoomCopy(id);
       set((s) => {
         const rooms = { ...s.rooms };
         delete rooms[id];
@@ -1078,6 +1078,13 @@ export async function loadRoom(id: string, quiet = false) {
     if (kept) return set({ roomView: kept, roomStale: true, roomMissing: false, roomError: null, rooms: get().rooms[id] ? { ...get().rooms, [id]: summaryPatch(kept, get().rooms[id]) } : get().rooms });
     set({ roomMissing: true, roomError: error instanceof Error ? error.message : "Couldn't load the room" });
   }
+}
+
+/** A deleted room leaves nothing behind: its copy, and the copies of the conversations it held. */
+async function forgetRoomCopy(id: string) {
+  const room = get().roomView?.id === id ? get().roomView : await readRoom(id).catch(() => null);
+  forgetThreadCopy((room?.members ?? []).flatMap((member) => typeof member.threadId === "string" && member.threadId ? [member.threadId] : []));
+  await forgetRoom(id);
 }
 
 /**
@@ -1128,15 +1135,18 @@ export function ensureRoom(id: string) {
 function startRoomPoll(id: string) {
   stopRoomPoll();
   roomPollId = id;
+  let resumed = false;
   roomPoll = window.setInterval(() => {
     // With no network the poll only burns requests; the socket coming back (or a manual retry) resumes it.
-    if (get().offline || navigator.onLine === false) return;
+    if (get().offline || navigator.onLine === false) { resumed = true; return; }
     if (roomPollId !== id || get().selectedRoom !== id || document.visibilityState !== "visible" || roomPollBusy) return;
     roomPollTick += 1;
     // While a turn is in flight the view needs 2 s; an idle room only needs to notice a message
     // another device sent, and 10 s is enough for that.
     const active = (get().roomView?.turns ?? []).some((turn) => turn.status === "running" || turn.status === "queued");
-    if (!active && roomPollTick % 5 !== 0) return;
+    // Back from offline, the copy on screen is replaced at once rather than on the idle cadence.
+    if (!active && roomPollTick % 5 !== 0 && !resumed) return;
+    resumed = false;
     roomPollBusy = true;
     void loadRoom(id, true).finally(() => { roomPollBusy = false; });
   }, 2_000);
@@ -1181,7 +1191,7 @@ export async function saveRoom(id: string, input: UpdateRoomInput) {
 export async function removeRoom(id: string) {
   const result = await deleteRoomApi(id);
   clearRoomDraft(id);
-  void forgetRoom(id);
+  void forgetRoomCopy(id);
   try {
     const roomSeen = { ...get().roomSeen };
     delete roomSeen[id];
