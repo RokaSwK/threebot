@@ -242,7 +242,7 @@ test('picking a model for a chat routine asks before moving it to its own conver
  const cheap=[...document.querySelectorAll('[role="radio"]')].find(el=>el.textContent?.includes('Cheap'));
  assert.ok(cheap);
  await act(async()=>(cheap as HTMLElement).click());
- assert.match(host.textContent,/Move it to its own conversation on cheap\?/);
+ assert.match(host.textContent,/Move it to its own conversation on Cheap\?/,'the confirmation names the model as the picker does');
  assert.equal(calls.some(c=>c.tag==='orchestration.launchThread'),false,'the move waits for the confirmation');
  await click(button('Move it'));
  const launch=calls.find(c=>c.tag==='orchestration.launchThread');

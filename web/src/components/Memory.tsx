@@ -7,7 +7,7 @@ import { chatDraft } from "../lib/chatDrafts";
 import { memoryApi, type MemoryFile, type MemoryFiles, type MemoryScope, type TidyFrequency } from "../lib/memory";
 import { findTidyTask, tidyScheduleText, tidyState } from "../lib/memoryTidy";
 import { setRoutineModel } from "../lib/routines";
-import { ModelPicker } from "./ModelPicker";
+import { ModelPicker, modelDisplayName } from "./ModelPicker";
 import type { Bot, ModelSelection } from "../lib/types";
 
 // While no one is editing, the tab picks up the Bot's own edits on this beat.
@@ -65,7 +65,7 @@ export function MemoryTab({ bot }: { bot: Bot }) {
     setModelBusy(true);
     try {
       await setRoutineModel(routine, bot, selection);
-      toast(`Tidy runs on ${selection.model}.`);
+      toast(`Tidy runs on ${modelDisplayName(selection, useApp.getState().providers)}.`);
     } catch (cause) {
       toast(cause instanceof Error ? cause.message : "Couldn't change the tidy model");
     } finally { setModelBusy(false); }

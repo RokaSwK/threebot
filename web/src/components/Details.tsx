@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowLeft, Brain, ChevronsRight, ChevronLeft, ChevronRight, CircleUser, Clock, FileText, Folder, Library as LibraryIcon, Monitor, Play, Plus, Trash2 } from "lucide-react";
-import { ModelLabel, ModelPicker } from "./ModelPicker";
+import { ModelLabel, ModelPicker, modelDisplayName } from "./ModelPicker";
 import { CodingWorkRows } from "./MachinesPane";
 import { t3 } from "../lib/t3";
 import { Avatar } from "./Avatar";
@@ -341,6 +341,8 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const chatThread = useApp((s) => (bot.mainThreadId ? s.threads[bot.mainThreadId] : undefined));
   const project = useApp((s) => (bot.projectId ? s.projects[bot.projectId] : undefined));
   const chatModel = chatModelFrom(bot, chatThread, project);
+  const providers = useApp((s) => s.providers);
+  const nameOf = (selection: ModelSelection | null | undefined) => modelDisplayName(selection, providers) || "its model";
   const model = destination === "own" ? ownThread?.modelSelection ?? task.modelSelection ?? null : destination === "chat" ? chatModel : task.modelSelection ?? null;
   // A run in progress owns the thread until it ends; moving the routine then is a change nobody asked for.
   const running = task.lastRunStatus === "running";
@@ -385,7 +387,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     }
     void action("model", async () => {
       await setRoutineModel(task, bot, selection);
-      announce(`Model set to ${selection.model}.`);
+      announce(`Model set to ${nameOf(selection)}.`);
     });
   };
   const moveOut = () => {
@@ -393,7 +395,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     void action("move", async () => {
       await setRoutineModel(task, bot, moveTo);
       setMoveTo(null);
-      announce(`Moved to its own conversation on ${moveTo.model}.`);
+      announce(`Moved to its own conversation on ${nameOf(moveTo)}.`);
     });
   };
   const moveBack = () => {
@@ -407,8 +409,8 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     ? `Runs with the model of ${bot.name}’s chat. Change it there and this routine follows.`
     : destination === "own"
       ? task.runCount
-        ? `Runs on ${model?.model ?? "its model"} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
-        : `Runs on ${model?.model ?? "its model"} in its own conversation. Nothing there until the first run.`
+        ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
+        : `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
       : destination === "own-pending"
         ? "The first run starts its own conversation with this model."
         : `Each run starts a new thread with this model. ${bot.name}’s chat gets a one-line summary.`;
@@ -450,7 +452,7 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
       </div>}
       {running && destination !== "new-thread" && <p className="mt-1 text-[12px] text-muted">A run is in progress. You can move it when the run finishes.</p>}
       {moveTo && destination === "chat" && <div ref={confirmBox} className="mt-2.5 border-t border-line pt-2.5">
-        <p className="text-[13px]">Move it to its own conversation on <span className="font-medium">{moveTo.model}</span>? Future runs answer there; {bot.name}’s chat gets a one-line summary.</p>
+        <p className="text-[13px]">Move it to its own conversation on <span className="font-medium">{nameOf(moveTo)}</span>? Future runs answer there; {bot.name}’s chat gets a one-line summary.</p>
         <div className="mt-2 flex flex-wrap gap-2">
           <Pill variant="soft" disabled={pending === "move" || running} onClick={moveOut}>{pending === "move" ? "Moving…" : "Move it"}</Pill>
           <Pill variant="soft" disabled={pending === "move"} onClick={() => { setMoveTo(null); modelAction.current?.focus(); }}>Keep it here</Pill>

@@ -38,6 +38,13 @@ function writeFavoriteKeys(keys: Set<string>) {
   } catch {}
 }
 
+/** The name the picker shows for a selection, or its slug when the provider doesn't list it. */
+export function modelDisplayName(value: ModelSelection | null | undefined, providers: Provider[]): string {
+  const provider = providers.find((p) => p.instanceId === value?.instanceId);
+  const model = provider?.models.find((m) => m.slug === value?.model);
+  return model ? getTriggerDisplayModelName(model, provider?.driver) : value?.model ?? "";
+}
+
 export function ModelLabel({ value, fallback = "Choose a model", wrap = false }: { value: ModelSelection | null; fallback?: string; wrap?: boolean }) {
   const providers = useApp((s) => s.providers);
   const provider = providers.find((p) => p.instanceId === value?.instanceId);
