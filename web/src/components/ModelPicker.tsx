@@ -2,7 +2,7 @@
 // so a choice here is the same choice in T3 Code.
 import clsx from "clsx";
 import { Check, ChevronRight, Star } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode, type Ref } from "react";
 import { applyModelPreferences, rankModelPickerSearch } from "../lib/modelPicker";
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -38,20 +38,49 @@ function writeFavoriteKeys(keys: Set<string>) {
   } catch {}
 }
 
-export function ModelPicker({ value, onChange }: { value: ModelSelection | null; onChange: (selection: ModelSelection) => void }) {
+/** The name the picker shows for a selection, or its slug when the provider doesn't list it. */
+export function modelDisplayName(value: ModelSelection | null | undefined, providers: Provider[]): string {
+  const provider = providers.find((p) => p.instanceId === value?.instanceId);
+  const model = provider?.models.find((m) => m.slug === value?.model);
+  return model ? getTriggerDisplayModelName(model, provider?.driver) : value?.model ?? "";
+}
+
+export function ModelLabel({ value, fallback = "Choose a model", wrap = false }: { value: ModelSelection | null; fallback?: string; wrap?: boolean }) {
   const providers = useApp((s) => s.providers);
-  const [open, setOpen] = useState(false);
   const provider = providers.find((p) => p.instanceId === value?.instanceId);
   const model = provider?.models.find((m) => m.slug === value?.model);
   const traits = provider && model ? buildTraitsTriggerDisplay({ driver: provider.driver, descriptors: getSelectedTraits(model, value?.options).descriptors }).label : "";
   return <>
-    <button type="button" className="model-trigger" aria-haspopup="dialog" onClick={() => setOpen(true)}>
-      {provider && <ProviderInstanceIcon driver={provider.driver} displayName={provider.displayName} className="size-4 text-muted" iconClassName="size-4" />}
-      <span className="name">{model ? getTriggerDisplayModelName(model, provider?.driver) : value?.model || "Choose a model"}</span>
-      {traits && <span className="traits">{traits}</span>}
-      <ChevronRight size={15} className="go" />
-    </button>
-    {open && <ModelSheet providers={providers} value={value} onChange={onChange} onClose={() => setOpen(false)} />}
+    {provider && <ProviderInstanceIcon driver={provider.driver} displayName={provider.displayName} className="size-4 shrink-0 text-muted" iconClassName="size-4" />}
+    <span className={wrap ? "min-w-0 break-words" : "name"}>{model ? getTriggerDisplayModelName(model, provider?.driver) : value?.model || fallback}</span>
+    {traits && <span className={wrap ? "shrink-0 text-muted" : "traits"}>{traits}</span>}
+  </>;
+}
+
+export function ModelPicker({ value, onChange, trigger, triggerRef, triggerClassName, describedBy, title = "Model", note, closeOnPick = false }: {
+  value: ModelSelection | null;
+  onChange: (selection: ModelSelection) => void;
+  /** Replaces the default trigger. Call `open` to show the sheet. */
+  trigger?: (open: () => void) => ReactNode;
+  triggerRef?: Ref<HTMLButtonElement>;
+  triggerClassName?: string;
+  describedBy?: string;
+  title?: string;
+  note?: string;
+  /** Closes the sheet as soon as a model is picked, so the caller can ask what to do next. */
+  closeOnPick?: boolean;
+}) {
+  const providers = useApp((s) => s.providers);
+  const [open, setOpen] = useState(false);
+  const openSheet = () => setOpen(true);
+  return <>
+    {trigger ? trigger(openSheet) : (
+      <button ref={triggerRef} type="button" className={clsx("model-trigger", triggerClassName)} aria-haspopup="dialog" aria-describedby={describedBy} onClick={openSheet}>
+        <ModelLabel value={value} />
+        <ChevronRight size={15} className="go" />
+      </button>
+    )}
+    {open && <ModelSheet providers={providers} value={value} onChange={onChange} onClose={() => setOpen(false)} title={title} note={note} closeOnPick={closeOnPick} />}
   </>;
 }
 
@@ -62,7 +91,7 @@ type ListedItem = {
   displayName: string;
 };
 
-function ModelSheet({ providers, value, onChange, onClose }: { providers: Provider[]; value: ModelSelection | null; onChange: (selection: ModelSelection) => void; onClose: () => void }) {
+function ModelSheet({ providers, value, onChange, onClose, title, note, closeOnPick }: { providers: Provider[]; value: ModelSelection | null; onChange: (selection: ModelSelection) => void; onClose: () => void; title: string; note?: string; closeOnPick: boolean }) {
   const preferences = useApp((s) => s.providerModelPreferences);
   const [activeTab, setActiveTab] = useState<string>(value?.instanceId ?? providers[0]?.instanceId ?? "favorites");
   const [query, setQuery] = useState("");
@@ -130,8 +159,13 @@ function ModelSheet({ providers, value, onChange, onClose }: { providers: Provid
 
   const pick = (next: ProviderModel, targetInstanceId: string) => {
     const targetProvider = providers.find((p) => p.instanceId === targetInstanceId);
-    if (!targetProvider || (targetProvider.instanceId === value?.instanceId && next.slug === value?.model)) return;
+    if (!targetProvider) return;
+    if (targetProvider.instanceId === value?.instanceId && next.slug === value?.model) {
+      if (closeOnPick) onClose();
+      return;
+    }
     onChange(selectionForModel(targetProvider.instanceId, next, next.slug, targetProvider.instanceId === value?.instanceId ? value?.options : undefined));
+    if (closeOnPick) onClose();
   };
 
   const setTrait = (id: string, trait: string | boolean) => {
@@ -144,7 +178,8 @@ function ModelSheet({ providers, value, onChange, onClose }: { providers: Provid
   };
 
   return (
-    <Modal onClose={onClose} title="Model" className={clsx("model-sheet w-full max-w-[calc(100vw-2rem)]", hasTraits ? "sm:w-[620px]" : "sm:w-[460px]")}>
+    <Modal onClose={onClose} title={title} className={clsx("model-sheet w-full max-w-[calc(100vw-2rem)]", hasTraits ? "sm:w-[620px]" : "sm:w-[460px]")}>
+      {note && <p className="shrink-0 border-b border-line px-4 py-2 text-[12px] leading-relaxed text-muted">{note}</p>}
       <div className="dialog-body flex flex-col sm:flex-row h-[480px] max-h-[75vh] p-0 overflow-hidden">
         {/* Left vertical sidebar (desktop) */}
         {providers.length > 0 && (

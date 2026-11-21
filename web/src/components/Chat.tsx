@@ -34,7 +34,7 @@ import { MachineBadge } from "./MachineBadge";
 import { loadedRunFloor, runOrdinal, supplementSubagents, threadIdentity, threadLink } from "../lib/threadFamily";
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
-import { findTidyTask, readTidyReport, type TidyReport } from "../lib/memoryTidy";
+import { ownConversationRoutines, readRoutineReports, reportKey, type RoutineReport } from "../lib/routineReports";
 import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
@@ -92,14 +92,17 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
   const isChild = !!threadId && threadId !== bot.mainThreadId;
   const tasks = useApp((s) => s.tasks);
-  const tidyTask = useMemo(() => findTidyTask(bot, tasks), [bot, tasks]);
-  const [tidyReport, setTidyReport] = useState<TidyReport | null>(null);
+  // Routines that run in their own conversation leave one line each here; the latest few only.
+  const ownRoutines = useMemo(() => ownConversationRoutines(bot, tasks, threads), [bot, tasks, threads]);
+  // The threads' run state is part of the key: T3 marks the task done once the prompt is sent, before the reply.
+  const ownRoutineKey = ownRoutines.map((task) => reportKey(task, task.threadId ? threads[task.threadId] : undefined)).join("|");
+  const [routineReports, setRoutineReports] = useState<RoutineReport[]>([]);
   useEffect(() => {
-    if (threadId !== bot.mainThreadId || !tidyTask) { setTidyReport(null); return; }
+    if (threadId !== bot.mainThreadId || ownRoutines.length === 0) { setRoutineReports([]); return; }
     let live = true;
-    readTidyReport(tidyTask).then((report) => { if (live) setTidyReport(report); }).catch(() => { if (live) setTidyReport(null); });
+    readRoutineReports(bot, tasks, threads).then((reports) => { if (live) setRoutineReports(reports); }).catch(() => { if (live) setRoutineReports([]); });
     return () => { live = false; };
-  }, [bot.mainThreadId, threadId, tidyTask?.id, tidyTask?.threadId, tidyTask?.lastRunAt, tidyTask?.lastRunStatus, tidyTask?.runCount]);
+  }, [bot.slug, bot.mainThreadId, threadId, ownRoutineKey]);
   const detailsOpen = useApp((s) => s.detailsOpen);
   const exchangeBotSlug = useApp((s) => s.exchangeBotSlug);
   const exchangeBot = useApp((s) => exchangeBotSlug ? s.bots[exchangeBotSlug] ?? s.historicalBots[exchangeBotSlug] : undefined);
@@ -132,7 +135,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
     const model = provider?.models.find((m) => m.slug === selection.model);
     return model ? getTriggerDisplayModelName(model, provider?.driver) : selection.model;
   }), [runs, providers]);
-  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches, routineReports: tidyReport ? [tidyReport] : [] }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches, tidyReport]);
+  const entries = useMemo(() => buildEntries(items, { bot, botsByThread, tasks, requests: data?.requests ?? {}, vaultSites, voiceCalls, modelSwitches: switches, routineReports }), [items, bot, botsByThread, tasks, data?.requests, vaultSites, voiceCalls, switches, routineReports]);
   const activeRun = runs.filter(run => isActiveRun(run) && run.status !== "queued").sort((a, b) => b.ordinal - a.ordinal)[0];
   const working = Boolean(activeRun) && !shell?.pendingRuntimeRequest;
   const [tick, setTick] = useState(0);
