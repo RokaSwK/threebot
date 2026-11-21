@@ -1,0 +1,149 @@
+
+## browser
+{
+  "permission": "granted",
+  "registrationId": "0"
+}
+
+## 1. pushes the gateway sent (delivered to the worker)
+[
+  {
+    "topic": "nV7C6OJ4gKQA2xvY19w3V1uVyJvl69cC",
+    "urgency": "high",
+    "kind": "waiting",
+    "tag": "waiting:beta:side-beta-1",
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "icon": "/api/bots/beta/avatar.png",
+    "badge": "/api/bots/beta/badge.png",
+    "url": "/?bot=beta&thread=side-beta-1"
+  },
+  {
+    "topic": "0RzzFFdKrmaJ8leiuJ_tGZ0WAyCsffC5",
+    "urgency": "high",
+    "kind": "waiting",
+    "tag": "waiting:beta:side-beta-2",
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "icon": "/api/bots/beta/avatar.png",
+    "badge": "/api/bots/beta/badge.png",
+    "url": "/?bot=beta&thread=side-beta-2"
+  }
+]
+
+## 1. tray: both waiting side chats, no duplicates from page + push
+[
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-1",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  },
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-2",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  }
+]
+
+## 2. pushes the gateway sent
+[
+  {
+    "topic": "nV7C6OJ4gKQA2xvY19w3V1uVyJvl69cC",
+    "urgency": "normal",
+    "kind": "resolved",
+    "tag": "waiting:beta:side-beta-1",
+    "title": "Beta",
+    "body": "Answered",
+    "url": "/?bot=beta&thread=side-beta-1"
+  }
+]
+
+## 2. tray after answering side chat 1
+[
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-2",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  }
+]
+
+## 3. no tab: pushes the gateway sent
+[
+  {
+    "topic": "LrawxhyuLzNyBD6_xVc7OTHBBi35Gx1h",
+    "urgency": "high",
+    "kind": "waiting",
+    "tag": "waiting:beta:side-beta-3",
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "icon": "/api/bots/beta/avatar.png",
+    "badge": "/api/bots/beta/badge.png",
+    "url": "/?bot=beta&thread=side-beta-3"
+  }
+]
+
+## 3. no tab: tray
+[
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-2",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  },
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-3",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  }
+]
+
+## 3. no tab, answered elsewhere: pushes the gateway sent
+[
+  {
+    "topic": "LrawxhyuLzNyBD6_xVc7OTHBBi35Gx1h",
+    "urgency": "normal",
+    "kind": "resolved",
+    "tag": "waiting:beta:side-beta-3",
+    "title": "Beta",
+    "body": "Answered",
+    "url": "/?bot=beta&thread=side-beta-3"
+  }
+]
+
+## 3. no tab: tray after the resolved push
+[
+  {
+    "title": "Beta",
+    "body": "A side chat is waiting for you",
+    "tag": "waiting:beta:side-beta-2",
+    "icon": "http://127.0.0.1:4792/api/bots/beta/avatar.png"
+  }
+]
+
+## 4. settings pane
+Updates | Beta | Usage stats | Connect apps | Notifications | Push reaches this browser or installed app when Threebot is closed. Each Bot has its own Notifications switch in Details. | This device | Push notifications | Off for this device. | Permission | The browser's permission for this site. | Allowed | Devices | Browsers and installed apps that receive this server's pushes. | 1 | If this browser refuses to register, its push service is the problem. Some Chromium browsers (for example Brave) need their push-service setting on; otherwise use Chrome or your phone.
+
+## 5. devices before off
+1
+
+## 5. unsubscribe
+{
+  "ok": true,
+  "subscriptions": 0
+}
+
+## 5. new pushes after off (expect 0)
+0
+
+## 5. new pushes after a gateway restart (expect 0)
+0
+
+## 5. devices after restart
+0
+
+## 5. gateway log
+push: waiting beta
