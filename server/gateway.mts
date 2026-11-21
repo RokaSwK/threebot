@@ -73,7 +73,7 @@ import { applyChatPermissions } from "./chat-permissions.mts";
 import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast, type PayloadInput } from "./telemetry.mts";
 import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
-import { APP_BADGE_URL, appBadgePng, botAvatarPng, botBadgePng, roomIdentity } from "./bot-icons.mts";
+import { APP_BADGE_URL, appBadgePng, botBadgePng, botFace, roomIdentity } from "./bot-icons.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
 type HttpError = Error & { status?: number; code?: string };
@@ -483,12 +483,16 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Outgo
 }
 
 /** A Bot's notification image: its PNG, or 404 when a photo has no monochrome badge. */
-async function sendBotImage(res: ServerResponse, image: Promise<Buffer>) {
+async function sendBotImage(res: ServerResponse, image: Promise<Buffer | { png: Buffer; fallback: boolean }>) {
   try {
-    return send(res, 200, await image, {
+    const result = await image;
+    const fallback = !Buffer.isBuffer(result) && result.fallback;
+    return send(res, 200, Buffer.isBuffer(result) ? result : result.png, {
       "content-type": "image/png",
       "content-security-policy": "default-src 'none'",
-      "cache-control": "private, max-age=300",
+      // A drawn stand-in for a picture that couldn't be read: nobody should keep it under the picture's URL.
+      "cache-control": fallback ? "no-store" : "private, max-age=300",
+      ...(fallback ? { "x-threebot-fallback": "drawn" } : {}),
     });
   } catch (error) {
     if ((error as HttpError).status === 404 || (error as NodeJS.ErrnoException).code === "ENOENT") return send(res, 404, { error: "not found" });
@@ -1626,7 +1630,7 @@ const server = http.createServer(async (req, res) => {
     const botAvatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\.png$/);
     if (botAvatar && req.method === "GET") {
       const bot = await getBot(botAvatar[1]);
-      return bot ? await sendBotImage(res, botAvatarPng(bot)) : send(res, 404, { error: "not found" });
+      return bot ? await sendBotImage(res, botFace(bot)) : send(res, 404, { error: "not found" });
     }
     const botBadge = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/badge\.png$/);
     if (botBadge && req.method === "GET") {

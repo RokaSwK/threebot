@@ -547,6 +547,13 @@ test("once fetched, a Bot's icon shows offline at full size, and a new look repl
   assert.deepEqual([...icons.keys()].map((url) => new URL(url).search), ["?v=two"]);
 });
 
+test("a cache that can't be opened still shows the fetched image", async () => {
+  const broken = cacheStorage();
+  const runtime = worker(app, { ...broken, async open(name) { if (name.startsWith("bot-icons-")) throw new Error("quota"); return broken.open(name); } });
+  const notice = await runtime.push({ title: "Alpha", body: "Finished", tag: "alpha", url: "/", icon: "/api/bots/alpha/avatar.png?v=one", iconData: EMBEDDED, kind: "finished" });
+  assert.equal(notice!.options.icon, `data:image/png;base64,${BOT_PNG.toString("base64")}`);
+});
+
 test("a sign-in page instead of the image falls back to the push's own copy, and is not kept", async () => {
   const runtime = worker(app);
   failure = { url: "/api/bots/alpha/avatar.png?v=signed-out", kind: "login-html" };

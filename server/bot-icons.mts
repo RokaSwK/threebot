@@ -31,6 +31,17 @@ const APP_LOOK: AvatarBot = { shape: "ball", color: "purple" };
 // The copies a push carries inside itself are small, so the whole message stays under the push
 // services' 4 KB limit.
 const EMBED_ICON = 64;
+const EMBED_ICON_BYTES = 1_400;
+
+/** The largest small icon that fits its share of a push: a noisy photo steps down in size and quality. */
+async function smallIcon(png: Buffer): Promise<Buffer> {
+  let out = Buffer.alloc(0);
+  for (const [size, quality] of [[EMBED_ICON, 50], [56, 40], [48, 35], [40, 30], [32, 25], [24, 20]]) {
+    out = await sharp(png).resize(size, size).webp({ quality, alphaQuality: quality }).toBuffer();
+    if (out.length <= EMBED_ICON_BYTES) break;
+  }
+  return out;
+}
 const EMBED_BADGE = 36;
 
 /** Changes exactly when the drawn look changes, so the cache follows shape, color and object look. */
@@ -53,16 +64,25 @@ export function botBadgeUrl(bot: IconBot): string {
   return avatarImageFile(bot.avatarImage) ? APP_BADGE_URL : `/api/bots/${encodeURIComponent(bot.slug)}/badge.png?v=${iconVersion(bot)}`;
 }
 
-export async function botAvatarPng(bot: IconBot): Promise<Buffer> {
+/**
+ * The Bot's face as it can be shown now: its picture, or its drawn avatar when the picture can't be
+ * read here (gone, or on another machine), never a letter. `version` names what was drawn, and a
+ * failed read is not cached, so a restored picture shows again.
+ */
+export async function botFace(bot: IconBot): Promise<{ png: Buffer; version: string; fallback: boolean }> {
   const picture = avatarImageFile(bot.avatarImage);
-  const drawn = async () => sharp(Buffer.from(renderBotAvatar(bot))).resize(ICON_SIZE, ICON_SIZE).png().toBuffer();
-  // A picture that can't be read here (gone, or on another machine) still leaves the Bot's drawn face, never a letter.
-  return cached(`avatar:${bot.slug}`, picture ?? look(bot), async () => {
-    if (picture) {
-      try { return await sharp(await readAvatarImage(bot, bot.avatarImage)).resize(ICON_SIZE, ICON_SIZE).png().toBuffer(); } catch { /* the drawn face below */ }
-    }
-    return drawn();
-  });
+  if (picture) {
+    try {
+      const png = await cached(`avatar:${bot.slug}`, picture, async () => sharp(await readAvatarImage(bot, bot.avatarImage)).resize(ICON_SIZE, ICON_SIZE).png().toBuffer());
+      return { png, version: iconVersion(bot), fallback: false };
+    } catch { /* the drawn face below */ }
+  }
+  const drawn = await cached(`avatar-drawn:${bot.slug}`, look(bot), async () => sharp(Buffer.from(renderBotAvatar(bot))).resize(ICON_SIZE, ICON_SIZE).png().toBuffer());
+  return { png: drawn, version: iconVersion({ ...bot, avatarImage: null }), fallback: Boolean(picture) };
+}
+
+export async function botAvatarPng(bot: IconBot): Promise<Buffer> {
+  return (await botFace(bot)).png;
 }
 
 /** Android draws a badge through its alpha channel: keep the silhouette, paint it white. */
@@ -95,11 +115,11 @@ export function appBadgePng(): Promise<Buffer> {
  * time (offline, or a signed-out Access session) still shows the Bot, not a letter.
  */
 export async function botIconData(bot: IconBot): Promise<{ iconData: string; badgeData: string }> {
-  const version = iconVersion(bot);
+  const face = await botFace(bot);
   const photo = Boolean(avatarImageFile(bot.avatarImage));
   const [icon, badge] = await Promise.all([
-    cached(`embed-icon:${bot.slug}`, version, async () => sharp(await botAvatarPng(bot)).resize(EMBED_ICON, EMBED_ICON).webp({ quality: 50, alphaQuality: 60 }).toBuffer()),
-    cached(`embed-badge:${bot.slug}`, version, async () => sharp(await (photo ? appBadgePng() : botBadgePng(bot))).resize(EMBED_BADGE, EMBED_BADGE).png({ palette: true, colours: 4, compressionLevel: 9 }).toBuffer()),
+    cached(`embed-icon:${bot.slug}`, face.version, () => smallIcon(face.png)),
+    cached(`embed-badge:${bot.slug}`, iconVersion(bot), async () => sharp(await (photo ? appBadgePng() : botBadgePng(bot))).resize(EMBED_BADGE, EMBED_BADGE).png({ palette: true, colours: 4, compressionLevel: 9 }).toBuffer()),
   ]);
   return { iconData: `data:image/webp;base64,${icon.toString("base64")}`, badgeData: `data:image/png;base64,${badge.toString("base64")}` };
 }

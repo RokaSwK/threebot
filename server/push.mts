@@ -115,14 +115,17 @@ export function usableSubject(value: unknown): string | null {
 // Push services take about 4 KB of payload; encryption adds about 100 bytes. The small embedded
 // images go first when a message would not fit (the full-size URLs remain).
 const MAX_PAYLOAD = 3_500;
+const clipText = (text: string, length: number) => [...text].length > length ? [...text].slice(0, length - 1).join("") + "…" : text;
 export function fitPayload(payload: PushPayload): PushPayload {
-  let fitted = payload;
+  const fits = (candidate: PushPayload) => Buffer.byteLength(JSON.stringify(candidate)) <= MAX_PAYLOAD;
+  // Text gives way first, so the Bot's face stays; then the embedded images; then the text again.
+  let fitted = fits(payload) ? payload : { ...payload, title: clipText(payload.title, 80), body: clipText(payload.body, 80) };
   for (const field of ["iconData", "badgeData"] as const) {
-    if (Buffer.byteLength(JSON.stringify(fitted)) <= MAX_PAYLOAD) break;
+    if (fits(fitted)) return fitted;
     const { [field]: _dropped, ...rest } = fitted;
     fitted = rest;
   }
-  return fitted;
+  return fits(fitted) ? fitted : { ...fitted, title: clipText(fitted.title, 24), body: clipText(fitted.body, 24) };
 }
 
 export function pushTopic(tag: string): string {

@@ -172,15 +172,21 @@ async function imageData(url: unknown, embedded: unknown): Promise<string | unde
   if (typeof url !== "string" || !url.startsWith("/")) return fallback;
   try {
     const key = new URL(url, SCOPE).href;
-    const cache = await caches.open(ICONS);
-    let response = await cache.match(key);
+    // The cache only helps: a storage failure must not cost an image the network can give.
+    const cache = await caches.open(ICONS).catch(() => undefined);
+    let response = await cache?.match(key).catch(() => undefined);
     if (!response) {
       const fresh = await fetch(key, { credentials: "same-origin", signal: AbortSignal.timeout(4_000) }).catch(() => null);
-      // A sign-in page answers with HTML: only an image is kept.
+      // A sign-in page answers with HTML: only an image is used.
       if (fresh?.ok && fresh.headers.get("content-type")?.startsWith("image/")) {
-        const path = new URL(key).pathname;
-        for (const old of await cache.keys()) if (new URL(old.url).pathname === path) await cache.delete(old);
-        await cache.put(key, fresh.clone());
+        // A drawn stand-in for a picture the gateway couldn't read is shown, not kept under the picture's URL.
+        if (cache && !fresh.headers.has("x-threebot-fallback")) {
+          try {
+            await cache.put(key, fresh.clone());
+            const path = new URL(key).pathname;
+            for (const old of await cache.keys()) if (old.url !== key && new URL(old.url).pathname === path) await cache.delete(old);
+          } catch { /* shown anyway; kept next time */ }
+        }
         response = fresh;
       }
     }
