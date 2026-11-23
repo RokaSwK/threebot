@@ -36,3 +36,13 @@ test("property: escaping only adds backslashes before dollars, and running it tw
     assert.equal(escapePriceDollars(once), once, input);
   }
 });
+
+test("a line of unmatched backtick runs stays linear", () => {
+  // Runs of 1, 2, 3 … backticks never close, so a scanner that rescans the line per opener is O(n^1.5):
+  // about one second for this 640k-character line, versus a few milliseconds when each run's closer is precomputed.
+  let line = "";
+  for (let k = 1; line.length < 640_000; k++) line += "`".repeat(k) + "a";
+  const started = performance.now();
+  assert.match(escapePriceDollars(line + " $5"), /\\\$5$/);
+  assert.ok(performance.now() - started < 500, "escaping took too long");
+});

@@ -10,19 +10,28 @@ function escapeText(text: string) {
 
 /** Applies `escape` outside inline code spans: a run of n backticks closes at the next run of exactly n. */
 function outsideCode(line: string, escape: (text: string) => string) {
-  let out = "", from = 0, pos = 0;
-  const runEnd = (at: number) => { let end = at; while (line[end] === "`") end++; return end; };
-  while (pos < line.length) {
-    const open = line.indexOf("`", pos);
-    if (open < 0) break;
-    const openEnd = runEnd(open);
-    let close = -1;
-    for (let next = line.indexOf("`", openEnd); next >= 0; next = line.indexOf("`", runEnd(next))) {
-      if (runEnd(next) - next === openEnd - open) { close = runEnd(next); break; }
-    }
-    if (close < 0) { pos = openEnd; continue; }
-    out += escape(line.slice(from, open)) + line.slice(open, close);
-    from = pos = close;
+  // Backtick runs as [start, end], each linked to the next run of the same length, in one pass,
+  // so an opener that never closes doesn't rescan the rest of the line (hostile lines stay linear).
+  const runs: [number, number][] = [];
+  for (let at = line.indexOf("`"); at >= 0; at = line.indexOf("`", at)) {
+    const start = at;
+    while (line[at] === "`") at++;
+    runs.push([start, at]);
+  }
+  const closer = new Array<number>(runs.length).fill(-1);
+  const nextOfLength = new Map<number, number>();
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const length = runs[i][1] - runs[i][0];
+    closer[i] = nextOfLength.get(length) ?? -1;
+    nextOfLength.set(length, i);
+  }
+  let out = "", from = 0;
+  for (let i = 0; i < runs.length; i++) {
+    if (runs[i][0] < from || closer[i] < 0) continue;
+    const close = runs[closer[i]][1];
+    out += escape(line.slice(from, runs[i][0])) + line.slice(runs[i][0], close);
+    from = close;
+    i = closer[i];
   }
   return out + escape(line.slice(from));
 }
