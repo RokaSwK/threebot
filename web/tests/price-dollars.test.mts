@@ -20,6 +20,9 @@ test("code keeps its dollars", () => {
   const fenced = "```sh\nprice=$5\n```\npaid $5";
   assert.equal(escapePriceDollars(fenced), "```sh\nprice=$5\n```\npaid \\$5");
   assert.equal(escapePriceDollars("~~~\n$1 and $2\n~~~"), "~~~\n$1 and $2\n~~~");
+  assert.equal(escapePriceDollars("Run:\n\n    echo $5 and $6\n\nthen pay $5"), "Run:\n\n    echo $5 and $6\n\nthen pay \\$5");
+  assert.equal(escapePriceDollars("> ```\n> price=$5 $6\n> ```\npaid $5"), "> ```\n> price=$5 $6\n> ```\npaid \\$5");
+  assert.equal(escapePriceDollars("``a ` $5 `` costs $5"), "``a ` $5 `` costs \\$5");
 });
 
 test("property: escaping only adds backslashes before dollars, and running it twice changes nothing", () => {
