@@ -427,9 +427,7 @@ button {
   .settings-close { top: 16px; left: 18px; right: auto; width: 42px; height: 42px; border: 1px solid var(--border-strong); }
   .settings-back { display: grid; left: auto; right: 18px; }
   .settings-home > div { margin-bottom: 26px; }
-  .settings-home > div > div:last-child { border-radius: 18px; background: var(--bg-card); }
   .settings-content h2 { text-align: center; font-size: 20px; }
-  .settings-content input { min-width: 0; max-width: 48%; }
 }
 
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
@@ -536,26 +534,68 @@ button {
 .new-bot-sheet .dialog-footer { border: 0; padding: 24px 18px max(24px, env(safe-area-inset-bottom)); }
 .new-bot-sheet .dialog-footer > button { width: 100%; height: 48px; font-size: 16px; }
 .new-bot-sheet .dialog-footer > button:disabled { opacity: 1; background: #969696; color: #424242; }
-.settings-group > div:last-child { background: var(--bg-card); border: 0; border-radius: 18px; }
-.settings-group > div:first-child:not(:last-child) { padding-inline: 16px; }
 .settings-home-row { min-height: 52px; padding: 15px 18px; }
 .settings-home-row:has(small), .settings-home-row:has(.block.text-muted) { min-height: 72px; }
 .settings-home .settings-row { min-height: 88px; padding: 16px 18px; flex-wrap: nowrap; }
 .settings-home .settings-row > div:first-child { flex-basis: auto; }
 .settings-home .settings-row > div > div:first-child { font-size: 16px; }
 .settings-home .settings-row > div > div:last-child:not(:first-child) { line-height: 19px; font-size: 13px; }
-.settings-home [role="switch"], .settings-content [role="switch"] { height: 30px; width: 50px; }
-.settings-home [role="switch"] span, .settings-content [role="switch"] span { height: 24px; width: 24px; top: 3px; }
-.settings-home [role="switch"][aria-checked="true"] span, .settings-content [role="switch"][aria-checked="true"] span { transform: translateX(23px); }
-.settings-home [role="switch"][aria-checked="false"] span, .settings-content [role="switch"][aria-checked="false"] span { transform: translateX(3px); }
+.settings-card {
+  background-color: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.settings-modal .settings-row { column-gap: 16px; row-gap: 8px; padding-inline: 20px; border-bottom: 0; }
+.settings-modal .settings-row > * { min-width: 0; max-width: 100%; }
+.settings-modal .settings-row > :first-child { overflow-wrap: anywhere; }
+:where(.settings-modal) .settings-row > div:first-child > div:first-child { font-size: 14.5px; }
+:where(.settings-modal) .settings-row > div:first-child > div:nth-child(2) { font-size: 13px; }
+.settings-modal .settings-row > .model-trigger { width: auto; }
+.settings-modal .settings-row .model-trigger {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding-inline: 12px;
+}
+.settings-select,
+.settings-input {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  outline: none;
+}
+.settings-select { appearance: none; field-sizing: content; height: 34px; max-width: 100%; padding: 0 30px 0 12px; text-overflow: ellipsis; }
+.settings-input { padding-inline: 12px; }
+input.settings-input { height: 34px; }
+.settings-select:focus-visible,
+.settings-input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+:where(.settings-modal, .vault-sheet) [data-pill] {
+  height: 34px;
+  max-width: 100%;
+  flex-shrink: 0;
+  padding-inline: 16px;
+  font-size: 14px;
+}
+:where(.settings-modal, .vault-sheet) [data-pill="soft"] {
+  border: 1px solid var(--border);
+  background-color: var(--bg-card);
+}
+:where(.settings-modal, .vault-sheet) [data-pill="soft"]:hover { background-color: var(--bg-hover); }
+:where(.settings-modal, .vault-edit-sheet) .switch { height: 24px; width: 40px; transition-duration: 150ms; }
+:where(.settings-modal, .vault-edit-sheet) .switch[aria-checked="true"] { background-color: #1a73e8; }
+.dark :where(.settings-modal, .vault-edit-sheet) .switch[aria-checked="true"] { background-color: #126dd3; }
+:where(.settings-modal, .vault-edit-sheet) .switch > span { width: 18px; height: 18px; background-color: white; }
+.settings-modal .settings-content { container-type: inline-size; }
+@container (max-width: 560px) {
+  .settings-modal .settings-content .settings-row { flex-flow: column nowrap; align-items: flex-start; }
+  .settings-modal .settings-content .settings-row > :nth-child(n) { flex-basis: auto; }
+}
 .permissions-boundary { font-size: 12px; line-height: 18px; color: var(--fg-muted); margin-bottom: 18px; }
-.settings-rules-card { font-size: 15px; }
-.rule-editor-body { padding: 20px 16px; }
-.rule-editor-body label { display: block; margin: 8px 16px; font-size: 13px; color: var(--fg-muted); }
-.rule-editor-body textarea { width: 100%; background: var(--bg-card); border-radius: 18px; padding: 16px; resize: vertical; min-height: 108px; outline: none; font-size: 16px; }
-.rule-editor-body p { font-size: 13px; line-height: 18px; color: var(--fg-muted); margin: 10px 16px; }
-.rule-editor-footer { margin-top: auto; padding: 18px 18px max(24px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; }
-.rule-editor-footer button { width: 100%; height: 46px; font-size: 16px; }
 /* Settings → Usage (docs/designs/bot-usage.md): limits cards and the Bot usage card. */
 :root { --usage-warn: #c27400; --usage-s1: #2a78d6; --usage-s2: #eda100; --usage-s3: #1baf7a; --usage-s4: #eb6834; }
 .dark { --usage-warn: #f0a63a; --usage-s1: #3987e5; --usage-s2: #c98500; --usage-s3: #199e70; --usage-s4: #d95926; }
@@ -622,8 +662,7 @@ button {
 .library-row:focus-visible { outline-offset: -2px; }
 .vault-pane { position: relative; min-height: 100%; padding-bottom: 76px; }
 .vault-tabs { gap: 2px; }
-.vault-items { border: 0; background: var(--bg-card); border-radius: 18px; }
-.vault-items > button { min-height: 72px; padding: 14px 18px; }
+.vault-items > button { min-height: 72px; padding: 14px 20px; }
 .vault-items > button > span:nth-child(2) > span:first-child { font-size: 16px; }
 .vault-payments-boundary { padding: 24px 18px; background: var(--bg-card); border-radius: 18px; }
 .vault-payments-boundary h3 { font-size: 17px; }
@@ -642,10 +681,9 @@ button {
   .new-bot-sheet .dialog-footer { padding-bottom: max(26px, env(safe-area-inset-bottom)); }
   .settings-modal .bot-modal-header { min-height: 88px; }
   .settings-home > div { margin-bottom: 30.476px; }
-  .settings-home > div > div:last-child { border: 0; }
   .settings-home-row:has(.mt-1) { min-height: 74px; }
   .settings-modal .settings-content:has(.vault-pane) { padding-top: 12px; }
-  .vault-inline-title, .vault-inline-description { display: none; }
+  .vault-inline-description { display: none; }
   .vault-tabs { padding-bottom: 12px; }
   .vault-toolbar { position: sticky; top: calc(100dvh - 170px); margin-bottom: -40px; z-index: 3; }
   .vault-toolbar > label { height: 44px; background: var(--bg-card); border-color: var(--border-strong); }
@@ -738,9 +776,6 @@ button {
   .vault-credentials > label:first-child { border-bottom: 1px solid var(--border); }
 }
 
-.settings-home [role="switch"] span, .settings-content [role="switch"] span { translate: none; }
-
-
 .apps-detail > p { text-align: left; }
 .apps-account-detail fieldset { background: var(--bg-card); border: 0; padding: 0 16px 12px; border-radius: 18px; }
 .apps-account-detail fieldset legend { font-size: 12px; padding-top: 8px; }
@@ -769,13 +804,9 @@ button {
 .apps-row-copy small { line-height: 17px; }
 .new-bot-name { height: 57.143px; }
 .new-bot-sheet .dialog-footer > button:disabled { background: #8f8f8f; }
-.rule-editor-body textarea { height: 104px; min-height: 104px; resize: none; }
-.rule-editor-footer button { height: 48px; }
-.rule-editor-footer button:disabled { background: var(--bg-active); color: var(--fg-muted); opacity: 1; }
 .vault-hints-helper { color: var(--fg-muted); font-size: 13px; padding-inline: 18px; }
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
   .new-bot-sheet .new-bot-preview { padding-inline: 17.143px; }
-  .rule-editor-body { padding-inline: 17.143px; }
   .settings-home-row { height: 51.429px; min-height: 51.429px; padding-block: 12px; }
   .settings-home-row:has(.mt-1), .settings-home-row:has(.size-10) { height: 72px; min-height: 72px; padding-block: 11px; }
   .settings-home .settings-row { min-height: 89.524px; padding-block: 13.75px; }
@@ -801,7 +832,6 @@ button {
 @media (max-width: 760px), (pointer: coarse) and (max-width: 1024px) {
   .bot-modal-header, .settings-modal .bot-modal-header { min-height: 76px; padding-block: 16px; }
   .settings-modal .settings-content { padding-top: 13px; }
-  .settings-modal .settings-content:has(.permissions-boundary) { padding-top: 23px; }
   .connect-apps-sheet .apps-filters { padding-top: 22px; }
   .apps-search { bottom: max(36px, env(safe-area-inset-bottom)); }
   .vault-toolbar { bottom: max(36px, env(safe-area-inset-bottom)); }
@@ -809,9 +839,6 @@ button {
   .new-bot-sheet .avatar-picker { padding-top: 33.143px; }
   .new-bot-sheet .avatar-shapes { gap: 12px 10px; }
   .new-bot-sheet .dialog-footer { padding-bottom: max(36px, env(safe-area-inset-bottom)); }
-  .rule-editor-body { padding-top: 13.833px; }
-  .rule-editor-footer { padding-bottom: max(34px, env(safe-area-inset-bottom)); }
-  .rule-editor-footer button:last-child { color: var(--fg-muted); }
   .vault-contact-sheet .dialog-footer { padding-bottom: max(36px, env(safe-area-inset-bottom)); }
   .settings-home-row > .size-10 { background: #3a3552; border: 0; color: #c4c0d6; }
 }

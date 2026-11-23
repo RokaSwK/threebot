@@ -68,8 +68,6 @@
   .settings-modal .settings-content h2 { text-align: left; }
   .settings-modal .settings-row { gap: 10px; }
   .settings-modal .settings-row > :first-child { flex-basis: 140px; }
-  .settings-rule-editor { flex-wrap: wrap; justify-content: flex-end; }
-  .settings-rule-editor textarea { flex-basis: 100%; }
   .settings-rule-actions { min-width: 44px; min-height: 44px; }
   .bot-modal-backdrop > [data-bot-modal] { margin-block: 0; }
 }

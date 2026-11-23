@@ -37,6 +37,7 @@ export function Pill({ variant = "primary", className, children, ...rest }: Butt
     <button
       type="button"
       {...rest}
+      data-pill={variant}
       className={clsx(
         "inline-flex h-8 items-center justify-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition-[opacity,background] disabled:cursor-default disabled:opacity-40",
         variant === "primary" && "bg-pill text-pill-fg hover:opacity-90",
