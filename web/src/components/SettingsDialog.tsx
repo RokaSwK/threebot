@@ -89,7 +89,7 @@ export function SettingsDialog() {
                 {pane === "account" && <General s={settings} accountOnly />}
                 {pane === "timezone" && <TimeZoneSettings s={settings} />}
                 {pane === "models" && <Group><ModelRows s={settings} /></Group>}
-                {pane === "computer" && <Computer />}
+                {pane === "computer" && <Computer s={settings} />}
                 {pane === "bots" && <BotsPane />}
                 {pane === "machines" && <MachinesPane save={save} />}
                 {pane === "permissions" && <Permissions s={settings} />}
@@ -539,7 +539,7 @@ function EnvironmentError({ retry }: { retry: () => void }) {
   return <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line p-3 text-[13px] text-muted"><span className="flex-1">Couldn't load computer information.</span><Pill variant="soft" onClick={retry}>Retry</Pill></div>;
 }
 
-function Computer() {
+function Computer({ s }: { s: Settings }) {
   const { state, retry } = useEnvironment();
   const botsRoot = useApp((s) => s.botsRoot);
   const connection = useApp((s) => s.connection);
@@ -554,7 +554,30 @@ function Computer() {
         <Row title="Bots folder" desc={botsRoot || "Not reported"} />
         <Row title="Agent runtime" desc={state.kind === "loading" ? "Loading…" : state.kind === "ready" ? `T3 Code ${state.value.serverVersion}` : "Unavailable"} />
       </Group>
+      <RemoteDesktop desktop={s.desktop ?? null} />
     </>
+  );
+}
+
+/** A desktop the Bots share (for example noVNC), shown in the Computer view instead of T3's browser. */
+function RemoteDesktop({ desktop }: { desktop: Settings["desktop"] }) {
+  const save = useContext(SettingsSave);
+  const [url, setUrl] = useState(desktop?.url ?? "");
+  const [howTo, setHowTo] = useState(desktop?.howTo ?? "");
+  useEffect(() => { setUrl(desktop?.url ?? ""); setHowTo(desktop?.howTo ?? ""); }, [desktop?.url, desktop?.howTo]);
+  const changed = url.trim() !== (desktop?.url ?? "") || howTo.trim() !== (desktop?.howTo ?? "");
+  return (
+    <Group title="Remote desktop">
+      <div className="space-y-3 px-4 py-3.5 text-[13px]">
+        <p className="text-muted">Show a desktop your Bots share, such as noVNC on a virtual screen, in the Computer view instead of T3's browser. The note goes into every Bot's instructions.</p>
+        <input aria-label="Remote desktop address" type="url" inputMode="url" autoComplete="off" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://my-server.ts.net:6080/vnc.html?autoconnect=1&resize=scale" className="h-9 w-full rounded-lg border border-line bg-elevated px-2.5 outline-none" />
+        <textarea aria-label="How Bots drive the remote desktop" value={howTo} onChange={(e) => setHowTo(e.target.value)} rows={4} placeholder="How Bots drive it, e.g. Chrome over CDP at http://127.0.0.1:9333; other apps with DISPLAY=:20 xdotool and scrot." className="w-full rounded-lg border border-line bg-elevated px-2.5 py-2 outline-none" />
+        <div className="flex gap-2">
+          <Pill variant="soft" disabled={!url.trim() || !changed} onClick={() => void save({ desktop: { url: url.trim(), howTo: howTo.trim() } })}>Save</Pill>
+          {desktop && <Pill variant="soft" onClick={() => void save({ desktop: null })}>Use T3's browser</Pill>}
+        </div>
+      </div>
+    </Group>
   );
 }
 

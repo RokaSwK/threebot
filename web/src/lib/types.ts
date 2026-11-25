@@ -68,6 +68,8 @@ export type Settings = {
   /** Settings → Beta: experimental features, saved on the server because they change what Bots get. */
   beta: { projects: boolean; settleBotThreads?: boolean };
   codingWork?: CodingWork | null;
+  /** Settings → Computer → Remote desktop: shown in the Computer view instead of T3's browser. */
+  desktop?: { url: string; howTo: string } | null;
 };
 
 export type ProviderOptionSelection = { id: string; value: string | boolean };

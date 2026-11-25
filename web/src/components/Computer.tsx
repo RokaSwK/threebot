@@ -303,8 +303,23 @@ export function ComputerScreen({ threadId, tabId, interactive, url = "", classNa
   );
 }
 
+/** Settings → Computer → Remote desktop, when one replaces T3's browser. */
+export const useDesktop = () => useApp((s) => s.settings?.desktop ?? null);
+
+/** Stands in for a live thumbnail of the remote desktop, so a Details page doesn't hold a VNC session open. */
+export function DesktopCard({ bot }: { bot: Bot }) {
+  return <button type="button" onClick={() => openDialog({ kind: "computer", slug: bot.slug })} className="grid aspect-[16/10] w-full place-items-center overflow-hidden rounded-2xl border border-line bg-card p-4 text-center text-[13px] text-muted" aria-label={`Open ${bot.name}’s remote desktop`}>
+    <div><Monitor size={22} className="mx-auto mb-2 opacity-60" />Remote desktop</div>
+  </button>;
+}
+
 /** Shared thumbnail for Details; mounting it is always read-only. */
 export function ComputerThumbnail({ bot }: { bot: Bot }) {
+  const desktop = useDesktop();
+  return desktop ? <DesktopCard bot={bot} /> : <BrowserThumbnail bot={bot} />;
+}
+
+function BrowserThumbnail({ bot }: { bot: Bot }) {
   const { state } = useBrowser(bot.mainThreadId);
   const tab = state.kind === "loading" ? null : state.index?.tabs.findLast(tab => tab.runtime === "server");
   return <button type="button" onClick={() => openDialog({ kind: "computer", slug: bot.slug })} className="block w-full overflow-hidden rounded-2xl border border-line bg-card text-left" aria-label={`Open ${bot.name}’s browser`}>
@@ -317,6 +332,8 @@ export function ComputerOverlay({ slug }: { slug: string }) {
   const bot = useApp(s => s.bots[slug]);
   const selected = useApp(s => s.selected === slug ? s.selectedThreadId : null);
   const threadId = selected ?? bot?.mainThreadId;
+  const desktop = useDesktop();
+  if (bot && desktop) return <DesktopView bot={bot} url={desktop.url} />;
   if (!bot || !threadId) return null;
   // A changed conversation remounts all local ownership and panel state.
   return <ComputerView key={`${slug}:${threadId}`} bot={bot} threadId={threadId} />;
@@ -407,5 +424,25 @@ function ComputerView({ bot, threadId }: { bot: Bot; threadId: string }) {
       <div className="min-w-0 text-[12px] text-white/50"><span role="status">{tab ? statusText : "Browser"}</span>{tab && <span className="block truncate">{profileLabel(tab.profileId)}</span>}{threadTarget(threadId).environmentId && <span className="block">Linked environment</span>}</div>
       {tab ? control ? <button type="button" onClick={returnControl} className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 text-[15px] text-white"><Check size={16} />{controlling ? "I'm done" : "Cancel"}</button> : <button type="button" onClick={() => { setOwnership(null); setControlTarget(streamKey); }} disabled={state.kind !== "ready" || pending} className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 text-[15px] text-white disabled:opacity-40"><Hand size={16} />Take control</button> : null}
     </footer>
+  </div>;
+}
+
+/** The full-page remote desktop. Its own page (noVNC, say) handles watching and control. */
+function DesktopView({ bot, url }: { bot: Bot; url: string }) {
+  const status = useApp(s => botStatus(bot, s));
+  const close = () => openDialog(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return <div role="dialog" aria-modal="true" aria-label={`${bot.name}’s remote desktop`} className="fixed inset-0 z-50 flex flex-col bg-black text-white" style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}>
+    <header className="flex min-h-16 shrink-0 items-center gap-3 px-4 py-3">
+      <button type="button" aria-label="Back to conversation" onClick={close} className="grid size-11 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10"><ArrowLeft size={23} /></button>
+      <ActivityAvatar threadId={bot.mainThreadId} status={status} shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={28} />
+      <span className="min-w-0 flex-1 truncate text-[18px]">{bot.name}</span>
+      <a href={url} target="_blank" rel="noreferrer" className="shrink-0 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-[13px]">Open in new tab</a>
+    </header>
+    <iframe title={`${bot.name}’s remote desktop`} src={url} allow="clipboard-read; clipboard-write; fullscreen" className="min-h-0 w-full flex-1 border-0 bg-black" />
   </div>;
 }
