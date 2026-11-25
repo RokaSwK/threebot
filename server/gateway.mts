@@ -76,6 +76,7 @@ import { aggregateTurnUsage, createTelemetry, MIN_T3_FOR_TOKENS, versionAtLeast,
 import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromProjection, usageDays, usageEntryFilter, type UsageEntry } from "./bot-usage.mts";
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
 import { APP_BADGE_URL, appBadgePng, botBadgePng, botFace, roomIdentity } from "./bot-icons.mts";
+import { desktopPatch } from "./desktop.mts";
 
 /** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
 type HttpError = Error & { status?: number; code?: string };
@@ -569,6 +570,7 @@ const DEFAULT_SETTINGS = {
   avatarDrawingModel: null,
   beta: BETA_DEFAULTS,
   codingWork: null,
+  desktop: null,
 };
 const settingsPath = path.join(appDir, "settings.json");
 // Settings → Beta: decide the Projects board's default once, before anything reads the settings.
@@ -1507,12 +1509,13 @@ const server = http.createServer(async (req, res) => {
       const next = { ...current, ...patch };
       if ("beta" in patch) next.beta = patchBeta(current.beta, patch.beta);
       if ("codingWork" in patch) next.codingWork = codingWorkPatch(patch.codingWork);
+      if ("desktop" in patch) next.desktop = desktopPatch(patch.desktop);
       if ("chatPermissions" in patch && typeof patch.chatPermissions !== "boolean") return send(res, 400, { error: "chatPermissions must be true or false" });
       await writeJson(settingsPath, next);
       if (next.chatPermissions !== current.chatPermissions) await syncChatPermissions(next.chatPermissions);
       if (!next.beta.projects) projectRoutes.closeStreams();
       if (next.beta.settleBotThreads && !current.beta.settleBotThreads) settleBots();
-      if ("rules" in patch || "userName" in patch || "timezone" in patch || "codingWork" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
+      if ("rules" in patch || "userName" in patch || "timezone" in patch || "codingWork" in patch || "desktop" in patch || next.beta.projects !== current.beta.projects) await refreshAllAgentsMd();
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);

@@ -5,6 +5,7 @@
 import { OBJECT_AVATAR_IDS } from "./object-avatars.mts";
 import { NAMED_COLORS } from "./avatar-color.mts";
 import { renderMemoryBlock, type MemorySnapshot } from "./memory.mts";
+import { desktopLines, type Desktop } from "./desktop.mts";
 
 const COLOR_NAMES = Object.keys(NAMED_COLORS).join(", ");
 
@@ -29,6 +30,7 @@ export type TemplateSettings = {
   rules?: { alwaysAsk?: string[]; allowWithoutAsking?: string[] };
   beta?: { projects?: boolean };
   codingWork?: CodingWork | null;
+  desktop?: Desktop | null;
 };
 /** How the Bot reaches connected apps, when Executor is set up. */
 export type TemplateExecutor = { kind?: string; publicUrl?: string; organization?: string; skippedApps?: string[] };
@@ -124,7 +126,7 @@ ${executor?.kind === 'cloud' ? cloudInstructions(userName, executor) : executor 
 
 ## Computer
 - You share one computer (this server) and its browser with ${userName}'s other Bots. Sign-ins made in that browser are shared too, so check whether a site is already signed in before asking.
-- Do the work yourself. ${executor?.kind === 'cloud' ? "For connected accounts, use the Executor Cloud connection flow above; do not create developer OAuth clients or send the user to a dashboard as the default setup path." : "Setup chores are your job: creating OAuth apps in developer consoles, enabling APIs, filling settings pages and downloading files."} Use the T3 browser tools (\`preview_open\`, \`preview_act\`, \`preview_snapshot\`, …); keep one tab per task and reuse it.
+- Do the work yourself. ${executor?.kind === 'cloud' ? "For connected accounts, use the Executor Cloud connection flow above; do not create developer OAuth clients or send the user to a dashboard as the default setup path." : "Setup chores are your job: creating OAuth apps in developer consoles, enabling APIs, filling settings pages and downloading files."} ${desktopLines(settings.desktop, userName)}
 - To sign in to a site, use the Vault first (see "Vault"): fill a saved login, or ask for one and save it there.
 - Some steps need ${userName} physically at a screen or phone: single sign-on, 2FA codes, passkeys, CAPTCHAs, or a sign-in the Vault can't cover. Leave your tab open on that page, then ask with the question tool, for example question "Take over to sign in to Google Cloud", options "I'm done" and "Skip". The app shows ${userName} a Take over button that opens your screen. When they answer, take a fresh snapshot and carry on.
 - Never ask for passwords, tokens or keys in chat. Ask with \`request_secret\` and save them to the Vault (see "Vault").
