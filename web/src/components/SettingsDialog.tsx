@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { DEFAULT_PALETTE, PALETTES, paletteLabel } from "../lib/themes";
 import clsx from "clsx";
 import { Activity, Bell, Bot as BotIcon, Sun, Moon, ChevronRight, Download, FlaskConical, FolderGit2, Globe, Monitor, Network, Pencil, Plug, Settings as Gear, Shield, Trash2, Vault, Palette } from "lucide-react";
@@ -9,7 +9,7 @@ import { ModelPicker } from "./ModelPicker";
 import { VaultPane } from "./Vault";
 import { ConnectApps } from "./ConnectApps";
 import { IconButton, Modal, Pill, Spinner, Switch } from "./ui";
-import { Group, H, Row } from "./SettingsParts";
+import { Group, Row, Select } from "./SettingsParts";
 import { RemoteAccessPane, UpdatesPane, useUpdateNotice } from "./RemoteAccess";
 import { UsageStatsPane } from "./UsageStats";
 import { MachinesPane } from "./MachinesPane";
@@ -24,18 +24,18 @@ import { cloudTranscription, PROVIDER_LABELS, saveCloudTranscription, type Cloud
 import { useVoiceSettings, voiceLanguageOptions } from "./VoiceDock";
 
 const PANES = [
-  { id: "general", label: "General", icon: <Gear size={15} /> },
-  { id: "bots", label: "Bots", icon: <BotIcon size={15} /> },
-  { id: "appearance", label: "Appearance", icon: <Palette size={15} /> },
-  { id: "computer", label: "Computer", icon: <Monitor size={15} /> },
-  { id: "machines", label: "Machines", icon: <Network size={15} /> },
-  { id: "permissions", label: "Permissions", icon: <Shield size={15} /> },
-  { id: "notifications", label: "Notifications", icon: <Bell size={15} /> },
-  { id: "vault", label: "Vault", icon: <Vault size={15} /> },
-  { id: "access", label: "Remote access", icon: <Globe size={15} /> },
-  { id: "updates", label: "Updates", icon: <Download size={15} /> },
-  { id: "beta", label: "Beta", icon: <FlaskConical size={15} /> },
-  { id: "usage-stats", label: "Usage stats", icon: <Activity size={15} /> },
+  { id: "general", label: "General", icon: <Gear size={16} /> },
+  { id: "bots", label: "Bots", icon: <BotIcon size={16} /> },
+  { id: "appearance", label: "Appearance", icon: <Palette size={16} /> },
+  { id: "computer", label: "Computer", icon: <Monitor size={16} /> },
+  { id: "machines", label: "Machines", icon: <Network size={16} /> },
+  { id: "permissions", label: "Permissions", icon: <Shield size={16} /> },
+  { id: "notifications", label: "Notifications", icon: <Bell size={16} /> },
+  { id: "vault", label: "Vault", icon: <Vault size={16} /> },
+  { id: "access", label: "Remote access", icon: <Globe size={16} /> },
+  { id: "updates", label: "Updates", icon: <Download size={16} /> },
+  { id: "beta", label: "Beta", icon: <FlaskConical size={16} /> },
+  { id: "usage-stats", label: "Usage stats", icon: <Activity size={16} /> },
 ];
 
 type SaveSettings = (patch: Partial<Settings>) => Promise<boolean>;
@@ -73,11 +73,11 @@ export function SettingsDialog() {
           <nav aria-label="Settings categories" className="settings-nav scroll-thin flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 pr-12 sm:block sm:w-[200px] sm:overflow-visible sm:border-r sm:border-b-0 sm:p-3">
             {PANES.map((p) => (
               <button key={p.id} onClick={() => navigatePane(p.id)} aria-current={pane === p.id ? "page" : undefined}
-                className={clsx("flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] sm:w-full", pane === p.id ? "bg-active" : "hover:bg-hover")}>
+                className={clsx("flex h-9 shrink-0 items-center gap-2.5 rounded-[10px] px-2.5 text-[14px] sm:w-full", pane === p.id ? "bg-active" : "hover:bg-hover")}>
                 <span className="text-muted">{p.icon}</span>{p.label}
               </button>
             ))}
-            <button onClick={() => setApps(true)} className="flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13.5px] hover:bg-hover sm:w-full"><Plug size={15} className="text-muted" />Connect apps</button>
+            <button onClick={() => setApps(true)} className="flex h-9 items-center gap-2.5 rounded-[10px] px-2.5 text-[14px] hover:bg-hover sm:w-full"><Plug size={16} className="text-muted" />Connect apps</button>
           </nav>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {pending && <div role="status" className="shrink-0 px-4 py-2 text-[13px] text-muted">Saving…</div>}
@@ -128,13 +128,13 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
   };
   return <div className="settings-home pt-16">
     <Group>
-      <button onClick={() => pane("account")} className="settings-home-row flex w-full items-center gap-3 border-b border-line px-4 py-5 text-left"><span className="grid size-10 shrink-0 place-items-center rounded-full border border-line-strong bg-app text-[18px] font-semibold">{(s.userName || "You")[0].toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block text-[17px]">{s.userName || "You"}</span><span className="block text-[13px] text-muted">Account</span></span><ChevronRight size={20} className="text-muted" /></button>
+      <button onClick={() => pane("account")} className="settings-home-row flex w-full items-center gap-3 px-5 py-4 text-left"><span className="grid size-10 shrink-0 place-items-center rounded-full border border-line-strong bg-app text-[18px] font-semibold">{(s.userName || "You")[0].toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block text-[14.5px]">{s.userName || "You"}</span><span className="mt-0.5 block text-[13px] text-muted">Account</span></span><ChevronRight size={20} className="shrink-0 text-muted" /></button>
       <SettingsHomeLink title="Usage" detail={usagePeak === null ? undefined : `${usagePeak}%`} onClick={() => pane("usage")} />
       <SettingsHomeLink title="Vault" description="Logins and contact info your Bots can use" onClick={() => pane("vault")} />
     </Group>
     <Group><SettingsHomeLink title="Connect apps" description="Search plugins" onClick={onApps} /></Group>
     <Group title="Bot">
-      <SettingsHomeLink title="Permissions" description={`${s.autoReview !== false ? "Auto-review on" : "Auto-review off"} · ${rules} rules`} onClick={() => pane("permissions")} />
+      <SettingsHomeLink title="Permissions" description={`${s.autoReview !== false ? "Auto-review" : "Full access"} · ${rules} rules`} onClick={() => pane("permissions")} />
       <Row title="Set Time Zone Automatically" desc="Use this device’s time zone in Bot settings."><Switch checked={!s.timezone} onChange={(auto) => save({ timezone: auto ? "" : timezone })} label="Set Time Zone Automatically" /></Row>
       <SettingsHomeLink title="Time Zone" detail={timezone} disabled={!s.timezone} onClick={() => pane("timezone")} />
       <SettingsHomeLink title="Models" description="Default, backup and avatar drawing models" onClick={() => pane("models")} />
@@ -144,9 +144,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
     </Group>
     <Group title="Voice">
       <Row title="Voice language" desc="Used for dictation and voice calls.">
-        <select aria-label="Voice language" value={voiceSettings.lang} onChange={(e) => saveVoiceSettings({ lang: e.target.value, voice: null })} className="h-8 rounded-lg border border-line bg-elevated px-2 text-[13px] outline-none">
-          {voiceLanguageOptions().map(([code, label]) => <option key={code} value={code}>{label}</option>)}
-        </select>
+        <Select label="Voice language" value={voiceSettings.lang} onChange={(lang) => saveVoiceSettings({ lang, voice: null })} options={voiceLanguageOptions()} />
       </Row>
       <T3DictationRow />
     </Group>
@@ -159,18 +157,7 @@ function SettingsHome({ s, onApps, onSkills, onPane: pane }: { s: Settings; onAp
 }
 
 function SettingsHomeLink({ title, description, detail, onClick, disabled = false }: { title: string; description?: string; detail?: string; disabled?: boolean; onClick: () => void }) {
-  return <button disabled={disabled} onClick={onClick} className="settings-home-row flex w-full items-center gap-3 border-b border-line px-4 py-4 text-left last:border-0 hover:bg-hover"><span className="min-w-0 flex-1"><span className="block text-[17px]">{title}</span>{description && <span className="mt-1 block text-[13px] leading-5 text-muted">{description}</span>}</span>{detail && <span className="min-w-0 truncate text-[14px] text-muted">{detail}</span>}<ChevronRight size={18} className="shrink-0 text-muted" /></button>;
-}
-
-function Select<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: readonly (readonly [T, string])[] }) {
-  return (
-    <select aria-label={label} value={value} onChange={(e) => {
-      const option = options.find(([value]) => value === e.target.value);
-      if (option) onChange(option[0]);
-    }} className="h-8 rounded-lg border border-line bg-elevated px-2 text-[13px] outline-none">
-      {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-    </select>
-  );
+  return <button disabled={disabled} onClick={onClick} className="settings-home-row flex w-full items-center gap-3 px-5 py-3.5 text-left hover:bg-hover"><span className="min-w-0 flex-1"><span className="block text-[14.5px]">{title}</span>{description && <span className="mt-0.5 block text-[13px] leading-5 text-muted">{description}</span>}</span>{detail && <span className="min-w-0 truncate text-[14px] text-muted">{detail}</span>}<ChevronRight size={18} className="shrink-0 text-muted" /></button>;
 }
 
 function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolean }) {
@@ -186,10 +173,9 @@ function General({ s, accountOnly = false }: { s: Settings; accountOnly?: boolea
   };
   return (
     <>
-      <H>{accountOnly ? "Account" : "General"}</H>
       <Group title="Account">
         <Row title="Your name" desc="Your Bots use it when they talk to you.">
-          <input aria-label="Your name" value={name} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.stopPropagation(); setName(s.userName); } }} placeholder="Enter your name" className="h-8 w-48 rounded-lg border border-line bg-elevated px-2.5 text-[13px] outline-none" />
+          <input aria-label="Your name" value={name} onChange={(e) => setName(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { e.stopPropagation(); setName(s.userName); } }} placeholder="Enter your name" className="settings-input w-48" />
         </Row>
       </Group>
       {!accountOnly && <Group title="Bot">
@@ -252,10 +238,10 @@ function CloudDictationRows() {
       }} options={[["", "Off"], ["openai", "OpenAI"], ["gemini", "Gemini"]]} />
     </Row>
     {provider && <Row title={`${PROVIDER_LABELS[provider]} API key`} desc={state.hasKey[provider] ? "Saved and encrypted on the gateway. Paste a new one to replace it." : `Paste a key from ${provider === "openai" ? "platform.openai.com" : "aistudio.google.com"} to turn this on.`}>
-      <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); if (!key.trim()) return; void apply({ apiKey: { provider, value: key }, provider }).then((ok) => { if (ok) setKey(""); }); }}>
-        <input type="password" autoComplete="off" aria-label={`${PROVIDER_LABELS[provider]} API key`} value={key} onChange={(event) => setKey(event.target.value)} placeholder={state.hasKey[provider] ? "••••••••" : "API key"} className="h-8 w-44 rounded-lg border border-line bg-elevated px-2.5 text-[13px] outline-none" />
-        <button type="submit" disabled={busy || !key.trim()} className="text-[12.5px] text-muted hover:text-fg disabled:opacity-50">Save</button>
-        {state.hasKey[provider] && state.provider !== provider && <button type="button" disabled={busy} className="text-[12.5px] text-muted hover:text-fg" onClick={() => void apply({ apiKey: { provider, value: "" } })}>Remove</button>}
+      <form className="flex min-w-0 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); if (!key.trim()) return; void apply({ apiKey: { provider, value: key }, provider }).then((ok) => { if (ok) setKey(""); }); }}>
+        <input type="password" autoComplete="off" aria-label={`${PROVIDER_LABELS[provider]} API key`} value={key} onChange={(event) => setKey(event.target.value)} placeholder={state.hasKey[provider] ? "••••••••" : "API key"} className="settings-input w-44" />
+        <Pill type="submit" variant="soft" disabled={busy || !key.trim()}>Save</Pill>
+        {state.hasKey[provider] && state.provider !== provider && <Pill variant="ghost" disabled={busy} onClick={() => void apply({ apiKey: { provider, value: "" } })}>Remove</Pill>}
       </form>
     </Row>}
     {provider && state.provider === provider && <Row title="Transcription model" desc={provider === "openai" ? "Text appears while you speak: gpt-live-transcribe writes word by word and handles mixed languages best; the others write each phrase when you pause. gpt-4o-transcribe and gpt-4o-mini-transcribe stop working on 26 February 2027." : "Gemini writes the text when you stop recording."}>
@@ -280,7 +266,7 @@ function BackupModelRow() {
   return <Row title="Backup model" desc="T3 uses it for new threads when the default model is out of usage. Routines in their own conversation keep their model.">
     <div className="backup-model-actions flex items-center gap-2">
       <ModelPicker value={fallback} onChange={(selection) => void change(selection)} />
-      {fallback && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => void change(null)}>Turn off</button>}
+      {fallback && <Pill variant="ghost" onClick={() => void change(null)}>Turn off</Pill>}
     </div>
   </Row>;
 }
@@ -293,9 +279,9 @@ function AvatarDrawingModelRow({ s }: { s: Settings }) {
   const automatic = fastDrawingModel(providers);
   const what = "Draws the avatars you describe in a Bot's avatar editor, under Drawn by your Bots.";
   return <Row title="Avatar drawing model" desc={chosen ? `${what} Automatic picks a fast model instead.` : automatic ? `${what} Automatic picks a fast model: GPT-6 Luna (Fast), else Claude Haiku.` : `${what} No fast model is available, so each Bot draws with its own model.`}>
-    <div className="flex items-center gap-2">
+    <div className="backup-model-actions flex items-center gap-2">
       <ModelPicker value={chosen ?? automatic} onChange={(selection) => save({ avatarDrawingModel: selection })} />
-      {chosen && <button type="button" className="text-[12.5px] text-muted hover:text-fg" onClick={() => save({ avatarDrawingModel: null })}>Automatic</button>}
+      {chosen && <Pill variant="ghost" onClick={() => save({ avatarDrawingModel: null })}>Automatic</Pill>}
     </div>
   </Row>;
 }
@@ -318,44 +304,71 @@ function Appearance({ s }: { s: Settings }) {
 }
 
 function RuleList({ title, desc, rules, onChange }: { title: string; desc: string; rules: string[]; onChange: (r: string[]) => Promise<boolean> }) {
-  const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<number | null>(null);
+  const [editor, setEditor] = useState<"add" | number | null>(null);
   const [draft, setDraft] = useState("");
-  const commit = async () => {
-    const v = draft.trim();
-    if (!v || !(await onChange(editing === null ? [...rules, v] : rules.map((r, i) => (i === editing ? v : r))))) return;
-    setAdding(false);
-    setEditing(null);
-    setDraft("");
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const placeholder = title === "Always Ask" ? "Purchases over $50" : "Emails to my team at acme.com";
+  const open = (button: HTMLButtonElement, index: "add" | number) => {
+    opener.current = button;
+    setDraft(index === "add" ? "" : rules[index]);
+    setEditor(index);
   };
+  const cancel = () => setEditor(null);
+  useLayoutEffect(() => {
+    if (editor !== null || !opener.current) return;
+    opener.current.focus({ preventScroll: true });
+    opener.current = null;
+  }, [editor]);
+  const commit = async () => {
+    const value = draft.trim();
+    if (editor === null || !value) return;
+    const next = editor === "add" ? [...rules, value] : rules.map((rule, index) => index === editor ? value : rule);
+    if (await onChange(next)) setEditor(null);
+  };
+  const ruleEditor = (saveLabel: string) => <RuleEditor draft={draft} setDraft={setDraft} commit={commit} cancel={cancel} placeholder={placeholder} saveLabel={saveLabel} />;
   return (
     <div className="mb-6">
-      <div className="mb-2 flex items-end gap-3">
-        <div className="flex-1">
-          <div className="text-[13.5px]">{title}</div>
-          <div className="text-[12.5px] text-muted">{desc}</div>
+      <div className="mb-2 flex items-end gap-3 pl-3.5">
+        <div className="min-w-0 flex-1">
+          <div className="text-[14.5px]">{title}</div>
+          <div className="text-[13px] text-muted">{desc}</div>
         </div>
-        <Pill variant="soft" onClick={() => { setAdding(true); setEditing(null); setDraft(""); }} disabled={rules.length >= 20}>
-          Add Rule
-        </Pill>
+        <Pill variant="soft" onClick={(event) => open(event.currentTarget, "add")} disabled={editor !== null || rules.length >= 20}>Add Rule</Pill>
       </div>
-      <div className="settings-rules-card overflow-hidden rounded-2xl bg-card">
-        {rules.length === 0 && <p className="px-4 py-4 text-muted">No rules yet</p>}
-        {rules.map((r, i) => <div key={i} className="group flex items-center gap-2 border-b border-line px-4 py-4 text-[15px] last:border-0"><span className="settings-rule-text min-w-0 flex-1">{r}</span><IconButton className="settings-rule-actions" onClick={() => { setEditing(i); setDraft(r); setAdding(false); }} aria-label="Edit rule"><Pencil size={14} /></IconButton><IconButton className="settings-rule-actions" onClick={() => onChange(rules.filter((_, j) => j !== i))} aria-label="Delete rule"><Trash2 size={14} /></IconButton></div>)}
+      <div className="settings-card overflow-hidden rounded-[18px]">
+        {rules.length === 0 && editor !== "add" && <p className="px-5 py-3.5 text-[14.5px] text-muted">No rules yet</p>}
+        {rules.map((rule, index) => (
+          <div key={index}>
+            <div hidden={editor === index} className="group flex items-center gap-2 px-5 py-3.5 text-[14.5px]">
+              <span className="settings-rule-text min-w-0 flex-1 whitespace-pre-wrap">{rule}</span>
+              <IconButton className="settings-rule-actions" disabled={editor !== null} onClick={(event) => open(event.currentTarget, index)} aria-label="Edit rule"><Pencil size={14} /></IconButton>
+              <IconButton className="settings-rule-actions" disabled={editor !== null} onClick={() => onChange(rules.filter((_, i) => i !== index))} aria-label="Delete rule"><Trash2 size={14} /></IconButton>
+            </div>
+            {editor === index && ruleEditor("Save")}
+          </div>
+        ))}
+        {editor === "add" && ruleEditor("Add rule")}
       </div>
-      {(adding || editing !== null) && <Modal title={editing === null ? "New Rule" : "Edit Rule"} onBack={() => { setAdding(false); setEditing(null); }} onClose={() => { setAdding(false); setEditing(null); }} className="rule-editor-sheet w-[460px]">
-        <RuleEditor placeholder={title === "Always Ask" ? "Purchases over $50" : "Emails to my team at acme.com"} draft={draft} setDraft={setDraft} commit={commit} cancel={() => { setAdding(false); setEditing(null); }} />
-      </Modal>}
     </div>
   );
 }
 
-function RuleEditor({ draft, setDraft, commit, cancel, placeholder }: { placeholder: string; draft: string; setDraft: (v: string) => void; commit: () => void; cancel: () => void }) {
+function RuleEditor({ draft, setDraft, commit, cancel, placeholder, saveLabel }: { placeholder: string; draft: string; setDraft: (v: string) => void; commit: () => void; cancel: () => void; saveLabel: string }) {
+  const id = useId();
   return (
-    <>
-      <div className="rule-editor-body"><label htmlFor="permission-rule">Applies to</label><textarea id="permission-rule" autoFocus value={draft} maxLength={1000} onChange={(e) => setDraft(e.target.value)} placeholder={placeholder} rows={3} /><p>Name the action and who or what it affects, like "Emails to dana@acme.com".</p></div>
-      <div className="rule-editor-footer"><Pill onClick={commit} disabled={!draft.trim()}>Add rule</Pill><Pill variant="ghost" onClick={cancel}>Cancel</Pill></div>
-    </>
+    <form className="settings-rule-editor flex flex-col gap-2.5 px-5 py-4" onSubmit={(event) => { event.preventDefault(); commit(); }} onKeyDown={(event) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      cancel();
+    }}>
+      <label htmlFor={id} className="text-[14.5px]">Applies to</label>
+      <textarea id={id} aria-describedby={`${id}-hint`} autoFocus value={draft} maxLength={1000} onChange={(event) => setDraft(event.target.value)} placeholder={placeholder} rows={3} className="settings-input w-full resize-y py-2" />
+      <p id={`${id}-hint`} className="text-[13px] text-muted">Name the action and who or what it affects, like “Emails to team@example.com”.</p>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Pill variant="soft" onClick={cancel}>Cancel</Pill>
+        <Pill type="submit" disabled={!draft.trim()}>{saveLabel}</Pill>
+      </div>
+    </form>
   );
 }
 
@@ -433,9 +446,8 @@ function NotificationsPane() {
   const blocker = pushBlocker(status);
   return (
     <>
-      <H>Notifications</H>
       <p className="mb-5 text-[13px] leading-6 text-muted">Push reaches this browser or installed app when Threebot is closed. Each Bot has its own Notifications switch in Details.</p>
-      {blocker && <div role="status" className="mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-muted">{blocker}</div>}
+      {blocker && <div role="status" className="mb-5 rounded-xl bg-active p-3.5 text-[13px] leading-5 text-muted">{blocker}</div>}
       <Group title="This device">
         <Row title="Push notifications" desc={!status.secure || !status.supported ? "Unavailable on this device." : status.subscribed ? "On for this device." : "Off for this device."}>
           <Switch
@@ -460,7 +472,7 @@ function NotificationsPane() {
           </Row>
         )}
       </Group>
-      <div id="push-problem" role="alert" aria-live="assertive" className={problem ? "mb-6 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] leading-5 text-danger" : "sr-only"}>
+      <div id="push-problem" role="alert" aria-live="assertive" className={problem ? "mb-5 rounded-xl bg-danger/10 p-3.5 text-[13px] leading-5 text-danger" : "sr-only"}>
         {problem}
       </div>
       {status.supported && status.secure && !status.subscribed && <p className="text-[12.5px] leading-5 text-muted">If this browser refuses to register, its push service is the problem. Some Chromium browsers (for example Brave) need their push-service setting on; otherwise use Chrome or your phone.</p>}
@@ -474,8 +486,8 @@ function Permissions({ s }: { s: Settings }) {
   return (
     <>
       <Group>
-        <Row title="Auto-Review" desc="Use provider approval checks before actions run.">
-          <Switch checked={s.autoReview !== false} onChange={(v) => save({ autoReview: v })} label="Auto-Review" />
+        <Row title="Approvals" desc="Use provider approval checks before actions run.">
+          <Select label="Approvals" value={s.autoReview !== false ? "auto" : "full"} onChange={(v) => save({ autoReview: v === "auto" })} options={[["auto", "Auto-review"], ["full", "Full access"]]} />
         </Row>
         <Row title="Chats can give permissions" desc="Threads your Bots and other chats start or message act on those requests as if you'd typed them, without asking you to confirm again.">
           <Switch checked={s.chatPermissions !== false} onChange={(v) => save({ chatPermissions: v })} label="Chats can give permissions" />
@@ -536,7 +548,7 @@ function useEnvironment() {
 }
 
 function EnvironmentError({ retry }: { retry: () => void }) {
-  return <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-line p-3 text-[13px] text-muted"><span className="flex-1">Couldn't load computer information.</span><Pill variant="soft" onClick={retry}>Retry</Pill></div>;
+  return <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-danger/10 p-3.5 text-[13px] text-danger"><span className="flex-1">Couldn't load computer information.</span><Pill variant="soft" onClick={retry}>Retry</Pill></div>;
 }
 
 function Computer({ s }: { s: Settings }) {
@@ -545,7 +557,6 @@ function Computer({ s }: { s: Settings }) {
   const connection = useApp((s) => s.connection);
   return (
     <>
-      <H>Computer</H>
       {state.kind === "error" && <EnvironmentError retry={retry} />}
       <Group title="Bot's computer">
         <Row title={state.kind === "ready" ? state.value.label : "Server"} desc="All your Bots share this computer: its files, browser and sign-ins.">
@@ -587,20 +598,19 @@ function BotsPane() {
   const list = Object.values(bots).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return (
     <>
-      <H>Bots</H>
       <Group>
-        <button onClick={() => openDialog("adopt-project")} className="settings-adopt flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-hover">
+        <button onClick={() => openDialog("adopt-project")} className="settings-adopt flex w-full items-center gap-3 px-5 py-3.5 text-left hover:bg-hover">
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-active"><FolderGit2 size={17} /></span>
-          <span className="min-w-0 flex-1"><span className="block text-[13.5px]">Make a Bot from a project</span><span className="mt-0.5 block text-[12.5px] text-muted">Pick one of this computer's T3 projects. The Bot works in its folder, and git never sees its files.</span></span>
+          <span className="min-w-0 flex-1"><span className="block text-[14.5px]">Make a Bot from a project</span><span className="mt-0.5 block text-[13px] text-muted">Pick one of this computer's T3 projects. The Bot works in its folder, and git never sees its files.</span></span>
           <ChevronRight size={18} className="shrink-0 text-muted" />
         </button>
       </Group>
       <Group title="Your Bots">
         {list.length === 0 ? <Row title="No Bots yet" /> : list.map((bot) => (
-          <div key={bot.slug} className="settings-bot-row flex items-center gap-3 border-b border-line px-4 py-3 last:border-0">
+          <div key={bot.slug} className="settings-bot-row flex items-center gap-3 px-5 py-3">
             <span className="grid size-8 shrink-0 place-items-center overflow-hidden"><Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={32} /></span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-[13.5px]"><span className="truncate">{bot.name}</span>{bot.adopted && <span className="shrink-0 rounded-full bg-active px-2 py-0.5 text-[11.5px] text-muted">From a project</span>}</div>
+              <div className="flex items-center gap-2 text-[14.5px]"><span className="truncate">{bot.name}</span>{bot.adopted && <span className="shrink-0 rounded-full bg-active px-2 py-0.5 text-[11.5px] text-muted">From a project</span>}</div>
               <div className="mt-0.5 truncate font-mono text-[12px] text-muted" title={bot.workspaceRoot}>{bot.workspaceRoot}</div>
             </div>
             {bot.adopted && <Pill variant="soft" onClick={() => openDialog({ kind: "delete-bot", slug: bot.slug })}>Turn back into a plain project</Pill>}

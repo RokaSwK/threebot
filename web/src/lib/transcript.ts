@@ -2,7 +2,7 @@ import { automatedMessage, type AutomatedMessage } from "./automatedMessage";
 import { REASONING_SELECT_DESCRIPTOR_IDS } from "./modelTraits";
 import type { Bot, ModelSelection, Run, RuntimeRequest, ScheduledTask, TurnItem } from "./types";
 import { botDelivery, shortToolName } from "./botMessages";
-import { questionAnswerMessageId } from "./runtimeRequests";
+import { findRequest, questionAnswerMessageId } from "./runtimeRequests";
 import { parseReply } from "./reply";
 
 // Turns T3 turn items into chat entries: bubbles, cards and
@@ -15,7 +15,7 @@ export type Entry =
   | { kind: "bot"; id: string; text: string; at: string; streaming: boolean; attachments: any[]; runId: string | null }
   | { kind: "voice-call"; id: string; seconds: number; at: string }
   | { kind: "event"; id: string; icon?: "routine" | "memory" | "rename" | "send" | "task" | "stop" | "file" | "vault"; text: string; strong?: string; bot?: Bot | null }
-  | { kind: "routine-report"; id: string; at: string; title: string; summary: string; threadId: string; failed: boolean }
+  | { kind: "routine-report"; id: string; at: string; title: string; summary: string; threadId: string | null; state: "finished" | "failed" | "stopped" | "waiting" | "running" | "unavailable"; bot: string }
   | { kind: "bot-event"; id: string; direction: "sent" | "received"; bots: Bot[]; runId: string | null }
   | { kind: "approval"; id: string; item: TurnItem; request?: RuntimeRequest }
   | { kind: "question"; id: string; item: TurnItem; request?: RuntimeRequest }
@@ -40,7 +40,7 @@ type Ctx = {
   /** First message on a new model or effort → the divider above it. */
   modelSwitches?: Map<string, string>;
   /** A routine's last report, shown as a line in the Bot's chat without waking it. */
-  routineReports?: { id: string; at: string; title: string; summary: string; threadId: string; failed: boolean }[];
+  routineReports?: { id: string; at: string; title: string; summary: string; threadId: string | null; state: "finished" | "failed" | "stopped" | "waiting" | "running" | "unavailable"; bot: string }[];
 };
 
 const toolName = (i: TurnItem) => String(i.toolName ?? "");
@@ -338,11 +338,6 @@ function pageOf(i: TurnItem): { attachmentId: string; title?: string; height?: n
 
 function hasImage(i: TurnItem) {
   return Boolean(i.viewedImagePath) || (Array.isArray(i.outputImages) && i.outputImages.length > 0) || /"image"/.test(JSON.stringify(i.output ?? "").slice(0, 2000));
-}
-
-function findRequest(reqs: Record<string, RuntimeRequest>, requestId: string | undefined) {
-  if (!requestId) return undefined;
-  return reqs[requestId] ?? Object.values(reqs).find((r) => r.id.endsWith(requestId) || requestId.endsWith(r.id));
 }
 
 // ---------- working status ----------

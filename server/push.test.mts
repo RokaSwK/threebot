@@ -325,6 +325,8 @@ async function notifierWith(preview?: (threadId: string, stamp: string | null) =
 }
 
 test("only the main conversation and a waiting side chat push, as on the page", async () => {
+  // This notifier has no routine records (`routines` omitted): the Bot-only path, unchanged. The
+  // per-routine defaults and opt-ins are covered by the routineNotifier tests below.
   const { notifier, finish } = await notifierWith();
   const child = (extra: Record<string, unknown> = {}) => ({ lineage: { rootThreadId: "main", parentThreadId: "main", ...extra } });
 
@@ -474,4 +476,275 @@ test("a rotated subscription renews in one step, and never after push was turned
   assert.equal("off" in late && late.off, true);
   const restarted = createPushStore({ file, generateKeys: () => keys, sender: async () => {} });
   assert.equal(await restarted.devices(), 0, "still off after a restart");
+});
+
+/** A notifier with T3's task subscription, a Bot, and per-routine records from a plain object. */
+async function routineNotifier({
+  tasks,
+  records = {},
+  preview,
+  bot = { slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "main", notifications: true, hidden: false },
+}: {
+  tasks: any[];
+  records?: Record<string, any>;
+  preview?: (threadId: string, stamp: string | null) => Promise<PushPreview | null>;
+  bot?: any;
+}) {
+  let shell: (event: any) => void = () => {};
+  let taskEvent: (event: any) => void = () => {};
+  const sent: any[] = [];
+  const notifier = createPushNotifier({
+    connect: async () => ({
+      stream(tag: string, _payload: unknown, onItem: (event: any) => void) {
+        if (tag === "scheduledTasks.subscribe") { taskEvent = onItem; queueMicrotask(() => onItem({ tasks })); }
+        else shell = onItem;
+        return { done: new Promise<void>(() => {}), cancel() {} };
+      },
+    }) as any,
+    bots: async () => [bot],
+    send: async (item) => { sent.push(item); },
+    preview,
+    routines: { alerts: async (taskId) => records[taskId] ?? null },
+    retryMs: 60_000,
+    log: () => {},
+    now: () => new Date("2026-11-10T10:00:00.000Z"),
+  });
+  void notifier.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const thread = (id: string, status: string, extra: Record<string, unknown> = {}) => ({ id, projectId: "project", status, activityRunStatus: status, pendingRuntimeRequest: null, updatedAt: `2026-11-10T09:59:${status === "running" ? "00" : "30"}.000Z`, lineage: { rootThreadId: id, parentThreadId: null }, ...extra });
+  const last = () => { const item = sent.at(-1); sent.length = 0; return item; };
+  const finish = async (id: string, status: string, extra: Record<string, unknown> = {}) => {
+    shell({ kind: "thread.updated", thread: thread(id, "running", { ...extra, pendingRuntimeRequest: null }) });
+    shell({ kind: "thread.updated", thread: thread(id, "running", { ...extra, pendingRuntimeRequest: null }) });
+    shell({ kind: "thread.updated", thread: thread(id, status, extra) });
+    await settle();
+    return last();
+  };
+  const wait = async (id: string, extra: Record<string, unknown> = {}) => {
+    shell({ kind: "thread.updated", thread: thread(id, "running", { ...extra, pendingRuntimeRequest: null }) });
+    shell({ kind: "thread.updated", thread: thread(id, "waiting", { ...extra, pendingRuntimeRequest: { id: `request-${id}` } }) });
+    await settle();
+    return last();
+  };
+  const answer = async (id: string, extra: Record<string, unknown> = {}) => {
+    shell({ kind: "thread.updated", thread: thread(id, "completed", { ...extra, pendingRuntimeRequest: null }) });
+    await settle();
+    const items = [...sent]; sent.length = 0; return items;
+  };
+  const snapshot = async (threads: any[]) => { shell({ kind: "snapshot", snapshot: { threads } }); await settle(); };
+  const updateTasks = async (next: any[]) => { taskEvent({ tasks: next }); await settle(); };
+  return { notifier, finish, wait, answer, snapshot, updateTasks, sent, thread };
+}
+
+const routineTasks = [
+  { id: "task-chat", title: "Chat check", projectId: "project", threadId: "main", threadMode: "fresh_session" },
+  { id: "task-own", title: "Own check", projectId: "project", threadId: "own", threadMode: "continue" },
+  { id: "task-new", title: "New check", projectId: "project", threadId: null, threadMode: "new_thread" },
+];
+
+test("routines keep yesterday's defaults: the chat speaks, its own and new threads stay silent", async () => {
+  const { notifier, finish, wait } = await routineNotifier({
+    tasks: routineTasks,
+    preview: async (threadId) => ({ role: "assistant", text: "All good", at: "2026-11-10T09:59:30.000Z", ...(threadId === "main" ? { routine: { taskId: "task-chat", runId: "r" } } : {}) }),
+  });
+  const chat = await finish("main", "completed");
+  assert.equal(chat.title, "Alpha · Chat check");
+  assert.equal(chat.tag, "routine:task-chat");
+  assert.equal(chat.thread, undefined, "a run in the Bot's chat is held back by the Bot's own presence key");
+  assert.equal(chat.url, "/?bot=alpha&thread=main");
+  assert.equal(chat.body, "All good");
+  // Own and new-thread runs were silent before and stay silent without an explicit choice.
+  assert.equal(await finish("own", "completed"), undefined);
+  assert.equal(await finish("own", "failed"), undefined);
+  assert.equal(await wait("own"), undefined);
+  assert.equal(await finish("new", "completed"), undefined);
+  // A normal thread in the same project stays quiet too.
+  assert.equal(await finish("user-thread", "completed"), undefined);
+  notifier.stop();
+});
+
+test("an opted-in own-thread routine notifies finished, failed and waiting with its own tag and exact link", async () => {
+  const preview = async () => ({ role: "assistant", text: "  The report is ready.  ", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-own", runId: "run-own" } });
+  const { notifier, finish, wait, answer } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-own": { alerts: { finished: true, failed: true, waiting: true } } },
+    preview,
+  });
+  const finished = await finish("own", "completed");
+  assert.deepEqual([finished.title, finished.body, finished.tag, finished.kind, finished.thread, finished.bot], ["Alpha · Own check", "The report is ready.", "routine:task-own", "finished", "own", "alpha"]);
+  assert.equal(finished.url, "/?bot=alpha&thread=own");
+  const failed = await finish("own", "failed");
+  assert.deepEqual([failed.title, failed.body, failed.kind, failed.tag], ["Alpha · Own check", "The run failed", "failed", "routine:task-own"]);
+  const waiting = await wait("own");
+  assert.deepEqual([waiting.title, waiting.body, waiting.kind, waiting.tag], ["Alpha · Own check", "Needs attention", "waiting", "waiting:alpha:own"]);
+  const resolved = await answer("own");
+  assert.deepEqual(resolved.map((item) => [item.kind, item.tag]), [["resolved", "waiting:alpha:own"], ["finished", "routine:task-own"]]);
+  notifier.stop();
+});
+
+test("a new-thread routine needs T3's scheduledTaskId evidence and never fires for a subagent", async () => {
+  let next: PushPreview | null = { role: "assistant", text: "Fresh report", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-new", runId: "run-7" } };
+  const { notifier, finish } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-new": { alerts: { finished: true } } },
+    preview: async () => next,
+  });
+  const fresh = await finish("fresh", "completed");
+  assert.deepEqual([fresh.title, fresh.body, fresh.tag, fresh.thread], ["Alpha · New check", "Fresh report", "routine:task-new", "fresh"]);
+  // No evidence: a normal thread is not attributed to the routine even when its alert is on.
+  next = { role: "assistant", text: "Manual reply", at: "2026-11-10T09:59:30.000Z" };
+  assert.equal(await finish("normal", "completed"), undefined);
+  // A subagent carries no routine message; the preview's old evidence must not label it either.
+  next = { role: "assistant", text: "Subagent reply", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-new", runId: "run-8" } };
+  assert.equal(await finish("child", "completed", { lineage: { rootThreadId: "own", parentThreadId: "own", relationshipToParent: "subagent" } }), undefined);
+  notifier.stop();
+});
+
+test("a main-chat routine can be muted, and a failure can be opted into without touching other runs", async () => {
+  const { notifier, finish } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-chat": { alerts: { finished: false, failed: true } } },
+    preview: async () => ({ role: "assistant", text: "All good", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-chat", runId: "r" } }),
+  });
+  assert.equal(await finish("main", "completed"), undefined, "finished is off for this routine");
+  const failed = await finish("main", "failed");
+  assert.deepEqual([failed.title, failed.body, failed.kind], ["Alpha · Chat check", "The run failed", "failed"]);
+  // A manual run in the same chat is not that routine: the Bot's own completion still speaks.
+  const manual = await routineNotifier({ tasks: routineTasks, preview: async () => ({ role: "assistant", text: "Manual", at: "2026-11-10T09:59:30.000Z" }) });
+  const other = await manual.finish("main", "completed");
+  assert.deepEqual([other.title, other.body, other.tag], ["Alpha", "Manual", "alpha"]);
+  manual.notifier.stop();
+  notifier.stop();
+});
+
+test("a muted Bot never gets a routine push, but its waiting notice still closes", async () => {
+  const bot = { slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "main", notifications: false, hidden: false };
+  const { notifier, wait, answer } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-own": { alerts: { waiting: true } } },
+    bot,
+    preview: async () => ({ role: "assistant", text: "Waiting reply", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-own", runId: "run-own" } }),
+  });
+  assert.equal(await wait("own"), undefined);
+  // The wait began while the Bot was muted; answering still closes anything a previous notice left.
+  const resolved = await answer("own");
+  assert.deepEqual(resolved.map((item) => [item.kind, item.tag]), [["resolved", "waiting:alpha:own"]]);
+  notifier.stop();
+});
+
+test("presence can name one conversation, so another thread's notice still arrives", async () => {
+  const file = path.join(await mkdtemp(path.join(tmpdir(), "threebot-push-")), "push.json");
+  const delivered: string[] = [];
+  const store = createPushStore({ file, generateKeys: () => keys, sender: async (target) => { delivered.push(target.endpoint); } });
+  assert.equal((await store.subscribe(subscription)).ok, true);
+  assert.equal((await store.presence(subscription.endpoint, "alpha", null, "own")).ok, true);
+  // Reading the routine's own thread suppresses its notice there...
+  assert.equal((await store.send({ title: "Alpha · Own", body: "Finished", tag: "routine:t", url: "/?bot=alpha&thread=own", bot: "alpha", thread: "own" })).watching, 1);
+  // ...but the Bot's chat finishing elsewhere is still delivered.
+  assert.equal((await store.send({ title: "Alpha", body: "Finished", tag: "alpha", url: "/?bot=alpha", bot: "alpha" })).sent, 1);
+  assert.deepEqual(delivered, [subscription.endpoint]);
+  // A malformed conversation id is a refusal, not a silent "looked away".
+  assert.equal((await store.presence(subscription.endpoint, "alpha", null, "bad thread")).ok, false);
+});
+
+
+test("a manual turn in a routine's own thread is never a routine result", async () => {
+  const { notifier, finish, wait } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-own": { alerts: { finished: true, failed: true, waiting: true } } },
+    // The newest run is the user's own turn: T3's projection has no scheduledTaskId on it.
+    preview: async () => ({ role: "assistant", text: "Manual reply", at: "2026-11-10T09:59:30.000Z" }),
+  });
+  assert.equal(await finish("own", "completed"), undefined);
+  assert.equal(await finish("own", "failed"), undefined);
+  assert.equal(await wait("own"), undefined);
+  notifier.stop();
+});
+
+test("a new-thread wait recovered from a snapshot closes when answered, without replaying it", async () => {
+  const { notifier, snapshot, answer, thread } = await routineNotifier({
+    tasks: routineTasks,
+    records: { "task-new": { alerts: { waiting: true } } },
+    preview: async () => ({ role: "assistant", text: "Waiting reply", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-new", runId: "run-new" } }),
+  });
+  await snapshot([thread("run-new", "waiting", { pendingRuntimeRequest: { id: "approval" } })]);
+  const resolved = await answer("run-new");
+  assert.deepEqual(resolved.map((item) => [item.kind, item.tag]), [["resolved", "waiting:alpha:run-new"]]);
+  notifier.stop();
+});
+
+test("the task stream reconnects and forgets its routines when it ends", async () => {
+  let shell: (event: any) => void = () => {};
+  let endTask: (() => void) | null = null;
+  let taskSubscriptions = 0, shellSubscriptions = 0, connects = 0;
+  const task = { id: "task-own", title: "Own check", projectId: "project", threadId: "own", threadMode: "continue" };
+  const client = {
+    stream(tag: string, _payload: unknown, onItem: (event: any) => void) {
+      if (tag === "scheduledTasks.subscribe") {
+        taskSubscriptions += 1;
+        queueMicrotask(() => onItem({ tasks: [task] }));
+        return { done: new Promise<void>((resolve) => { endTask = resolve; }), cancel() {} };
+      }
+      shellSubscriptions += 1; shell = onItem;
+      return { done: new Promise<void>(() => {}), cancel() {} };
+    },
+  };
+  const sent: any[] = [];
+  const notifier = createPushNotifier({
+    connect: async () => { connects += 1; return client as any; },
+    bots: async () => [{ slug: "alpha", name: "Alpha", projectId: "project", mainThreadId: "main", notifications: true, hidden: false } as any],
+    send: async (payload) => { sent.push(payload); },
+    preview: async () => ({ role: "assistant", text: "Report", at: "2026-11-10T09:59:30.000Z", routine: { taskId: "task-own", runId: "run" } }),
+    routines: { alerts: async () => ({ alerts: { finished: true } }) },
+    retryMs: 10,
+    log: () => {},
+  });
+  void notifier.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual([taskSubscriptions, shellSubscriptions], [1, 1]);
+  endTask!();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // Before the next task snapshot, an old map must not attribute a manual completion.
+  const event = (status: string) => ({ kind: "thread.updated", thread: { id: "own", projectId: "project", status, activityRunStatus: status, pendingRuntimeRequest: null, updatedAt: "2026-11-10T09:59:30.000Z", lineage: { rootThreadId: "own", parentThreadId: null } } });
+  shell(event("running"));
+  shell(event("completed"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [], "the ended task stream must not leave a stale attribution map");
+  for (let i = 0; i < 200 && (taskSubscriptions < 2 || shellSubscriptions < 2); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(connects >= 2 && taskSubscriptions >= 2 && shellSubscriptions >= 2, `expected a reconnect, got ${connects}/${taskSubscriptions}/${shellSubscriptions}`);
+  notifier.stop();
+});
+
+
+test("an opted-in dispatch failure comes from the task snapshot, without inventing a conversation", async () => {
+  const base = { ...routineTasks.find((task) => task.id === "task-new")!, lastRunAt: "2026-11-10T09:00:00.000Z", lastRunStatus: "succeeded" };
+  const { notifier, updateTasks, sent } = await routineNotifier({
+    tasks: [base],
+    records: { "task-new": { alerts: { failed: true } } },
+  });
+  await updateTasks([{ ...base, lastRunAt: "2026-11-10T10:00:00.000Z", lastRunStatus: "failed" }]);
+  assert.equal(sent.length, 1);
+  const push = sent[0];
+  assert.deepEqual([push.title, push.body, push.tag, push.kind], ["Alpha · New check", "The run could not be dispatched.", "routine:task-new", "failed"]);
+  assert.equal(push.thread, undefined, "a dispatch that never started a thread must not link one");
+  assert.equal(push.url, "/?bot=alpha");
+  // A first snapshot with an already-failed task is history, not a fresh event.
+  const seeded = await routineNotifier({ tasks: [{ ...base, lastRunStatus: "failed" }], records: { "task-new": { alerts: { failed: true } } } });
+  assert.deepEqual(seeded.sent, []);
+  seeded.notifier.stop();
+  notifier.stop();
+});
+
+test("a dispatch failure stays quiet without the per-routine opt-in or an owner", async () => {
+  const base = { ...routineTasks.find((task) => task.id === "task-new")!, lastRunAt: "2026-11-10T09:00:00.000Z", lastRunStatus: "succeeded" };
+  const off = await routineNotifier({ tasks: [base], records: {} });
+  await off.updateTasks([{ ...base, lastRunAt: "2026-11-10T10:00:00.000Z", lastRunStatus: "failed" }]);
+  assert.deepEqual(off.sent, []);
+  off.notifier.stop();
+  const adopted = { slug: "alpha", name: "Alpha", projectId: "user-repo", mainThreadId: "main", notifications: true, hidden: false, adopted: true };
+  const noOwner = await routineNotifier({ tasks: [{ ...base, projectId: "user-repo" }], records: { "task-new": { alerts: { failed: true } } }, bot: adopted });
+  await noOwner.updateTasks([{ ...base, projectId: "user-repo", lastRunAt: "2026-11-10T10:00:00.000Z", lastRunStatus: "failed" }]);
+  assert.deepEqual(noOwner.sent, [], "an adopted project with one Bot is not ownership");
+  noOwner.notifier.stop();
 });

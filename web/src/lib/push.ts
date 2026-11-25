@@ -172,8 +172,8 @@ async function removeSubscription(): Promise<PushResult> {
 // (WATCHING_MS in server/push.mts), so one lost report doesn't let a push through.
 const PRESENCE_MS = 12_000;
 
-/** The room or the Bot's conversation this page has open, or nothing when it looks away. */
-export type PushView = { bot: string | null; room: string | null };
+/** The room, conversation or Bot's chat this page has open, or nothing when it looks away. */
+export type PushView = { bot: string | null; room: string | null; thread?: string | null };
 
 /**
  * Keep the gateway told which Bot's conversation or which room this device has open and in focus
@@ -187,8 +187,8 @@ export function startPushPresence(watching: () => PushView, onChange: (listener:
   let reported: string | undefined;
   let reportedAt = 0;
   const sync = () => {
-    const { bot, room } = watching();
-    const key = room ? `room:${room}` : bot ? `bot:${bot}` : "";
+    const { bot, room, thread } = watching();
+    const key = room ? `room:${room}` : thread ? `thread:${thread}` : bot ? `bot:${bot}` : "";
     if (key === reported && (!key || Date.now() - reportedAt < PRESENCE_MS)) return;
     if (!key && reported === undefined) return;
     reported = key;
@@ -200,7 +200,7 @@ export function startPushPresence(watching: () => PushView, onChange: (listener:
       await fetch("/api/push/presence", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ endpoint: subscription.endpoint, bot, room }),
+        body: JSON.stringify({ endpoint: subscription.endpoint, bot, room, thread: thread ?? null }),
         keepalive: true,
       });
     })().catch(() => {});

@@ -849,7 +849,7 @@ test("a tidy routine reads as a preset and its report is a transcript line", () 
   assert.equal(tidyState({ ...task, schedule: { ...task.schedule, weekdays: [1] } }), "weekly");
   assert.equal(tidyState({ ...task, enabled: false }), "off");
   assert.equal(findTidyTask(bot, [task])?.id, "task-1");
-  const report = { id: "task-1", at: task.lastRunAt, title: "Tidy memory", summary: "Nothing changed.", threadId: "thread-routine", failed: false };
+  const report = { id: "task-1", at: task.lastRunAt, title: "Tidy memory", summary: "Nothing changed.", threadId: "thread-routine", state: "finished" as const, bot: "tester" };
   const entries = buildEntries([{ id: "m1", type: "user_message", text: "hello", messageId: "m1", startedAt: "2026-11-16T10:10:00.000Z", ordinal: 1 }], { bot, botsByThread: new Map(), tasks: [], requests: {}, routineReports: [report] });
   const kinds = entries.map((entry) => entry.kind);
   assert.ok(kinds.includes("routine-report"));

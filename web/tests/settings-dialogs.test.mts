@@ -33,6 +33,7 @@ const bundle = await buildOnce({
       export { createElement, act, useState } from "react";
       export { createRoot } from "react-dom/client";
       export { SkillsDialog } from ${JSON.stringify(`${src}components/SkillsDialog.tsx`)};
+      export { Sidebar } from ${JSON.stringify(`${src}components/Sidebar.tsx`)};
       export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};
       export { parseVaultCsv, parseCsv } from ${JSON.stringify(`${src}lib/vaultCsv.ts`)};
       export { SettingsDialog } from ${JSON.stringify(`${src}components/SettingsDialog.tsx`)};
@@ -51,7 +52,7 @@ assert.ok(entry);
 const testDir = await mkdtemp(join(tmpdir(), "bot-settings-tests-"));
 const testEntry = join(testDir, "components.mjs");
 await writeFile(testEntry, entry.code);
-const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, RenameBotDialog, AvatarEditorDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer } = await import(pathToFileURL(testEntry).href);
+const { parseVaultCsv, parseCsv, createElement: h, act, useState, createRoot, SettingsDialog, SkillsDialog, t3, AvatarPicker, NewBotDialog, RenameBotDialog, AvatarEditorDialog, AvatarDialog, Modal, useApp, createCharacter, AvatarPlayer, Sidebar } = await import(pathToFileURL(testEntry).href);
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(testDir, { recursive: true }); });
 let root, host, requests, settings, handleRequest;
 beforeEach(() => {
@@ -82,7 +83,7 @@ const input = async (el, value) => act(async () => {
 });
 const select = async (label, value) => act(async () => { const el = labeled<HTMLSelectElement>(label); el.value = value; el.dispatchEvent(new window.Event("change", { bubbles: true })); });
 
-for (const [label, pane] of [["General", "general"], ["Computer", "computer"], ["Permissions", "permissions"], ["Vault", "vault"], ["Updates", "updates"]]) test(`${label} opens its category and Back returns to overview`, async () => {
+for (const [label, pane] of [["General", "general"], ["Computer", "computer"], ["Permissions", "permissions"], ["Notifications", "notifications"], ["Vault", "vault"], ["Updates", "updates"]]) test(`${label} opens its category and Back returns to overview`, async () => {
   await render(); await click(button(label, document.querySelector("nav")));
   assert.equal(useApp.getState().settingsPane, pane); assert.ok(document.body.textContent.includes(label));
   await click(labeled("Back")); assert.equal(useApp.getState().settingsPane, "overview"); assert.ok([...document.querySelectorAll("button")].some((button) => button.textContent.startsWith("Appearance")));
@@ -111,24 +112,27 @@ test("failed save shows status and retains the permission rule draft", async () 
   handleRequest = (url, init) => init.method === "PUT"
     ? new Promise((resolve) => { rejectRequest = () => resolve(Response.json({ error: "Storage unavailable" }, { status: 503 })); })
     : Response.json(settings);
-  await render(); await click(button("Add Rule")); await input(document.querySelector("textarea"), "Ask before deleting"); await click(button("Add rule"));
+  await render(); await click(button("Add Rule")); await input(document.querySelector(".settings-rule-editor textarea"), "Ask before deleting"); await click(button("Add rule"));
   assert.match(document.querySelector('[role="status"]').textContent, /Saving/); assert.equal(document.querySelector("fieldset").disabled, true);
   await act(async () => rejectRequest()); assert.match(document.querySelector('[role="alert"]').textContent, /Storage unavailable/);
-  assert.equal(document.querySelector("textarea").value, "Ask before deleting"); assert.equal(document.querySelector("fieldset").disabled, false);
+  assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-rule-editor textarea")!.value, "Ask before deleting"); assert.equal(document.querySelector("fieldset").disabled, false);
 });
 
-test("permission add/edit/delete and Auto-Review save their values", async () => {
-  useApp.setState({ settingsPane: "permissions" }); await render(); await click(labeled("Auto-Review")); assert.equal(settings.autoReview, false);
-  await click(button("Add Rule")); await input(document.querySelector("textarea"), "Ask before deleting"); await click(button("Add rule"));
+test("permission add/edit/delete and Approvals save their values, editing inline", async () => {
+  useApp.setState({ settingsPane: "permissions" }); await render(); await select("Approvals", "full"); assert.equal(settings.autoReview, false);
+  await click(button("Add Rule")); await input(document.querySelector(".settings-rule-editor textarea"), "Ask before deleting"); assert.equal(document.querySelectorAll("[data-bot-modal]").length, 1); await click(button("Add rule"));
   assert.deepEqual(settings.rules.alwaysAsk, ["Ask before buying", "Ask before deleting"]);
-  await click(labeled("Edit rule")); await input(document.querySelector("textarea"), "Ask before spending"); await click(button("Add rule"));
-  assert.deepEqual(settings.rules.alwaysAsk, ["Ask before spending", "Ask before deleting"]);
+  await click(labeled("Edit rule"));
+  assert.ok([...document.querySelectorAll<HTMLButtonElement>('[aria-label="Delete rule"]')].every((button) => button.disabled));
+  await input(document.querySelector(".settings-rule-editor textarea"), "Ask before spending\nCheck the amount"); await click(button("Save"));
+  assert.deepEqual(settings.rules.alwaysAsk, ["Ask before spending\nCheck the amount", "Ask before deleting"]);
   await click(labeled("Delete rule")); assert.deepEqual(settings.rules.alwaysAsk, ["Ask before deleting"]);
+  await click(labeled("Chats can give permissions")); assert.equal(settings.chatPermissions, false);
 });
 
 test("Escape cancels the rule editor without closing Settings", async () => {
-  useApp.setState({ settingsPane: "permissions", dialog: "settings" }); await render(); await click(button("Add Rule")); await key(document.querySelector("textarea"), "Escape");
-  assert.equal(document.querySelector("textarea"), null); assert.equal(useApp.getState().dialog, "settings"); assert.equal(requests.length, 0);
+  useApp.setState({ settingsPane: "permissions", dialog: "settings" }); await render(); await click(button("Add Rule")); await key(document.querySelector(".settings-rule-editor textarea"), "Escape");
+  assert.equal(document.querySelector(".settings-rule-editor textarea"), null); assert.equal(useApp.getState().dialog, "settings"); assert.equal(requests.length, 0);
 });
 
 test("Computer/Updates report metadata and retry a genuine failure", async () => {
@@ -680,14 +684,14 @@ test("Account and manual Time Zone open separate destinations, while automatic z
   await select("Time Zone", "Europe/Paris"); assert.equal(settings.timezone, "Europe/Paris");
 });
 
-test("Always Ask and Allow without Asking use their distinct native editor examples and Back cancels", async () => {
+test("Always Ask and Allow without Asking use their distinct editor examples and Cancel closes them", async () => {
   useApp.setState({ settingsPane: "permissions" }); await render();
   const add = () => [...document.querySelectorAll("button")].filter((button) => button.textContent.trim() === "Add Rule");
-  await click(add()[0]); assert.equal(document.querySelector("textarea").placeholder, "Purchases over $50");
-  await click(labeled("Back", [...document.querySelectorAll('[role="dialog"]')].at(-1)));
-  await click(add()[1]); assert.equal(document.querySelector("textarea").placeholder, "Emails to my team at acme.com"); assert.equal(button("Add rule").disabled, true);
-  await click(labeled("Back", [...document.querySelectorAll('[role="dialog"]')].at(-1)));
-  assert.equal(document.querySelectorAll('[role="dialog"]').length, 1); assert.equal(requests.length, 0);
+  await click(add()[0]); assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-rule-editor textarea")!.placeholder, "Purchases over $50");
+  await click(button("Cancel")); assert.equal(document.querySelector(".settings-rule-editor textarea"), null); assert.equal(document.activeElement, add()[0]);
+  await click(add()[1]); assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-rule-editor textarea")!.placeholder, "Emails to my team at acme.com"); assert.equal(button("Add rule").disabled, true);
+  await click(button("Cancel"));
+  assert.equal(document.querySelector(".settings-rule-editor textarea"), null); assert.equal(document.querySelectorAll('[role="dialog"]').length, 1); assert.equal(requests.length, 0);
 });
 
 test("Sign Out uses the real logout route, suppresses duplicate clicks and retains Settings on failure", async () => {
@@ -770,4 +774,68 @@ test("Bot CSV import retains ordered repeatable fields and skips malformed array
   assert.deepEqual(contacts.items[0].emails,["first@example.invalid","second@example.invalid"]);
   assert.deepEqual(contacts.items[0].phones,["111","222"]);
   assert.equal(parseVaultCsv('name,url,username,password,websites\nSample,https://first.invalid,user,synthetic,broken\n').skipped,1);
+});
+
+test("New Bot saves chosen and new sections, and the sidebar menu toggles Bot Creator", async (t) => {
+  const bot = (slug: string, name: string, extra = {}) => ({
+    slug, name, shape: "sphere", color: "teal", createdAt: "2026-01-01", mainThreadId: null, ...extra,
+  });
+  const alpha = bot("alpha", "Alpha", { primary: true, section: "Work" });
+  const beta = bot("beta", "Beta");
+  const gamma = bot("gamma", "Gamma", { pinned: true, createdAt: "2025-01-01" });
+  let bots = [alpha, beta, gamma];
+  settings = { ...settings, sections: ["Work"] };
+  useApp.setState({ bots: { alpha, beta, gamma }, settings, sidebarCompact: false });
+  t.mock.method(t3, "dispatch", async () => ({}));
+  const handleSettings = handleRequest;
+  handleRequest = async (url, init) => {
+    if (url === "/api/bots" && init.method === "POST") {
+      const body = JSON.parse(init.body);
+      const created = { ...bot(body.name.toLowerCase(), body.name, body), mainThreadId: "thread-" + body.name };
+      bots = [...bots, created];
+      return Response.json(created);
+    }
+    if (url === "/api/bots") return Response.json({ bots });
+    if (url === "/api/bots/beta" && init.method === "PUT") {
+      const updated = { ...beta, ...JSON.parse(init.body) };
+      bots = bots.map((entry) => entry.slug === "beta" ? updated : entry);
+      return Response.json(updated);
+    }
+    return handleSettings(url, init);
+  };
+
+  for (const [name, choice, newName] of [["Existing", "Work", ""], ["New", "New section…", " Research "], ["Reuse", "New section…", "research"]]) {
+    await render(h(NewBotDialog, { key: name }));
+    await input(labeled("Name your Bot"), name);
+    const picker = labeled<HTMLSelectElement>("Section");
+    assert.ok(picker);
+    assert.equal(picker.selectedOptions[0].textContent, "Unassigned");
+    assert.equal(picker.options[1].textContent, "Work");
+    const option = Array.from(picker.options).find((option) => option.textContent?.startsWith(choice));
+    assert.ok(option, choice);
+    await select("Section", option.value);
+    if (newName) await input(labeled("Section name"), newName);
+    await click(button("Create"));
+  }
+
+  assert.deepEqual(requests.filter(({ method }) => method === "PUT" || method === "POST").map(({ url, body }) => {
+    const payload = JSON.parse(body);
+    return [url, payload.sections ?? payload.section];
+  }), [
+    ["/api/bots", "Work"],
+    ["/api/settings", ["Work", "Research"]],
+    ["/api/bots", "Research"],
+    ["/api/bots", "Research"],
+  ]);
+
+  await render(h(Sidebar));
+  await click(labeled("Options for Alpha"));
+  assert.equal(button("Make Bot Creator")?.disabled, true);
+  await click(labeled("Options for Beta"));
+  await click(button("Make Bot Creator"));
+  assert.deepEqual(Array.from(document.querySelectorAll(".pinned-bot .pinned-name"), (label) => label.textContent), ["AlphaMain Bot", "BetaBot Creator", "Gamma"]);
+  await click(labeled("Options for Beta"));
+  await click(button("Remove Bot Creator"));
+  assert.equal(host.querySelectorAll(".pinned-bot").length, 2);
+  assert.deepEqual(requests.filter(({ url }) => url === "/api/bots/beta").map(({ body }) => JSON.parse(body)), [{ creator: true }, { creator: false }]);
 });

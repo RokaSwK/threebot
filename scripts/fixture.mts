@@ -258,6 +258,12 @@ export async function smokeFixture(fixture: Fixture) {
   assert.deepEqual(await main(), ['beta']);
   assert.equal((await fixture.request('/api/main-bot', 'PUT', { slug: 'missing' })).status, 404);
   assert.equal((await fixture.request('/api/bots/beta', 'PUT', { hidden: true })).status, 409);
+  // Per-routine records are gateway data, keyed by task id; a partial write never invents a task.
+  assert.deepEqual((await fixture.request('/api/routine-alerts')).body.tasks, {});
+  const linked = await fixture.request('/api/routine-alerts/scheduled-task:fixture-smoke', 'PUT', { bot: 'alpha', alerts: { failed: true } });
+  assert.equal(linked.status, 200);
+  assert.deepEqual((await fixture.request('/api/routine-alerts')).body.tasks['scheduled-task:fixture-smoke'], { bot: 'alpha', alerts: { failed: true } });
+  assert.equal((await fixture.request('/api/routine-alerts/scheduled-task:fixture-smoke', 'PUT', { bot: 'missing' })).status, 400);
   const patch = { userName: 'Edited Sample', theme: 'dark', timezone: 'Europe/Madrid', autoReview: false,
     rules: { alwaysAsk: ['Ask before deleting sample files'], allowWithoutAsking: ['Read sample files'] }, defaultModel: MODEL };
   assert.equal((await fixture.request('/api/settings', 'PUT', patch)).status, 200);

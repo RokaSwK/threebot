@@ -754,7 +754,7 @@ test('a remote child on a machine Threebot reaches opens inside the app with its
 
 test('a routine report says what ran and names the run behind Open', async () => {
   const bot = { slug: 'alpha', name: 'Alpha', mainThreadId: 'root', shape: 'blob', color: 'teal' };
-  const entry = { kind: 'routine-report' as const, id: 'routine-report:task-1', at: '2026-11-16T03:30:00Z', title: 'Tidy memory', summary: 'Running now, in its own conversation.', threadId: 't-tidy', failed: false };
+  const entry = { kind: 'routine-report' as const, id: 'routine-report:task-1', at: '2026-11-16T03:30:00Z', title: 'Tidy memory', summary: 'Running now, in its own conversation.', threadId: 't-tidy', state: 'running' as const, bot: 'alpha' };
   await act(async () => root.render(h(RoutineReportLine, { entry, bot })));
   const view = host.querySelector('button');
   assert.equal(view.textContent, 'Open');
@@ -762,4 +762,6 @@ test('a routine report says what ran and names the run behind Open', async () =>
   assert.equal(host.querySelector('time').getAttribute('datetime'), entry.at);
   assert.equal(host.querySelector('svg').getAttribute('aria-hidden'), 'true');
   assert.match(host.textContent ?? '', /Running now, in its own conversation/u);
+  assert.match(host.textContent ?? '', /Running…/u);
+  assert.equal(host.querySelector('[role="group"]').getAttribute('aria-label'), 'Alpha, routine Tidy memory: Running…');
 });

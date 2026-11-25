@@ -24,6 +24,25 @@ test("the newest recognizable item wins, including attachments, questions and Bo
   assert.equal(latestPreview({ visibleTurnItems: [{ item: message(1, "assistant_message", { text: "wrapped" }) }] })!.text, "wrapped");
 });
 
+test("only the newest run's scheduledTaskId is routine evidence; an older routine message is not", () => {
+  const projection = {
+    turnItems: [message(3, "assistant_message", { text: "Manual reply" })],
+    messages: [
+      { id: "routine-message", runId: "run-routine", scheduledTaskId: "task-1" },
+      { id: "manual-message", runId: "run-manual" },
+    ],
+    runs: [
+      { id: "run-routine", userMessageId: "routine-message", requestedAt: "2026-10-30T09:00:00.000Z" },
+      { id: "run-manual", userMessageId: "manual-message", requestedAt: "2026-10-30T10:00:00.000Z" },
+    ],
+  };
+  assert.equal(latestPreview(projection)!.routine, undefined, "a manual run after the routine is not its result");
+  const running = { ...projection, runs: [projection.runs[0]] };
+  assert.deepEqual(latestPreview(running)!.routine, { taskId: "task-1", runId: "run-routine" });
+  // Without the message rows the preview is still a preview; it just cannot prove a routine.
+  assert.equal(latestPreview({ turnItems: projection.turnItems })!.routine, undefined);
+});
+
 test("previews reload only moved threads and never pass an older stamp off as a fresh notification body", async () => {
   const calls: string[] = [];
   let failing = false;

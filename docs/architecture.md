@@ -31,7 +31,7 @@ browser (web/)  ──HTTP + WS──>  gateway (server/)  ──WS + HTTP, bear
 | Bot persona, memory, library | `AGENTS.md` (+ `CLAUDE.md` link), `memory/MEMORY.md`, `library/` in the Bot folder |
 | Helper Bots | New Bot projects created by agents (they follow the same folder convention) |
 | Subagents / tasks | T3 provider subagents and `delegate_task` child threads |
-| Routines | T3 scheduled tasks bound to the Bot's chat, or to a conversation of their own with a model of their own |
+| Routines | T3 scheduled tasks bound to the Bot's chat, or to a conversation of their own with a model of their own. Threebot keeps per-routine ownership and alert choices in `bots/.botapp/routine-alerts.json`, keyed by task id (never in T3's schema) |
 | Staying active | T3 0.1.8+ settles threads idle for a week; at start and hourly the gateway sends `thread.auto-settle.set` (`enabled: false`) for Bot main, room and routine threads that still have it on. A T3 without `autoSettleDisabledAt` is left alone |
 | Settled in T3 (beta) | With `beta.settleBotThreads` on, every minute the gateway sends `thread.settle` for quiet Bot threads: main and room threads, threads in a non-adopted Bot project, and descendants of a main thread. It skips archived, settled, pinned, snoozed, busy, waiting, background-work, usage-limit, merge-wait and PR-watched threads, and any whose last run or message is under 2 minutes old. Threebot then shows a settled main thread as idle, not finished |
 | Approval cards | T3 `approval_request` turn items + `runtime-request.respond` |
@@ -124,6 +124,40 @@ Settings → Machines lists the machines the local T3 Code links, with status, l
 - **Where coding work runs**: `settings.codingWork` (and a Bot's own `codingWork` in `bot.json`, which wins) holds a preferred machine and a fallback, by environment id (`"local"` is this machine). AGENTS.md then gets a "Where coding work runs" section telling the Bot to check `t3_environment_links` and start coding work there with `delegate_task`, and to drop any memory rule about it.
 - **Offline alerts** (`server/machine-alerts.mts`): once a minute the gateway looks at the machines. A machine that has been quiet for two looks in a row, while a Bot's main thread has `delegate_task` work running there (`subagents[].remoteChild` in its projection), gets one message per Bot in that Bot's main thread, "From Threebot: <machine> went offline/to sleep with these threads running…", and one more when it's back. Outages are kept in `.botapp/machines/outages.json`, so a restart doesn't repeat them. Work a Bot started with `t3_thread_launch` isn't tracked, since T3 records no owner for it.
 
+## Routine results
+
+A routine that runs outside the Bot's chat leaves one line in that chat: the last run's report, read
+from the conversation it ran in (`web/src/lib/routineReports.ts`). The line shows the Bot's avatar
+and the routine's name, a textual state (`Completed`, `Failed`, `Needs attention`, `Running…`,
+`Stopped`, `Result unavailable`), a short summary and an `Open` button that deep-links to the exact
+thread. A routine in the Bot's chat is the chat: it leaves no second line.
+
+The summary is only text T3 attributes to that routine: the newest message carrying
+`scheduledTaskId`, its `runId`, and the assistant item of that same run. If the chain is missing,
+the line says `Result unavailable. Open the conversation for details.` instead of quoting another
+run's reply. For a new-thread run the history row must have started at or after the task's
+`lastRunAt` (small skew allowed), so a late backfill never links the previous conversation as the
+new dispatch; a miss is retried while the chat is open instead of being cached as a permanent
+null. A focused preview needs a stamp for T3's cache: `updatedAt` is used, else the run's own
+completion/start timestamp, else a fresh stamp, so an older shell cannot silently mute the notice. `fresh_session` reuses its thread; `new_thread` has no stored thread id, so the
+gateway finds the conversation from the last dispatch (`GET /api/routine-history`: a bounded read of
+the newest threads around `lastRunAt`, then `messages.scheduledTaskId` joined to
+`runs.userMessageId`). That read starts when the routine is opened or its chat report is built; it
+is not a permanent watcher, and the history is flagged incomplete because T3 keeps no durable
+guarantee that every run was observed. The routines list uses the persisted refs only
+(`GET /api/routine-history/latest?tasks=…`) to show `Needs attention` only when the conversation's
+latest run is the one recorded for that routine; a manual turn in the same thread has a different
+run id and is never painted as routine attention or failure.
+
+Ownership is not inferred from a project alone. A task bound to a Bot's own chat is that Bot's, as
+is the memory tidy linked by `memoryTidyRoutineId`; an explicit link
+(`PUT /api/routine-alerts/<task id>`) resolves a conversation of its own or a new thread in a
+shared project. The project fallback only applies to a project Threebot created for a single Bot.
+An adopted project is the user's own work even when this install has one Bot in it, so a routine
+on a user thread, a room, or a new thread there stays unowned until linked. An ambiguous routine is
+shown in each candidate Bot's Details with `Bot association unavailable` and a link action, and is
+never reported as anybody's result.
+
 ## Web Push
 
 The gateway keeps one VAPID key pair and the browser push subscriptions in `.botapp/push.json`
@@ -132,37 +166,66 @@ with `POST /api/push/subscribe` and can remove its endpoint with `POST /api/push
 
 A server-side `orchestration.subscribeShell` stream turns T3 thread transitions into pushes, by the
 same rules the open app uses for its own notifications (`notifyIfNeeded` in `web/src/store.ts`): a
-Bot's main conversation finishing or asking for the user, and a side chat asking for the user.
-Routines, subagents, snoozed threads and Bots with notifications off stay quiet. The payload is
-small and encrypted (a title, a short preview, the Bot or the room it is about, and a deep link).
-The stream reconnects to T3 on its own; this does not duplicate the browser's WebSocket proxy and
-does not add a T3 schema change.
+Bot's main conversation finishing or asking for the user, a side chat asking for the user, and a
+routine whose per-routine alert is on. A routine is only ever attributed through T3's own evidence:
+the task bound to the conversation, or the `scheduledTaskId` on the newest run's message, joined to
+that run in the same projection. Subagents, snoozed threads and Bots with notifications off stay
+quiet. The payload is small and encrypted (a title, a short preview, the Bot or the room it is
+about, and a deep link). The stream reconnects to T3 on its own; this does not duplicate the
+browser's WebSocket proxy and does not add a T3 schema change. With routine records configured, the
+notifier also subscribes to `scheduledTasks.subscribe` (T3 stays the only scheduler); it does not
+poll and it never reads a projection for a thread that no routine could own.
+
+Routine alerts are opt-in where they used to be silent. A run in the Bot's chat keeps the Bot's
+`Finished`/`Waiting` behaviour; a run in the routine's own conversation or a new thread starts with
+all three choices off, so an upgrade does not turn yesterday's quiet routines into a burst. A
+dispatch that never started a conversation is reported as `The run could not be dispatched.` only
+when the routine's `Failed` choice is on and the owner is unambiguous; it links the task's thread
+or the Bot's chat, never a thread the run did not create. A first task snapshot seeds state and
+does not replay an old failure. The
+memory tidy is one of those own-thread routines: it stays silent unless the user explicitly asks
+for its alerts. `GET /api/routine-alerts` returns every record and
+`PUT /api/routine-alerts/<task id>` merges `{bot, alerts}`; a record is never deleted from a
+partial task snapshot. A store that cannot be parsed fails the request and is left untouched rather
+than being replaced by an empty file. The Bot's own chat is proof of ownership; a shared project
+with several Bots is ambiguous until the user links the routine from Details. An ambiguous routine
+shows in each candidate Bot's Details with `Bot association unavailable` and a link action, and in
+nobody's chat.
 
 Browsers require every push to show a notification, and Safari drops a subscription after three
 that showed nothing. So `web/src/sw.ts` always shows what it receives, and the gateway is the one
-that holds a push back: while a device has a Bot's conversation or a room open and in focus, it says
-so with `POST /api/push/presence` (`{endpoint, bot, room}`, repeated every 12 s, forgotten after 30 s
-or when the page looks away), and a push about that Bot — or about that room — is not sent to that
-device. A room push carries the room id, so it is held back on the device looking at that room and
-still reaches a phone looking at a Bot or at another room. A report names a room or a Bot (a room
-wins when both arrive); any other value is refused with a 400, and an older page that sends only
-`bot` keeps working. A completion keeps the Bot's own tag, so three finished runs leave one notice.
-A push that needs the user gets one tag per conversation (`waiting:<slug>:<threadId>`) and
-deep-links to that thread, so a side chat's request is not replaced by that Bot's completion or by
-another side chat. Every Bot push (a completion, a wait, a room's) shows a Bot's face: its uploaded
-picture or its drawn avatar from `/api/bots/<slug>/avatar.png?v=<look>`, and as Android's status-bar
-badge its white silhouette from `/badge.png`, or Threebot's own monochrome badge
-(`/api/push/badge.png`) for a Bot with a photo. A room has no avatar of its own, so a room push shows
-the Bot that is waiting or spoke last. The `v` changes with the look, so no cache keeps an old face.
-The worker hands the browser these images as `data:` URLs (from its own `bot-icons-` cache, or
-fetched once with the session cookie), so Android never fetches them at display time, when it may be
-offline or signed out of Access and would draw a letter. A push also carries small copies of both
-(`iconData`, `badgeData`, about 2 KB, dropped first if a message would pass the push services' 4 KB),
-for a device that has nothing cached and cannot fetch. Each
-push also carries an RFC 8030 `Topic` derived from the tag, so a device that was offline receives
-the latest notice per conversation instead of a burst. Safari ignores the icon, badge and timestamp,
-and iOS still stacks notifications because it does not coalesce tags. The page builds the same
-options for its own notifications, so the two replace each other.
+that holds a push back: while a device has a Bot's conversation, a room or another conversation
+open and in focus, it says so with `POST /api/push/presence`
+(`{endpoint, bot, room, thread}`, repeated every 12 s, forgotten after 30 s or when the page looks
+away), and a push about that same thing is not sent to that device. Presence compares one key: a
+room wins over a conversation, and a conversation over the Bot's chat. A routine notice carries
+its thread, so it is held back only on the device reading that thread (a run in the Bot's chat is
+held back by the Bot's view instead); a phone reading the Bot's chat still hears that a different
+conversation finished. A report names a room, a conversation or
+a Bot; any other value is refused with a 400, and an older page that sends only `bot` keeps
+working. A Bot completion keeps the Bot's own tag, so three finished runs leave one notice; a
+routine completion uses one tag per routine (`routine:<taskId>`), so one routine cannot replace
+another's notice. That per-routine tag is a deliberate grouping: a burst of runs of the same routine
+updates one notice instead of stacking, while another routine's notice is untouched. A waiting
+request keeps its per-conversation tag so it is never replaced by a completion. A push that needs the user gets one tag per conversation
+(`waiting:<slug>:<threadId>`) and deep-links to that thread, so a side chat's request is not
+replaced by that Bot's completion or by another side chat. Every Bot push (a completion, a wait, a
+room's) shows a Bot's face: its uploaded picture or its drawn avatar from
+`/api/bots/<slug>/avatar.png?v=<look>`, and as Android's status-bar badge its white silhouette from
+`/badge.png`, or Threebot's own monochrome badge (`/api/push/badge.png`) for a Bot with a photo. A
+room has no avatar of its own, so a room push shows the Bot that is waiting or spoke last. A routine
+push is titled `<Bot> · <routine>`, so the lock screen says which owner and which routine. The `v`
+changes with the look, so no cache keeps an old face. The worker hands the browser these images as
+`data:` URLs (from its own `bot-icons-` cache, or fetched once with the session cookie), so Android
+never fetches them at display time, when it may be offline or signed out of Access and would draw a
+letter. A push also carries small copies of both (`iconData`, `badgeData`, about 2 KB, dropped
+first if a message would pass the push services' 4 KB), for a device that has nothing cached and
+cannot fetch. Each push also carries an RFC 8030 `Topic` derived from the tag, so a device that was
+offline receives the latest notice per conversation instead of a burst. Safari ignores the icon,
+badge and timestamp, and iOS still stacks notifications because it does not coalesce tags. The page
+builds the same options for its own notifications, so the two replace each other. Delivery is best
+effort: a reconnect may retry an event, and the tag coalesces the notice; neither the shell stream
+nor the history is a durable queue, so this is not an exactly-once guarantee.
 
 When a request is answered, here or on another device (or its thread is archived or removed), the
 gateway sends a `resolved` push with the same tag, and so the same topic, after the `waiting` one:
