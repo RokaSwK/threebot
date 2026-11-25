@@ -22,6 +22,7 @@ import { startProvisioner } from "./provisioner.mts";
 import { keepThreadsActive, settleQuietThreads } from "./auto-settle.mts";
 import { archivedBotIdentities } from "./bot-identities.mts";
 import { createMainBotRegistry, type Bot, type BotPatch } from "./main-bot.mts";
+import { createBotMap, readBotMapThread } from "./bot-map.mts";
 import {
   CLAUDE_FILE, CODEX_FILE, CONFIG_FILES, LOCAL_ENVIRONMENT, archiveAdoptedData, excludePatterns, gitRepo, mergeJsonFile, planAdoption,
   projectAgentsMd, readAdopted, registerAdopted, samePath, undoAdoptionFiles, unregisterAdopted, updateAdopted, withProjectAgents, within,
@@ -597,14 +598,48 @@ function botDir(slug: string) {
   if (!SLUG_RE.test(slug)) throw Object.assign(new Error("bad slug"), { status: 400 });
   return path.join(cfg.botsRoot, slug);
 }
+const projectsClient = new T3Client({ baseUrl: cfg.t3Url, token });
+let archivedProjectsCache: { ids: ReadonlySet<string>; expiresAt: number } | undefined;
 const mainBots = createMainBotRegistry({
   botsRoot: cfg.botsRoot,
+  archivedProjects: async () => {
+    if (archivedProjectsCache && Date.now() < archivedProjectsCache.expiresAt) return archivedProjectsCache.ids;
+    try {
+      const projects = await t3Projects(2_000);
+      const ids = new Set(projects.filter((project) => project.archivedAt).map((project) => project.id));
+      archivedProjectsCache = { ids, expiresAt: Date.now() + 30_000 };
+      return ids;
+    } catch {
+      return new Set<string>();
+    }
+  },
   onBotChanged: async (bot) => {
     await writeAgentsMd(bot, await getSettings()).catch((error) => console.error("refreshing Bot instructions failed", error));
   },
 });
 const getBot = (slug: string) => mainBots.get(slug);
 const listBots = () => mainBots.list();
+const botMapReplay = new WeakMap<T3Client, Promise<boolean>>();
+const botMap = createBotMap({
+  file: path.join(appDir, "bot-map.json"),
+  bots: mainBots.roster,
+  threads: () => shellThreads(false),
+  readThread: async (threadId, afterSequence) => {
+    const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
+    if (afterSequence !== undefined) {
+      let supported = botMapReplay.get(client);
+      if (!supported) {
+        supported = withTimeout(client.call("server.getConfig"), 10_000, "T3 config timed out")
+          .then((config) => config?.threadResumeCompletionMarker === true)
+          .catch((error) => { botMapReplay.delete(client); throw error; });
+        botMapReplay.set(client, supported);
+      }
+      if (!await supported) afterSequence = undefined;
+    }
+    return readBotMapThread(client, threadId, afterSequence);
+  },
+  log: (message, error) => console.warn(message, error instanceof Error ? error.message : error),
+});
 /** A palette name or any hex spelling, stored as a name or "#rrggbb"; anything else is a 400. */
 const colorPatch = <T extends { color?: unknown }>(patch: T): T => patch && patch.color !== undefined ? { ...patch, color: avatarColorPatch(patch.color) } : patch;
 const saveBot = async (slug: string, patch: BotPatch) => {
@@ -877,9 +912,8 @@ async function freeSlug(name: string) {
 // ---------- Bots made from existing projects ----------
 /** A T3 project as /api/projects lists it; only the fields used here. */
 type T3ProjectRow = { id: string; title?: string; workspaceRoot?: string; deletedAt?: string | null; archivedAt?: string | null };
-async function t3Projects(): Promise<T3ProjectRow[]> {
-  const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
-  const { projects } = await withTimeout(client.http("/api/projects"), 15000, "T3 timed out");
+async function t3Projects(timeout = 15_000): Promise<T3ProjectRow[]> {
+  const { projects } = await projectsClient.http("/api/projects", { signal: AbortSignal.timeout(timeout) });
   return (projects ?? []).filter((project: T3ProjectRow) => project.id && project.workspaceRoot && !project.deletedAt);
 }
 /** This machine's T3 projects that could become Bots: not already a Bot, and not inside the Bots folder. */
@@ -1555,6 +1589,7 @@ const server = http.createServer(async (req, res) => {
       requireJson(req);
       return send(res, 200, await threadMeta.addVoiceCall(await readBody(req)));
     }
+    if (p === "/api/bot-map" && req.method === "GET") return send(res, 200, await botMap.read(), { "cache-control": "no-store" });
     if (p === "/api/bots" && req.method === "GET") return send(res, 200, { bots: await listBots() }, { "cache-control": "no-store" });
     if (p === "/api/memory" && req.method === "GET") {
       const bot = await getBot(url.searchParams.get("slug") ?? "");
