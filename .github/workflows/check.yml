@@ -5,25 +5,27 @@ on:
   pull_request:
 jobs:
   check:
-    runs-on: ${{ matrix.os }}
-    # The check takes about 3 minutes; a hung test or open handle fails the job instead of running for hours.
+    name: check (${{ matrix.env.os }}, ${{ matrix.env.node }}, ${{ matrix.part }})
+    runs-on: ${{ matrix.env.os }}
+    # A hung test or open handle fails the job instead of running for hours.
     timeout-minutes: 10
     strategy:
       matrix:
         # 22.18 is the oldest Node Threebot supports: the first 22.x that runs TypeScript without a flag.
-        os: [ubuntu-latest]
-        node: ["22.18.0", "24"]
-        include:
-          - os: windows-latest
-            node: "24"
+        env:
+          - { os: ubuntu-latest, node: "22.18.0" }
+          - { os: ubuntu-latest, node: "24" }
+          - { os: windows-latest, node: "24" }
+        # The gate's parts run side by side; web tests are split by file across four jobs.
+        part: ["web-tests:1/4", "web-tests:2/4", "web-tests:3/4", "web-tests:4/4", "fixture", "rest"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
+          node-version: ${{ matrix.env.node }}
           cache: npm
           cache-dependency-path: |
             web/package-lock.json
             server/package-lock.json
       - run: npm run setup
-      - run: npm run check
+      - run: node scripts/check.mts ${{ matrix.part }}
