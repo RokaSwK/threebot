@@ -4,6 +4,7 @@ import { isCustomColor } from "../../server/avatar-color.mts";
 import { rememberColor } from "./lib/recentColors";
 import { enablePushNotifications, pushTurnedOff } from "./lib/push";
 import { botBadge, notificationContent, notificationTarget, waitingThread } from "./lib/notification";
+import { effectiveAlerts, loadRoutineAlerts, loadRoutineRuns, routineOwner, routinePlace, routineTag, saveRoutineAlerts, type RoutineRecord, type RoutineRunRef } from "./lib/routineAlerts";
 import { allT3Clients, t3, t3http, uuid, environmentT3, environmentHttp, environmentPrefix, threadClient, threadTarget, threadKey, type ThreadTarget, type StreamHandle } from "./lib/t3";
 import { vaultApi, type VaultItem } from "./lib/vault";
 import { columnWidth, type Column } from "./lib/layout";
@@ -85,6 +86,12 @@ type State = {
   providerModelPreferences: ProviderModelPreferences;
   /** Model picker favorites, kept in this browser. */
   tasks: ScheduledTask[];
+  /** Per-routine ownership and alert choices, shared by every device through the gateway. */
+  routineAlerts: Record<string, RoutineRecord>;
+  /** The newest observed conversation per task, from the gateway's persisted refs. */
+  routineRuns: Record<string, RoutineRunRef>;
+  /** A run-ref read failed for this task; the list must not present the old ref as current. */
+  routineRunsStale: Record<string, boolean>;
   threadData: Record<string, ThreadData>;
   selected: string | null;
   selectedThreadId: string | null;
@@ -150,6 +157,9 @@ export const useApp = create<State>(() => ({
   providers: [],
   providerModelPreferences: {},
   tasks: [],
+  routineAlerts: {},
+  routineRuns: {},
+  routineRunsStale: {},
   threadData: {},
   selected: localStorage.getItem("bot.selected"),
   selectedThreadId: null,
@@ -241,6 +251,7 @@ async function initialize() {
     t3.connect();
     void loadVault();
     void loadMachines();
+    void refreshRoutineAlerts();
     booted = true;
     set({ auth: "ready" });
   } catch {
@@ -273,6 +284,7 @@ async function confirmLaunch() {
     // The copy carries neither of these, and the first paint must not be the last word on them.
     void loadVault();
     void loadMachines();
+    void refreshRoutineAlerts();
   } catch {
     // The gateway answered the session but not the rest: the copy stays, the socket keeps trying.
   }
@@ -429,8 +441,69 @@ function stopSaving() {
   resetAssetCopies();
 }
 
-export async function loadVault() {
-  const items = await vaultApi.list().catch(() => null);
+/** Per-routine records from the gateway. A failure leaves the cached copy and the legacy rules in place. */
+export async function refreshRoutineAlerts(): Promise<void> {
+  const routineAlerts = await loadRoutineAlerts().catch(() => null);
+  if (routineAlerts) set({ routineAlerts });
+}
+
+/** Writes one routine's record and keeps the store in step with what the gateway stored. */
+export async function updateRoutineAlerts(taskId: string, patch: { bot?: string | null; alerts?: Partial<Record<"finished" | "failed" | "waiting", boolean>> }): Promise<RoutineRecord> {
+  const task = await saveRoutineAlerts(taskId, patch);
+  set((s) => ({ routineAlerts: { ...s.routineAlerts, [taskId]: task } }));
+  return task;
+}
+
+// One read per set of routines, so Details opening and a run landing do not duplicate the request.
+const routineRunReads = new Map<string, Promise<void>>();
+/** Newest observed run per routine, from the gateway's persisted refs; no T3 projection is opened. */
+export async function refreshRoutineRuns(taskIds: string[]): Promise<void> {
+  const ids = [...new Set(taskIds)].filter((id) => /^[\w:%.-]{1,600}$/.test(id)).sort();
+  if (!ids.length) return;
+  const state = get();
+  // A new dispatch changes lastRunAt; it must not join the previous run's in-flight read.
+  const generation = ids.map((id) => `${id}:${state.tasks.find((task) => task.id === id)?.lastRunAt ?? ""}`).join("|");
+  const key = `${generation}|${ids.join("|")}`;
+  const pending = routineRunReads.get(key);
+  if (pending) return pending;
+  let read!: Promise<void>;
+  const chunks: string[][] = [];
+  for (let index = 0; index < ids.length; index += 20) chunks.push(ids.slice(index, index + 20));
+  read = Promise.all(chunks.map((chunk) => loadRoutineRuns(chunk)))
+    .then((results) => set((current) => {
+      const routineRuns = { ...current.routineRuns };
+      const routineRunsStale = { ...current.routineRunsStale };
+      const returned = Object.assign({}, ...results) as Record<string, RoutineRunRef>;
+      for (const id of ids) {
+        const run = returned[id];
+        const lastRunAt = current.tasks.find((task) => task.id === id)?.lastRunAt;
+        const since = lastRunAt ? Date.parse(lastRunAt) - 5_000 : null;
+        // A successful read that still returns a run older than the task's last dispatch is
+        // behind history: do not present it as the current run, and say that state is unavailable.
+        if (run && (since === null || Date.parse(run.at) >= since)) {
+          // A slow response for an older run must not replace a newer one.
+          if (!routineRuns[id] || run.at >= routineRuns[id].at) routineRuns[id] = run;
+          delete routineRunsStale[id];
+        } else if (routineRuns[id]) {
+          routineRunsStale[id] = true;
+        }
+      }
+      return { routineRuns, routineRunsStale };
+    }))
+    .catch(() => {
+      // Keep the last known refs, but say they are stale so no row paints old attention or failure.
+      set((current) => {
+        const routineRunsStale = { ...current.routineRunsStale };
+        for (const id of ids) routineRunsStale[id] = true;
+        return { routineRunsStale };
+      });
+    })
+    .finally(() => { if (routineRunReads.get(key) === read) routineRunReads.delete(key); });
+  routineRunReads.set(key, read);
+  return read;
+}
+
+export async function loadVault() {  const items = await vaultApi.list().catch(() => null);
   if (items) set({ vault: items });
   return items;
 }
@@ -540,6 +613,28 @@ export async function refreshPreviews() {
   return current;
 }
 
+/** One conversation's preview, deduped by its stamp; another thread's roster fetch never covers it. */
+const focusedPreviewReads = new Map<string, Promise<ThreadPreview | null>>();
+async function previewForThread(thread: ThreadShell): Promise<ThreadPreview | null> {
+  // T3 sends updatedAt on every supported shell. Older shells can omit it: the run's own
+  // timestamps are a safe cache-busting stamp; with none, a fresh stamp avoids a stale server
+  // cache for one conversation rather than silently muting the notice.
+  const stamp = thread.updatedAt || thread.latestRunCompletedAt || thread.latestRunStartedAt || new Date().toISOString();
+  if (!thread.id) return null;
+  const key = `${thread.id}:${stamp}`;
+  const pending = focusedPreviewReads.get(key);
+  if (pending) return pending;
+  let read!: Promise<ThreadPreview | null>;
+  read = api.threadPreviews({ [thread.id]: stamp })
+    // The result is used for this notification only: routine text is not written to the roster
+    // cache or localStorage, and an older response cannot replace a newer preview anywhere.
+    .then((previews) => previews[thread.id] ?? null)
+    .catch(() => null)
+    .finally(() => { if (focusedPreviewReads.get(key) === read) focusedPreviewReads.delete(key); });
+  focusedPreviewReads.set(key, read);
+  return read;
+}
+
 // ---------- reactions and voice call log ----------
 export async function loadThreadMeta(threadId: string) {
   if (threadTarget(threadId).environmentId) return;
@@ -568,41 +663,128 @@ function subscribeTasks() {
 
 
 // ---------- notifications ----------
-/** The Bot the user is looking at right now, if any: nothing about it needs a notification. */
-export function watchedBot(): string | null {
-  return document.visibilityState === "visible" && document.hasFocus() ? get().selected : null;
+/**
+ * What this device has open and in focus, as the presence key the gateway compares against a push.
+ * A room wins when the room page is showing. The selected conversation counts only while its
+ * chat is visible.
+ */
+export function watchedView(): { bot: string | null; room: string | null; thread: string | null } {
+  if (document.visibilityState !== "visible" || !document.hasFocus()) return { bot: null, room: null, thread: null };
+  const state = get();
+  if (state.page === "room" && state.selectedRoom) return { bot: null, room: state.selectedRoom, thread: null };
+  if (state.page) return { bot: null, room: null, thread: null };
+  return { bot: state.selected, room: null, thread: state.selectedThreadId };
+}
+/** Whether this page has exactly this conversation open and focused. Bot-level and per-thread notices both ask. */
+function watchingThread(bot: Bot, threadId: string): boolean {
+  const view = watchedView();
+  return view.bot === bot.slug && (view.thread ?? bot.mainThreadId) === threadId;
+}
+const ACTIVE = ["preparing", "queued", "starting", "running", "waiting"];
+
+/** The Bot a thread belongs to as its chat or side chat, never a routine's own conversation. */
+function botByThread(thread: ThreadShell): Bot | null {
+  const side = isSideChat(thread);
+  const mainThreadId = side ? thread.lineage.parentThreadId : thread.id;
+  return mainThreadId ? Object.values(get().bots).find((bot) => bot.mainThreadId === mainThreadId) ?? null : null;
+}
+
+/** The mode T3 acts on; older servers omit it, and a null thread means a new thread each run. */
+function taskMode(task: ScheduledTask): string {
+  return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
+}
+
+/** The single routine T3 bound to this conversation, if that is proof and not a guess. */
+function boundRoutine(threadId: string, bots: Bot[]): { task: ScheduledTask; bot: Bot } | null {
+  const state = get();
+  const candidates = state.tasks.filter((task) => task.threadId === threadId && taskMode(task) !== "new_thread");
+  if (candidates.length !== 1) return null;
+  const task = candidates[0];
+  const owner = routineOwner(task, bots, state.routineAlerts);
+  if (owner.kind !== "bot" || owner.bot.hidden) return null;
+  return { task, bot: owner.bot };
+}
+
+/** The routine whose message T3 reported as the newest run, if this page knows it. */
+function previewRoutine(preview: ThreadPreview | null | undefined, bots: Bot[], projectId: string | null | undefined): { task: ScheduledTask; bot: Bot } | null {
+  if (!preview?.routine?.taskId) return null;
+  const state = get();
+  const task = state.tasks.find((entry) => entry.id === preview.routine!.taskId);
+  if (!task || (task.projectId && projectId && task.projectId !== projectId)) return null;
+  const owner = routineOwner(task, bots, state.routineAlerts);
+  if (owner.kind !== "bot" || owner.bot.hidden) return null;
+  return { task, bot: owner.bot };
 }
 
 /**
- * What this device has open and in focus, as the presence key the gateway compares against a push.
- * A room wins when the room page is showing. The selected Bot counts only when its chat is showing.
- * Returning both null means the page is not looking at either, so nothing should be held back.
+ * Whether a finished or failed conversation could notify anyone on this page. Keeps an untouched
+ * install from reading a projection for every thread that ends; the defaults decide, not a guess.
  */
-export function watchedView(): { bot: string | null; room: string | null } {
-  if (document.visibilityState !== "visible" || !document.hasFocus()) return { bot: null, room: null };
+function terminalInterested(thread: ThreadShell, failed: boolean): boolean {
   const state = get();
-  if (state.page === "room" && state.selectedRoom) return { bot: null, room: state.selectedRoom };
-  if (state.page) return { bot: null, room: null };
-  return { bot: state.selected, room: null };
+  const bots = Object.values(state.bots);
+  const bound = boundRoutine(thread.id, bots);
+  if (bound) {
+    const place = routinePlace(bound.task, bound.bot);
+    const alerts = effectiveAlerts(state.routineAlerts[bound.task.id], place);
+    return failed ? alerts.failed : place === "chat" || alerts.finished;
+  }
+  // A main-chat routine can be one of several bound to the chat; any of them may want this outcome.
+  const owner = botByThread(thread);
+  const chatTasks = owner ? state.tasks.filter((task) => task.threadId === owner.mainThreadId) : [];
+  if (chatTasks.some((task) => effectiveAlerts(state.routineAlerts[task.id], "chat")[failed ? "failed" : "finished"])) return true;
+  // Several routines can share an own thread; the projection picks the one that actually ran.
+  if (!owner && state.tasks.some((task) => task.threadId === thread.id && taskMode(task) !== "new_thread"
+    && effectiveAlerts(state.routineAlerts[task.id], "own")[failed ? "failed" : "finished"])) return true;
+  // An ordinary Bot chat still gets its completion notice; failures stay quiet as before.
+  if (owner) return !failed;
+  return state.tasks.some((task) => task.projectId === thread.projectId && taskMode(task) === "new_thread"
+    && effectiveAlerts(state.routineAlerts[task.id], "new")[failed ? "failed" : "finished"]);
 }
-const ACTIVE = ["preparing", "queued", "starting", "running", "waiting"];
+
 function notifyIfNeeded(prev: ThreadShell | undefined, next: ThreadShell) {
   if (!prev) return;
-  const side = isSideChat(next);
-  const ownerThreadId = side ? next.lineage.parentThreadId : next.id;
-  const bot = Object.values(get().bots).find((b) => b.mainThreadId === ownerThreadId);
-  if (!bot) return;
   // The request is gone: its notification is a stale reminder, even (above all) when it was answered
   // right here in the Bot this page is looking at.
   // closeAnsweredNotifications also clears an older per-Bot notice once this was the Bot's last wait.
   if (prev.pendingRuntimeRequest && !next.pendingRuntimeRequest) closeAnsweredNotifications();
-  if (bot.notifications === false || bot.hidden) return;
-  if (watchedBot() === bot.slug || next.archivedAt || isSnoozed(next)) return;
+  if (next.archivedAt || isSnoozed(next) || next.lineage.relationshipToParent === "subagent") return;
   if (!prev.pendingRuntimeRequest && next.pendingRuntimeRequest) {
-    void notify(bot, side ? "A side chat is waiting for you" : "Waiting for you", "waiting", next.id);
-  } else if (!side && ACTIVE.includes(prev.activityRunStatus ?? prev.status) && next.status === "completed") {
-    void completionNotification(bot, next).catch(() => {});
+    void waitingNotification(next).catch(() => {});
+    return;
   }
+  const side = isSideChat(next);
+  const terminal = !side && ACTIVE.includes(prev.activityRunStatus ?? prev.status) && (next.status === "completed" || next.status === "failed");
+  if (terminal && terminalInterested(next, next.status === "failed")) void completionNotification(next).catch(() => {});
+}
+
+/**
+ * A wait is per conversation. A routine's own thread speaks for itself; the Bot's chat also carries
+ * manual turns, so only T3's scheduledTaskId evidence can attribute one there.
+ */
+async function waitingNotification(thread: ThreadShell) {
+  const bots = Object.values(get().bots);
+  const bound = boundRoutine(thread.id, bots);
+  const boundPlace = bound ? routinePlace(bound.task, bound.bot) : null;
+  // Only an explicit preference can make a new-thread wait speak; without one there is nothing to attribute.
+  const newThreadInterest = get().tasks.some((task) => task.projectId === thread.projectId && taskMode(task) === "new_thread"
+    && get().routineAlerts[task.id]?.alerts?.waiting === true);
+  // A chat can hold several routines; an explicit mute needs the projection to say which one waits.
+  const explicitWaiting = get().tasks.some((task) => task.threadId === thread.id && taskMode(task) !== "new_thread"
+    && typeof get().routineAlerts[task.id]?.alerts?.waiting === "boolean");
+  const preview = boundPlace === "chat" || newThreadInterest || explicitWaiting ? await previewForThread(thread) : undefined;
+  // Only T3's scheduledTaskId evidence can say this wait belongs to the routine. A single task
+  // bound to the thread is not proof: the user can chat in that conversation themselves.
+  const routine = previewRoutine(preview, bots, thread.projectId);
+  if (routine) {
+    if (routine.bot.notifications === false) return;
+    const alerts = effectiveAlerts(get().routineAlerts[routine.task.id], routinePlace(routine.task, routine.bot));
+    if (!alerts.waiting || watchingThread(routine.bot, thread.id)) return;
+    return notifyRoutine(routine.bot, routine.task, "waiting", thread.id, "Needs attention");
+  }
+  const owner = botByThread(thread);
+  if (!owner || owner.notifications === false || owner.hidden || watchingThread(owner, thread.id)) return;
+  return notify(owner, isSideChat(thread) ? "A side chat is waiting for you" : "Waiting for you", "waiting", thread.id);
 }
 
 /** On a fresh shell: close "waiting" notices whose request was answered while this page was closed. */
@@ -622,23 +804,49 @@ function closeAnsweredNotifications() {
 }
 const LEGACY_WAITING = new Set(["Waiting for you", "A side chat is waiting for you"]);
 
-export async function completionNotification(bot: Bot, completed: ThreadShell) {
-  // Require output from this run; a stale cache or the user's prompt is not a completion body.
-  const previews = await refreshPreviews();
-  const preview = previews[completed.id];
+export async function completionNotification(completed: ThreadShell) {
+  // A Bot's chat still uses the roster preview; a routine's own or new thread is read on its own,
+  // because the roster fetch only asks for main threads.
+  const isMain = Object.values(get().bots).some((bot) => bot.mainThreadId === completed.id);
+  const preview = isMain ? (await refreshPreviews())[completed.id] : await previewForThread(completed);
+  const bots = Object.values(get().bots);
+  // Only T3's scheduledTaskId evidence identifies the run; a manual turn in a routine thread is not one.
+  const routine = previewRoutine(preview, bots, completed.projectId);
+  const failed = completed.status === "failed";
   const runStarted = completed.latestRunStartedAt ?? completed.latestRunRequestedAt ?? completed.latestUserMessageAt;
   const fresh = preview?.role === "assistant" && preview.at && (!runStarted || preview.at >= runStarted);
   const current = get().threads[completed.id];
   if (current && current.latestRunId !== completed.latestRunId) return;
+  if (routine) {
+    if (routine.bot.notifications === false) return;
+    const alerts = effectiveAlerts(get().routineAlerts[routine.task.id], routinePlace(routine.task, routine.bot));
+    if ((failed && !alerts.failed) || (!failed && !alerts.finished)) return;
+    if (watchingThread(routine.bot, completed.id)) return;
+    const body = failed ? "The run failed" : fresh ? preview.text.slice(0, 140) : "Finished";
+    return notifyRoutine(routine.bot, routine.task, failed ? "failed" : "finished", completed.id, body);
+  }
+  const bot = botByThread(completed);
+  // A failed ordinary run stays silent, as it did before routine alerts existed.
+  if (!bot || failed || bot.notifications === false || bot.hidden || watchingThread(bot, completed.id)) return;
   return notify(bot, fresh ? preview.text.slice(0, 140) : "Finished", "finished", completed.id);
 }
 
 /** A waiting notification is per thread; a completion is per Bot, so three runs leave one notice. */
 async function notify(bot: Bot, body: string, kind: "finished" | "waiting", threadId: string) {
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
   const target = notificationTarget(bot.slug, kind, threadId);
-  const { title, options } = notificationContent({
-    title: bot.name,
+  return showNotice(bot, threadId, kind, bot.name, body, target, false);
+}
+
+/** A routine notice names the routine, opens its exact conversation and uses its own tag. */
+async function notifyRoutine(bot: Bot, task: ScheduledTask, kind: "finished" | "waiting" | "failed", threadId: string, body: string) {
+  const target = kind === "waiting" ? notificationTarget(bot.slug, "waiting", threadId) : { tag: routineTag(task.id), url: `/?bot=${encodeURIComponent(bot.slug)}&thread=${encodeURIComponent(threadId)}` };
+  return showNotice(bot, threadId, kind, `${bot.name} · ${task.title}`, body, target, true);
+}
+
+async function showNotice(bot: Bot, threadId: string, kind: "finished" | "waiting" | "failed", title: string, body: string, target: { tag: string; url: string }, openThread: boolean) {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const { title: shownTitle, options } = notificationContent({
+    title,
     body,
     tag: target.tag,
     url: target.url,
@@ -654,18 +862,18 @@ async function notify(bot: Bot, body: string, kind: "finished" | "waiting", thre
   // Android has no page Notification constructor; only the worker can show one.
   const registration = await navigator.serviceWorker?.getRegistration();
   if (registration) {
-    await registration.showNotification(title, options);
+    await registration.showNotification(shownTitle, options);
     if (stale()) void closeNotifications((tag) => tag === target.tag);
     return;
   }
-  const notification = new Notification(title, options);
+  const notification = new Notification(shownTitle, options);
   pageNotices.get(target.tag)?.close();
   pageNotices.set(target.tag, notification);
   notification.onclose = () => { if (pageNotices.get(target.tag) === notification) pageNotices.delete(target.tag); };
   notification.onclick = () => {
     window.focus();
-    // A waiting notice opens its own conversation (a side chat), as the worker's click does.
-    if (kind === "waiting" && threadId !== bot.mainThreadId) selectThread(bot, threadId);
+    // A notice about another conversation opens it, as the worker's click does.
+    if (openThread && threadId !== bot.mainThreadId) selectThread(bot, threadId);
     else select(bot.slug);
     notification.close();
   };

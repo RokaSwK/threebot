@@ -78,3 +78,66 @@ test('a T3 disconnect with projection reads still queued does not throw from the
   reads.shift()!(); await new Promise((resolve) => setTimeout(resolve, 50)); // a read finishes after that
   assert.deepEqual(unhandled, []);
 });
+
+test('a new-thread routine finds its conversation from the last dispatch, newest threads first', async (t) => {
+  const { file } = await fixture(t);
+  const newThreadTask = { id: 'task-new', projectId: 'project', threadId: null, lastRunAt: '2026-10-31T12:00:00Z', lastRunStatus: 'succeeded', runCount: 3 };
+  const calls: string[] = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const client = {
+    stream(tag: string, _payload: unknown, onItem: (event: unknown) => void) {
+      calls.push(tag); listeners.set(tag, onItem);
+      queueMicrotask(() => onItem(tag === 'scheduledTasks.subscribe' ? { tasks: [newThreadTask] } : {
+        kind: 'snapshot',
+        snapshot: { threads: [
+          { id: 'later-user-thread', projectId: 'project', updatedAt: '2026-10-31T12:02:00Z' },
+          { id: 'routine-thread', projectId: 'project', updatedAt: '2026-10-31T12:00:05Z' },
+          { id: 'old-thread', projectId: 'project', updatedAt: '2026-09-01T00:00:00Z' },
+          { id: 'other-project', projectId: 'elsewhere', updatedAt: '2026-10-31T12:00:05Z' },
+        ] },
+      }));
+      return { cancel() {}, done: new Promise(() => {}) };
+    },
+    async call(tag: string, payload: { threadId: string }) {
+      calls.push(`${tag}:${payload.threadId}`);
+      // The routine's message and run live in routine-thread; the other recent thread is a manual one.
+      if (payload.threadId === 'routine-thread') return {
+        messages: [{ id: 'scheduled-task-message:task-new:123:manual', scheduledTaskId: 'task-new', text: 'PRIVATE PROMPT AND TOKEN' }],
+        runs: [{ id: 'run-1', threadId: 'routine-thread', userMessageId: 'scheduled-task-message:task-new:123:manual', requestedAt: '2026-10-31T12:00:00Z', startedAt: '2026-10-31T12:00:01Z', status: 'completed' }],
+      };
+      return { messages: [{ id: 'manual', runId: 'manual-run', text: 'hello' }], runs: [{ id: 'manual-run', threadId: payload.threadId, userMessageId: 'manual', requestedAt: '2026-10-31T12:02:00Z', startedAt: '2026-10-31T12:02:01Z', status: 'completed' }] };
+    },
+  };
+  const routes = createRoutineHistoryRoutes({ rpc: async () => client, file });
+  const server = http.createServer(async (req, res) => { if (!(await routes.handle(req, res, new URL(req.url!, 'http://localhost')))) { res.writeHead(404); res.end(); } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { routes.close(); server.closeAllConnections(); server.close(); });
+  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/routine-history?task=task-new`);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  const execution = result.rows.find((row: { source: string }) => row.source === 'execution');
+  assert.equal(execution.threadId, 'routine-thread');
+  assert.equal(execution.runId, 'run-1');
+  assert.ok(!calls.includes('orchestration.getThreadProjection:other-project'), 'a thread in another project is never read');
+  assert.ok(calls.filter((call) => call.startsWith('orchestration.getThreadProjection:')).length <= 8, 'the backfill is bounded');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+
+
+test('persisted executions answer the latest thread per task without starting T3 streams', async (t) => {
+  const { file, history } = await fixture(t);
+  await history.consumeProjection(projection('completed'), new Set([task.id]));
+  const calls: string[] = [];
+  const client = { stream(tag: string) { calls.push(tag); return { cancel() {}, done: new Promise(() => {}) }; }, async call() { calls.push('call'); return {}; } };
+  const routes = createRoutineHistoryRoutes({ rpc: async () => client, file });
+  const server = http.createServer(async (req, res) => { if (!(await routes.handle(req, res, new URL(req.url!, 'http://localhost')))) { res.writeHead(404); res.end(); } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => { routes.close(); server.closeAllConnections(); server.close(); });
+  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/routine-history/latest?tasks=${encodeURIComponent(task.id)},missing`);
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.deepEqual(result.tasks[task.id], { threadId: 'thread', runId: 'run-1', at: '2026-10-31T12:00:01Z', status: 'completed' });
+  assert.equal(result.tasks.missing, undefined);
+  assert.deepEqual(calls, [], 'a persisted lookup must not open T3 streams');
+  assert.equal((await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/routine-history/latest?tasks=`)).status, 400);
+});

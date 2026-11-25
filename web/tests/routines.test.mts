@@ -12,7 +12,7 @@ const window = domWindow(new Window({ url: 'http://routines.test' }));
 for (const key of ['window','document','navigator','HTMLElement','Element','Node','Event','MouseEvent','localStorage','requestAnimationFrame','cancelAnimationFrame','IntersectionObserver']) Object.defineProperty(globalThis,key,{configurable:true,value:window[key]});
 globalThis.getComputedStyle = window.getComputedStyle.bind(window); globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const src = fileURLToPath(new URL('../src/',import.meta.url));
-const bundle = await buildOnce({ configFile:false,logLevel:'silent',define:{'process.env.NODE_ENV':'"development"'}, plugins:[{name:'routine-tests',resolveId:id=>id.endsWith('virtual:routines')?'\0routines':undefined,load:id=>id==='\0routines'?`export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export * from ${JSON.stringify(src+'lib/routines.ts')}; export * from ${JSON.stringify(src+'lib/routineReports.ts')}; export {chatDraft} from ${JSON.stringify(src+'lib/chatDrafts.ts')}; export {Details, RoutineDetail, RoutineRow} from ${JSON.stringify(src+'components/Details.tsx')}; export {useApp} from ${JSON.stringify(src+'store.ts')}; export {t3, T3RpcError} from ${JSON.stringify(src+'lib/t3.ts')};`:undefined,transform:(code,id)=>isModule(id,src+'components/Details.tsx')?{code:code+'\nexport {RoutineDetail, RoutineRow};',map:null}:undefined}],ssr:{noExternal:true},build:{ssr:'virtual:routines',write:false}});
+const bundle = await buildOnce({ configFile:false,logLevel:'silent',define:{'process.env.NODE_ENV':'"development"'}, plugins:[{name:'routine-tests',resolveId:id=>id.endsWith('virtual:routines')?'\0routines':undefined,load:id=>id==='\0routines'?`export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export * from ${JSON.stringify(src+'lib/routines.ts')}; export * from ${JSON.stringify(src+'lib/routineReports.ts')}; export * from ${JSON.stringify(src+'lib/routineAlerts.ts')}; export {chatDraft} from ${JSON.stringify(src+'lib/chatDrafts.ts')}; export {Details, RoutineDetail, RoutineRow} from ${JSON.stringify(src+'components/Details.tsx')}; export {useApp, refreshRoutineRuns} from ${JSON.stringify(src+'store.ts')}; export {t3, T3RpcError} from ${JSON.stringify(src+'lib/t3.ts')};`:undefined,transform:(code,id)=>isModule(id,src+'components/Details.tsx')?{code:code+'\nexport {RoutineDetail, RoutineRow};',map:null}:undefined}],ssr:{noExternal:true},build:{ssr:'virtual:routines',write:false}});
 const temp = await mkdtemp(join(tmpdir(),'bot-routine-tests-')); const file=join(temp,'test.mjs'); await writeFile(file,entryChunk(bundle).code);
 const {createElement:h,act,createRoot,chatDraft,Details,RoutineDetail,RoutineRow,useApp,t3,T3RpcError,...r} = await import(pathToFileURL(file).href);
 after(async()=>{for(const c of channels){c.port1.close();c.port2.close();}await window.happyDOM.close();await rm(temp,{recursive:true,force:true});});
@@ -292,33 +292,63 @@ test('cancelling the move keeps the routine in the chat and moves no focus or da
 });
 const R='threebot-routine:';
 const own=(id,extra={})=>({id,title:'Check example',status:'completed',latestRunId:`${id}-run`,latestRunCompletedAt:'2026-11-19T03:31:00Z',pendingRuntimeRequest:null,archivedAt:null,lineage:{parentThreadId:null,relationshipToParent:null,rootThreadId:id},...extra});
+test('the routine report tag is per routine and deep-links to its exact conversation',()=>{
+ assert.equal(r.routineTag('task-1'),'routine:task-1');
+ assert.deepEqual(r.routineTarget('lab','task-1','own-thread'),{tag:'routine:task-1',url:'/?bot=lab&thread=own-thread'});
+});
 test('a routine in its own conversation reports one line with time and the last text',async()=>{
  const task={...original,threadId:R+'a',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
  const threads={[R+'a']:own(R+'a'),[R+'empty']:own(R+'empty')};
- transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text:'Tidied three lines.\n\nDetails.'}]}:{};
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'message-1',runId:'run-1',scheduledTaskId:task.id}],runs:[{id:'run-1',status:'completed',completedAt:'2026-11-19T03:30:30Z'}],turnItems:[{type:'assistant_message',runId:'run-1',text:'Tidied three lines.\n\nDetails.'}]}:{};
  const reports=await r.readRoutineReports(bot,[task],threads);
- assert.deepEqual(reports,[{id:task.id,at:task.lastRunAt,title:task.title,summary:'Tidied three lines.',threadId:R+'a',failed:false}]);
+ assert.deepEqual(reports,[{id:task.id,at:'2026-11-19T03:30:30Z',title:task.title,summary:'Tidied three lines.',threadId:R+'a',state:'finished',bot:'lab'}]);
  assert.equal((await r.readRoutineReports(bot,[{...task,threadId:'thread'}],{...threads,thread:own('thread')})).length,0,'a routine in the chat leaves no line');
- transport=async()=>({turnItems:[]});
+ transport=async()=>({messages:[{id:'message-2',runId:'run-2',scheduledTaskId:'routine-empty'}],runs:[{id:'run-2',status:'completed'}],turnItems:[]});
  const empty=await r.readRoutineReports(bot,[{...task,id:'routine-empty',threadId:R+'empty'}],threads);
- assert.equal(empty[0].summary,'Ran in its own conversation.','a run without text still leaves a line');
+ assert.equal(empty[0].summary,'The run finished without a written report.','a run without text does not borrow another reply');
 });
 test('the line follows the run in its conversation, not only T3\u2019s dispatch record',async()=>{
  // T3 records "succeeded" as soon as the prompt is sent; the reply lands later in the thread.
  const id=R+'live';
  const task={...original,id:'routine-live',threadId:id,threadMode:'continue',runCount:3,lastRunAt:'2026-11-20T03:30:00Z',lastRunStatus:'succeeded'};
- let text='Yesterday\u2019s report.';
- transport=async(tag)=>tag==='orchestration.getThreadProjection'?{turnItems:[{type:'assistant_message',text}]}:{};
+ let text='Yesterday\u2019s report.', status='running';
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'message-live',runId:'run-3',scheduledTaskId:task.id}],runs:[{id:'run-3',status,completedAt:status==='running'?null:'2026-11-20T03:31:00Z'}],turnItems:[{type:'assistant_message',runId:'run-3',text}]}:{};
  const running={[id]:own(id,{status:'running',latestRunId:'run-3',latestRunCompletedAt:null})};
- assert.equal((await r.readRoutineReports(bot,[task],running))[0].summary,'Running now, in its own conversation.');
- text='Today\u2019s report.';
+ assert.equal((await r.readRoutineReports(bot,[task],running))[0].summary,'Running now, in its conversation.');
+ text='Today\u2019s report.'; status='completed';
  const done={[id]:own(id,{status:'completed',latestRunId:'run-3',latestRunCompletedAt:'2026-11-20T03:31:00Z'})};
  assert.notEqual(r.reportKey(task,running[id]),r.reportKey(task,done[id]),'the reply landing is a new key');
  assert.equal((await r.readRoutineReports(bot,[task],done))[0].summary,'Today\u2019s report.');
  const asking={[id]:own(id,{status:'running',latestRunId:'run-3',latestRunCompletedAt:null,pendingRuntimeRequest:{id:'req',kind:'approval',blocking:true}})};
- assert.equal((await r.readRoutineReports(bot,[task],asking))[0].summary,'Waiting for you in its own conversation.');
- const failed=await r.readRoutineReports(bot,[{...task,lastRunStatus:'failed',lastRunError:'Provider instance gone is disabled for project project'}],done);
- assert.deepEqual([failed[0].failed,failed[0].summary],[true,'The run failed: Provider instance gone is disabled for project project']);
+ assert.equal((await r.readRoutineReports(bot,[task],asking))[0].summary,'Waiting for you in its conversation.');
+ status='failed';
+ const failed=await r.readRoutineReports(bot,[task],{[id]:own(id,{status:'failed',latestRunId:'run-3',latestRunCompletedAt:'2026-11-20T03:32:00Z'})});
+ assert.deepEqual([failed[0].state,failed[0].summary],['failed','The run failed. Open the conversation for details.']);
+});
+test('a manual-only conversation in a routine thread leaves no routine line',async()=>{
+ const id=R+'manual-only';
+ const task={...original,id:'routine-manual-only',threadId:id,threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'manual',runId:'manual-run',scheduledTaskId:null}],runs:[{id:'manual-run',status:'completed',requestedAt:'2026-11-19T03:30:00Z',completedAt:'2026-11-19T03:30:20Z'}],turnItems:[{type:'assistant_message',runId:'manual-run',text:'Manual reply.'}]}:{};
+ assert.deepEqual(await r.readRoutineReports(bot,[task],{[id]:own(id,{status:'completed',latestRunId:'manual-run'})}),[],'a conversation without a routine message is not a routine result');
+});
+test('a manual turn in a routine thread is never reported as the routine running or waiting',async()=>{
+ const id=R+'manual';
+ const task={...original,id:'routine-manual',threadId:id,threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{
+  messages:[{id:'routine-message',runId:'routine-run',scheduledTaskId:task.id},{id:'manual-message',runId:'manual-run',scheduledTaskId:null}],
+  runs:[{id:'routine-run',status:'completed',requestedAt:'2026-11-19T03:30:00Z',completedAt:'2026-11-19T03:30:20Z'},{id:'manual-run',status:'waiting',requestedAt:'2026-11-19T04:00:00Z'}],
+  turnItems:[{type:'assistant_message',runId:'routine-run',text:'Routine report.'},{type:'assistant_message',runId:'manual-run',text:'Manual reply.'}]}:{};
+ const waiting={[id]:own(id,{status:'waiting',latestRunId:'manual-run',latestRunCompletedAt:null,pendingRuntimeRequest:{id:'req',kind:'approval',blocking:true}})};
+ assert.deepEqual(await r.readRoutineReports(bot,[task],waiting),[],'a manual wait must not show as the routine waiting');
+ const running={[id]:own(id,{status:'running',latestRunId:'manual-run',latestRunCompletedAt:null})};
+ assert.deepEqual(await r.readRoutineReports(bot,[task],running),[],'a manual run must not show as the routine running');
+ // A manual run after the routine's own completed run does not erase the routine's last report.
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{
+  messages:[{id:'routine-message',runId:'routine-run',scheduledTaskId:task.id},{id:'manual-message',runId:'manual-run',scheduledTaskId:null}],
+  runs:[{id:'routine-run',status:'completed',requestedAt:'2026-11-19T03:30:00Z',completedAt:'2026-11-19T03:30:20Z'},{id:'manual-run',status:'completed',requestedAt:'2026-11-19T04:00:00Z',completedAt:'2026-11-19T04:00:20Z'}],
+  turnItems:[{type:'assistant_message',runId:'routine-run',text:'Routine report.'},{type:'assistant_message',runId:'manual-run',text:'Manual reply.'}]}:{};
+ const report=(await r.readRoutineReports(bot,[task],{[id]:own(id,{status:'completed',latestRunId:'manual-run',latestRunCompletedAt:'2026-11-19T04:00:20Z'})}))[0];
+ assert.deepEqual([report.state,report.summary],['finished','Routine report.'],'the completed routine keeps its own text and state');
 });
 test('the line is the routine\u2019s own run, not a reply the user got there by chatting',async()=>{
  const id=R+'chatty';
@@ -327,22 +357,25 @@ test('the line is the routine\u2019s own run, not a reply the user got there by 
   messages:[{id:'m1',runId:'r1',scheduledTaskId:task.id},{id:'m2',runId:'r2',scheduledTaskId:null}],
   turnItems:[{type:'assistant_message',runId:'r1',text:'The routine\u2019s report.'},{type:'assistant_message',runId:'r2',text:'A reply to the user.'}]}:{};
  assert.equal((await r.readRoutineReports(bot,[task],{[id]:own(id)}))[0].summary,'The routine\u2019s report.');
+ assert.equal((await r.readRoutineReports(bot,[task],{[id]:own(id)}))[0].state,'finished');
 });
 test('Details promises a line in the chat only where one will appear',async()=>{
  const own2={instanceId:'pi',model:'cheap',options:[]};
  const task={...original,threadId:'room',threadMode:'continue',modelSelection:own2,runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
  useApp.setState({threads:{thread:{id:'thread',modelSelection:model},room:{id:'room',modelSelection:own2,latestRunId:'run-1'},[R+'b']:{id:R+'b',modelSelection:own2,latestRunId:'run-1'}},providers:[]});
  await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
- assert.doesNotMatch(host.textContent,/one-line summary/,'a routine bound to a room reports there, not in the chat');
+ assert.match(host.textContent,/one-line summary/,'a routine bound to another conversation reports there');
  await render(h(RoutineDetail,{bot,task:{...task,threadId:R+'b'},onBack(){},onEdit(){}}));
  assert.match(host.textContent,/chat gets a one-line summary/);
  useApp.setState({threads:{...useApp.getState().threads,[R+'b']:{id:R+'b',modelSelection:own2,latestRunId:'run-1',archivedAt:'2026-11-20T00:00:00Z'}}});
  await render(h(RoutineDetail,{bot,task:{...task,threadId:R+'b'},onBack(){},onEdit(){}}));
  assert.doesNotMatch(host.textContent,/one-line summary/,'an archived conversation leaves no line either');
- await render(h(RoutineDetail,{bot,task:{...task,threadId:null,threadMode:'new_thread'},onBack(){},onEdit(){}}));
- assert.doesNotMatch(host.textContent,/one-line summary/,'a thread per run leaves no line');
+ await render(h(RoutineDetail,{bot,task:{...task,threadId:null,threadMode:'new_thread',runCount:0},onBack(){},onEdit(){}}));
+ assert.doesNotMatch(host.textContent,/one-line summary/,'a thread per run leaves no line before it has run');
+ await render(h(RoutineDetail,{bot,task:{...task,threadId:null,threadMode:'new_thread',runCount:2},onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/one-line summary/,'a thread per run reports once it has run');
 });
-test('only a conversation started for the routine, once it has run, leaves a line in this chat',async()=>{
+test('only a routine owned by this Bot, in a conversation that has run, leaves a line in this chat',async()=>{
  const task={...original,threadId:R+'a',threadMode:'continue',runCount:2,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
  const threads={[R+'a']:own(R+'a')};
  assert.deepEqual(r.ownConversationRoutines(bot,[task],threads).map(t=>t.threadId),[R+'a'],'its own routine reports');
@@ -352,9 +385,183 @@ test('only a conversation started for the routine, once it has run, leaves a lin
  assert.deepEqual(r.ownConversationRoutines(bot,[task],{[R+'a']:own(R+'a',{archivedAt:'2026-11-19T04:00:00Z'})}),[],'an archived conversation leaves no line');
  // Just moved: the run T3 recorded happened in the chat, not in the new conversation.
  assert.deepEqual(r.ownConversationRoutines(bot,[task],{[R+'a']:own(R+'a',{latestRunId:null,status:'idle'})}),[],'a conversation that has not run yet leaves no line');
- // A routine T3 or the user bound to another thread (a room, the user's own) keeps behaving as before.
- assert.deepEqual(r.ownConversationRoutines(bot,[{...task,threadId:'room'}],{room:own('room',{title:'#general'})}),[],'another conversation is not its own');
+ // A routine bound to another conversation still reports there: a prefix is not what makes it the routine's.
+ assert.deepEqual(r.ownConversationRoutines(bot,[{...task,threadId:'room'}],{room:own('room',{title:'#general'})}).map(t=>t.threadId),['room'],'another bound conversation is its own');
  assert.deepEqual(r.ownConversationRoutines({...bot,memoryTidyRoutineId:task.id},[{...task,threadId:'tidy'}],{tidy:own('tidy',{title:'Renamed'})}).map(t=>t.id),[task.id],'the memory tidy\u2019s conversation always counts');
+});
+test('an adopted project with one Bot does not own user or room routines without explicit evidence',()=>{
+ const adopted={...bot,slug:'adopted',name:'Adopted',projectId:'user-repo',mainThreadId:'adopted-main',adopted:true,memoryTidyRoutineId:'tidy-task'};
+ const task={...original,id:'user-routine',projectId:'user-repo',threadId:'user-thread',threadMode:'continue'};
+ assert.equal(r.routineOwner(task,[adopted],{}).kind,'ambiguous','a user thread in an adopted project is not proof');
+ assert.equal(r.routineOwner({...task,threadId:'room-thread'},[adopted],{}).kind,'ambiguous','a room thread in an adopted project is not proof');
+ assert.equal(r.routineOwner({...task,threadId:null,threadMode:'new_thread'},[adopted],{}).kind,'ambiguous','a new thread in an adopted project is not proof');
+ assert.equal(r.routineOwner({...task,threadId:'adopted-main'},[adopted],{}).kind,'bot','the Bot main thread is proof');
+ assert.equal(r.routineOwner({...task,threadId:'tidy-thread',id:'tidy-task'},[adopted],{}).kind,'bot','the tidy routine link is proof');
+ assert.equal(r.routineOwner(task,[adopted],{[task.id]:{bot:'adopted'}}).kind,'bot','an explicit link resolves it');
+ assert.deepEqual(r.ownConversationRoutines(adopted,[{...task,runCount:1,lastRunAt:'2026-11-19T03:30:00Z'}],{'user-thread':own('user-thread')},[adopted],{}),[],'no chat line without evidence');
+});
+test('a shared project is ambiguous until a routine is linked, and a Bot\u2019s own chat wins over a stale link',()=>{
+ const other={...bot,slug:'other',name:'Other',mainThreadId:'other-thread'};
+ const task={...original,threadId:R+'shared',threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ const threads={[R+'shared']:own(R+'shared')};
+ assert.equal(r.routineOwner(task,[bot,other],{}).kind,'ambiguous');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],threads,[bot,other],{}),[],'an ambiguous routine is nobody\u2019s');
+ assert.deepEqual(r.ownConversationRoutines(bot,[task],threads,[bot,other],{[task.id]:{bot:'lab'}}).map(t=>t.id),[task.id],'the link resolves it');
+ assert.deepEqual(r.ownConversationRoutines(other,[task],threads,[bot,other],{[task.id]:{bot:'lab'}}),[],'and only for the linked Bot');
+ const chatTask={...task,id:'chat-task',threadId:bot.mainThreadId};
+ assert.deepEqual(r.routineOwner(chatTask,[bot,other],{['chat-task']:{bot:'other'}}),{kind:'bot',bot},'the chat is proof, not the link');
+});
+test('a new run never borrows the previous conversation while history catches up',async()=>{
+ const task={...original,id:'routine-lag',threadId:null,threadMode:'new_thread',runCount:2,lastRunAt:'2026-11-20T03:30:00Z',lastRunStatus:'succeeded'};
+ globalThis.fetch=async()=>new Response(JSON.stringify({rows:[{id:'execution:old:run-old',taskId:task.id,at:'2026-11-19T03:30:00Z',status:'completed',trigger:'scheduled',threadId:'old-thread',runId:'run-old',source:'execution'}],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}});
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'old-message',runId:'run-old',scheduledTaskId:task.id}],runs:[{id:'run-old',status:'completed',completedAt:'2026-11-19T03:30:20Z'}],turnItems:[{type:'assistant_message',runId:'run-old',text:'Old report.'}]}:{};
+ const first=await r.readRoutineReports(bot,[task],{'old-thread':own('old-thread',{latestRunId:'run-old'})});
+ assert.deepEqual(first.map((item)=>[item.threadId,item.summary]),[[null,'A run was dispatched, but its conversation could not be found.']],'the old run must not be linked to the new dispatch');
+ // History catches up with the new execution: the next read must use it, not the old row or a cached null.
+ globalThis.fetch=async()=>new Response(JSON.stringify({rows:[{id:'execution:new:run-new',taskId:task.id,at:'2026-11-20T03:30:01Z',status:'completed',trigger:'scheduled',threadId:'new-thread',runId:'run-new',source:'execution'}],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}});
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'new-message',runId:'run-new',scheduledTaskId:task.id}],runs:[{id:'run-new',status:'completed',completedAt:'2026-11-20T03:30:20Z'}],turnItems:[{type:'assistant_message',runId:'run-new',text:'New report.'}]}:{};
+ const second=await r.readRoutineReports(bot,[task],{'new-thread':own('new-thread',{latestRunId:'run-new'})});
+ assert.deepEqual(second.map((item)=>[item.threadId,item.summary]),[['new-thread','New report.']],'a late history row updates the line');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a missing history row is retried instead of cached as a permanent null',async()=>{
+ const task={...original,id:'routine-retry-null',threadId:null,threadMode:'new_thread',runCount:1,lastRunAt:'2026-11-20T03:30:00Z',lastRunStatus:'succeeded'};
+ globalThis.fetch=async()=>new Response(JSON.stringify({rows:[],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}});
+ const first=await r.readRoutineReports(bot,[task],{});
+ assert.deepEqual(first.map((item)=>[item.threadId,item.state]),[[null,'unavailable']]);
+ globalThis.fetch=async()=>new Response(JSON.stringify({rows:[{id:'execution:new:run-new',taskId:task.id,at:'2026-11-20T03:30:01Z',status:'completed',trigger:'scheduled',threadId:'new-thread',runId:'run-new',source:'execution'}],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}});
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'new-message',runId:'run-new',scheduledTaskId:task.id}],runs:[{id:'run-new',status:'completed',completedAt:'2026-11-20T03:30:20Z'}],turnItems:[{type:'assistant_message',runId:'run-new',text:'New report.'}]}:{};
+ const second=await r.readRoutineReports(bot,[task],{'new-thread':own('new-thread',{latestRunId:'run-new'})});
+ assert.deepEqual(second.map((item)=>[item.threadId,item.summary]),[['new-thread','New report.']],'the null must not be permanent');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a new-thread routine resolves its conversation through the gateway\u2019s bounded history',async()=>{
+ const task={...original,id:'routine-new',threadId:null,threadMode:'new_thread',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ const thread=own('new-run',{latestRunId:'run-new'});
+ globalThis.fetch=async(url)=>{ if(String(url).startsWith('/api/routine-history')) return new Response(JSON.stringify({rows:[{id:'execution:new-run:run-new',taskId:task.id,at:'2026-11-19T03:30:00Z',status:'completed',trigger:'scheduled',threadId:'new-run',runId:'run-new',source:'execution'}],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}}); return new Response('{}',{status:404}); };
+ transport=async(tag)=>tag==='orchestration.getThreadProjection'?{messages:[{id:'message-new',runId:'run-new',scheduledTaskId:task.id}],runs:[{id:'run-new',status:'completed',completedAt:'2026-11-19T03:30:20Z'}],turnItems:[{type:'assistant_message',runId:'run-new',text:'Fresh report.'}]}:{};
+ const reports=await r.readRoutineReports(bot,[task],{'new-run':thread});
+ assert.deepEqual(reports.map((item)=>[item.threadId,item.summary,item.state]),[['new-run','Fresh report.','finished']]);
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+ const missing=await r.readRoutineReports(bot,[{...task,id:'routine-new-missing'}],{'new-run':thread});
+ assert.deepEqual(missing.map((item)=>[item.threadId,item.state]),[[null,'unavailable']],'a run with no findable conversation still leaves an honest line');
+});
+test('the routine detail saves each notification choice, keeps it on failure and explains a muted Bot',async()=>{
+ const own2={instanceId:'pi',model:'cheap',options:[]};
+ const task={...original,threadId:'own-thread',threadMode:'continue',modelSelection:own2,runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({threads:{'own-thread':{id:'own-thread',modelSelection:own2,latestRunId:'run-1'}},routineAlerts:{}});
+ const puts=[];
+ globalThis.fetch=async(url,init)=>{ if(String(url).startsWith('/api/routine-alerts/')&&init?.method==='PUT'){ const body=JSON.parse(String(init.body)); puts.push([String(url),body]); if(body.alerts?.failed===true) return new Response(JSON.stringify({error:'Couldn’t save'}),{status:500,headers:{'content-type':'application/json'}}); return new Response(JSON.stringify({task:{...body,alerts:{...(body.alerts??{})}}}),{status:200,headers:{'content-type':'application/json'}}); } if(String(url).startsWith('/api/routine-history')) return new Response(JSON.stringify({rows:[],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}}); return new Response('{}',{status:404}); };
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/Its runs happen in their own conversation/);
+ await click(document.querySelector('[aria-label="Routine notifications: Finished"]'));
+ assert.deepEqual(puts.at(-1)[1],{alerts:{finished:true}});
+ assert.equal(useApp.getState().routineAlerts[task.id].alerts.finished,true);
+ await click(document.querySelector('[aria-label="Routine notifications: Failed"]'));
+ assert.match(host.textContent,/Couldn’t save/);
+ assert.equal(useApp.getState().routineAlerts[task.id].alerts.failed,undefined,'a failed save keeps the old choice');
+ await render(h(RoutineDetail,{bot:{...bot,notifications:false},task,onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/Notifications are off for this Bot/);
+ assert.equal((document.querySelector('[aria-label="Routine notifications: Finished"]') as HTMLButtonElement | null)?.disabled,true);
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a new run during a run-ref fetch starts a new read instead of reusing the old one',async()=>{
+ let calls=0;const pending=[];
+ globalThis.fetch=async(url)=>{ if(String(url).startsWith('/api/routine-history/latest')){ calls+=1; return new Promise<Response>((resolve)=>{ pending.push(resolve); }); } return new Response('{}',{status:404}); };
+ const task={...original,id:'task-gen',lastRunAt:'2026-11-19T03:30:00Z'};
+ useApp.setState({tasks:[task],routineRuns:{}});
+ const first=r.refreshRoutineRuns(['task-gen']);
+ useApp.setState({tasks:[{...task,lastRunAt:'2026-11-20T03:30:00Z'}]});
+ const second=r.refreshRoutineRuns(['task-gen']);
+ await new Promise((resolve)=>setTimeout(resolve,5));
+ assert.equal(calls,2,'a newer run must not join the older in-flight read');
+ pending[0](new Response(JSON.stringify({tasks:{'task-gen':{threadId:'old',runId:'old',at:'2026-11-19T03:30:01Z',status:'completed'}}}),{status:200,headers:{'content-type':'application/json'}}));
+ pending[1](new Response(JSON.stringify({tasks:{'task-gen':{threadId:'new',runId:'new',at:'2026-11-20T03:30:01Z',status:'completed'}}}),{status:200,headers:{'content-type':'application/json'}}));
+ await Promise.all([first,second]);
+ assert.equal(useApp.getState().routineRuns['task-gen'].threadId,'new');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a successful read that still lags the new dispatch does not present the old run as current',async()=>{
+ const task={...original,id:'task-lag-ref',threadId:null,threadMode:'new_thread',runCount:2,lastRunAt:'2026-11-20T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[task],routineRuns:{'task-lag-ref':{threadId:'old-run',runId:'old-run-run',at:'2026-11-19T03:30:00Z',status:'waiting'}},routineRunsStale:{},threads:{'old-run':own('old-run',{status:'waiting',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}})}} as any);
+ globalThis.fetch=async()=>new Response(JSON.stringify({tasks:{'task-lag-ref':{threadId:'old-run',runId:'old-run-run',at:'2026-11-19T03:30:00Z',status:'waiting'}}}),{status:200,headers:{'content-type':'application/json'}});
+ await r.refreshRoutineRuns(['task-lag-ref']);
+ assert.equal((useApp.getState() as any).routineRunsStale['task-lag-ref'],true,'a lagging row is not the new dispatch');
+ await render(h(RoutineRow,{task,onOpen(){}}));
+ assert.doesNotMatch(host.textContent,/Needs attention/);
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a failed run-ref read marks the state stale so the list does not show old attention',async()=>{
+ const task={...original,id:'task-stale',threadId:null,threadMode:'new_thread',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[task],routineRuns:{'task-stale':{threadId:'new-run',runId:'new-run-run',at:'2026-11-19T03:30:00Z',status:'waiting'}},routineRunsStale:{},threads:{'new-run':own('new-run',{status:'waiting',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}})}} as any);
+ globalThis.fetch=async()=>new Response('{}',{status:500});
+ await r.refreshRoutineRuns(['task-stale']);
+ assert.equal((useApp.getState() as any).routineRunsStale['task-stale'],true,'a failure must be visible, not silently stale');
+ await render(h(RoutineRow,{task,onOpen(){}}));
+ assert.doesNotMatch(host.textContent,/Needs attention/,'an unreadable refresh must not keep showing old attention');
+ assert.match(host.textContent,/Run state unavailable/,'the stale state is disclosed');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('persisted run refs load once per batch and never replace a newer run',async()=>{
+ let calls=0;
+ globalThis.fetch=async(url)=>{ if(String(url).startsWith('/api/routine-history/latest')){ calls+=1; await new Promise((resolve)=>setTimeout(resolve,20)); return new Response(JSON.stringify({tasks:{'task-1':{threadId:'thread-1',runId:'run-1',at:'2026-11-19T03:30:00Z',status:'completed'}}}),{status:200,headers:{'content-type':'application/json'}}); } return new Response('{}',{status:404}); };
+ await Promise.all([r.refreshRoutineRuns(['task-1']),r.refreshRoutineRuns(['task-1'])]);
+ assert.equal(calls,1,'two renders must share one read');
+ assert.deepEqual(useApp.getState().routineRuns['task-1'],{threadId:'thread-1',runId:'run-1',at:'2026-11-19T03:30:00Z',status:'completed'});
+ // A slow older response must not overwrite a newer run already in the store.
+ useApp.setState({routineRuns:{'task-1':{threadId:'thread-2',runId:'run-2',at:'2026-11-19T04:00:00Z',status:'running'}}});
+ globalThis.fetch=async()=>new Response(JSON.stringify({tasks:{'task-1':{threadId:'thread-1',runId:'run-1',at:'2026-11-19T03:30:00Z',status:'completed'}}}),{status:200,headers:{'content-type':'application/json'}});
+ await r.refreshRoutineRuns(['task-1']);
+ assert.equal(useApp.getState().routineRuns['task-1'].runId,'run-2');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('a routine moved to another thread keeps the waiting run of the thread that produced it',async()=>{
+ const task={...original,id:'routine-moved',threadId:'thread-B',threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[task],routineRuns:{[task.id]:{threadId:'thread-A',runId:'run-A',at:'2026-11-19T03:30:00Z',status:'waiting'}},threads:{'thread-A':own('thread-A',{status:'waiting',latestRunId:'run-A',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}}),'thread-B':own('thread-B',{status:'idle',latestRunId:null})}} as any);
+ await render(h(RoutineRow,{task,onOpen(){}}));
+ assert.match(host.textContent,/Needs attention/,'the verified run thread must win over the moved task thread');
+});
+test('a new-thread routine with a waiting run shows Needs attention in the routines list',async()=>{
+ const task={...original,id:'routine-new-attention',threadId:null,threadMode:'new_thread',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[task],routineRuns:{[task.id]:{threadId:'new-run',runId:'new-run-run',at:'2026-11-19T03:30:00Z',status:'waiting'}},threads:{'new-run':own('new-run',{status:'waiting',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}})}} as any);
+ await render(h(RoutineRow,{task,onOpen(){}}));
+ assert.match(host.textContent,/Needs attention/,'the list cannot show a new-thread wait today');
+});
+test('a manual wait in a routine conversation never paints the list as routine attention',async()=>{
+ const task={...original,id:'routine-manual-list',threadId:null,threadMode:'new_thread',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[task],routineRuns:{[task.id]:{threadId:'new-run',runId:'routine-run',at:'2026-11-19T03:30:00Z',status:'completed'}},threads:{'new-run':own('new-run',{status:'waiting',latestRunId:'manual-run',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}})}} as any);
+ await render(h(RoutineRow,{task,onOpen(){}}));
+ assert.doesNotMatch(host.textContent,/Needs attention/);
+ const bound={...original,id:'routine-manual-own',threadId:'own-thread',threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({tasks:[bound],routineRuns:{[bound.id]:{threadId:'own-thread',runId:'routine-run',at:'2026-11-19T03:30:00Z',status:'completed'}},threads:{'own-thread':own('own-thread',{status:'waiting',latestRunId:'manual-run',pendingRuntimeRequest:{id:'request',kind:'approval',blocking:true}})}} as any);
+ await render(h(RoutineRow,{task:bound,onOpen(){}}));
+ assert.doesNotMatch(host.textContent,/Needs attention/,'a manual turn in an own routine thread is not routine attention');
+});
+test('a main-chat routine exposes its own choices with the compatible chat defaults',async()=>{
+ const task={...original,threadId:'thread',threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({threads:{thread:{id:'thread',modelSelection:model,latestRunId:'run-1'}},routineAlerts:{}});
+ globalThis.fetch=async(url)=>{ if(String(url).startsWith('/api/routine-history')) return new Response(JSON.stringify({rows:[],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}}); return new Response('{}',{status:404}); };
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/follow the Bot’s Notifications switch/);
+ const checked=(label)=>document.querySelector(`[aria-label="Routine notifications: ${label}"]`).getAttribute('aria-checked');
+ assert.equal(checked('Finished'),'true');
+ assert.equal(checked('Failed'),'false');
+ assert.equal(checked('Needs attention'),'true');
+ globalThis.fetch=async()=>new Response('{}',{status:404});
+});
+test('an ambiguous routine in a shared project can be linked explicitly from its detail',async()=>{
+ const other={...bot,slug:'other',name:'Other',mainThreadId:'other-thread'};
+ const task={...original,id:'routine-shared',threadId:'shared-thread',threadMode:'continue',runCount:1,lastRunAt:'2026-11-19T03:30:00Z',lastRunStatus:'succeeded'};
+ useApp.setState({bots:{lab:bot,other},routineAlerts:{},threads:{'shared-thread':own('shared-thread')}});
+ const puts=[];
+ globalThis.fetch=async(url,init)=>{ if(String(url).startsWith('/api/routine-alerts/')&&init?.method==='PUT'){ const body=JSON.parse(String(init.body)); puts.push([String(url),body]); return new Response(JSON.stringify({task:{...body}}),{status:200,headers:{'content-type':'application/json'}}); } if(String(url).startsWith('/api/routine-history')) return new Response(JSON.stringify({rows:[],observingSince:'2026-11-01T00:00:00Z',incomplete:true,observing:true}),{status:200,headers:{'content-type':'application/json'}}); return new Response('{}',{status:404}); };
+ await render(h(RoutineDetail,{bot,task,onBack(){},onEdit(){}}));
+ assert.match(host.textContent,/Bot association unavailable/);
+ await click(button('Link it to Lab'));
+ assert.deepEqual(puts.at(-1)[1],{bot:'lab'});
+ assert.equal(useApp.getState().routineAlerts[task.id].bot,'lab');
+ useApp.setState({bots:{lab:bot}});
+ globalThis.fetch=async()=>new Response('{}',{status:404});
 });
 
 test('a failed move archives the conversation it started and leaves the routine in the chat',async()=>{

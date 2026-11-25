@@ -96,6 +96,16 @@ export function createRoutineHistory({ file, now = () => new Date().toISOString(
       merge(rows); if (rows.length) await persist();
     }); },
     get(taskId: string) { return serial(() => ({ observingSince: state.observingSince, incomplete: true, rows: state.rows.filter((row) => row.taskId === taskId) })); },
+    /** The newest observed execution per task, from the persisted refs only: no T3 read. */
+    latest(taskIds: string[]) { return serial(() => {
+      const tasks: Record<string, { threadId: string; runId: string; at: string; status: string }> = {};
+      for (const taskId of taskIds) {
+        const row = state.rows.filter((entry) => entry.taskId === taskId && entry.source === 'execution' && entry.threadId)
+          .sort((left, right) => right.at.localeCompare(left.at))[0];
+        if (row?.threadId) tasks[taskId] = { threadId: row.threadId, runId: row.runId ?? '', at: row.at, status: row.status };
+      }
+      return tasks;
+    }); },
     remove(taskId: string) { return serial(async () => { state.rows = state.rows.filter((r) => r.taskId !== taskId); previous.delete(taskId); await persist(); }); },
   };
 }
@@ -122,6 +132,31 @@ export function createRoutineHistoryRoutes({ rpc, file, timeoutMs = 15000 }: { r
       void bounded(connection.call('orchestration.getThreadProjection', { threadId: key })).then(async (projection) => {
         await history.consumeProjection(projection as RoutineProjection, new Set(tasks.map((task) => task.id))); stamps.set(key, thread.updatedAt);
       }).catch(() => { healthy = false; }).finally(() => { workers--; pump(); });
+    }
+  };
+  // A new-thread routine has no stored thread id. When its page is opened, read only the handful of
+  // threads that changed around its last dispatch, newest first, and stop at the first execution it
+  // finds. This is a bounded backfill, not a watcher: the streams above record later runs.
+  const scanning = new Set<string>();
+  const findRunThread = async (task: RoutineTask): Promise<void> => {
+    if (!connection || task.threadId || !task.projectId || scanning.has(task.id)) return;
+    scanning.add(task.id);
+    try {
+      const since = task.lastRunAt ? Date.parse(task.lastRunAt) - 5 * 60_000 : 0;
+      const candidates = [...threads.values()]
+        .filter((thread) => thread.projectId === task.projectId && (!since || (Date.parse(thread.updatedAt ?? "") || 0) >= since))
+        .sort((left, right) => (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""))
+        .slice(0, 8);
+      for (const thread of candidates) {
+        if (stamps.get(thread.id) === thread.updatedAt) continue;
+        await bounded(connection.call('orchestration.getThreadProjection', { threadId: thread.id })).then(async (projection) => {
+          await history.consumeProjection(projection as RoutineProjection, new Set(tasks.map((entry) => entry.id)));
+          stamps.set(thread.id, thread.updatedAt);
+        }).catch(() => { healthy = false; });
+        if ((await history.get(task.id)).rows.some((row) => row.source === 'execution')) break;
+      }
+    } finally {
+      scanning.delete(task.id);
     }
   };
   const ready = async (): Promise<void> => {
@@ -162,14 +197,26 @@ export function createRoutineHistoryRoutes({ rpc, file, timeoutMs = 15000 }: { r
   return {
     history,
     async handle(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-      if (url.pathname !== '/api/routine-history') return false;
+      if (url.pathname !== '/api/routine-history' && url.pathname !== '/api/routine-history/latest') return false;
       res.setHeader('content-type', 'application/json'); res.setHeader('cache-control', 'no-store');
       if (req.method !== 'GET') { res.writeHead(405, { allow: 'GET' }); res.end(JSON.stringify({ error: 'Use GET' })); return true; }
+      if (url.pathname === '/api/routine-history/latest') {
+        const ids = (url.searchParams.get('tasks') ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+        if (!ids.length || ids.length > 50 || ids.some((taskId) => !ID.test(taskId))) {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid routine IDs' })); return true;
+        }
+        try { const tasks = await history.latest(ids); res.writeHead(200); res.end(JSON.stringify({ tasks })); }
+        catch { res.writeHead(503); res.end(JSON.stringify({ error: 'Routine history is temporarily unavailable' })); }
+        return true;
+      }
       const taskId = id(url.searchParams.get('task'));
       if (!taskId) { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid routine ID' })); return true; }
       try {
         await ready(); await pending;
-        if (!tasks.some((task) => task.id === taskId)) { res.writeHead(404); res.end(JSON.stringify({ error: 'Routine not found' })); return true; }
+        const target = tasks.find((task) => task.id === taskId);
+        if (!target) { res.writeHead(404); res.end(JSON.stringify({ error: 'Routine not found' })); return true; }
+        // New-thread runs: find the conversation from this task's last dispatch, once per open.
+        await findRunThread(target);
         const result = await history.get(taskId);
         res.writeHead(200); res.end(JSON.stringify({ ...result, observing: healthy }));
       } catch { res.writeHead(503); res.end(JSON.stringify({ error: 'Routine history is temporarily unavailable' })); }

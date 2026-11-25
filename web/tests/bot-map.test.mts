@@ -29,14 +29,14 @@ const bundle = await buildOnce({
       export { createElement, act } from "react";
       export { createRoot } from "react-dom/client";
       export { Sidebar } from ${JSON.stringify(join(src, "components/Sidebar.tsx"))};
-      export { useApp } from ${JSON.stringify(join(src, "store.ts"))};` : undefined,
+      export { openBotMap, useApp, watchedView } from ${JSON.stringify(join(src, "store.ts"))};` : undefined,
   }],
   ssr: { noExternal: true }, build: { ssr: "virtual:bot-map", write: false },
 });
 const directory = await mkdtemp(join(tmpdir(), "bot-map-test-"));
 const file = join(directory, "sidebar.mjs");
 await writeFile(file, entryChunk(bundle).code);
-const { createElement: h, act, createRoot, Sidebar, useApp } = await import(pathToFileURL(file).href);
+const { createElement: h, act, createRoot, Sidebar, openBotMap, useApp, watchedView } = await import(pathToFileURL(file).href);
 after(async () => {
   for (const channel of channels) { channel.port1.close(); channel.port2.close(); }
   await window.happyDOM.close();
@@ -63,4 +63,13 @@ test("sidebar opens Map with Projects off or on", async () => {
   } finally {
     await act(async () => root.unmount());
   }
+});
+
+test("the Bot Map leaves the selected conversation eligible for notifications", (t) => {
+  t.mock.getter(document, "visibilityState", () => "visible");
+  t.mock.method(document, "hasFocus", () => true);
+  useApp.setState({ page: null, selected: "alpha", selectedThreadId: "routine-thread" });
+  assert.deepEqual(watchedView(), { bot: "alpha", room: null, thread: "routine-thread" });
+  openBotMap();
+  assert.deepEqual(watchedView(), { bot: null, room: null, thread: null });
 });

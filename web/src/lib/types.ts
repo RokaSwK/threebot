@@ -48,7 +48,7 @@ export type CodingMachine = { environmentId: string; label: string };
 export type CodingWork = { preferred: CodingMachine | null; fallback: CodingMachine | null };
 
 /** The roster line for a conversation, which T3's shell stream leaves empty. */
-export type ThreadPreview = { kind: "text" | "attachment" | "question" | "sent"; role: "user" | "assistant"; text: string; at: string | null };
+export type ThreadPreview = { kind: "text" | "attachment" | "question" | "sent"; role: "user" | "assistant"; text: string; at: string | null; routine?: { taskId: string; runId: string } };
 
 export type ThreadMeta = { reactions: Record<string, string[]>; voiceCalls: { at: string; seconds: number }[] };
 

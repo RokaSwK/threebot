@@ -42,15 +42,28 @@ export function EventLine({ entry }: { entry: Extract<Entry, { kind: "event" }> 
   );
 }
 
+const ROUTINE_STATE_LABEL = {
+  finished: "Completed",
+  failed: "Failed",
+  waiting: "Needs attention",
+  running: "Running…",
+  stopped: "Stopped",
+  unavailable: "Result unavailable",
+} as const;
+
 /** A routine's report, derived from T3's run; it is not a model turn and never wakes the Bot. */
 export function RoutineReportLine({ entry, bot }: { entry: Extract<Entry, { kind: "routine-report" }>; bot: Bot }) {
+  const state = ROUTINE_STATE_LABEL[entry.state];
   return (
-    <div className="fade-up flex flex-wrap items-center justify-start gap-x-2 gap-y-1 py-2 text-left text-[13px] text-muted sm:justify-center sm:text-center">
-      <Sparkles size={13} className="shrink-0 opacity-80" aria-hidden="true" />
+    <div role="group" aria-label={`${bot.name}, routine ${entry.title}: ${state}`} className="fade-up flex flex-wrap items-center justify-start gap-x-2 gap-y-1 py-2 text-left text-[13px] text-muted sm:justify-center sm:text-center">
+      <Clock size={13} className="shrink-0 opacity-80" aria-hidden="true" />
+      <Avatar shape={bot.shape} color={bot.color} picture={bot.avatarImage} size={14} />
+      <span className="sr-only">{bot.name}</span>
       <span className="break-words text-fg">{entry.title}</span>
-      <span className={clsx("line-clamp-2 min-w-0 flex-1 sm:line-clamp-1 sm:flex-none", entry.failed ? "text-danger" : "text-fg")}>{entry.summary}</span>
+      <span className={clsx("shrink-0", entry.state === "failed" ? "text-danger" : entry.state === "waiting" ? "text-attention" : entry.state === "running" ? "text-muted" : "text-fg")}>{state}</span>
+      <span className={clsx("line-clamp-2 min-w-0 flex-1 sm:line-clamp-1 sm:flex-none", entry.state === "failed" ? "text-danger" : "text-fg")}>{entry.summary}</span>
       <time dateTime={entry.at} className="shrink-0 text-[12px]">{timeAgo(entry.at)}</time>
-      <button type="button" aria-label={`Open the ${entry.title} conversation`} className="inline-flex min-h-6 min-w-6 shrink-0 items-center px-1 underline underline-offset-2 hover:text-fg max-sm:min-h-11" onClick={() => selectThread(bot, entry.threadId)}>Open</button>
+      {entry.threadId && <button type="button" aria-label={`Open the ${entry.title} conversation`} className="inline-flex min-h-6 min-w-6 shrink-0 items-center px-1 underline underline-offset-2 hover:text-fg max-sm:min-h-11" onClick={() => selectThread(bot, entry.threadId!)}>Open</button>}
     </div>
   );
 }
