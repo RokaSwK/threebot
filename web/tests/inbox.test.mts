@@ -70,11 +70,57 @@ test('snooze presets skip elapsed choices and preserve next weekday semantics',(
 test('completion notifications never repeat a user prompt or stale prior-run reply',async()=>{
  const notifications=[];globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push(options.body)}close(){}} as unknown as typeof Notification;
  api.threadPreviews=async()=>({main:{role:'user',text:'Private prompt',at:'2026-01-02'}});
- await completionNotification(bot,thread);assert.deepEqual(notifications,['Finished']);
+ await completionNotification(thread);assert.deepEqual(notifications,['Finished']);
  api.threadPreviews=async()=>({main:{role:'assistant',text:'Older answer',at:'2025-12-01'}});
- await completionNotification(bot,thread);assert.equal(notifications.at(-1),'Finished');
+ await completionNotification(thread);assert.equal(notifications.at(-1),'Finished');
  api.threadPreviews=async()=>({main:{role:'assistant',text:'Current answer',at:'2026-01-02'}});
- await completionNotification(bot,thread);assert.equal(notifications.at(-1),'Current answer');
+ await completionNotification(thread);assert.equal(notifications.at(-1),'Current answer');
+});
+
+test('a new-thread routine names itself from its own projection, not the Bot chat previews',async()=>{
+ const notifications=[];const previousNotification=globalThis.Notification;const previousPreviews=api.threadPreviews;
+ globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push({title,...options})}close(){}} as unknown as typeof Notification;
+ const task={id:'task-new',title:'Nightly',enabled:true,projectId:'project',threadId:null,threadMode:'new_thread',schedule:{type:'interval',everyMs:60000},runCount:1,lastRunAt:'2026-01-02T00:00:00Z',lastRunStatus:'succeeded'};
+ const fresh={...thread,id:'new-thread',status:'completed',activityRunStatus:'completed',latestRunId:'run-2',latestRunStartedAt:'2026-01-02T00:00:10Z',latestRunCompletedAt:'2026-01-02T00:00:30Z',updatedAt:'2026-01-02T00:00:30Z'};
+ useApp.setState({tasks:[task],routineAlerts:{'task-new':{alerts:{finished:true}}},threads:{main:thread,'new-thread':fresh},previews:{}});
+ let stamps={};let newThreadReads=0;
+ api.threadPreviews=async (value)=>{stamps=value as Record<string,string>;if(!('new-thread' in (value as Record<string,string>)))return {};newThreadReads+=1;return {'new-thread':{role:'assistant',text:'Fresh report',at:'2026-01-02T00:00:20Z',routine:{taskId:'task-new',runId:'run-2'}}};};
+ try{
+  await Promise.all([completionNotification(fresh),completionNotification(fresh)]);
+  assert.ok(notifications.length>=1,'the routine notice is missing when only the chat was read');
+  assert.equal(notifications[0].title,'Sample · Nightly');
+  assert.equal(notifications[0].tag,'routine:task-new');
+  assert.ok('new-thread' in stamps,'the focused projection for the affected thread was not requested');
+  assert.equal(newThreadReads,1,'concurrent notifications share one focused preview read');
+ }finally{globalThis.Notification=previousNotification;api.threadPreviews=previousPreviews;}
+});
+
+test('a shell without updatedAt still reads the affected projection through its run timestamp',async()=>{
+ const notifications=[];const previousNotification=globalThis.Notification;const previousPreviews=api.threadPreviews;
+ globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push({title,...options})}close(){}} as unknown as typeof Notification;
+ const task={id:'task-new',title:'Nightly',enabled:true,projectId:'project',threadId:null,threadMode:'new_thread',schedule:{type:'interval',everyMs:60000},runCount:1,lastRunAt:'2026-01-02T00:00:00Z',lastRunStatus:'succeeded'};
+ const fresh={...thread,id:'new-thread',status:'completed',activityRunStatus:'completed',latestRunId:'run-2',latestRunStartedAt:'2026-01-02T00:00:10Z',latestRunCompletedAt:'2026-01-02T00:00:30Z',updatedAt:''};
+ useApp.setState({tasks:[task],routineAlerts:{'task-new':{alerts:{finished:true}}},threads:{main:thread,'new-thread':fresh},previews:{}});
+ let stamps={};
+ api.threadPreviews=async (value)=>{stamps=value as Record<string,string>;return {'new-thread':{role:'assistant',text:'Fresh report',at:'2026-01-02T00:00:20Z',routine:{taskId:'task-new',runId:'run-2'}}};};
+ try{
+  await completionNotification(fresh);
+  assert.equal(notifications.length,1,'a missing updatedAt must not mute the routine notice');
+  assert.equal(stamps['new-thread'],'2026-01-02T00:00:30Z','the completed run timestamp is the safe fallback stamp');
+ }finally{globalThis.Notification=previousNotification;api.threadPreviews=previousPreviews;}
+});
+
+test('a manual turn in a routine thread does not notify as the routine',async()=>{
+ const notifications=[];const previousNotification=globalThis.Notification;const previousPreviews=api.threadPreviews;
+ globalThis.Notification=class {static permission='granted';constructor(title,options){notifications.push({title,...options})}close(){}} as unknown as typeof Notification;
+ const task={id:'task-own',title:'Nightly',enabled:true,projectId:'project',threadId:'own-thread',threadMode:'continue',schedule:{type:'interval',everyMs:60000},runCount:2,lastRunAt:'2026-01-02T00:00:00Z',lastRunStatus:'succeeded'};
+ const ownThread={...thread,id:'own-thread',status:'completed',activityRunStatus:'completed',latestRunId:'manual-run',latestRunStartedAt:'2026-01-02T01:00:10Z',latestRunCompletedAt:'2026-01-02T01:00:30Z',updatedAt:'2026-01-02T01:00:30Z'};
+ useApp.setState({tasks:[task],routineAlerts:{'task-own':{alerts:{finished:true}}},threads:{main:thread,'own-thread':ownThread},previews:{}});
+ api.threadPreviews=async (value)=>{const stamps=value as Record<string,string>;if(!('own-thread' in stamps))return {};return {'own-thread':{role:'assistant',text:'Manual reply',at:'2026-01-02T01:00:20Z'}};};
+ try{
+  await completionNotification(ownThread);
+  assert.deepEqual(notifications,[],'manual text must not be announced under the routine identity');
+ }finally{globalThis.Notification=previousNotification;api.threadPreviews=previousPreviews;}
 });
 
 test('old gateways also hide short voice calls without changing the data source',async()=>{

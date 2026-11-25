@@ -35,6 +35,7 @@ import { loadedRunFloor, runOrdinal, supplementSubagents, threadIdentity, thread
 import { parseThreadLink } from "../lib/botMessages";
 import { buildEntries, isActiveRun, modelSwitches, workingPhrases, type Entry } from "../lib/transcript";
 import { ownConversationRoutines, readRoutineReports, reportKey, type RoutineReport } from "../lib/routineReports";
+import { threadMode } from "../lib/routines";
 import { getTriggerDisplayModelName } from "../lib/modelTraits";
 import { canStartSideChat, parseSideCommand } from "../lib/sideChats";
 import { SideChatPill, SideChatSheet } from "./SideChat";
@@ -93,17 +94,31 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
   const identity = threadId ? threadIdentity(bot, threadId, threads) : bot;
   const isChild = !!threadId && threadId !== bot.mainThreadId;
   const tasks = useApp((s) => s.tasks);
+  const bots = useApp((s) => s.bots);
+  const routineRecords = useApp((s) => s.routineAlerts);
   // Routines that run in their own conversation leave one line each here; the latest few only.
-  const ownRoutines = useMemo(() => ownConversationRoutines(bot, tasks, threads), [bot, tasks, threads]);
+  const ownRoutines = useMemo(() => ownConversationRoutines(bot, tasks, threads, Object.values(bots), routineRecords), [bot, tasks, threads, bots, routineRecords]);
   // The threads' run state is part of the key: T3 marks the task done once the prompt is sent, before the reply.
   const ownRoutineKey = ownRoutines.map((task) => reportKey(task, task.threadId ? threads[task.threadId] : undefined)).join("|");
   const [routineReports, setRoutineReports] = useState<RoutineReport[]>([]);
+  // A new-thread dispatch is recorded before its conversation exists in history. Retry that one
+  // read a handful of times while the chat is open instead of leaving a permanent "not found".
+  const [routineRetry, setRoutineRetry] = useState(0);
+  useEffect(() => { setRoutineRetry(0); }, [ownRoutineKey]);
   useEffect(() => {
     if (threadId !== bot.mainThreadId || ownRoutines.length === 0) { setRoutineReports([]); return; }
     let live = true;
-    readRoutineReports(bot, tasks, threads).then((reports) => { if (live) setRoutineReports(reports); }).catch(() => { if (live) setRoutineReports([]); });
+    readRoutineReports(bot, tasks, threads, Object.values(bots), routineRecords).then((reports) => { if (live) setRoutineReports(reports); }).catch(() => { if (live) setRoutineReports([]); });
     return () => { live = false; };
-  }, [bot.slug, bot.mainThreadId, threadId, ownRoutineKey]);
+  }, [bot.slug, bot.mainThreadId, threadId, ownRoutineKey, routineRetry]);
+  const unresolvedNewThread = routineReports.some((report) => report.threadId === null && report.state === "unavailable"
+    && report.summary === "A run was dispatched, but its conversation could not be found."
+    && ownRoutines.some((task) => task.id === report.id && threadMode(task) === "new_thread"));
+  useEffect(() => {
+    if (!unresolvedNewThread || routineRetry >= 10) return;
+    const timer = window.setTimeout(() => setRoutineRetry((count) => count + 1), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [unresolvedNewThread, routineRetry, ownRoutineKey]);
   const detailsOpen = useApp((s) => s.detailsOpen);
   const exchangeBotSlug = useApp((s) => s.exchangeBotSlug);
   const exchangeBot = useApp((s) => exchangeBotSlug ? s.bots[exchangeBotSlug] ?? s.historicalBots[exchangeBotSlug] : undefined);

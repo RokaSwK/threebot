@@ -42,6 +42,7 @@ import { executorConfiguration, executorMcpDefinition, publicExecutorConfigurati
 import { createExecutorClient } from "./executor-client.mts";
 import { createThreadMeta, createThreadPreviews } from "./thread-meta.mts";
 import { createRoutineHistoryRoutes } from "./routine-history.mts";
+import { createRoutineAlertRoutes, createRoutinePrefs } from "./routine-alerts.mts";
 import { createPushNotifier, createPushStore, type PushPayload } from "./push.mts";
 import { objectAvatarPatch } from "./object-avatars.mts";
 import { avatarColorPatch } from "./avatar-color.mts";
@@ -175,6 +176,12 @@ const roomEngine = createRoomEngine({
 });
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
 const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
+const routinePrefs = createRoutinePrefs({ file: path.join(appDir, "routine-alerts.json") });
+const routineAlertRoutes = createRoutineAlertRoutes({
+  store: routinePrefs,
+  botExists: async (slug) => (await getBot(slug)) !== null,
+  readBody,
+});
 const threadMeta = createThreadMeta({ file: path.join(appDir, "thread-meta.json") });
 const threadPreviews = createThreadPreviews({
   projection: async (threadId) => withTimeout((await withTimeout(t3rpc(), 10000, "T3 timed out")).call("orchestration.getThreadProjection", { threadId }), 15000, "T3 timed out"),
@@ -1516,7 +1523,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/push/presence" && req.method === "POST") {
       requireJson(req);
       const body = await readBody(req);
-      const result = await pushStore.presence(body?.endpoint, body?.bot, body?.room);
+      const result = await pushStore.presence(body?.endpoint, body?.bot, body?.room, body?.thread);
       if (!result.ok) return send(res, 400, { error: result.message });
       return send(res, 200, result, { "cache-control": "no-store" });
     }
@@ -1535,6 +1542,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, icon.bytes, { "content-type": icon.type, "cache-control": "private, max-age=604800", "content-security-policy": "default-src 'none'", "x-content-type-options": "nosniff" });
     }
     if (await routineHistoryRoutes.handle(req, res, url)) return;
+    if (await routineAlertRoutes.handle(req, res, url)) return;
     if (await projectRoutes.handle(req, res, url)) return;
     if (await roomRoutes.handle(req, res, url)) return;
     if (p === "/api/thread-meta" && req.method === "GET") return send(res, 200, // A missing thread id is refused by threadMeta.get's own check.
@@ -1896,6 +1904,9 @@ const pushNotifier = createPushNotifier({
     const previews = await threadPreviews({ [threadId]: stamp ?? new Date().toISOString() }).catch(() => null);
     return previews?.[threadId] ?? null;
   },
+  // Per-routine records live beside push.json; without a record, each routine keeps the defaults
+  // that matched its old behaviour (the Bot's chat notifies, its own and new threads stay silent).
+  routines: { alerts: (taskId) => routinePrefs.get(taskId) },
 });
 pushNotifier.start();
 

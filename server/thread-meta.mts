@@ -23,9 +23,24 @@ export type TurnItem = {
   input?: unknown;
 };
 /** T3's `orchestration.getThreadProjection` result; rows are either the item or `{ item }`. */
-export type ThreadProjection = { visibleTurnItems?: ProjectionRow[] | null; turnItems?: ProjectionRow[] | null };
+export type ThreadProjection = {
+  visibleTurnItems?: ProjectionRow[] | null;
+  turnItems?: ProjectionRow[] | null;
+  /** The message rows carry the routine that sent them; newer projections only. */
+  messages?: ProjectionMessage[] | null;
+  runs?: ProjectionRun[] | null;
+};
 type ProjectionRow = (Partial<TurnItem> & { item?: TurnItem | null }) | null | undefined;
-export type Preview = { kind: "text" | "attachment" | "question" | "sent"; role: "user" | "assistant"; text: string; at: string | null };
+type ProjectionMessage = { id?: unknown; runId?: unknown; scheduledTaskId?: unknown };
+type ProjectionRun = { id?: unknown; userMessageId?: unknown; requestedAt?: unknown };
+export type Preview = {
+  kind: "text" | "attachment" | "question" | "sent";
+  role: "user" | "assistant";
+  text: string;
+  at: string | null;
+  /** Set when the newest run was sent by a routine: the message it dispatched is that task's. */
+  routine?: { taskId: string; runId: string };
+};
 export type NameFor = (threadId: string) => string | null | undefined;
 type VoiceCall = { at: string; seconds: number };
 type ThreadState = { reactions: Record<string, string[]>; voiceCalls: VoiceCall[] };
@@ -54,24 +69,38 @@ export function previewText(value: unknown): string {
     .slice(0, 200);
 }
 
+/** The routine that sent the newest run's prompt, when T3 exposes the message and run rows. */
+export function latestRoutine(projection: ThreadProjection | null | undefined): { taskId: string; runId: string } | null {
+  const runs = (projection?.runs ?? []).filter((run) => typeof run?.id === "string" && run.id);
+  // The newest run is the one that just finished or waits. An older routine message must not label it.
+  const latest = [...runs].sort((a, b) => String(a.requestedAt ?? "").localeCompare(String(b.requestedAt ?? ""))).at(-1);
+  if (!latest?.id) return null;
+  const message = (projection?.messages ?? []).find((item) =>
+    item?.runId === latest.id && typeof item.scheduledTaskId === "string" && item.scheduledTaskId,
+  );
+  return message && typeof message.scheduledTaskId === "string" ? { taskId: message.scheduledTaskId, runId: latest.id as string } : null;
+}
+
 /** The newest thing a person would recognize in this conversation, or null when it has none. */
 export function latestPreview(projection: ThreadProjection | null | undefined, nameFor: NameFor = () => null): Preview | null {
   const rows = projection?.visibleTurnItems ?? projection?.turnItems ?? [];
   const items = (rows.map((row) => row?.item ?? row).filter(Boolean) as TurnItem[]).sort((a, b) => b.ordinal - a.ordinal);
+  const routine = latestRoutine(projection);
+  const withRoutine = (preview: Omit<Preview, "routine">): Preview => ({ ...preview, ...(routine ? { routine } : {}) });
   for (const item of items) {
     const at = item.completedAt ?? item.startedAt ?? item.updatedAt ?? null;
     if (item.type === "user_message" || item.type === "assistant_message") {
       const role = item.type === "user_message" ? "user" : "assistant";
       const text = previewText(item.text);
-      if (text) return { kind: "text", role, text, at };
-      if (item.attachments?.length) return { kind: "attachment", role, text: "Attachment", at };
+      if (text) return withRoutine({ kind: "text", role, text, at });
+      if (item.attachments?.length) return withRoutine({ kind: "attachment", role, text: "Attachment", at });
     } else if (item.type === "user_input_request") {
       const text = previewText(parsed(item.questions)?.[0]?.question);
-      if (text) return { kind: "question", role: "assistant", text, at };
+      if (text) return withRoutine({ kind: "question", role: "assistant", text, at });
     } else if (item.type === "dynamic_tool" && item.status === "completed" && toolName(item) === "t3_thread_send") {
       const input = parsed(item.input);
       const text = previewText(input.message);
-      if (text) return { kind: "sent", role: "assistant", text: `Messaged ${nameFor(input.threadId) ?? "a Bot"}: ${text}`, at };
+      if (text) return withRoutine({ kind: "sent", role: "assistant", text: `Messaged ${nameFor(input.threadId) ?? "a Bot"}: ${text}`, at });
     }
   }
   return null;

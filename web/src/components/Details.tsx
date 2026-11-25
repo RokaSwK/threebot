@@ -13,7 +13,7 @@ import { SideChatList } from "./SideChat";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
-import { botStatus, botThreadStatus, openDialog, selectThread, setDetailsOpen, toast, updateBot, useApp, setBotModel } from "../store";
+import { botStatus, botThreadStatus, openDialog, refreshRoutineAlerts, refreshRoutineRuns, selectThread, setDetailsOpen, toast, updateBot, updateRoutineAlerts, useApp, setBotModel } from "../store";
 import { sharedObjects } from "../lib/objectAvatars";
 import { useAvatarDrawing } from "./useAvatarDrawing";
 import { ComputerScreen, useBotTabs } from "./Computer";
@@ -23,8 +23,7 @@ import { chatDraft } from "../lib/chatDrafts";
 import { formatTokens, readBotUsage, totalIn } from "../lib/usageApi";
 import { pushDeviceStatus, type PushDeviceStatus } from "../lib/push";
 import "./routines.css";
-import { findTidyTask } from "../lib/memoryTidy";
-import { reportsToChat } from "../lib/routineReports";
+import { anyAlert, effectiveAlerts, routineOwner, routinePlace, taskForBot } from "../lib/routineAlerts";
 import { changeRoutineEnabled, changeRoutineFreshSession, chatModelFrom, copyWebhookUrl, displayTimezone, moveRoutineToChat, removeRoutine, routineDate, routineDestination, routineHistory, scheduleText, setRoutineModel, testRoutine, threadMode } from "../lib/routines";
 export { scheduleText } from "../lib/routines";
 
@@ -57,9 +56,33 @@ export function Details({ bot, threadId }: { bot: Bot; threadId: string | null }
   const [routine, setRoutine] = useState<string | null>(null);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const allTasks = useApp((s) => s.tasks);
-  const tasks = useMemo(() => allTasks.filter((t) => t.projectId === bot.projectId), [allTasks, bot.projectId]);
+  const allBots = useApp((s) => s.bots);
+  const routineRecords = useApp((s) => s.routineAlerts);
+  // A routine in a shared project shows up only where it is owned; an ambiguous one appears in each
+  // candidate so it can be linked, never in the chat as somebody's result.
+  const tasks = useMemo(() => allTasks.filter((task) => taskForBot(task, bot, Object.values(allBots), routineRecords)), [allTasks, allBots, bot, routineRecords]);
   const openRoutine = tasks.find((t) => t.id === routine);
   useEffect(() => { setRoutine(null); setShowRoutines(false); }, [bot.slug]);
+  // Another device may have linked a routine or changed its alerts; Details is the place that acts on them.
+  useEffect(() => { void refreshRoutineAlerts(); }, []);
+  const runKey = tasks.filter((task) => (task.runCount ?? 0) > 0).map((task) => `${task.id}:${task.lastRunAt ?? ""}`).join("|");
+  const runsStale = useApp((s) => s.routineRunsStale);
+  const staleRunKey = tasks.filter((task) => (task.runCount ?? 0) > 0 && runsStale[task.id]).map((task) => task.id).join("|");
+  const [runRetry, setRunRetry] = useState(0);
+  useEffect(() => { setRunRetry(0); }, [runKey]);
+  // New-thread and own routines can show a waiting run only when the last observed run is that
+  // routine's; these persisted refs are the proof, and a manual turn never matches.
+  useEffect(() => {
+    const ids = tasks.filter((task) => (task.runCount ?? 0) > 0).map((task) => task.id);
+    if (ids.length) void refreshRoutineRuns(ids);
+  }, [runKey, runRetry]);
+  // A failed or lagging read is retried while Details is open (bounded); it never leaves stale
+  // attention on screen, and it stops as soon as the refs catch up.
+  useEffect(() => {
+    if (!staleRunKey || runRetry >= 10) return;
+    const timer = window.setTimeout(() => setRunRetry((count) => count + 1), 6_000);
+    return () => window.clearTimeout(timer);
+  }, [staleRunKey, runRetry, runKey]);
   const tabs = DETAILS_TABS;
 
   const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -335,6 +358,17 @@ function RoutineRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void 
   const busy = useRef(false);
   const [error, setError] = useState("");
   const timezone = useApp((s) => s.settings?.timezone ?? "");
+  const runRef = useApp((s) => s.routineRuns[task.id]);
+  const stale = useApp((s) => s.routineRunsStale[task.id] === true);
+  // The conversation that produced the verified run wins over a task that was just moved to
+  // another thread: a waiting run A must still be visible while task.threadId already points at B.
+  const thread = useApp((s) => { const id = runRef?.threadId ?? task.threadId; return id ? s.threads[id] : undefined; });
+  // Only the run we observed for this routine counts: a manual turn in the same conversation has
+  // its own latestRunId and must not be labelled as routine attention or failure.
+  const currentRun = !stale && !!runRef && !!thread?.latestRunId && thread.latestRunId === runRef.runId;
+  const needsAttention = currentRun && !!thread?.pendingRuntimeRequest && !thread.archivedAt;
+  const failed = task.lastRunStatus === "failed" || (currentRun && (thread?.activityRunStatus ?? thread?.status) === "failed");
+  const stateText = needsAttention ? "Needs attention · " : failed ? "Failed · " : stale && !!runRef ? "Run state unavailable · " : task.blockedByPolicy ? "Blocked · " : !task.enabled ? "Paused · " : "";
   const toggle = async (enabled: boolean) => {
     if (busy.current) return;
     busy.current = true;
@@ -345,8 +379,8 @@ function RoutineRow({ task, onOpen }: { task: ScheduledTask; onOpen: () => void 
   };
   return <div className="border-b border-line last:border-0">
     <div className="flex items-center gap-3 px-3.5 py-2.5">
-      <button onClick={onOpen} className="min-w-0 flex-1 text-left hover:text-muted"><span className="block truncate text-[13.5px]">{task.title}</span><span className="block text-[12px] text-muted">{task.blockedByPolicy ? "Blocked · " : !task.enabled && "Paused · "}{scheduleText(task, timezone)}</span></button>
-      <span aria-busy={pending} className={pending ? "pointer-events-none opacity-50" : ""}><Switch checked={task.enabled} onChange={(v) => void toggle(v)} label={`${task.enabled ? "Pause" : "Resume"} ${task.title}`} /></span>
+      <button onClick={onOpen} className="min-w-0 flex-1 text-left hover:text-muted"><span className="block truncate text-[13.5px]">{task.title}</span><span className={clsx("block text-[12px]", needsAttention ? "text-attention" : failed ? "text-danger" : "text-muted")}>{stateText}{scheduleText(task, timezone)}</span></button>
+      <span className={pending ? "opacity-50" : ""}><Switch checked={task.enabled} disabled={pending} busy={pending} onChange={(v) => void toggle(v)} label={`Routine enabled: ${task.title}`} /></span>
     </div>
     {error && <p role="alert" className="px-3.5 pb-2 text-[12px] text-danger">{error}</p>}
   </div>;
@@ -370,8 +404,10 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
   const project = useApp((s) => (bot.projectId ? s.projects[bot.projectId] : undefined));
   const chatModel = chatModelFrom(bot, chatThread, project);
   const providers = useApp((s) => s.providers);
-  // Only a conversation started for the routine (or the memory tidy's) reports to the chat.
-  const tidyId = useApp((s) => findTidyTask(bot, s.tasks)?.id);
+  const bots = useApp((s) => s.bots);
+  const records = useApp((s) => s.routineAlerts);
+  const owner = routineOwner(task, Object.values(bots), records);
+  const ambiguous = owner.kind === "ambiguous";
   const nameOf = (selection: ModelSelection | null | undefined) => modelDisplayName(selection, providers) || "its model";
   const model = destination === "own" ? ownThread?.modelSelection ?? task.modelSelection ?? null : destination === "chat" ? chatModel : task.modelSelection ?? null;
   // A run in progress owns the thread until it ends; moving the routine then is a change nobody asked for.
@@ -440,12 +476,14 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     : destination === "own"
       ? !ownThread?.latestRunId
         ? `Runs on ${nameOf(model)} in its own conversation. Nothing there until the first run.`
-        : reportsToChat(task, tidyId) && !ownThread.archivedAt
-          ? `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
-          : `Runs on ${nameOf(model)} in its own conversation.`
+        : ownThread.archivedAt
+          ? `Runs on ${nameOf(model)} in its own conversation.`
+          : `Runs on ${nameOf(model)} in its own conversation. ${bot.name}’s chat gets a one-line summary.`
       : destination === "own-pending"
         ? "The first run starts its own conversation with this model."
-        : "Each run starts a new thread with this model.";
+        : (task.runCount ?? 0) > 0
+          ? `Each run starts a new thread with this model. ${bot.name}’s chat gets a one-line summary.`
+          : "Each run starts a new thread with this model.";
   const freshNote = mode === "fresh_session"
     ? destination === "chat"
       ? `Each run starts a fresh session instead of re-reading the whole chat. ${bot.name} keeps its memory and files, and your next message carries on from the run.`
@@ -467,6 +505,10 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
     </div>
     {error && <p role="alert" id="routine-error" className="mb-4 break-words text-[13px] text-danger">{error}</p>}
     {task.blockedByPolicy && <p role="status" className="mb-4 break-words rounded-2xl bg-card px-3.5 py-3 text-[13px]">This routine can’t run: {task.blockedByPolicy}</p>}
+    {ambiguous && <div className="mb-4 rounded-2xl bg-card px-3.5 py-3 text-[13px]">
+      <p className="text-muted">Bot association unavailable. This project is shared, so nothing proves which Bot owns this routine.</p>
+      <button type="button" disabled={!!pending} onClick={() => void action("link", async () => { await updateRoutineAlerts(task.id, { bot: bot.slug }); announce(`Linked to ${bot.name}.`); })} className="mt-1 flex min-h-10 items-center text-fg hover:underline disabled:text-muted disabled:hover:no-underline max-sm:min-h-11">{pending === "link" ? "Linking…" : `Link it to ${bot.name}`}</button>
+    </div>}
     <Section title="Instruction"><div className="whitespace-pre-wrap break-words rounded-2xl bg-card px-3.5 py-3 text-[13.5px]">{task.prompt}</div></Section>
     <Section title="When to run"><div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">{scheduleText(task, timezone)}{!task.enabled && <p className="mt-1 text-muted">{task.schedule.type === "webhook" ? "Paused. Webhook deliveries will not dispatch work." : "Paused. Scheduled runs are off; Test still dispatches work."}</p>}{task.schedule.type === "fixed_time" && <p className="mt-1 text-[12px] text-muted">Uses the T3 server’s clock and daylight saving rules. Changing your display timezone does not change this schedule.</p>}</div></Section>
     <Section title="Where it runs"><div role="group" aria-label="Where it runs" className={clsx("rounded-2xl bg-card px-3.5 py-3 text-[13px]", busyBlock && "opacity-60")} aria-busy={busyBlock || undefined}>
@@ -509,12 +551,59 @@ function RoutineDetail({ bot, task, onBack, onEdit }: { bot: Bot; task: Schedule
       </>}
       <p role="status" aria-live="polite" aria-atomic="true" className="sr-only" ref={status} />
     </div></Section>
+    <Section title="Notifications"><RoutineNotifications bot={bot} task={task} /></Section>
     {task.schedule.type === "webhook" && <WebhookDetails task={task} />}
-    <RoutineHistory task={task} timezone={timezone} />
+    <RoutineHistory task={task} timezone={timezone} bot={bot} />
     {confirm ? <div className="flex flex-wrap items-center gap-2"><span className="flex-1 text-[13px]">Delete this routine?</span><Pill variant="soft" disabled={!!pending} onClick={() => setConfirm(false)}>Cancel</Pill><Pill variant="danger" disabled={!!pending} onClick={() => void action("delete", async () => { await removeRoutine(task); onBack(); })}>{pending === "delete" ? "Deleting…" : "Delete"}</Pill></div> : <button onClick={() => setConfirm(true)} className="flex min-h-10 items-center gap-2 px-1 text-[13px] text-danger hover:underline"><Trash2 size={13} /> Delete routine</button>}
   </div>;
 }
-function RoutineHistory({ task, timezone }: { task: ScheduledTask; timezone: string }) {
+function RoutineNotifications({ bot, task }: { bot: Bot; task: ScheduledTask }) {
+  const records = useApp((s) => s.routineAlerts);
+  const [device, setDevice] = useState<PushDeviceStatus | null>(null);
+  const [pending, setPending] = useState<"finished" | "failed" | "waiting" | null>(null);
+  const [error, setError] = useState("");
+  const busy = useRef(false);
+  useEffect(() => { void pushDeviceStatus().then(setDevice); }, []);
+  const place = routinePlace(task, bot);
+  const alerts = effectiveAlerts(records[task.id], place);
+  const toggle = async (kind: "finished" | "failed" | "waiting", on: boolean) => {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(kind); setError("");
+    try { await updateRoutineAlerts(task.id, { alerts: { [kind]: on } }); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Couldn’t save this notification"); }
+    finally { busy.current = false; setPending(null); }
+  };
+  const blocked = !!device && device.permission !== "granted";
+  const noPush = !!device && device.supported && device.secure && device.permission === "granted" && !device.subscribed;
+  const rows = [
+    ["finished", "Finished", "The run completed."],
+    ["failed", "Failed", "The run ended in an error."],
+    ["waiting", "Needs attention", "The run is waiting for you."],
+  ] as const;
+  return <div className="rounded-2xl bg-card px-3.5 py-3 text-[13px]">
+    <p className="text-muted">{place === "chat"
+      ? "Its runs happen in the main chat and follow the Bot’s Notifications switch. These choices refine them for this routine."
+      : place === "new" ? "Each run starts a new thread, away from this chat. Choose what this routine tells you." : "Its runs happen in their own conversation, away from this chat. Choose what this routine tells you."}</p>
+    <div className="mt-1">
+      {rows.map(([kind, label, hint]) => <div key={kind} className="flex min-h-11 items-center gap-3 border-t border-line py-2 first:border-0">
+        <span className="min-w-0 flex-1"><span className="block">{label}</span><span className="block text-[12px] text-muted">{hint}</span></span>
+        <Switch checked={alerts[kind]} disabled={!!pending || bot.notifications === false} busy={pending === kind} onChange={(on) => void toggle(kind, on)} label={`Routine notifications: ${label}`} />
+      </div>)}
+    </div>
+    {error && <p role="alert" className="mt-1 break-words text-[12px] text-danger">{error}</p>}
+    {bot.notifications === false
+      ? <p role="status" className="mt-1 text-muted">Notifications are off for this Bot. Turn them on above to use these choices.</p>
+      : blocked
+        ? <p role="status" className="mt-1 text-muted">This device can’t show notifications.</p>
+        : noPush
+          ? <p role="status" className="mt-1 text-muted">Push is off on this device. An open tab can still show these notices.</p>
+          : !anyAlert(alerts) && <p role="status" className="mt-1 text-muted">Muted. This routine’s runs stay silent.</p>}
+    {(blocked || noPush) && <button type="button" onClick={() => { useApp.setState({ settingsPane: "notifications" }); openDialog("settings"); }} className="mt-1 flex min-h-10 items-center text-fg hover:underline max-sm:min-h-11">Open device notification settings</button>}
+  </div>;
+}
+
+function RoutineHistory({ task, timezone, bot }: { task: ScheduledTask; timezone: string; bot: Bot }) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof routineHistory>> | null>(null);
   const [error, setError] = useState(""); const [revision, refresh] = useState(0);
   useEffect(() => {
@@ -522,12 +611,23 @@ function RoutineHistory({ task, timezone }: { task: ScheduledTask; timezone: str
     routineHistory(task.id, controller.signal).then(setResult).catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Couldn't read history"); });
     return () => controller.abort();
   }, [task.id, task.lastRunAt, task.lastRunStatus, task.runCount, revision]);
+  // Opening the history also proves the newest run for the list's attention state.
+  useEffect(() => {
+    if (!result) return;
+    const latest = result.rows.filter((row) => row.source === "execution" && row.threadId).sort((left, right) => right.at.localeCompare(left.at))[0];
+    if (!latest?.threadId) return;
+    useApp.setState((state) => {
+      const current = state.routineRuns[task.id];
+      if (current && current.at >= latest.at) return {};
+      return { routineRuns: { ...state.routineRuns, [task.id]: { threadId: latest.threadId!, runId: latest.runId ?? "", at: latest.at, status: latest.status } } };
+    });
+  }, [result, task.id]);
   return <Section title="History" action={<button className="min-h-9 hover:text-fg" onClick={() => refresh((r) => r + 1)}>Refresh</button>}>
     <div className="rounded-2xl bg-card px-3.5 py-3 text-[13px] text-muted">
       {error ? <p role="status">{error}</p> : !result ? <p role="status">Loading…</p> : <>
         {!result.observing && <p role="status" className="mb-2">History is unavailable. Try again.</p>}
         {!result.rows.length && <p>No history yet.</p>}
-        {result.rows.map((row) => <div key={row.id} className="border-b border-line py-2 last:border-0"><span className="capitalize text-fg">{row.status.replaceAll("_", " ")}</span><div className="mt-1 text-[12px]">{routineDate(row.at, timezone)}</div>{row.threadId && row.runId && <button className="mt-1 min-h-8 text-fg hover:underline" onClick={() => { const bot = Object.values(useApp.getState().bots).find((b) => b.projectId === task.projectId); if (bot && row.threadId) selectThread(bot, row.threadId); }}>Open conversation</button>}</div>)}
+        {result.rows.map((row) => <div key={row.id} className="border-b border-line py-2 last:border-0"><span className="capitalize text-fg">{row.status.replaceAll("_", " ")}</span><div className="mt-1 text-[12px]">{routineDate(row.at, timezone)}</div>{row.threadId && row.runId && <button className="mt-1 min-h-10 text-fg hover:underline max-sm:min-h-11" onClick={() => { if (row.threadId) selectThread(bot, row.threadId); }}>Open conversation</button>}</div>)}
         {result.incomplete && <p className="mt-2 text-[12px]">Some history may be missing.</p>}
       </>}
     </div>
