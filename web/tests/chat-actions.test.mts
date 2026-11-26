@@ -57,8 +57,8 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 const defer = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const button = (label) => [...document.querySelectorAll("button")].find((element) => element.getAttribute("aria-label") === label || element.textContent.trim() === label);
 const click = async (element) => { assert.ok(element, "control exists"); await act(async () => { element.click(); await flush(); }); };
-const render = async (kind, text, attachments = [], threadId = "main") => act(async () => {
-  root.render(h(EntryView, { entry: { kind, id: "message-example", at: "2026-01-01T00:00:00Z", text, attachments }, bot, threadId, accent: "monochrome", onOpenFile() {} }));
+const render = async (kind, text, attachments = [], threadId = "main", onCite = undefined) => act(async () => {
+  root.render(h(EntryView, { entry: { kind, id: "message-example", at: "2026-01-01T00:00:00Z", text, attachments }, bot, threadId, accent: "monochrome", onOpenFile() {}, onCite }));
   await flush();
 });
 const renderAttachments = async (attachments) => act(async () => { root.render(h(AttachmentList, { attachments })); await flush(); });
@@ -327,6 +327,37 @@ test("browser Copy on an inline selection uses only selected rendered text", asy
   assert.equal(event.defaultPrevented, true);
   assert.equal(clipboardData.getData("text/plain"), "this part");
   assert.deepEqual(copied, [], "native clipboard event has no extra full-message clipboard write");
+});
+
+// A mouse drag that starts in the message; the button counts even when it is released outside.
+const drag = async (element) => act(async () => {
+  element.dispatchEvent(new window.PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }));
+  document.body.dispatchEvent(new window.PointerEvent("pointerup", { bubbles: true, pointerType: "mouse" }));
+});
+test("Cite appears for a selection inside a message and hands over only the selected text", async () => {
+  const cited = [];
+  await render("bot", "Choose **this part** and leave the rest.", [], "main", (text) => cited.push(text));
+  assert.equal(document.querySelector(".chat-message-cite"), null);
+  const selected = host.querySelector("strong"); const range = document.createRange(); range.selectNodeContents(selected);
+  const selection = window.getSelection(); await act(async () => { selection.removeAllRanges(); selection.addRange(range); });
+  await drag(selected);
+  await click(document.querySelector(".chat-message-cite"));
+  assert.deepEqual(cited, ["this part"]);
+  assert.equal(selection.rangeCount, 0); assert.equal(document.querySelector(".chat-message-cite"), null);
+  await act(async () => { selection.removeAllRanges(); selection.addRange(range); });
+  await drag(selected);
+  assert.ok(document.querySelector(".chat-message-cite"));
+  await act(async () => window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  assert.equal(document.querySelector(".chat-message-cite"), null, "Escape dismisses Cite with the selection");
+  assert.deepEqual(cited, ["this part"]);
+});
+
+test("a message without Cite shows no Cite button for its selection", async () => {
+  await render("bot", "Choose **this part** and leave the rest.");
+  const selected = host.querySelector("strong"); const range = document.createRange(); range.selectNodeContents(selected);
+  const selection = window.getSelection(); await act(async () => { selection.removeAllRanges(); selection.addRange(range); });
+  await drag(selected);
+  assert.equal(document.querySelector(".chat-message-cite"), null);
 });
 
 test("native selection Copy also excludes code controls and duplicate KaTeX trees", async () => {

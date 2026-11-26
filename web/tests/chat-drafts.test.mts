@@ -171,6 +171,20 @@ test("a reply sends its quote, shows a chip, and a failed send restores both wit
   assert.equal(sends[1].command.text, "My answer");
 });
 
+test("Cite adds the selection as a blockquote after the draft, with the caret and focus after it", async () => {
+  const citeTo = { current: null };
+  await runtime.act(async () => root.render([runtime.createElement(runtime.Composer, { key: "composer", bot, threadId: bot.mainThreadId, citeTo, working: false })]));
+  await type("My draft");
+  await runtime.act(async () => citeTo.current("First line\r\n\n  second line  "));
+  assert.equal(textarea().value, "My draft\n\n> First line\n>\n>   second line\n\n");
+  assert.equal(document.activeElement, textarea());
+  assert.equal(textarea().selectionStart, textarea().value.length);
+  await runtime.act(async () => citeTo.current("   "));
+  assert.equal(textarea().value, "My draft\n\n> First line\n>\n>   second line\n\n", "an empty selection adds nothing");
+  await click(send());
+  assert.equal(sends[0].command.text, "My draft\n\n> First line\n>\n>   second line");
+});
+
 test("same-turn duplicate send events dispatch a payload once", async () => {
   await render(); await type("Send once");
   const button = send(); await runtime.act(async () => { button.click(); button.click(); });
