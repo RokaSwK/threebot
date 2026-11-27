@@ -81,6 +81,7 @@ import { createEventStream } from "./routes/events.mts";
 import { createAuthRoutes } from "./routes/auth.mts";
 import { createBotRoutes } from "./routes/bots.mts";
 import { createMachineRoutes } from "./routes/machines.mts";
+import { createWebhookRoutes } from "./routes/webhooks.mts";
 import type { HttpError } from "./routes/router.mts";
 import { createDatabase } from "./db.mts";
 import { createT3Adapter } from "./t3-adapter.mts";
@@ -1406,6 +1407,14 @@ const machineRoutes = () => (cachedMachineRoutes ??= createMachineRoutes({
   readBody,
   requireJson,
 }));
+let cachedWebhookRoutes: ReturnType<typeof createWebhookRoutes> | null = null;
+const webhookRoutes = () => (cachedWebhookRoutes ??= createWebhookRoutes({
+  webhookToken: process.env.THREEBOT_WEBHOOK_TOKEN?.trim() || undefined,
+  authed,
+  runRoutine: (id) => t3Adapter.call("scheduledTasks.runNow", { id }),
+  recordAudit: (entry) => { try { db.recordAudit(entry); } catch { /* best effort */ } },
+  send,
+}));
 
 // A server request always has its url and method.
 const server = http.createServer(async (req, res) => {
@@ -1431,6 +1440,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 403, { error: "cross-site request refused" });
     }
     if (await authRoutes.handle(req, res, url)) return;
+    if (await webhookRoutes().handle(req, res, url)) return;
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
     if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, resolveAuth: resolveMcpAuth, readBody });
 
