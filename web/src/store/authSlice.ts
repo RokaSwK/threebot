@@ -8,7 +8,7 @@ import { get, keepBoot, set, storeShared } from "./context";
 import { startGatewayEvents } from "./events";
 import { refreshBots, refreshRoutineAlerts, subscribeTasks } from "./botsSlice";
 import { hydrateRooms, loadRoom, loadRooms, selectRoom } from "./roomsSlice";
-import { flushCache, loadArchivedThreads, resubscribeThreads, subscribeShell } from "./threadsSlice";
+import { flushCache, flushPendingOutbox, loadArchivedThreads, resubscribeThreads, subscribeShell } from "./threadsSlice";
 import { openBotMap } from "./uiSlice";
 
 let booted = false;
@@ -194,6 +194,7 @@ function startRuntime() {
     void refreshBots();
     resyncRooms();
     void loadMachines();
+    void flushPendingOutbox();
   });
   window.addEventListener("pageshow", wake);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCache(); });
