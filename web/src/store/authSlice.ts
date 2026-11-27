@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { clearOutbox } from "../lib/outbox";
 import { resetAssetCopies } from "../lib/assetCopies";
 import { allT3Clients, t3, threadKey, threadTarget } from "../lib/t3";
 import { clearCache, FORGET_CHANNEL, readBoot, stopCacheWrites, type CachedBoot } from "../lib/threadCache";
@@ -8,7 +9,7 @@ import { get, keepBoot, set, storeShared } from "./context";
 import { startGatewayEvents } from "./events";
 import { refreshBots, refreshRoutineAlerts, subscribeTasks } from "./botsSlice";
 import { hydrateRooms, loadRoom, loadRooms, selectRoom } from "./roomsSlice";
-import { flushCache, loadArchivedThreads, resubscribeThreads, subscribeShell } from "./threadsSlice";
+import { flushCache, flushPendingOutbox, loadArchivedThreads, resubscribeThreads, subscribeShell } from "./threadsSlice";
 import { openBotMap } from "./uiSlice";
 
 let booted = false;
@@ -173,6 +174,7 @@ function startRuntime() {
     void loadProviders();
     void loadArchivedThreads();
     resubscribeThreads();
+    void flushPendingOutbox();
   });
   const resyncRooms = () => {
     void loadRooms().catch(() => {});
@@ -194,6 +196,7 @@ function startRuntime() {
     void refreshBots();
     resyncRooms();
     void loadMachines();
+    void flushPendingOutbox();
   });
   window.addEventListener("pageshow", wake);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCache(); });
@@ -246,6 +249,7 @@ function stopSaving() {
   for (const timer of storeShared.cacheTimers.values()) clearTimeout(timer);
   storeShared.cacheTimers.clear();
   stopCacheWrites();
+  clearOutbox();
   resetAssetCopies();
 }
 

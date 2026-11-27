@@ -234,3 +234,38 @@ export function accountsFromBuckets(buckets: unknown, home: string = homedir()):
   }
   return [...totals.values()];
 }
+
+export type UsageBudget = {
+  maxTokens?: number | null;
+  maxCostUsd?: number | null;
+  warnRatio?: number;
+  autoPause?: boolean;
+};
+
+export type BudgetEvaluation = {
+  state: "ok" | "warning" | "exceeded";
+  shouldAutoPause: boolean;
+  reason: string | null;
+};
+
+/** Evaluates current usage against an optional token or USD budget for soft warnings and circuit-breaking. */
+export function evaluateBudget(
+  totals: { tokens: number; costUsd: number },
+  budget?: UsageBudget | null,
+): BudgetEvaluation {
+  if (!budget) return { state: "ok", shouldAutoPause: false, reason: null };
+  const warnRatio = typeof budget.warnRatio === "number" && budget.warnRatio > 0 && budget.warnRatio < 1 ? budget.warnRatio : 0.8;
+  const checks: Array<{ ratio: number; label: string }> = [];
+  if (typeof budget.maxTokens === "number" && budget.maxTokens > 0) {
+    checks.push({ ratio: totals.tokens / budget.maxTokens, label: `token budget (${totals.tokens.toLocaleString()} / ${budget.maxTokens.toLocaleString()})` });
+  }
+  if (typeof budget.maxCostUsd === "number" && budget.maxCostUsd > 0) {
+    checks.push({ ratio: totals.costUsd / budget.maxCostUsd, label: `cost budget ($${totals.costUsd.toFixed(2)} / $${budget.maxCostUsd.toFixed(2)})` });
+  }
+  const worst = checks.sort((a, b) => b.ratio - a.ratio)[0];
+  if (!worst || worst.ratio < warnRatio) return { state: "ok", shouldAutoPause: false, reason: null };
+  if (worst.ratio >= 1) {
+    return { state: "exceeded", shouldAutoPause: budget.autoPause === true, reason: `Exceeded ${worst.label}` };
+  }
+  return { state: "warning", shouldAutoPause: false, reason: `Approaching ${worst.label}` };
+}

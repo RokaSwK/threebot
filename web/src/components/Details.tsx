@@ -11,6 +11,7 @@ import { MemoryTab } from "./Memory";
 import { InstructionsTab } from "./Instructions";
 import { ThreadFamily } from "./ThreadFamily";
 import { SideChatList } from "./SideChat";
+import { AuditTimeline } from "./AuditTimeline";
 import { subagentStatus, threadIdentity } from "../lib/threadFamily";
 import { AvatarEditorDialog } from "./AvatarEditor";
 import { IconButton, Pill, Switch } from "./ui";
@@ -328,7 +329,8 @@ function DetailsTab({ bot, tasks, onOpenRoutine, onCreate, routinesOnly }: { bot
           <Folder size={13} className="shrink-0" />
           <span className="truncate" title={bot.workspaceRoot}>{bot.workspaceRoot}</span>
         </div>
-      </Section></>}
+      </Section>
+      <AuditTimeline bot={bot} /></>}
     </>
   );
 }

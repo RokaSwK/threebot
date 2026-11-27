@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { FileText, Grid2x2Plus, Clock, MessageSquareText, Search, X } from "lucide-react";
+import { FileText, Grid2x2Plus, Clock, MessageSquareText, Search, Sparkles, X } from "lucide-react";
 import { Avatar, GroupAvatar } from "./Avatar";
 import { Modal } from "./ui";
-import { botReferenceKey, navigateSearchHit, openDialog, selectThread, showRoom, toast, useApp, type SearchFilter } from "../store";
+import { botReferenceKey, navigateSearchHit, openBotMap, openDialog, openProjects, saveSettings, selectThread, showRoom, toast, useApp, type SearchFilter } from "../store";
 import { t3 } from "../lib/t3";
 import { executorApi, type ExecutorApp } from "../lib/executor";
 import { WorkspaceResourceViewer } from "./WorkspaceResource";
@@ -21,7 +21,8 @@ type Result =
   | { kind: "message"; key: string; bot: Bot; detail: string; threadId: string; messageId?: string }
   | { kind: "file"; key: string; bot: Bot; title: string; detail: string; path: string }
   | { kind: "app"; key: string; title: string; detail: string }
-  | { kind: "routine"; key: string; bot: Bot; title: string; detail: string };
+  | { kind: "routine"; key: string; bot: Bot; title: string; detail: string }
+  | { kind: "action"; key: string; title: string; detail: string; run: () => void };
 
 export function SearchDialog() {
   const bots = useApp((s) => s.bots);
@@ -108,6 +109,18 @@ export function SearchDialog() {
     }
     if (filter === "All" || filter === "Files") found.push(...files);
     if (filter === "All" || filter === "Apps") for (const app of apps) if (matching(app.name)) found.push({ kind: "app", key: `app:${app.id}`, title: app.name, detail: app.status === "connected" || app.status === "ready" ? "Installed app" : "Connection needed" });
+    if (filter === "All" && needle) {
+      const actions: Array<{ id: string; title: string; detail: string; run: () => void }> = [
+        { id: "new-bot", title: "Create New Bot", detail: "Action · New Bot dialog", run: () => openDialog("new-bot") },
+        { id: "projects", title: "Open Projects Board", detail: "Action · Projects page", run: () => { openDialog(null); openProjects(); } },
+        { id: "map", title: "Open Bot Map", detail: "Action · Bot Map", run: () => { openDialog(null); openBotMap(); } },
+        { id: "settings", title: "Open Settings", detail: "Action · Settings", run: () => openDialog("settings") },
+        { id: "auto-review", title: "Toggle Auto-review", detail: "Action · Permissions", run: () => { const cur = useApp.getState().settings?.autoReview !== false; openDialog(null); void saveSettings({ autoReview: !cur }); toast(cur ? "Auto-review off" : "Auto-review on"); } },
+      ];
+      for (const action of actions) {
+        if (matching(action.title) || matching(action.detail)) found.push({ kind: "action", key: `action:${action.id}`, title: action.title, detail: action.detail, run: action.run });
+      }
+    }
     return found;
   }, [bots, rooms, historicalBots, previews, tasks, matches, files, apps, filter, needle]);
 
@@ -123,6 +136,7 @@ export function SearchDialog() {
 
   useEffect(() => { resultsRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [i]);
   const go = (result: Result) => {
+    if (result.kind === "action") { result.run(); return; }
     if (result.kind === "file") { setResource(result); return; }
     if (result.kind === "app") { openDialog("connect-apps"); return; }
     if (result.kind === "room") { showRoom(result.room.id); return; }
@@ -164,12 +178,12 @@ export function SearchDialog() {
         {!loading && results.length === 0 && <div className="grid h-full min-h-[120px] place-content-center justify-items-center gap-3 py-8 text-center text-[15px] text-muted"><Search size={28} aria-hidden="true" />No matches</div>}
         {results.map((r, idx) => (
           <button key={r.key} role="option" aria-selected={idx === i} onMouseEnter={() => setI(idx)} onClick={() => go(r)} className={clsx("flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left", idx === i && "bg-active")}>
-            {r.kind === "room" ? <GroupAvatar members={r.room.members} size={30} /> : r.kind === "app" || r.kind === "file" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted">{r.kind === "file" ? <FileText size={16}/> : <Grid2x2Plus size={16}/>}</span> : r.kind === "routine" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted"><Clock size={16} /></span> : <Avatar shape={r.bot.shape} color={r.bot.color} picture={r.bot.avatarImage} size={30} />}
+            {r.kind === "room" ? <GroupAvatar members={r.room.members} size={30} /> : r.kind === "action" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted"><Sparkles size={16} /></span> : r.kind === "app" || r.kind === "file" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted">{r.kind === "file" ? <FileText size={16}/> : <Grid2x2Plus size={16}/>}</span> : r.kind === "routine" ? <span className="grid size-[30px] shrink-0 place-items-center rounded-full bg-hover text-muted"><Clock size={16} /></span> : <Avatar shape={r.bot.shape} color={r.bot.color} picture={r.bot.avatarImage} size={30} />}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[14px]">{r.kind === "room" ? r.room.name : "title" in r ? r.title : r.bot.name}</span>
               <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-muted">{r.kind === "message" && <MessageSquareText size={13} className="shrink-0" />}<span className="min-w-0 truncate">{r.detail}</span></span>
             </span>
-            <span className="text-[11.5px] text-faint">{r.kind === "bot" ? "Bot" : r.kind === "room" ? "Room" : r.kind === "message" ? "Message" : r.kind === "file" ? "File" : r.kind === "app" ? "App" : "Routine"}</span>
+            <span className="text-[11.5px] text-faint">{r.kind === "bot" ? "Bot" : r.kind === "room" ? "Room" : r.kind === "message" ? "Message" : r.kind === "file" ? "File" : r.kind === "app" ? "App" : r.kind === "action" ? "Action" : "Routine"}</span>
           </button>
         ))}
       </div>
