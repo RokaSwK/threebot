@@ -190,8 +190,18 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
     assert.deepEqual([badRoom.status, typeof badRoom.body.error], [400, 'string']);
     const badBot = await request('/api/push/presence', 'POST', { endpoint: 'https://push.example/sub', bot: '../../etc' });
     assert.equal(badBot.status, 400);
+    const rotation = await request('/api/bots/alpha/mcp-token/revoke', 'POST');
+    assert.equal(rotation.status, 200);
+    const rotatedMcp = JSON.parse(await readFile(path.join(botsRoot, 'alpha/.mcp.json'), 'utf8'));
+    const rotatedToken = String(rotatedMcp.mcpServers.bot.headers.Authorization).replace(/^Bearer\s+/u, '');
+    assert.notEqual(rotatedToken, alphaToken);
+    const listTools = { jsonrpc: '2.0', id: 1, method: 'tools/list' };
+    assert.ok((await mcp(rotatedToken, listTools)).result?.tools.length);
+    assert.equal((await mcp(alphaToken, listTools)).result, undefined);
     await stop();
     await start();
+    assert.ok((await mcp(rotatedToken, listTools)).result?.tools.length);
+    assert.equal((await mcp(alphaToken, listTools)).result, undefined);
     assert.deepEqual(main((await request('/api/bots')).body.bots), ['beta']);
     assert.equal((await request('/api/bots/alpha', 'DELETE')).status, 200);
     const archived = (await request('/api/bot-identities')).body.bots;

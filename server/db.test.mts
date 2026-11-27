@@ -8,7 +8,7 @@ import { createProjects } from "./projects.mts";
 import { createRooms } from "./rooms.mts";
 import { createRoutineHistory } from "./routine-history.mts";
 
-test("SQLite database enables WAL mode, migrates JSON files idempotently, and renames to .migrated", async () => {
+test("SQLite database enables WAL mode, migrates JSON files idempotently, and leaves rollback snapshots", async () => {
   const dir = mkdtempSync(path.join(tmpdir(), "threebot-db-"));
   try {
     mkdirSync(dir, { recursive: true });
@@ -45,10 +45,9 @@ test("SQLite database enables WAL mode, migrates JSON files idempotently, and re
     assert.equal(mode.journal_mode.toLowerCase(), "wal");
 
     db.migrateFromJson(dir);
-    assert.equal(existsSync(path.join(dir, "projects.json")), false);
-    assert.equal(existsSync(path.join(dir, "projects.json.migrated")), true);
-    assert.equal(existsSync(path.join(dir, "rooms.json.migrated")), true);
-    assert.equal(existsSync(path.join(dir, "routine-history.json.migrated")), true);
+    assert.equal(existsSync(path.join(dir, "projects.json")), true);
+    assert.equal(existsSync(path.join(dir, "rooms.json")), true);
+    assert.equal(existsSync(path.join(dir, "routine-history.json")), true);
 
     // Idempotent second run
     db.migrateFromJson(dir);
