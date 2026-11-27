@@ -84,6 +84,7 @@ import { createMachineRoutes } from "./routes/machines.mts";
 import type { HttpError } from "./routes/router.mts";
 import { createDatabase } from "./db.mts";
 import { createT3Adapter } from "./t3-adapter.mts";
+import { sandboxConfig } from "./sandbox.mts";
 
 /** A browser tab as T3's preview.list reports it; only the fields used here. */
 type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: string; title?: string } };
@@ -151,6 +152,7 @@ const cloudTranscription = createCloudTranscription({ file: path.join(path.dirna
 const events = createEventStream();
 const db = createDatabase(path.join(appDir, "threebot.db"));
 db.migrateFromJson(appDir);
+const sandbox = sandboxConfig();
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
 const projects = createProjects({ file: projectsFile, db });
@@ -578,8 +580,9 @@ async function getSettings() {
   const saved = (await readJson(settingsPath, {})) ?? {};
   return { ...DEFAULT_SETTINGS, ...saved, beta: betaSettings(saved.beta) };
 }
-/** Keep the "chats can give permissions" block in each provider's global instructions in step with the switch. */
+/** Keep the "chats can give permissions" block in each provider's global instructions in step with the switch (only when explicitly opted in via THREEBOT_ALLOW_GLOBAL_CONFIG=1). */
 async function syncChatPermissions(enabled: boolean) {
+  if (process.env.THREEBOT_ALLOW_GLOBAL_CONFIG !== "1") return;
   for (const result of await applyChatPermissions(enabled !== false)) {
     if (result.error) console.error(`chat permissions: couldn't update ${result.file}: ${result.error}`);
     else if (result.changed) console.log(`chat permissions: ${enabled !== false ? "added to" : "removed from"} ${result.file}`);
@@ -647,8 +650,9 @@ const saveBot = async (slug: string, patch: BotPatch) => {
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
 const codexTrustLines = (dir: string) => `[projects.${JSON.stringify(dir)}]\ntrust_level = "trusted"\n`;
-/** Trusts a Bot folder in Codex's global config. True when this call added it. */
+/** Trusts a Bot folder in Codex's global config when THREEBOT_ALLOW_GLOBAL_CONFIG=1 is set. */
 async function trustInCodex(dir: string) {
+  if (process.env.THREEBOT_ALLOW_GLOBAL_CONFIG !== "1") return false;
   const existing = await fs.readFile(codexGlobalConfig, "utf8").catch(() => "");
   const header = `[projects.${JSON.stringify(dir)}]`;
   if (existing.includes(header)) return false;
@@ -665,9 +669,15 @@ async function untrustInCodex(dir: string) {
   await fs.writeFile(codexGlobalConfig, existing.replace(`\n${lines}`, "").replace(lines, ""), { mode: 0o600 });
 }
 
+// Harnesses cache workspace MCP headers. Keep them valid across rewrites and restarts until an explicit rotation.
+const workspaceTokenKey = (slug: string) => `mcp:workspace_token:${slug}`;
+function workspaceToken(slug: string) {
+  const generation = db.getMeta(workspaceTokenKey(slug));
+  return tokenForBot(botMcpToken, generation === null ? slug : `${slug}:${generation}`);
+}
+
 async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot, executorApproval?: Bot['executorApproval']) {
-  // Every Bot gets its own tool server (the Vault and Projects); Executor when it's configured.
-  const botToken = tokenForBot(botMcpToken, slug);
+  const botToken = workspaceToken(slug);
   const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
   try {
     const elicitationMode = executorApproval === 'automatic' ? 'automatic' : executorApproval === 'ask' ? 'model' : undefined;
@@ -1173,11 +1183,11 @@ function combineExtras(...sources: (ExtraTools | null)[]): ExtraTools | null {
   };
 }
 
-/** Accept a Bot's own HMAC bearer, or the legacy shared bearer (Vault/Projects only). */
+/** Accept a Bot's workspace bearer or the legacy shared bearer. */
 async function resolveMcpAuth(raw: string): Promise<McpAuth | null> {
   if (tokenMatches(raw, botMcpToken)) return { botSlug: null, legacy: true };
   for (const bot of await listBots()) {
-    if (tokenMatches(raw, tokenForBot(botMcpToken, bot.slug))) return { botSlug: bot.slug, legacy: false };
+    if (tokenMatches(raw, workspaceToken(bot.slug))) return { botSlug: bot.slug, legacy: false };
   }
   return null;
 }
@@ -1191,7 +1201,18 @@ const botTools = createBotTools({
   typeIntoTab,
   secretsDir: cfg.t3SecretsDir,
   tokenDir: path.join(path.dirname(cfg.vaultKeyFile), "bot-secrets"),
-  log: (line) => console.log(line),
+  log: (line) => {
+    console.log(line);
+    const m = /^(\S+):\s+(\S+)\s*(.*)$/.exec(line);
+    try {
+      db.recordAudit({
+        botSlug: m?.[1] ?? null,
+        action: m?.[2] ?? "mcp.tool",
+        target: m?.[3] || null,
+        status: "ok",
+      });
+    } catch { /* best-effort audit */ }
+  },
   extra: async () => combineExtras((await projectsOn()) ? projectTools : null),
 });
 const projectRoutes = createProjectRoutes({ projects, send, readBody, requireJson, enabled: projectsOn, log: (line) => console.log(line), checkOrigin: (req) => sameOriginRequest(req, originPolicy) });
@@ -1430,7 +1451,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (await machineRoutes().handle(req, res, url)) return;
-    if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN) && !onTailnet(req, exposure), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null });
+    if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN) && !onTailnet(req, exposure), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null, sandbox: sandbox.mode });
+    if (p === "/api/audit" && req.method === "GET") {
+      const botSlug = url.searchParams.get("bot") ?? undefined;
+      const limit = Number(url.searchParams.get("limit") ?? 100);
+      const beforeId = url.searchParams.get("beforeId");
+      return send(res, 200, { entries: db.listAudit({ botSlug, limit, beforeId: beforeId ? Number(beforeId) : undefined }) }, { "cache-control": "no-store" });
+    }
+    const revokeTokenMatch = /^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/mcp-token\/revoke$/.exec(p);
+    if (revokeTokenMatch && req.method === "POST") {
+      const bot = await getBot(revokeTokenMatch[1]);
+      if (!bot) return send(res, 404, { error: "Bot not found" });
+      db.setMeta(workspaceTokenKey(bot.slug), randomUUID());
+      await writeAgentsMd(bot, await getSettings());
+      db.recordAudit({ botSlug: bot.slug, action: "mcp.token.rotate", status: "ok" });
+      return send(res, 200, { ok: true, revoked: 1 }, { "cache-control": "no-store" });
+    }
     if (p === "/api/executor" && req.method === 'GET') return send(res, 200, await executorStatus());
     if (p === "/api/executor/catalog" && req.method === 'GET') return send(res, 200, await executorClient().catalog(url.searchParams.get('search') ?? ''));
     if (p === "/api/executor/install" && req.method === 'POST') return send(res, 200, await executorClient().install(await readBody(req)));

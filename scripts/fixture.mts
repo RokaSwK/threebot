@@ -37,7 +37,7 @@ function macSandboxProfile(root: string, git: string | null = null) {
   }
   // The adopt scenario's gateway runs git (and only git) on the fixture's own repo.
   if (git) runtimeReads.push(path.resolve(path.dirname(git), '..'));
-  const subpaths = [root, serverDir, staticDir, '/System', '/usr/lib', ...runtimeReads];
+  const subpaths = [root, serverDir, sharedDir, staticDir, '/System', '/usr/lib', ...runtimeReads];
   return `(version 1)
 (allow default)
 (deny file-read-data)
@@ -56,7 +56,7 @@ ${git ? '' : '(deny process-fork)\n'}(deny process-exec)
 
 // An allowlist, never {...process.env}: ignore production URLs, tokens, NODE_OPTIONS,
 // proxy settings, CF Access, executors, T3_CLI, and the user's actual HOME.
-export function gatewayInvocation(root: string, port: number, t3Port: number, executorPort?: number, { git = false, releases = false }: { git?: boolean; releases?: boolean } = {}) {
+export function gatewayInvocation(root: string, port: number, t3Port: number, executorPort?: number, { git = false, releases = false, allowGlobalConfig = false }: { git?: boolean; releases?: boolean; allowGlobalConfig?: boolean } = {}) {
   if (executorPort !== undefined && (!Number.isInteger(executorPort) || executorPort < 1 || executorPort > 65535)) throw new Error('Invalid local Executor fixture port');
   if (!process.allowedNodeEnvironmentFlags.has('--permission')) throw new Error('Use Node >= 22.13 with --permission support.');
   const osSandbox = process.platform === 'darwin';
@@ -72,6 +72,7 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
       path.join(serverDir, 'gateway.mts')],
     env: {
       PATH: [path.dirname(process.execPath), ...(gitBinary ? [path.dirname(gitBinary)] : [])].join(path.delimiter),
+      ...(allowGlobalConfig ? { THREEBOT_ALLOW_GLOBAL_CONFIG: '1' } : {}),
       ...(gitBinary ? { GIT_CONFIG_NOSYSTEM: '1', XDG_CONFIG_HOME: path.join(root, 'home', '.config') } : {}),
       // os.homedir() reads USERPROFILE on Windows, HOME elsewhere.
       HOME: path.join(root, 'home'), USERPROFILE: path.join(root, 'home'), CODEX_HOME: path.join(root, 'codex'),
@@ -162,7 +163,7 @@ async function stopChild(child: ChildProcess | undefined) {
   try { await exited; } finally { clearTimeout(timer); }
 }
 
-export async function createFixture({ port = 0, scenario = 'basic', links }: { port?: number; scenario?: string; links?: FixtureLink[] } = {}) {
+export async function createFixture({ port = 0, scenario = 'basic', links, allowGlobalConfig = false }: { port?: number; scenario?: string; links?: FixtureLink[]; allowGlobalConfig?: boolean } = {}) {
   validateScenario(scenario);
   await access(path.join(staticDir, 'index.html')).catch(() => {
     throw new Error('Missing web/dist/index.html. Run npm ci --prefix web && npm run build --prefix web first.');
@@ -191,7 +192,7 @@ export async function createFixture({ port = 0, scenario = 'basic', links }: { p
     async restart() {
       if (closed) throw new Error('Fixture already closed');
       await stopChild(child);
-      const invocation = gatewayInvocation(root, gatewayPort, fake!.port, executor?.port, { git: scenario === 'adopt', releases: scenario === 'release-notes' });
+      const invocation = gatewayInvocation(root, gatewayPort, fake!.port, executor?.port, { git: scenario === 'adopt', releases: scenario === 'release-notes', allowGlobalConfig });
       child = spawn(invocation.command, invocation.args, { env: invocation.env, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
       logs = '';
       await new Promise<void>((resolve, reject) => {
