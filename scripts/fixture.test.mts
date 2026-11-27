@@ -1209,12 +1209,20 @@ test('with Beta → Settle Bot threads on, the gateway settles quiet Bot threads
   } finally { rpc?.close(); await fixture.close(); }
 });
 
-test('chats can give permissions: the gateway keeps the block in each provider\'s global instructions in step with the switch', { timeout: 30000 }, async () => {
+test('global provider configuration is left alone by default', async () => {
   const fixture = await createFixture();
+  try {
+    assert.equal(existsSync(path.join(fixture.root, 'codex', 'AGENTS.md')), false);
+    assert.equal(existsSync(path.join(fixture.root, 'home', '.claude', 'CLAUDE.md')), false);
+  } finally { await fixture.close(); }
+});
+
+test('chats can give permissions: the gateway keeps the block in each provider\'s global instructions in step with the switch', { timeout: 30000 }, async () => {
+  const fixture = await createFixture({ allowGlobalConfig: true });
   const codex = path.join(fixture.root, 'codex', 'AGENTS.md');
   const claude = path.join(fixture.root, 'home', '.claude', 'CLAUDE.md');
   try {
-    // On by default, written at startup, where the fixture's T3 providers read them (CODEX_HOME, HOME/.claude).
+    // With global writes enabled, the default block is written at startup where the fixture's T3 providers read them (CODEX_HOME, HOME/.claude).
     assert.equal((await fixture.request('/api/settings')).body.chatPermissions, true);
     for (const file of [codex, claude]) assert.match(await readFile(file, 'utf8'), /threebot:chat-permissions start[\s\S]*carry the user's permission[\s\S]*threebot:chat-permissions end/);
     assert.equal((await fixture.request('/api/settings', 'PUT', { chatPermissions: 'yes' })).status, 400);

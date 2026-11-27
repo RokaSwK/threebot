@@ -31,6 +31,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $bundle "app"), (Join-Path 
 # The app: the gateway with its dependencies, and the built web app.
 $copy = @{
   "server"        = "app\server"
+  "shared"        = "app\shared"
   "web\dist"      = "app\web\dist"
   "assets"        = "app\assets"
 }
