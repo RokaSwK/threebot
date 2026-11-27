@@ -1,4 +1,5 @@
 import { api } from "../lib/api";
+import { clearOutbox } from "../lib/outbox";
 import { resetAssetCopies } from "../lib/assetCopies";
 import { allT3Clients, t3, threadKey, threadTarget } from "../lib/t3";
 import { clearCache, FORGET_CHANNEL, readBoot, stopCacheWrites, type CachedBoot } from "../lib/threadCache";
@@ -173,6 +174,7 @@ function startRuntime() {
     void loadProviders();
     void loadArchivedThreads();
     resubscribeThreads();
+    void flushPendingOutbox();
   });
   const resyncRooms = () => {
     void loadRooms().catch(() => {});
@@ -247,6 +249,7 @@ function stopSaving() {
   for (const timer of storeShared.cacheTimers.values()) clearTimeout(timer);
   storeShared.cacheTimers.clear();
   stopCacheWrites();
+  clearOutbox();
   resetAssetCopies();
 }
 

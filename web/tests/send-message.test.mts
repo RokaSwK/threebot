@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 // Bundle the real store with the app's compiler, including its TypeScript-only syntax.
 const storeUrl = fileURLToPath(new URL("../src/store.ts", import.meta.url));
+const threadsUrl = fileURLToPath(new URL("../src/store/threadsSlice.ts", import.meta.url));
 const t3Url = fileURLToPath(new URL("../src/lib/t3.ts", import.meta.url));
 const bundle = await buildOnce({
   configFile: false,
@@ -13,7 +14,7 @@ const bundle = await buildOnce({
     name: "send-message-test-entry",
     resolveId: (id) => id.endsWith("virtual:send-message-test") ? "\0send-message-test" : undefined,
     load: (id) => id === "\0send-message-test"
-      ? `export { sendMessage, useApp } from ${JSON.stringify(storeUrl)}; export { t3 } from ${JSON.stringify(t3Url)};`
+      ? `export { sendMessage, useApp } from ${JSON.stringify(storeUrl)}; export { flushPendingOutbox } from ${JSON.stringify(threadsUrl)}; export { t3 } from ${JSON.stringify(t3Url)};`
       : undefined,
   }],
   ssr: { noExternal: true },
@@ -21,8 +22,8 @@ const bundle = await buildOnce({
 });
 const entry = entryChunk(bundle);
 assert.ok(entry, "test bundle has an entry point");
-globalThis.localStorage = { getItem: () => null } as unknown as Storage;
-const { sendMessage, useApp, t3 } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString("base64")}`);
+globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} } as unknown as Storage;
+const { sendMessage, flushPendingOutbox, useApp, t3 } = await import(`data:text/javascript;base64,${Buffer.from(entry.code).toString("base64")}`);
 
 beforeEach(() => {
   mock.restoreAll();
@@ -93,4 +94,32 @@ test("text steering retains Ultrathink", async () => {
   const dispatch = captureDispatch();
   await sendMessage("roka", "Think through this");
   assertSteeringCommand(dispatch, "main", "Ultrathink: Think through this");
+});
+
+
+test("a reconnect delivers queued messages once, including messages queued during a send", async () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { setTimeout: () => 0, clearTimeout: () => {} } });
+  const saved = new Map<string, string>();
+  mock.method(localStorage, "getItem", (key: string) => saved.get(key) ?? null);
+  mock.method(localStorage, "setItem", (key: string, value: string) => { saved.set(key, value); });
+  mock.method(localStorage, "removeItem", (key: string) => { saved.delete(key); });
+  const dispatch = mock.method(t3, "dispatch", async ({ text }: { commandId: string; text: string }) => {
+    if (text === "first") {
+      useApp.setState({ offline: true });
+      await sendMessage("roka", "second", [], "main", "message-2");
+      useApp.setState({ offline: false });
+    }
+    return { sequence: 1 };
+  });
+  useApp.setState({ offline: true, connection: "closed" });
+  await sendMessage("roka", "first", [], "main", "message-1");
+  assert.equal(await flushPendingOutbox(), 0);
+  assert.equal(dispatch.mock.callCount(), 0);
+  useApp.setState({ offline: false, connection: "open" });
+  await Promise.all([flushPendingOutbox(), flushPendingOutbox()]);
+  assert.deepEqual(dispatch.mock.calls.map(({ arguments: [command] }) => [command.commandId, command.text]), [["message-1", "first"], ["message-2", "second"]]);
+  assert.equal(await flushPendingOutbox(), 0);
+  if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+  else Reflect.deleteProperty(globalThis, "window");
 });

@@ -546,10 +546,14 @@ export async function sendMessage(slug: string, text: string, attachments: Attac
   if (!threadId) throw new Error("This Bot has no conversation yet");
   if (attachments.some((attachment) => attachment.environmentId !== threadTarget(threadId).environmentId)) throw new Error("Upload attachments to the conversation’s machine before sending");
   if ((typeof navigator !== "undefined" && navigator.onLine === false) || get().offline) {
-    queueOutboxMessage({ id: messageId, slug, threadId, text, attachments, fresh, queuedAt: Date.now() });
+    queueOutboxMessage({ id: messageId, threadId, text, attachments, fresh });
     toast("Offline — message queued and will send when connected");
     return;
   }
+  await dispatchMessage(threadId, text, attachments, messageId, fresh);
+}
+
+async function dispatchMessage(threadId: string, text: string, attachments: Attachment[], messageId: string, fresh: boolean) {
   const effort = get().threads[threadId]?.modelSelection?.options?.find((o) => o.id === "effort")?.value;
   const body = effort === "ultrathink" && text && !/^ultrathink:/i.test(text) ? `Ultrathink: ${text}` : text;
   await threadClient(threadId).dispatch({
@@ -561,7 +565,8 @@ export async function sendMessage(slug: string, text: string, attachments: Attac
 }
 
 export async function flushPendingOutbox() {
-  return flushOutbox((entry) => sendMessage(entry.slug, entry.text, entry.attachments, entry.threadId, entry.id, entry.fresh));
+  if (get().connection !== "open" || get().offline || navigator.onLine === false) return 0;
+  return flushOutbox((entry) => dispatchMessage(entry.threadId, entry.text, entry.attachments, entry.id, entry.fresh));
 }
 
 export async function interrupt(threadId: string) {
