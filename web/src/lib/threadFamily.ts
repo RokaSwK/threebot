@@ -1,4 +1,4 @@
-import config from "../../../server/avatar-config.json";
+import config from "../../../shared/avatar-config.json";
 import type { Bot, ThreadShell, TurnItem } from "./types";
 
 export type ThreadTarget =

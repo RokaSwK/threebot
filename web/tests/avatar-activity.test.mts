@@ -10,7 +10,7 @@ const bundle = await buildOnce({
   plugins: [{
     name: "avatar-activity-test-entry",
     resolveId: (id) => id.endsWith("virtual:avatar-activity-test") ? "\0avatar-activity-test" : undefined,
-    load: (id) => id === "\0avatar-activity-test" ? `export * from ${JSON.stringify(`${src}lib/avatarActivity.ts`)}; export { objectMood } from ${JSON.stringify(`${src}lib/objectAvatars.ts`)}; export { default as config } from ${JSON.stringify(`${src}../../server/avatar-config.json`)};` : undefined,
+    load: (id) => id === "\0avatar-activity-test" ? `export * from ${JSON.stringify(`${src}lib/avatarActivity.ts`)}; export { objectMood } from ${JSON.stringify(`${src}lib/objectAvatars.ts`)}; export { default as config } from ${JSON.stringify(`${src}../../shared/avatar-config.json`)};` : undefined,
   }],
   ssr: { noExternal: true },
   build: { ssr: "virtual:avatar-activity-test", write: false },

@@ -5,7 +5,7 @@ import type { AvatarDefinition } from "open-bot-avatar";
 import { Avatar } from "./Avatar";
 import { IconButton, Modal, Pill } from "./ui";
 import { avatarShape, botColor, DEFAULT_AVATAR, isCustomColor, PICKER_COLORS, PICKER_SHAPES } from "../lib/character";
-import { colorHex } from "../../../server/avatar-color.mts";
+import { colorHex } from "../../../shared/avatar-color.mts";
 import { ColorPicker } from "./ColorPicker";
 import { importDefinition, OBJECT_AVATARS, objectShape } from "../lib/objectAvatars";
 import type { Drawing, DrawingOption } from "../lib/avatarDrawing";

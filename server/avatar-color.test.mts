@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DOMParser } from "linkedom";
-import config from "./avatar-config.json" with { type: "json" };
-import { avatarColorPatch, avatarInk, colorHex, contrast, eyeInk, hexToHsv, hsvToHex, isAvatarColor, isCustomColor, NAMED_COLORS, normalizeHex, READABLE, SURFACES, textInk } from "./avatar-color.mts";
+import config from "../shared/avatar-config.json" with { type: "json" };
+import { avatarColorPatch, avatarInk, colorHex, contrast, eyeInk, hexToHsv, hsvToHex, isAvatarColor, isCustomColor, NAMED_COLORS, normalizeHex, READABLE, SURFACES, textInk } from "../shared/avatar-color.mts";
 import { renderBotAvatar } from "./bot-avatar.mts";
 import { renderAgentsMd } from "./bot-template.mts";
 import { objectEyeColor } from "./object-avatars.mts";

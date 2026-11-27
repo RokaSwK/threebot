@@ -268,10 +268,11 @@ export type CreateRoomInput = {
  * The rooms file: one writer, serialized, atomic (temp file + rename) and mode 0600.
  * Reads are cached in memory; every write replaces the cache.
  */
-export function createRooms({ file, now = () => new Date().toISOString(), newId = () => randomBytes(4).toString("hex") }: {
+export function createRooms({ file, now = () => new Date().toISOString(), newId = () => randomBytes(4).toString("hex"), onChange }: {
   file: string;
   now?: () => string;
   newId?: () => string;
+  onChange?: () => void;
 }) {
   let cache: RoomsFile | null = null;
   let queue: Promise<unknown> = Promise.resolve();
@@ -303,6 +304,7 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
     await fs.writeFile(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
     await fs.rename(tmp, file);
     cache = next;
+    onChange?.();
   }
 
   /** Every mutation runs after the previous one finished, so two writes cannot interleave. */

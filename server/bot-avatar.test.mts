@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { DOMParser } from "linkedom";
-import config from "./avatar-config.json" with { type: "json" };
+import config from "../shared/avatar-config.json" with { type: "json" };
 import { ensureBotFavicon, renderBotAvatar, syncBotProject } from "./bot-avatar.mts";
 
 test("the blob fills its icon instead of keeping the study playground's margins", () => {

@@ -21,14 +21,24 @@ const bundle = await buildOnce({ configFile: false, logLevel: 'silent', define: 
  load: id => id === '\0auth-boot' ? `export { createElement as h, act, StrictMode } from 'react'; export { createRoot } from 'react-dom/client'; export { default as App } from ${JSON.stringify(`${src}App.tsx`)}; export { boot, useApp } from ${JSON.stringify(`${src}store.ts`)}; export { api } from ${JSON.stringify(`${src}lib/api.ts`)}; export { t3 } from ${JSON.stringify(`${src}lib/t3.ts`)};` : undefined }],
  build: { ssr: 'virtual:auth-boot', write: false, rollupOptions: { output: { entryFileNames: 'entry.mjs', chunkFileNames: '[name]-[hash].mjs' } } } });
 for (const output of bundle.output) { const file = join(directory, output.fileName); await mkdir(dirname(file), { recursive: true }); await writeFile(file, output.type === 'chunk' ? output.code : output.source); }
-let serial = 0, app, root, host, handler, calls, runtime, intervals;
+let serial = 0, app, root, host, handler, calls, runtime, sources;
+class FakeEventSource {
+  url: string;
+  listeners = new Map<string, Array<() => void>>();
+  onerror: (() => void) | null = null;
+  constructor(url: string) { this.url = url; sources.push(this); }
+  addEventListener(type: string, fn: () => void) {
+    const list = this.listeners.get(type) ?? []; list.push(fn); this.listeners.set(type, list);
+  }
+  emit(type: string) { for (const fn of this.listeners.get(type) ?? []) fn(); }
+  close() {}
+}
+globalThis.EventSource = FakeEventSource as unknown as typeof EventSource;
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const deferred = () => Promise.withResolvers();
 const settings = { userName: 'Sample', theme: 'light', accent: 'bot', timezone: 'UTC', sections: [], autoReview: true, rules: { alwaysAsk: [], allowWithoutAsking: [] } };
-const originalInterval = window.setInterval;
 beforeEach(async () => {
- localStorage.clear(); calls = []; runtime = { states: 0, reconnects: 0, connects: 0 }; intervals = [];
- window.setInterval = (fn, delay) => { intervals.push({ fn, delay }); return intervals.length; };
+ localStorage.clear(); calls = []; runtime = { states: 0, reconnects: 0, connects: 0 }; sources = [];
  app = await import(`${pathToFileURL(join(directory, 'entry.mjs')).href}?test=${++serial}`);
  app.t3.onState = () => { runtime.states++; return () => {}; }; app.t3.onReconnect = () => { runtime.reconnects++; return () => {}; }; app.t3.connect = () => { runtime.connects++; };
  handler = async url => {
@@ -42,7 +52,7 @@ beforeEach(async () => {
  globalThis.fetch = async (url, init = {}) => { calls.push({ url, ...init }); return handler(url, init); };
  host = document.createElement('main'); document.body.append(host); root = app.createRoot(host);
 });
-afterEach(async () => { await app.act(async () => root.unmount()); host.remove(); window.setInterval = originalInterval; });
+afterEach(async () => { await app.act(async () => root.unmount()); host.remove(); });
 after(async () => { for (const channel of channels) { channel.port1.close(); channel.port2.close(); } await window.happyDOM.close(); await rm(directory, { recursive: true }); });
 const render = (strict = false) => app.act(async () => { root.render(strict ? app.h(app.StrictMode, {}, app.h(app.App)) : app.h(app.App)); await flush(); });
 const click = label => app.act(async () => { const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === label); assert.ok(b, label); b.click(); await flush(); });
@@ -72,10 +82,10 @@ test('an Access redirect on an expired session offers sign-in instead of a load 
  assert.equal(calls.find(c => c.url === '/api/session').redirect, 'manual');
 });
 test('a session that ends while the app is open offers sign-in', async () => {
- await render(); const refresh = intervals.find(i => i.delay === 5_000); assert.ok(refresh);
+ await render(); const events = sources.find(s => s.url === '/api/events'); assert.ok(events);
  const redirect = new Response(null, { status: 200 }); Object.defineProperty(redirect, 'type', { value: 'opaqueredirect' });
  handler = async url => { if (url === '/api/session') return redirect; throw new TypeError('Failed to fetch'); };
- await app.act(async () => { refresh.fn(); await flush(); await flush(); });
+ await app.act(async () => { events.emit('bots'); await flush(); await flush(); });
  assert.ok([...document.querySelectorAll('a')].some(e => e.textContent.trim() === 'Sign in with Cloudflare'));
 });
 for (const [next, expected] of [['%2F%3Fbot%3Dsample', '/?bot=sample'], ['https%3A%2F%2Fevil.example%2F', '/'], ['%2F%2Fevil.example%2F', '/']]) test(`returning from Cloudflare with next=${next} stays on this origin`, async () => {
@@ -97,13 +107,13 @@ test('failed bootstrap is caught and retry reaches ready without duplicate setup
  const original = handler; let failing = true; handler = (url, init) => url === '/api/settings' && failing ? Promise.reject(new Error('private settings failure')) : original(url, init);
  await app.act(async () => { await app.boot(); }); await render(); assert.match(document.body.textContent, /Couldn't load Bot/); assert.equal(runtime.connects, 0);
  failing = false; await click('Try again'); assert.equal(app.useApp.getState().auth, 'ready'); assert.match(document.body.textContent, /Meet your first Bot/);
- await app.boot(); assert.deepEqual(runtime, { states: 1, reconnects: 1, connects: 1 }); assert.equal(intervals.filter(i => i.delay === 5000).length, 1);
+ await app.boot(); assert.deepEqual(runtime, { states: 1, reconnects: 1, connects: 1 }); assert.equal(sources.filter(s => s.url === '/api/events').length, 1);
 });
 test('overlapping boot and StrictMode mounts share startup', async () => {
  const wait = deferred(), original = handler; handler = (url, init) => url === '/api/session' ? wait.promise : original(url, init);
  const first = app.boot(), second = app.boot(); await render(true); assert.equal(calls.filter(c => c.url === '/api/session').length, 1);
  await app.act(async () => { wait.resolve(Response.json({ authenticated: true, passwordRequired: false, accessLogin: true })); await Promise.all([first, second]); await flush(); });
- assert.equal(app.useApp.getState().auth, 'ready'); assert.deepEqual(runtime, { states: 1, reconnects: 1, connects: 1 }); assert.equal(calls.filter(c => c.url === '/api/config').length, 1); assert.equal(intervals.filter(i => i.delay === 5000).length, 1);
+ assert.equal(app.useApp.getState().auth, 'ready'); assert.deepEqual(runtime, { states: 1, reconnects: 1, connects: 1 }); assert.equal(calls.filter(c => c.url === '/api/config').length, 1); assert.equal(sources.filter(s => s.url === '/api/events').length, 1);
 });
 
 

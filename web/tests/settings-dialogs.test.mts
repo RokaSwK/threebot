@@ -7,7 +7,7 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import { Window } from "happy-dom";
 import { buildOnce, domWindow, entryChunk, isModule } from "./support.mts";
 import { MessageChannel } from "node:worker_threads";
-import avatarConfig from "../../server/avatar-config.json" with { type: "json" };
+import avatarConfig from "../../shared/avatar-config.json" with { type: "json" };
 import { fileURLToPath } from "node:url";
 
 // React act's browser fallback creates Node message ports in this bundled test.

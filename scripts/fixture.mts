@@ -21,6 +21,7 @@ import { startFakeExecutor } from './fixture-executor.mts';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const serverDir = path.join(repo, 'server');
+const sharedDir = path.join(repo, 'shared');
 const staticDir = path.join(repo, 'web', 'dist');
 // The version the gateway reports (package.json), for the release-notes scenario's releases.
 const packageVersion: string = JSON.parse(readFileSync(path.join(repo, 'package.json'), 'utf8')).version;
@@ -64,7 +65,7 @@ export function gatewayInvocation(root: string, port: number, t3Port: number, ex
     command: osSandbox ? '/usr/bin/sandbox-exec' : process.execPath,
     isolation: osSandbox ? 'macos-sandbox' : 'node-permissions',
     args: [...(osSandbox ? ['-p', macSandboxProfile(root, gitBinary), process.execPath] :
-      ['--permission', `--allow-fs-read=${serverDir}`, `--allow-fs-read=${staticDir}`,
+      ['--permission', `--allow-fs-read=${serverDir}`, `--allow-fs-read=${sharedDir}`, `--allow-fs-read=${staticDir}`,
       `--allow-fs-read=${root}`, `--allow-fs-write=${root}`,
       ...(gitBinary ? ['--allow-child-process'] : []),
       ...['--allow-net', '--allow-addons'].filter((flag) => process.allowedNodeEnvironmentFlags.has(flag))]),

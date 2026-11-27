@@ -53,7 +53,7 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
   writeInstructions?: (bot: Bot, text: string) => Promise<unknown>;
 }) {
   let client: T3Client | null = null;
-  let busy = false;
+  let inFlight: Promise<void> | null = null;
 
   async function connect() {
     if (client) return client;
@@ -67,8 +67,6 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
   }
 
   async function tick() {
-    if (busy) return;
-    busy = true;
     try {
       const bots = await listBots();
       const c = await connect();
@@ -97,8 +95,6 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
       console.error("[provisioner]", (err as Error).message ?? err);
       try { client?.close(); } catch {}
       client = null;
-    } finally {
-      busy = false;
     }
   }
 
@@ -158,13 +154,19 @@ export function startProvisioner({ t3Url, token, listBots, saveBot, getSettings,
     await saveBot(bot.slug, { brief: null, pendingBrief: null });
   }
 
-  let running: Promise<void> | null = null;
+  function runTick() {
+    if (inFlight) return inFlight;
+    const p = tick().finally(() => {
+      if (inFlight === p) inFlight = null;
+    });
+    inFlight = p;
+    return p;
+  }
   const runNow = async () => {
-    while (busy) await new Promise((r) => setTimeout(r, 100));
-    running = tick();
-    await running;
+    if (inFlight) await inFlight;
+    await runTick();
   };
-  const timer = setInterval(tick, intervalMs);
-  tick();
+  const timer = setInterval(() => { void runTick(); }, intervalMs);
+  void runTick();
   return { stop: () => clearInterval(timer), runNow };
 }
