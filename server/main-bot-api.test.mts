@@ -217,7 +217,6 @@ test('gateway main-Bot endpoints persist replacement and reject unsafe hides/del
 
 test('gateway shares one archived-project fetch between roster reads and retries a failure', async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), 'main-bot-cache-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
   const botsRoot = await seedBots(root);
   let projectReads = 0;
   const t3 = http.createServer((req, res) => {
@@ -229,10 +228,13 @@ test('gateway shares one archived-project fetch between roster reads and retries
   });
   t3.listen(0, '127.0.0.1');
   await once(t3, 'listening');
-  t.after(() => new Promise<void>((resolve) => { t3.close(() => resolve()); t3.closeAllConnections(); }));
   const { port } = t3.address() as net.AddressInfo;
   const app = await gateway(root, `http://127.0.0.1:${port}`);
-  t.after(app.stop);
+  t.after(async () => {
+    await app.stop();
+    await new Promise<void>((resolve) => { t3.close(() => resolve()); t3.closeAllConnections(); });
+    await rm(root, { recursive: true, force: true });
+  });
   await app.start();
   assert.equal((await app.request('/api/bots')).status, 200);
   const profile = path.join(botsRoot, 'beta/.bot/bot.json');
