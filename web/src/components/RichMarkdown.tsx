@@ -54,7 +54,7 @@ function textOfNode(node: ReactNode): string {
   return "";
 }
 
-function RichTable({ children, ...props }: ComponentPropsWithoutRef<"table"> & ExtraProps) {
+function RichTable({ children, node: _node, ...props }: ComponentPropsWithoutRef<"table"> & ExtraProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
   const parts = Children.toArray(children);
