@@ -879,21 +879,24 @@ function startMemoryWatcher() {
     debounceTimer.unref?.();
   };
 
-  try {
-    const rootWatcher = watch(cfg.botsRoot, { recursive: true }, (_event, filename) => {
-      if (!filename || /(?:memory|AGENTS\.override\.md|AGENTS\.md|INSTRUCTIONS\.md|shared-memory\.md)/i.test(String(filename))) {
-        schedule();
-      }
-    });
-    rootWatcher.unref();
-  } catch {
-    // Some platforms/filesystems do not support recursive fs.watch; fallback reconcile below covers them.
+  // On Windows a recursive watch holds directory handles, so moving a Bot to trash can fail.
+  if (process.platform !== "win32") {
+    try {
+      const rootWatcher = watch(cfg.botsRoot, { recursive: true }, (_event, filename) => {
+        if (!filename || /(?:memory|AGENTS\.override\.md|AGENTS\.md|INSTRUCTIONS\.md|shared-memory\.md)/i.test(String(filename))) {
+          schedule();
+        }
+      });
+      rootWatcher.on("error", () => rootWatcher.close());
+      rootWatcher.unref();
+    } catch {
+      // Recursive notifications are unavailable on some filesystems.
+    }
   }
 
-  // Fallback reconcile for adopted projects outside botsRoot or missed fs.watch events.
-  const fallback = setInterval(() => void reconcile(), 60_000);
+  // Reconcile adopted projects outside botsRoot or missed notifications. Startup already refreshes every Bot.
+  const fallback = setInterval(() => void reconcile(), process.platform === "win32" ? 3_000 : 60_000);
   fallback.unref();
-  void reconcile();
 }
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
