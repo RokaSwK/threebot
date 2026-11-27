@@ -2,7 +2,7 @@
 // `object:<id>`, naming a gallery object or the Bot's own `avatarDefinition`. Definitions can be
 // written by agents and reach innerHTML in the renderer, so nothing is used until it validates.
 import { readFileSync } from "node:fs";
-import { contrast } from "./avatar-color.mts";
+import { contrast } from "../shared/avatar-color.mts";
 import { renderAvatarSvg, validateAvatar, type AvatarDefinition } from "open-bot-avatar";
 
 export const OBJECT_PREFIX = "object:";

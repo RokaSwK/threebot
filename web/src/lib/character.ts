@@ -1,5 +1,5 @@
-import config from "../../../server/avatar-config.json";
-import { avatarInk, contrast, isCustomColor, isNamedColor, NAMED_COLORS, normalizeHex, textInk } from "../../../server/avatar-color.mts";
+import config from "../../../shared/avatar-config.json";
+import { avatarInk, contrast, isCustomColor, isNamedColor, NAMED_COLORS, normalizeHex, textInk } from "../../../shared/avatar-color.mts";
 import { cutoutEyes } from "../../../server/avatar-eyes.mts";
 import { decorateT3Avatar } from "../../../server/avatar-t3.mts";
 import { Character as Engine } from "../../../server/character.mts";

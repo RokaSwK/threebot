@@ -29,6 +29,7 @@ writeFileSync(path.join(stage, "package.json"), JSON.stringify({ ...pkg, version
 // The server without its tests or anything installed or generated locally.
 const skip = (src: string) => /node_modules|\.test\.mts$|\.t3-token$|\.env$/.test(src);
 cpSync(path.join(root, "server"), path.join(stage, "server"), { recursive: true, filter: (src) => !skip(path.relative(root, src)) });
+cpSync(path.join(root, "shared"), path.join(stage, "shared"), { recursive: true, filter: (src) => !skip(path.relative(root, src)) });
 const serverPkg = JSON.parse(readFileSync(path.join(stage, "server", "package.json"), "utf8"));
 writeFileSync(path.join(stage, "server", "package.json"), JSON.stringify({ ...serverPkg, version }, null, 2) + "\n");
 cpSync(path.join(root, "web", "dist"), path.join(stage, "web", "dist"), { recursive: true });

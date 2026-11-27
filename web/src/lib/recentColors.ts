@@ -1,4 +1,4 @@
-import { normalizeHex } from "../../../server/avatar-color.mts";
+import { normalizeHex } from "../../../shared/avatar-color.mts";
 
 const RECENT_KEY = "bot.avatar.recentColors";
 const RECENT_MAX = 8;

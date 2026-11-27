@@ -16,5 +16,5 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["*.mts", "../scripts/*.mts"]
+  "include": ["*.mts", "routes/*.mts", "../shared/*.mts", "../scripts/*.mts"]
 }

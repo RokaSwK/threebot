@@ -3,7 +3,7 @@
 // including the Beta switches (the Projects board section is only there while that beta is on).
 
 import { OBJECT_AVATAR_IDS } from "./object-avatars.mts";
-import { NAMED_COLORS } from "./avatar-color.mts";
+import { NAMED_COLORS } from "../shared/avatar-color.mts";
 import { renderMemoryBlock, type MemorySnapshot } from "./memory.mts";
 import { desktopLines, type Desktop } from "./desktop.mts";
 

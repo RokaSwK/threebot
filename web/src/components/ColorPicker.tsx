@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { Pipette } from "lucide-react";
-import { hexToHsv, hsvToHex, normalizeHex } from "../../../server/avatar-color.mts";
+import { hexToHsv, hsvToHex, normalizeHex } from "../../../shared/avatar-color.mts";
 import { recentColors } from "../lib/recentColors";
 import "./color-picker.css";
 
