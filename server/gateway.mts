@@ -84,7 +84,6 @@ import { createMachineRoutes } from "./routes/machines.mts";
 import type { HttpError } from "./routes/router.mts";
 import { createDatabase } from "./db.mts";
 import { createT3Adapter } from "./t3-adapter.mts";
-import { createMcpTokenBroker } from "./mcp-token-broker.mts";
 import { sandboxConfig } from "./sandbox.mts";
 
 /** A browser tab as T3's preview.list reports it; only the fields used here. */
@@ -153,7 +152,6 @@ const cloudTranscription = createCloudTranscription({ file: path.join(path.dirna
 const events = createEventStream();
 const db = createDatabase(path.join(appDir, "threebot.db"));
 db.migrateFromJson(appDir);
-const mcpTokens = createMcpTokenBroker();
 const sandbox = sandboxConfig();
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
@@ -671,10 +669,15 @@ async function untrustInCodex(dir: string) {
   await fs.writeFile(codexGlobalConfig, existing.replace(`\n${lines}`, "").replace(lines, ""), { mode: 0o600 });
 }
 
+// Harnesses cache workspace MCP headers. Keep them valid across rewrites and restarts until an explicit rotation.
+const workspaceTokenKey = (slug: string) => `mcp:workspace_token:${slug}`;
+function workspaceToken(slug: string) {
+  const generation = db.getMeta(workspaceTokenKey(slug));
+  return tokenForBot(botMcpToken, generation === null ? slug : `${slug}:${generation}`);
+}
+
 async function writeMcpConfig(dir: string, slug: string, adoption?: AdoptedBot, executorApproval?: Bot['executorApproval']) {
-  // Every Bot gets a short-lived, revocable brokered token for its own tool server.
-  mcpTokens.revokeBot(slug);
-  const botToken = mcpTokens.issue(slug).token;
+  const botToken = workspaceToken(slug);
   const servers: Record<string, McpServer> = { bot: { type: 'http', url: cfg.botMcpUrl, headers: { Authorization: `Bearer ${botToken}` } } };
   try {
     const elicitationMode = executorApproval === 'automatic' ? 'automatic' : executorApproval === 'ask' ? 'model' : undefined;
@@ -1177,13 +1180,11 @@ function combineExtras(...sources: (ExtraTools | null)[]): ExtraTools | null {
   };
 }
 
-/** Accept a short-lived brokered token, a Bot's HMAC bearer, or the legacy shared bearer. */
+/** Accept a Bot's workspace bearer or the legacy shared bearer. */
 async function resolveMcpAuth(raw: string): Promise<McpAuth | null> {
-  const brokered = mcpTokens.verify(raw);
-  if (brokered) return { botSlug: brokered.botSlug, legacy: false };
   if (tokenMatches(raw, botMcpToken)) return { botSlug: null, legacy: true };
   for (const bot of await listBots()) {
-    if (tokenMatches(raw, tokenForBot(botMcpToken, bot.slug))) return { botSlug: bot.slug, legacy: false };
+    if (tokenMatches(raw, workspaceToken(bot.slug))) return { botSlug: bot.slug, legacy: false };
   }
   return null;
 }
@@ -1458,10 +1459,10 @@ const server = http.createServer(async (req, res) => {
     if (revokeTokenMatch && req.method === "POST") {
       const bot = await getBot(revokeTokenMatch[1]);
       if (!bot) return send(res, 404, { error: "Bot not found" });
-      const revoked = mcpTokens.revokeBot(bot.slug);
+      db.setMeta(workspaceTokenKey(bot.slug), randomUUID());
       await writeAgentsMd(bot, await getSettings());
-      db.recordAudit({ botSlug: bot.slug, action: "mcp.token.rotate", status: "ok", details: { revoked } });
-      return send(res, 200, { ok: true, revoked }, { "cache-control": "no-store" });
+      db.recordAudit({ botSlug: bot.slug, action: "mcp.token.rotate", status: "ok" });
+      return send(res, 200, { ok: true, revoked: 1 }, { "cache-control": "no-store" });
     }
     if (p === "/api/executor" && req.method === 'GET') return send(res, 200, await executorStatus());
     if (p === "/api/executor/catalog" && req.method === 'GET') return send(res, 200, await executorClient().catalog(url.searchParams.get('search') ?? ''));
