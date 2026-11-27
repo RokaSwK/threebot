@@ -59,6 +59,13 @@ test('unmatched async answers and ordinary text are preserved',()=>{
  const unrelated=item({id:'other-question',type:'user_input_request',questionAnswer:{requestId:'other-request',answers:{choice:'Keep this answer'}}});
  assert.deepEqual(buildEntries([orphan,pending,unrelated],ctx).filter(e=>e.kind==='user').map(e=>e.text),['Keep this answer']);
 });
+test('a question still waiting for an answer stays at the end, below what the Bot posted after asking',()=>{
+ const asked=item({id:'asked',type:'user_input_request',requestId:'open-request',status:'waiting',ordinal:1,questions:[{id:'q',question:'Use these amounts?'}]});
+ const answeredQ=item({id:'answered',type:'user_input_request',requestId:'done-request',status:'completed',ordinal:2,questions:[{id:'q',question:'Earlier?'}]});
+ const after=item({id:'after',type:'assistant_message',text:'Here is the report',ordinal:3});
+ const requests={'open-request':{id:'open-request',kind:'user-input',status:'pending'},'done-request':{id:'done-request',kind:'user-input',status:'resolved'}};
+ assert.deepEqual(buildEntries([asked,answeredQ,after],{...ctx,requests}).filter(e=>e.kind!=='date').map(e=>e.id),['answered','after','asked']);
+});
 test('Executor activity keeps its connected-app identity across runtime namespaces',()=>{
  for(const toolName of ['mcp__executor__execute','mcp__executor__search','executor.call','executor.describe']){
   assert.deepEqual(workingPhrases([item({toolName,status:'running'})],'run'),['Working in a connected app']);

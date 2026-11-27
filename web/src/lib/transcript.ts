@@ -2,7 +2,7 @@ import { automatedMessage, type AutomatedMessage } from "./automatedMessage";
 import { REASONING_SELECT_DESCRIPTOR_IDS } from "./modelTraits";
 import type { Bot, ModelSelection, Run, RuntimeRequest, ScheduledTask, TurnItem } from "./types";
 import { botDelivery, shortToolName } from "./botMessages";
-import { findRequest, questionAnswerMessageId } from "./runtimeRequests";
+import { findRequest, questionAnswerMessageId, requestStatus } from "./runtimeRequests";
 import { parseReply } from "./reply";
 
 // Turns T3 turn items into chat entries: bubbles, cards and
@@ -311,7 +311,9 @@ export function buildEntries(items: TurnItem[], ctx: Ctx): Entry[] {
     const next = entries.findIndex((e) => "at" in e && e.at > report.at);
     entries.splice(next < 0 ? entries.length : next, 0, { kind: "routine-report", ...report, id: `routine-report:${report.id}` });
   }
-  return entries;
+  // A Bot can keep posting after it asks; an open question stays last so the user can find it.
+  const open = (e: Entry) => e.kind === "question" && requestStatus(e.item, e.request) === "pending";
+  return [...entries.filter((e) => !open(e)), ...entries.filter(open)];
 }
 
 /** A tool's output as text, whatever shape the runtime stored it in (escaped JSON included). */
