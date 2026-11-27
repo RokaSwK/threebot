@@ -5,7 +5,7 @@ import http, { type IncomingMessage, type OutgoingHttpHeaders, type ServerRespon
 import type { Socket } from "node:net";
 import type { Duplex } from "node:stream";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
-import { promises as fs, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { promises as fs, existsSync, readFileSync, watch, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,7 @@ import { createRoutineHistoryRoutes } from "./routine-history.mts";
 import { createRoutineAlertRoutes, createRoutinePrefs } from "./routine-alerts.mts";
 import { createPushNotifier, createPushStore, type PushPayload } from "./push.mts";
 import { objectAvatarPatch } from "./object-avatars.mts";
-import { avatarColorPatch } from "./avatar-color.mts";
+import { avatarColorPatch } from "../shared/avatar-color.mts";
 import { allowedOrigins, sameOriginRequest } from "./request-origin.mts";
 import { safeEqual } from "./safe-equal.mts";
 import { createAccessStore, createRemoteAccess } from "./remote-access.mts";
@@ -77,9 +77,12 @@ import { accountsFromBuckets, createUsageLedger, nextScanWatermark, turnsFromPro
 import { AVATAR_BODY_LIMIT, avatarImagePatch, decodeAvatarImage, storeAvatarImage, readAvatarImage } from "./avatar-images.mts";
 import { APP_BADGE_URL, appBadgePng, botBadgePng, botFace, roomIdentity } from "./bot-icons.mts";
 import { desktopPatch } from "./desktop.mts";
+import { createEventStream } from "./routes/events.mts";
+import { createAuthRoutes } from "./routes/auth.mts";
+import { createBotRoutes } from "./routes/bots.mts";
+import { createMachineRoutes } from "./routes/machines.mts";
+import type { HttpError } from "./routes/router.mts";
 
-/** What route handlers and helpers throw: an Error, optionally with the HTTP status and a code to show. */
-type HttpError = Error & { status?: number; code?: string };
 /** A browser tab as T3's preview.list reports it; only the fields used here. */
 type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: string; title?: string } };
 /** A new Bot as the app posts it. objectAvatarPatch and decodeAvatarImage check the avatar fields. */
@@ -143,11 +146,12 @@ if (!botMcpToken) {
 }
 const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 const cloudTranscription = createCloudTranscription({ file: path.join(path.dirname(cfg.vaultKeyFile), "transcription.json"), keyFile: cfg.vaultKeyFile });
+const events = createEventStream();
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
 const projects = createProjects({ file: projectsFile });
 // Rooms: a named conversation with several Bots. Each member answers in its own T3 room thread.
-const rooms = createRooms({ file: path.join(appDir, "rooms.json") });
+const rooms = createRooms({ file: path.join(appDir, "rooms.json"), onChange: () => events.emit("rooms") });
 const launchDefaults = async () => {
   const settings = await getSettings();
   return { runtimeMode: settings.autoReview === false ? "full-access" : "auto", model: settings.defaultModel ?? undefined };
@@ -222,21 +226,6 @@ function cookies(req: IncomingMessage) {
     if (k) out[k] = decodeURIComponent(rest.join("="));
   }
   return out;
-}
-// Login attempts per client: 5 failures lock that client out for 15 minutes.
-const attempts = new Map<string, { count: number; last: number }>();
-function clientIp(req: IncomingMessage) {
-  // The last hop is the one our proxy (Tailscale Funnel) added; earlier entries come from the client.
-  return String(req.headers["x-forwarded-for"] ?? "").split(",").pop()!.trim() || req.socket.remoteAddress || "?";
-}
-function loginBlocked(ip: string) {
-  const a = attempts.get(ip);
-  return Boolean(a && a.count >= 5 && Date.now() - a.last < 15 * 60 * 1000);
-}
-function loginFailed(ip: string) {
-  const a = attempts.get(ip);
-  const fresh = !a || Date.now() - a.last > 15 * 60 * 1000;
-  attempts.set(ip, { count: fresh ? 1 : a.count + 1, last: Date.now() });
 }
 function isHttps(req: IncomingMessage) {
   return req.headers["x-forwarded-proto"] === "https";
@@ -647,7 +636,9 @@ const colorPatch = <T extends { color?: unknown }>(patch: T): T => patch && patc
 const saveBot = async (slug: string, patch: BotPatch) => {
   const bot = await getBot(slug);
   if (!bot) throw Object.assign(new Error("Bot not found"), { status: 404 });
-  return mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(colorPatch(patch))));
+  const saved = await mainBots.save(slug, await avatarImagePatch(bot, objectAvatarPatch(colorPatch(patch))));
+  events.emit("bots", { action: "updated", slug });
+  return saved;
 };
 // Codex only reads a project's .codex/config.toml when the project is trusted in its global config.
 const codexGlobalConfig = path.join(process.env.CODEX_HOME ?? path.join(homedir(), ".codex"), "config.toml");
@@ -835,8 +826,11 @@ async function writeBotInstructions(bot: Bot, text: string) {
 function startMemoryWatcher() {
   const seen = new Map<string, string>();
   let busy = false;
-  const timer = setInterval(async () => {
-    if (busy) return;
+  let pending = false;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const reconcile = async () => {
+    if (busy) { pending = true; return; }
     busy = true;
     try {
       const [bots, settings] = await Promise.all([listBots(), getSettings()]);
@@ -858,9 +852,34 @@ function startMemoryWatcher() {
       console.error("refreshing memory snapshots failed", error);
     } finally {
       busy = false;
+      if (pending) {
+        pending = false;
+        void reconcile();
+      }
     }
-  }, 3_000);
-  timer.unref();
+  };
+
+  const schedule = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { debounceTimer = null; void reconcile(); }, 250);
+    debounceTimer.unref?.();
+  };
+
+  try {
+    const rootWatcher = watch(cfg.botsRoot, { recursive: true }, (_event, filename) => {
+      if (!filename || /(?:memory|AGENTS\.override\.md|AGENTS\.md|INSTRUCTIONS\.md|shared-memory\.md)/i.test(String(filename))) {
+        schedule();
+      }
+    });
+    rootWatcher.unref();
+  } catch {
+    // Some platforms/filesystems do not support recursive fs.watch; fallback reconcile below covers them.
+  }
+
+  // Fallback reconcile for adopted projects outside botsRoot or missed fs.watch events.
+  const fallback = setInterval(() => void reconcile(), 60_000);
+  fallback.unref();
+  void reconcile();
 }
 async function createBot(input: NewBot) {
   input = objectAvatarPatch(colorPatch(input));
@@ -1303,6 +1322,67 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: s
 }
 
 // ---------- router ----------
+const authRoutes = createAuthRoutes({
+  cookieName: COOKIE,
+  makeSession,
+  passwordRequired,
+  passwordMatches,
+  authed,
+  hasAccess: Boolean(verifyAccess),
+  readBody,
+  send,
+  isHttps,
+});
+let cachedBotRoutes: ReturnType<typeof createBotRoutes> | null = null;
+const botRoutes = () => (cachedBotRoutes ??= createBotRoutes({
+  appDir,
+  listBots,
+  getBot,
+  saveBot,
+  createBot,
+  selectMainBot: mainBots.select,
+  removeBot: mainBots.remove,
+  archivedBotIdentities,
+  adoptableProjects,
+  adoptProject,
+  releaseAdopted,
+  readAvatarImage,
+  sendBotImage,
+  botFace,
+  botBadgePng,
+  avatarBodyLimit: AVATAR_BODY_LIMIT,
+  codingWorkPatch,
+  readMemoryFiles,
+  saveMemoryFile,
+  memoryTidyPrompt,
+  setMemoryTidy,
+  loadInstructions,
+  instructionsTarget,
+  saveInstructions,
+  writeAgentsMd,
+  getSettings,
+  t3rpc,
+  withTimeout,
+  botMapRead: () => botMap.read(),
+  events,
+  send,
+  readBody,
+  requireJson,
+}));
+let cachedMachineRoutes: ReturnType<typeof createMachineRoutes> | null = null;
+const machineRoutes = () => (cachedMachineRoutes ??= createMachineRoutes({
+  machines,
+  machineFor,
+  readLinkedThread,
+  t3McpCall: (tool, args) => t3Mcp.call(tool, args),
+  resolveEnvironment,
+  resolveThreadLink,
+  events,
+  send,
+  readBody,
+  requireJson,
+}));
+
 // A server request always has its url and method.
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url!, "http://x");
@@ -1326,91 +1406,24 @@ const server = http.createServer(async (req, res) => {
     if ((p.startsWith("/api/") || p.startsWith("/t3/")) && !["GET", "HEAD"].includes(req.method!) && !sameOriginRequest(req, originPolicy)) {
       return send(res, 403, { error: "cross-site request refused" });
     }
-    if (p === "/api/login" && req.method === "POST") {
-      const ip = clientIp(req);
-      if (loginBlocked(ip)) return send(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
-      const { password } = await readBody(req, 4096);
-      const ok = !(await passwordRequired()) || (await passwordMatches(password));
-      if (!ok) {
-        loginFailed(ip);
-        console.warn(`failed login from ${ip}`);
-        return send(res, 401, { error: "wrong password" });
-      }
-      attempts.delete(ip);
-      const secure = isHttps(req) ? "; Secure" : "";
-      return send(res, 200, { ok: true }, { "set-cookie": `${COOKIE}=${makeSession()}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 3600}${secure}` });
-    }
+    if (await authRoutes.handle(req, res, url)) return;
     // The Bots' own tool server: local callers with its bearer only, never the app's login.
     if (p === "/mcp/bot") return await handleMcpHttp(req, res, { tools: botTools, resolveAuth: resolveMcpAuth, readBody });
 
-    if (p === "/api/session") {
-      const needsPassword = await passwordRequired();
-      // Cloudflare's login only helps requests that came through Cloudflare; on this machine or the LAN, use the password.
-      const accessLogin = Boolean(verifyAccess) && !(needsPassword && !req.headers["cf-ray"]);
-      return send(res, 200, { authenticated: await authed(req), passwordRequired: needsPassword, accessLogin });
-    }
-    if (p === "/api/logout") return send(res, 200, { ok: true }, { "set-cookie": `${COOKIE}=; Path=/; Max-Age=0` });
-
     if (p.startsWith("/api/") || p.startsWith("/t3/")) {
       if (!(await authed(req))) return send(res, 401, { error: "login required" });
+    }
+    if (p === "/api/events" && req.method === "GET") {
+      events.handle(req, res);
+      return;
     }
     if (p.startsWith("/t3/")) {
       const route = environmentPath(p);
       return await proxyT3(req, res, route.path + url.search, await resolveEnvironment(route.environmentId));
     }
 
-    if (p === "/api/machines" && req.method === "GET") {
-      const { machines: list, linksSupported } = await machines.list({ maxAge: url.searchParams.get("fresh") === "1" ? 0 : 15_000 });
-      return send(res, 200, { machines: list, linksSupported }, { "cache-control": "no-store" });
-    }
-    const pairRoute = p.match(/^\/api\/machines\/([a-zA-Z0-9_-]{1,128})\/pair$/);
-    if (pairRoute && req.method === "POST") {
-      requireJson(req);
-      const body = await readBody(req, 8192);
-      const paired = await machines.pair(pairRoute[1], body?.code, typeof body?.url === "string" && body.url ? body.url : undefined);
-      console.log(`machines: paired ${pairRoute[1]} directly at ${new URL(paired.baseUrl).host}`);
-      return send(res, 200, paired);
-    }
-    if (pairRoute && req.method === "DELETE") return send(res, 200, await machines.unpair(pairRoute[1]));
-    const remoteThread = p.match(/^\/api\/machines\/([a-zA-Z0-9_-]{1,128})\/threads\/([\w:.-]{1,256})(\/messages)?$/);
-    if (remoteThread) {
-      const [, environmentId, threadId, messages] = remoteThread;
-      const machine = await machineFor(environmentId);
-      if (machine.route === "none") return send(res, 409, { error: `The link to ${machine.label} has expired. Link it again in T3 Code.` });
-      try {
-        if (!messages && req.method === "GET") {
-          const after = url.searchParams.get("after");
-          return send(res, 200, { machine, read: await readLinkedThread(environmentId, threadId, after !== null && /^\d{1,9}$/.test(after) ? Number(after) : null) }, { "cache-control": "no-store" });
-        }
-        if (messages && req.method === "POST") {
-          requireJson(req);
-          const text = String((await readBody(req, 256 * 1024))?.text ?? "").trim();
-          if (!text) return send(res, 400, { error: "Write a message first" });
-          return send(res, 200, await t3Mcp.call("t3_thread_send", { environmentId, threadId, message: text, mode: "auto", clientRequestId: randomUUID() }));
-        }
-      } catch (error) {
-        if (error instanceof T3ToolError) return send(res, machine.status === "online" ? error.status : 503, { error: machine.status === "online" ? error.message : `${machine.label} isn't reachable right now${machine.status === "asleep" ? " (it's asleep)" : ""}.` });
-        throw error;
-      }
-      return send(res, 405, { error: "method not allowed" });
-    }
+    if (await machineRoutes().handle(req, res, url)) return;
     if (p === "/api/config") return send(res, 200, { botsRoot: cfg.botsRoot, accessLogout: Boolean(process.env.CF_ACCESS_TEAM_DOMAIN) && !onTailnet(req, exposure), executorUrl: executorConfig.profile?.credential ? executorConfig.profile.publicUrl : null });
-    if (p === "/api/thread-link" && req.method === "GET") {
-      const environmentId = url.searchParams.get("environmentId") ?? "";
-      const threadId = url.searchParams.get("threadId") ?? "";
-      if (!/^[a-zA-Z0-9_-]{1,128}$/.test(environmentId) || !/^[\w:%.-]{1,1024}$/.test(threadId)) return send(res, 400, { error: "Invalid thread reference" });
-      // Machines the gateway can reach (paired, configured, or linked in T3) stay inside the app;
-      // anything else keeps the existing T3 handoff.
-      const reachable = await resolveEnvironment(environmentId).then(() => true, () => false)
-        || (await machines.list().catch(() => null))?.machines.some((machine) => machine.environmentId === environmentId && !machine.local && machine.route !== "none");
-      if (reachable) {
-        res.writeHead(302, { location: `/?environment=${encodeURIComponent(environmentId)}&thread=${encodeURIComponent(threadId)}`, "cache-control": "no-store" });
-        return res.end();
-      }
-      const href = await resolveThreadLink({ environmentId: url.searchParams.get("environmentId") ?? "", threadId: url.searchParams.get("threadId") ?? "" });
-      res.writeHead(302, { location: href, "cache-control": "no-store", "referrer-policy": "no-referrer" });
-      return res.end();
-    }
     if (p === "/api/executor" && req.method === 'GET') return send(res, 200, await executorStatus());
     if (p === "/api/executor/catalog" && req.method === 'GET') return send(res, 200, await executorClient().catalog(url.searchParams.get('search') ?? ''));
     if (p === "/api/executor/install" && req.method === 'POST') return send(res, 200, await executorClient().install(await readBody(req)));
@@ -1519,11 +1532,6 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, next);
     }
     if (p === "/api/vault" || p.startsWith("/api/vault/")) return await vaultRoutes(req, res, p, url);
-    if (p === "/api/main-bot" && req.method === "PUT") {
-      requireJson(req);
-      const body = await readBody(req);
-      return send(res, 200, { bots: await mainBots.select(body?.slug) }, { "cache-control": "no-store" });
-    }
     if (p === "/api/push" && req.method === "GET") {
       // With ?endpoint=, also whether the gateway holds this device's subscription (it may have refused it).
       const endpoint = url.searchParams.get("endpoint");
@@ -1592,109 +1600,7 @@ const server = http.createServer(async (req, res) => {
       requireJson(req);
       return send(res, 200, await threadMeta.addVoiceCall(await readBody(req)));
     }
-    if (p === "/api/bot-map" && req.method === "GET") return send(res, 200, await botMap.read(), { "cache-control": "no-store" });
-    if (p === "/api/bots" && req.method === "GET") return send(res, 200, { bots: await listBots() }, { "cache-control": "no-store" });
-    if (p === "/api/memory" && req.method === "GET") {
-      const bot = await getBot(url.searchParams.get("slug") ?? "");
-      if (!bot) return send(res, 404, { error: "Bot not found" });
-      const files = await readMemoryFiles({ botDir: bot.dataDir, sharedFile: path.join(appDir, "shared-memory.md"), botPath: bot.adopted ? ".bot/memory/MEMORY.md" : undefined });
-      return send(res, 200, { ...files, tidyPrompt: memoryTidyPrompt(bot) }, { "cache-control": "no-store" });
-    }
-    if (p === "/api/memory/tidy" && req.method === "POST") {
-      requireJson(req);
-      const body = await readBody(req, 4096);
-      const bot = await getBot(String(body?.slug ?? ""));
-      if (!bot) return send(res, 404, { error: "Bot not found" });
-      const frequency = body?.frequency;
-      if (frequency !== "off" && frequency !== "weekly" && frequency !== "nightly") return send(res, 400, { error: "frequency must be off, weekly or nightly" });
-      if (bot.environmentId !== "local") return send(res, 409, { error: "Memory tidy is only available for Bots on this machine." });
-      if (!bot.projectId || !bot.mainThreadId) return send(res, 409, { error: "This Bot needs a main conversation first." });
-      const client = await withTimeout(t3rpc(), 10_000, "T3 timed out");
-      const projection = await withTimeout(client.call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15_000, "T3 timed out");
-      const modelSelection = projection?.thread?.modelSelection ?? bot.model;
-      if (!modelSelection) return send(res, 409, { error: "Pick a model for this Bot first." });
-      const result = await setMemoryTidy({ client, bot, frequency: frequency as MemoryTidyFrequency, modelSelection });
-      if (result.task && result.task.id !== bot.memoryTidyRoutineId) await saveBot(bot.slug, { memoryTidyRoutineId: result.task.id });
-      return send(res, 200, { frequency, task: result.task }, { "cache-control": "no-store" });
-    }
-    if (p === "/api/instructions" && req.method === "GET") {
-      const bot = await getBot(url.searchParams.get("slug") ?? "");
-      if (!bot) return send(res, 404, { error: "Bot not found" });
-      return send(res, 200, await loadInstructions(bot), { "cache-control": "no-store" });
-    }
-    if (p === "/api/instructions" && req.method === "PUT") {
-      requireJson(req);
-      const body = await readBody(req);
-      const bot = await getBot(String(body?.slug ?? ""));
-      if (!bot) return send(res, 404, { error: "Bot not found" });
-      await loadInstructions(bot);
-      const result = await saveInstructions(instructionsTarget(bot), { text: body?.text, expectedRevision: body?.expectedRevision });
-      // An adopted Bot's text is copied into its managed files; write them now, not on the next watcher tick.
-      if (result.ok && bot.adopted) await writeAgentsMd(bot, await getSettings());
-      return send(res, result.ok ? 200 : result.code === "conflict" ? 409 : 400, result, { "cache-control": "no-store" });
-    }
-    if (p === "/api/memory" && req.method === "PUT") {
-      requireJson(req);
-      const body = await readBody(req);
-      const bot = await getBot(String(body?.slug ?? ""));
-      if (!bot) return send(res, 404, { error: "Bot not found" });
-      const result = await saveMemoryFile({
-        botDir: bot.dataDir,
-        sharedFile: path.join(appDir, "shared-memory.md"),
-        scope: body?.scope === "shared" ? "shared" : "bot",
-        text: body?.text,
-        expectedRevision: body?.expectedRevision,
-      });
-      // The memory watcher picks the change up within a few seconds and rewrites AGENTS.md.
-      return send(res, result.ok ? 200 : result.code === "conflict" ? 409 : 400, result, { "cache-control": "no-store" });
-    }
-    if (p === "/api/bot-identities" && req.method === "GET") return send(res, 200, { bots: await archivedBotIdentities(path.join(appDir, "trash")) }, { "cache-control": "no-store" });
-    if (p === "/api/bots" && req.method === "POST") {
-      requireJson(req);
-      return send(res, 200, await createBot(await readBody(req, AVATAR_BODY_LIMIT)));
-    }
-    if (p === "/api/adoptable-projects" && req.method === "GET") return send(res, 200, { projects: await adoptableProjects() }, { "cache-control": "no-store" });
-    if (p === "/api/bots/adopt" && req.method === "POST") {
-      requireJson(req);
-      return send(res, 200, await adoptProject(await readBody(req, AVATAR_BODY_LIMIT)));
-    }
-    const release = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/release$/);
-    if (release && req.method === "POST") {
-      requireJson(req);
-      return send(res, 200, await releaseAdopted(release[1]), { "cache-control": "no-store" });
-    }
-    const avatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\/([a-f0-9]{64})\.png$/);
-    if (avatar && req.method === "GET") {
-      const candidates = [await getBot(avatar[1]), ...await archivedBotIdentities(path.join(appDir, "trash"))].filter((b): b is NonNullable<typeof b> => b?.slug === avatar[1]);
-      for (const bot of candidates) {
-        try { return send(res, 200, await readAvatarImage(bot, p), { "content-type": "image/png", "content-security-policy": "default-src 'none'", "cache-control": "private, max-age=31536000, immutable" }); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      }
-      return send(res, 404, { error: "not found" });
-    }
-    // The notification image is one stable URL per Bot: the uploaded picture or its drawn avatar.
-    const botAvatar = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/avatar\.png$/);
-    if (botAvatar && req.method === "GET") {
-      const bot = await getBot(botAvatar[1]);
-      return bot ? await sendBotImage(res, botFace(bot)) : send(res, 404, { error: "not found" });
-    }
-    const botBadge = p.match(/^\/api\/bots\/([a-z0-9][a-z0-9-]{0,62})\/badge\.png$/);
-    if (botBadge && req.method === "GET") {
-      const bot = await getBot(botBadge[1]);
-      return bot ? await sendBotImage(res, botBadgePng(bot)) : send(res, 404, { error: "not found" });
-    }
-    const m = p.match(/^\/api\/bots\/([^/]+)$/);
-    if (m && req.method === "GET") {
-      const b = await getBot(m[1]);
-      return b ? send(res, 200, b) : send(res, 404, { error: "not found" });
-    }
-    if (m && req.method === "PUT") {
-      requireJson(req);
-      const patch = await readBody(req, AVATAR_BODY_LIMIT);
-      if (patch && typeof patch === "object" && "codingWork" in patch) patch.codingWork = codingWorkPatch(patch.codingWork);
-      return send(res, 200, await saveBot(m[1], patch));
-    }
-    if (m && req.method === "DELETE") { const bots = await mainBots.remove(m[1]); return send(res, 200, { ok: true, bots }); }
+    if (await botRoutes().handle(req, res, url)) return;
     if (p.startsWith("/api/")) return send(res, 404, { error: "not found" });
 
     return await serveStatic(req, res, p);
@@ -1846,14 +1752,22 @@ const outageAlerts = createOutageAlerts({
 });
 /** The Bots whose main threads have tasks still running on a machine. Throws after the rest if any couldn't be read, so they're tried again. */
 async function botWorkOn(environmentId: string): Promise<BotWork[]> {
+  const bots = (await listBots()).filter((bot): bot is Bot & { mainThreadId: string } => Boolean(bot.mainThreadId));
+  if (!bots.length) return [];
+  const client = await withTimeout(t3rpc(), 10000, "T3 timed out");
+  const settled = await Promise.allSettled(bots.map(async (bot) => {
+    const projection = await withTimeout(client.call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15000, "T3 timed out");
+    return { bot, threads: remoteThreads(projection, environmentId) };
+  }));
   const out: BotWork[] = [];
   const unread: string[] = [];
-  for (const bot of await listBots()) {
-    if (!bot.mainThreadId) continue;
-    const projection = await withTimeout((await withTimeout(t3rpc(), 10000, "T3 timed out")).call("orchestration.getThreadProjection", { threadId: bot.mainThreadId }), 15000, "T3 timed out").catch(() => { unread.push(bot.slug); return null; });
-    const threads = remoteThreads(projection, environmentId);
-    if (threads.length) out.push({ slug: bot.slug, mainThreadId: bot.mainThreadId, threads });
-  }
+  settled.forEach((result, i) => {
+    if (result.status === "fulfilled") {
+      if (result.value.threads.length) out.push({ slug: result.value.bot.slug, mainThreadId: result.value.bot.mainThreadId, threads: result.value.threads });
+    } else {
+      unread.push(bots[i].slug);
+    }
+  });
   if (unread.length) throw Object.assign(new Error(`couldn't read ${unread.join(", ")}`), { partial: out });
   return out;
 }
@@ -1954,7 +1868,7 @@ if (envTailnet) {
 }
 // Tailscale and Cloudflare links switched on in Settings come back with the gateway.
 remoteAccess.boot().catch((e) => console.error("remote access", e));
-for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { remoteAccess.stop(); process.exit(0); });
+for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { events.closeAll(); remoteAccess.stop(); process.exit(0); });
 // An update this gateway's predecessor started either worked or rolled back; record which for the app.
 await autoUpdate.settle().catch((error) => console.error("auto-update: couldn't read its state", error));
 // Copies that can update themselves check on their own, so the sidebar's update button shows without
