@@ -106,6 +106,8 @@ export function subagentStatus(status: string) {
 
 /** Native children can have an idle shell and no runs even after completion.
  * Use their subagent record, and never let an older family read undo an event. */
+const ACTIVE = ["pending", "preparing", "queued", "starting", "running", "waiting"];
+
 export function agentStatus({ thread, fallback, updatedAt }: { thread?: ThreadShell; fallback?: string; updatedAt?: string } = {}) {
   if (!thread) return fallback ?? "unknown";
   if (thread.pendingRuntimeRequest) return "waiting";
@@ -113,7 +115,10 @@ export function agentStatus({ thread, fallback, updatedAt }: { thread?: ThreadSh
   const newer = updatedAt && updatedAt > thread.updatedAt;
   if (newer && fallback) return fallback;
   if (["pending", "preparing", "queued", "starting", "running", "waiting", "failed", "cancelled", "interrupted", "rolled_back"].includes(status)) return status;
-  if (thread.settledOverride === "settled" || (thread.settledOverride === undefined && thread.settledAt)) return "completed";
+  const settled = thread.settledOverride === "settled" || (thread.settledOverride === undefined && thread.settledAt);
+  // A settled child can be sent new work (Claude's SendMessage); its shell stays settled while it runs.
+  const restarted = fallback && ACTIVE.includes(fallback) && updatedAt && thread.settledAt && updatedAt > thread.settledAt;
+  if (settled && !restarted) return "completed";
   if (status === "idle" && fallback) return fallback;
   return status;
 }
