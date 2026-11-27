@@ -844,7 +844,7 @@ function startMemoryWatcher() {
     if (busy) { pending = true; return; }
     busy = true;
     try {
-      const [bots, settings] = await Promise.all([listBots(), getSettings()]);
+      const [bots, settings] = await Promise.all([mainBots.roster(), getSettings()]);
       for (const bot of bots) {
         try {
           const snapshot = await readSnapshot({ botDir: bot.dataDir, sharedFile: path.join(cfg.botsRoot, ".botapp", "shared-memory.md") });

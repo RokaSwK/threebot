@@ -17,3 +17,10 @@ export function parseReply(text: string): { quote: string | null; text: string }
 export function replyLabel(quote: string) {
   return quote.replace(/\s+/g, " ").trim();
 }
+
+/** What Cite adds at the end of a draft: the selection as a Markdown blockquote, then a blank line. */
+export function citation(draft: string, selection: string) {
+  const quote = selection.replace(/\r\n?/g, "\n").trim().split("\n").map((line) => line.trimEnd() ? `> ${line.trimEnd()}` : ">").join("\n");
+  const gap = !draft.trim() || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
+  return quote === ">" ? "" : `${gap}${quote}\n\n`;
+}

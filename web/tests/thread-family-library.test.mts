@@ -66,6 +66,10 @@ test('settlement, native child completion and newer subagent events resolve trut
   assert.equal(agentStatus({ thread: { ...child, pendingRuntimeRequest: { id: 'input' }, settledOverride: 'settled' } }), 'waiting');
   assert.equal(agentStatus({ thread: { ...child, activityRunStatus: 'running', settledOverride: 'settled' } }), 'running');
   assert.equal(agentStatus({ thread: { ...child, status: 'running' }, fallback: 'completed', updatedAt: '2026-10-30T11:00:00Z' }), 'completed');
+  const reused = { status: 'idle', settledAt: '2026-10-30T10:00:00Z', pendingRuntimeRequest: null, updatedAt: '2026-10-30T12:00:00Z' };
+  assert.equal(agentStatus({ thread: reused, fallback: 'running', updatedAt: '2026-10-30T11:00:00Z' }), 'running', 'a settled child that is sent new work runs again');
+  assert.equal(agentStatus({ thread: reused, fallback: 'running', updatedAt: '2026-10-30T09:00:00Z' }), 'completed', 'a record older than the settle stays done');
+  assert.equal(agentStatus({ thread: reused, fallback: 'completed', updatedAt: '2026-10-30T11:00:00Z' }), 'completed');
   assert.equal(subagentStatus('pending'), 'Working');
   assert.equal(subagentStatus('unexpected'), 'Unknown');
 });

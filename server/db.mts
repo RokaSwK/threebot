@@ -1,6 +1,6 @@
 // Built-in SQLite (WAL) storage for Projects board, Rooms, Routine History, and Action Audit Log.
 // Uses Node 22.18+'s built-in `node:sqlite` (zero native dependencies).
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -173,6 +173,8 @@ export function createDatabase(dbPath: string) {
   }
 
   function migrateFromJson(appDir: string) {
+    // Keep the original JSON snapshots readable if the updater rolls back to a pre-SQLite release.
+    // The migration markers commit with the imported rows and prevent re-import on normal restarts.
     // 1. Projects
     const projectsFile = path.join(appDir, "projects.json");
     if (existsSync(projectsFile) && !getMeta("migrated:projects")) {
@@ -199,7 +201,6 @@ export function createDatabase(dbPath: string) {
         }
         setMeta("migrated:projects", new Date().toISOString());
       });
-      renameSync(projectsFile, `${projectsFile}.migrated`);
     }
 
     // 2. Rooms
@@ -216,7 +217,6 @@ export function createDatabase(dbPath: string) {
         }
         setMeta("migrated:rooms", new Date().toISOString());
       });
-      renameSync(roomsFile, `${roomsFile}.migrated`);
     }
 
     // 3. Routine history
@@ -237,7 +237,6 @@ export function createDatabase(dbPath: string) {
         }
         setMeta("migrated:routine-history", new Date().toISOString());
       });
-      renameSync(historyFile, `${historyFile}.migrated`);
     }
   }
 
