@@ -56,6 +56,18 @@ export type RemoteRead = {
   items: RemoteItem[]; nextPosition: number | null; hasMore: boolean;
 };
 
+export type AuditEntry = {
+  id: number;
+  at: string;
+  botSlug: string | null;
+  action: string;
+  target: string | null;
+  status: "ok" | "error" | "denied";
+  runId: string | null;
+  threadId: string | null;
+  details: Record<string, unknown> | null;
+};
+
 export type BotMapEdge = { from: string; to: string; count: number };
 
 export const api = {
@@ -99,6 +111,14 @@ export const api = {
   threadMeta: (threadId: string) => req<ThreadMeta>(`/api/thread-meta?thread=${encodeURIComponent(threadId)}`),
   toggleReaction: (threadId: string, itemId: string, emoji: string) => req<ThreadMeta>("/api/thread-meta/reactions", { method: "POST", body: JSON.stringify({ threadId, itemId, emoji }) }),
   addVoiceCall: (threadId: string, seconds: number) => req<ThreadMeta>("/api/thread-meta/voice-calls", { method: "POST", body: JSON.stringify({ threadId, seconds }) }),
+  audit: (bot?: string, limit = 50, beforeId?: number) => {
+    const params = new URLSearchParams();
+    if (bot) params.set("bot", bot);
+    params.set("limit", String(limit));
+    if (typeof beforeId === "number") params.set("beforeId", String(beforeId));
+    return req<{ entries: AuditEntry[] }>(`/api/audit?${params.toString()}`).then((r) => r.entries);
+  },
+  revokeMcpToken: (slug: string) => req<{ ok: boolean; revoked: number }>(`/api/bots/${encodeURIComponent(slug)}/mcp-token/revoke`, { method: "POST", body: "{}" }),
 };
 
 /** The JSON request helper `api` uses, shared with modules that own their own routes. */
