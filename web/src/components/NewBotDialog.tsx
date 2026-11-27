@@ -9,6 +9,7 @@ import { sharedObjects } from "../lib/objectAvatars";
 import type { Bot } from "../lib/types";
 import { useAvatarDrawing } from "./useAvatarDrawing";
 import { composeBotInstructions, BOT_INSTRUCTIONS_MAX } from "../lib/botInstructions";
+import { BOT_TEMPLATES, parseBotBundle, type BotTemplate } from "../lib/botTemplates";
 
 export { AvatarPicker } from "./AvatarEditor";
 
@@ -33,6 +34,31 @@ export function NewBotDialog() {
   const tooLong = instructions.length > BOT_INSTRUCTIONS_MAX;
   const newSection = sectionChoice === "new";
   const canCreate = name.trim() && (!newSection || sectionName.trim()) && !busy && !tooLong;
+
+  const applyTemplate = (tpl: BotTemplate) => {
+    setName(tpl.name);
+    setLabel(tpl.label);
+    setDoes(tpl.does);
+    setDoesNot(tpl.doesNot);
+    setStyle(tpl.style);
+    setAvatar({ shape: tpl.shape, color: tpl.color, avatarImage: null, avatarDefinition: null });
+  };
+
+  const importBundle = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const bundle = parseBotBundle(await file.text());
+      setName(bundle.name);
+      setLabel(bundle.label);
+      setDoes(bundle.does ?? bundle.instructions ?? "");
+      setDoesNot(bundle.doesNot ?? "");
+      setStyle(bundle.style ?? "");
+      setAvatar({ shape: bundle.shape, color: bundle.color, avatarImage: null, avatarDefinition: null });
+      toast(`Imported ${bundle.name}`);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Couldn't import Bot file");
+    }
+  };
 
   const create = async () => {
     if (!canCreate) return;
@@ -89,6 +115,17 @@ export function NewBotDialog() {
             className="new-bot-role mt-1 h-8 w-full border-0 bg-transparent text-center text-[13px] text-muted outline-none placeholder:text-faint focus:text-fg"
           />
           <p className="new-bot-role-hint mt-0.5 text-center text-[11.5px] text-muted">One line. It appears under the Bot's name.</p>
+          <div className="mt-3 flex w-full flex-wrap items-center justify-center gap-1.5">
+            {BOT_TEMPLATES.map((tpl) => (
+              <button key={tpl.id} type="button" onClick={() => applyTemplate(tpl)} disabled={busy} className="rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:bg-hover hover:text-fg">
+                {tpl.name}
+              </button>
+            ))}
+            <label className="cursor-pointer rounded-full border border-line px-2.5 py-1 text-[11.5px] text-muted hover:bg-hover hover:text-fg">
+              Import…
+              <input type="file" accept=".json,.threebot.json" className="hidden" onChange={(e) => { void importBundle(e.target.files?.[0]); e.target.value = ""; }} />
+            </label>
+          </div>
         </div>
         <details className="new-bot-more mx-5 mt-2 rounded-xl border border-line bg-card">
           <summary className="new-bot-more-summary flex min-h-11 cursor-pointer list-none items-center gap-2 px-3 text-[13.5px] text-fg [&::-webkit-details-marker]:hidden">
