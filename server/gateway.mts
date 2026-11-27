@@ -82,6 +82,8 @@ import { createAuthRoutes } from "./routes/auth.mts";
 import { createBotRoutes } from "./routes/bots.mts";
 import { createMachineRoutes } from "./routes/machines.mts";
 import type { HttpError } from "./routes/router.mts";
+import { createDatabase } from "./db.mts";
+import { createT3Adapter } from "./t3-adapter.mts";
 
 /** A browser tab as T3's preview.list reports it; only the fields used here. */
 type PreviewSession = { runtime?: string; tabId: string; navStatus?: { url?: string; title?: string } };
@@ -147,11 +149,13 @@ if (!botMcpToken) {
 const vault = createVault({ file: cfg.vaultFile, keyFile: cfg.vaultKeyFile });
 const cloudTranscription = createCloudTranscription({ file: path.join(path.dirname(cfg.vaultKeyFile), "transcription.json"), keyFile: cfg.vaultKeyFile });
 const events = createEventStream();
+const db = createDatabase(path.join(appDir, "threebot.db"));
+db.migrateFromJson(appDir);
 // The Projects board, shared by the user and every Bot. APP_URL makes the links Bots share absolute.
 const projectsFile = path.join(appDir, "projects.json");
-const projects = createProjects({ file: projectsFile });
+const projects = createProjects({ file: projectsFile, db });
 // Rooms: a named conversation with several Bots. Each member answers in its own T3 room thread.
-const rooms = createRooms({ file: path.join(appDir, "rooms.json"), onChange: () => events.emit("rooms") });
+const rooms = createRooms({ file: path.join(appDir, "rooms.json"), onChange: () => events.emit("rooms"), db });
 const launchDefaults = async () => {
   const settings = await getSettings();
   return { runtimeMode: settings.autoReview === false ? "full-access" : "auto", model: settings.defaultModel ?? undefined };
@@ -181,7 +185,7 @@ const roomEngine = createRoomEngine({
   log: (line) => console.log(line),
 });
 const appUrl = (process.env.APP_URL ?? "").replace(/\/$/, "");
-const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json") });
+const routineHistoryRoutes = createRoutineHistoryRoutes({ rpc: t3rpc, file: path.join(appDir, "routine-history.json"), db });
 const routinePrefs = createRoutinePrefs({ file: path.join(appDir, "routine-alerts.json") });
 const routineAlertRoutes = createRoutineAlertRoutes({
   store: routinePrefs,
@@ -1710,13 +1714,12 @@ const localDescriptor = async () => {
   const response = await fetch(cfg.t3Url + "/.well-known/t3/environment", { signal: AbortSignal.timeout(5000) });
   return response.ok ? response.json() : null;
 };
+const t3Adapter = createT3Adapter({ connect: t3rpc, descriptor: localDescriptor });
 const machines = createMachines({
   appDir, t3Url: cfg.t3Url, version, localDescriptor,
   // Feature-detected: T3 older than 0.1.9 has no links, and Threebot keeps only its direct routes.
   async listLinks() {
-    if ((await localDescriptor().catch(() => null))?.capabilities?.peerLinks !== true) return null;
-    const result = await withTimeout((await withTimeout(t3rpc(), 10000, "T3 timed out")).call("peerLinks.list", {}), 45000, "T3 timed out");
-    return Array.isArray(result?.links) ? result.links as PeerLink[] : null;
+    return t3Adapter.listPeerLinks<PeerLink>();
   },
   async routeFiles() {
     const merged: Record<string, { baseUrl: string }> = {};
@@ -1868,7 +1871,7 @@ if (envTailnet) {
 }
 // Tailscale and Cloudflare links switched on in Settings come back with the gateway.
 remoteAccess.boot().catch((e) => console.error("remote access", e));
-for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { events.closeAll(); remoteAccess.stop(); process.exit(0); });
+for (const signal of ["SIGTERM", "SIGINT"]) process.once(signal, () => { events.closeAll(); remoteAccess.stop(); try { db.close(); } catch {} process.exit(0); });
 // An update this gateway's predecessor started either worked or rolled back; record which for the app.
 await autoUpdate.settle().catch((error) => console.error("auto-update: couldn't read its state", error));
 // Copies that can update themselves check on their own, so the sidebar's update button shows without

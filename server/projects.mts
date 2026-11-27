@@ -5,6 +5,7 @@
 import { randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import type { ThreebotDb } from "./db.mts";
 
 export type Kind = "project" | "task" | "machine" | "service" | "repo" | "note" | "link";
 export type LinkType = "thread" | "bot" | "item" | "url" | "t3project";
@@ -236,7 +237,7 @@ export function actorLabel(actor: Actor | null | undefined): string {
   return actor.name || actor.slug || "A Bot";
 }
 
-export function createProjects({ file, now = () => new Date().toISOString() }: { file: string; now?: () => string }) {
+export function createProjects({ file, now = () => new Date().toISOString(), db }: { file: string; now?: () => string; db?: ThreebotDb }) {
   // null until load() runs; everything that reads it awaits load() first.
   let state: BoardState = null!;
   let writing: Promise<unknown> = Promise.resolve();
@@ -244,6 +245,20 @@ export function createProjects({ file, now = () => new Date().toISOString() }: {
 
   async function load(): Promise<BoardState> {
     if (state) return state;
+    if (db) {
+      const version = Number(db.getMeta("projects:version") ?? "0") || 0;
+      const seq = Number(db.getMeta("projects:seq") ?? "0") || 0;
+      const itemRows = db.raw.prepare("SELECT data FROM projects_items").all() as Array<{ data: string }>;
+      const actRows = db.raw.prepare("SELECT data FROM projects_activity ORDER BY seq ASC").all() as Array<{ data: string }>;
+      const items: Record<string, Item> = {};
+      for (const row of itemRows) {
+        const item = JSON.parse(row.data) as Item;
+        items[item.id] = item;
+      }
+      const activity = actRows.map((row) => JSON.parse(row.data) as ActivityEntry);
+      state = { version, seq, items, activity };
+      return state;
+    }
     try {
       const raw = JSON.parse(await fs.readFile(file, "utf8"));
       state = { version: Number(raw.version) || 0, seq: Number(raw.seq) || 0, items: raw.items && typeof raw.items === "object" ? raw.items : {}, activity: Array.isArray(raw.activity) ? raw.activity : [] };
@@ -255,6 +270,25 @@ export function createProjects({ file, now = () => new Date().toISOString() }: {
   }
 
   async function persist() {
+    if (db) {
+      db.transaction(() => {
+        db.setMeta("projects:version", String(state.version));
+        db.setMeta("projects:seq", String(state.seq));
+        db.raw.prepare("DELETE FROM projects_items").run();
+        const insertItem = db.raw.prepare(
+          "INSERT INTO projects_items (id, kind, title, status, area, archived, pinned, updated_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        );
+        for (const item of Object.values(state.items)) {
+          insertItem.run(item.id, item.kind, item.title, item.status ?? null, item.area ?? null, item.archived ? 1 : 0, item.pinned ? 1 : 0, item.updatedAt, JSON.stringify(item));
+        }
+        db.raw.prepare("DELETE FROM projects_activity").run();
+        const insertAct = db.raw.prepare("INSERT INTO projects_activity (seq, at, item_id, data) VALUES (?, ?, ?, ?)");
+        for (const entry of state.activity) {
+          insertAct.run(entry.seq, entry.at, entry.itemId, JSON.stringify(entry));
+        }
+      });
+      return;
+    }
     const tmp = `${file}.${process.pid}.tmp`;
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(tmp, JSON.stringify(state), { mode: 0o600 });

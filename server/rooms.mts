@@ -3,6 +3,7 @@
 // the user's messages. Bot replies are never stored here; they live in each member's T3 thread.
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import type { ThreebotDb } from "./db.mts";
 import { randomBytes } from "node:crypto";
 
 export const MIN_MEMBERS = 2;
@@ -268,17 +269,32 @@ export type CreateRoomInput = {
  * The rooms file: one writer, serialized, atomic (temp file + rename) and mode 0600.
  * Reads are cached in memory; every write replaces the cache.
  */
-export function createRooms({ file, now = () => new Date().toISOString(), newId = () => randomBytes(4).toString("hex"), onChange }: {
+export function createRooms({ file, now = () => new Date().toISOString(), newId = () => randomBytes(4).toString("hex"), onChange, db }: {
   file: string;
   now?: () => string;
   newId?: () => string;
   onChange?: () => void;
+  db?: ThreebotDb;
 }) {
   let cache: RoomsFile | null = null;
   let queue: Promise<unknown> = Promise.resolve();
 
   async function load(): Promise<RoomsFile> {
     if (cache) return cache;
+    if (db) {
+      const rows = db.raw.prepare("SELECT data FROM rooms").all() as Array<{ data: string }>;
+      const rooms = rows.map((row) => JSON.parse(row.data) as Room).filter((room) => !!room && typeof room.id === "string");
+      cache = {
+        version: 1,
+        rooms: rooms.map((room) => ({
+          ...room,
+          members: Array.isArray(room.members) ? room.members : [],
+          formerMembers: Array.isArray(room.formerMembers) ? room.formerMembers : [],
+          turns: Array.isArray(room.turns) ? room.turns : [],
+        })),
+      };
+      return cache;
+    }
     try {
       const raw = JSON.parse(await fs.readFile(file, "utf8")) as Partial<RoomsFile>;
       const rooms = Array.isArray(raw.rooms) ? raw.rooms.filter((room): room is Room => !!room && typeof room.id === "string") : [];
@@ -299,6 +315,18 @@ export function createRooms({ file, now = () => new Date().toISOString(), newId 
   }
 
   async function save(next: RoomsFile): Promise<void> {
+    if (db) {
+      db.transaction(() => {
+        db.raw.prepare("DELETE FROM rooms").run();
+        const insert = db.raw.prepare("INSERT INTO rooms (id, name, pinned, data) VALUES (?, ?, ?, ?)");
+        for (const room of next.rooms) {
+          insert.run(room.id, room.name, room.pinned ? 1 : 0, JSON.stringify(room));
+        }
+      });
+      cache = next;
+      onChange?.();
+      return;
+    }
     await fs.mkdir(path.dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
