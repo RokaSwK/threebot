@@ -42,7 +42,7 @@ import { SideChatPill, SideChatSheet } from "./SideChat";
 import type { Bot } from "../lib/types";
 import { composerFocusBehavior, isClearCommand, listNewline, MOBILE_CHAT_QUERY, replaceText, splitBubbles } from "../lib/chatBehavior";
 import { chatDraft } from "../lib/chatDrafts";
-import { parseReply, replyLabel, withReply } from "../lib/reply";
+import { citation, parseReply, replyLabel, withReply } from "../lib/reply";
 import { activeWork, messageCommand, useRuntimeWork, useWorkCommand } from "../lib/runtimeApi";
 import { QueuedWork, WorkFeedback } from "./QueuedWork";
 import { PlanMessage, PlanItemMessage } from "./PlanMessage";
@@ -190,6 +190,8 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
 
   const greeting = data?.loaded && !entries.some((e) => e.kind === "user" || e.kind === "bot");
   const reply = (text: string) => chatDraft(bot, threadId).setReply(text);
+  const citeTo = useRef<((quote: string) => void) | null>(null);
+  const cite = (quote: string) => citeTo.current?.(quote);
   const voiceObservation = useMemo(() => {
     const lastUser = entries.findLastIndex((e) => e.kind === "user");
     const replies = entries.slice(lastUser + 1).flatMap((e) => (e.kind === "bot" && e.text ? [e] : []));
@@ -250,7 +252,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
           {(hiddenCount > 0 || (data?.hasMoreHistory && !offline && !data.stale)) && <button className="mx-auto my-3 rounded-full bg-card px-4 py-2 text-[13px] text-muted hover:bg-hover disabled:opacity-60" disabled={olderLoading} onClick={showEarlier}>{olderLoading ? "Loading…" : "Load earlier messages"}</button>}
           {visibleEntries.map((e, i) => (
             <div key={e.id} className="contents" data-chat-entry={e.id}>
-              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />
+              <EntryView entry={e} prev={visibleEntries[i - 1]} bot={bot} threadId={threadId!} onOpenFile={setOpenFile} onReply={archived ? undefined : reply} onCite={archived ? undefined : cite} accent={settings?.accent ?? "bot"} onAsk={archived ? undefined : askAboutFile} />
             </div>
           ))}
           {threadId && <ConversationWork threadId={threadId} readOnly={archived} />}
@@ -281,7 +283,7 @@ export function Chat({ bot, threadId = bot.mainThreadId, onBack, embedded = fals
 
       {threadId && !embedded && <SideChatPill parentThreadId={threadId} />}
       {voiceChat && threadId && <VoiceDock bot={identity === bot ? bot : { ...bot, ...identity }} threadId={threadId} observation={voiceObservation} onEnd={() => setVoiceChat(false)} />}
-      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} working={working} embedded={embedded} offline={offline} inVoiceChat={voiceChat} onVoiceChat={async () => {
+      {archived ? <div className="shrink-0 px-5 py-5 text-center text-[13px] text-muted">Archived Bot · This conversation is read-only.</div> : <Composer key={threadId ?? bot.slug} bot={bot} threadId={threadId} citeTo={citeTo} working={working} embedded={embedded} offline={offline} inVoiceChat={voiceChat} onVoiceChat={async () => {
         if (!threadId || !voiceChatSupported()) return;
         const problem = await requestMicrophone();
         if (problem) toast(problem); else setVoiceChat(true);
@@ -302,7 +304,7 @@ function duration(seconds: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, onAsk }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; accent: string; onAsk?: (fileName: string, text: string) => void }) {
+function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, onCite, accent, onAsk }: { entry: Entry; prev?: Entry; bot: Bot; threadId: string; onOpenFile: (p: string) => void; onReply?: (text: string) => void; onCite?: (text: string) => void; accent: string; onAsk?: (fileName: string, text: string) => void }) {
   const tight = prev && prev.kind === entry.kind && (entry.kind === "bot" || entry.kind === "user");
   switch (entry.kind) {
     case "date":
@@ -322,7 +324,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, on
     case "user":
       return (
         <MessageImages>
-        <ChatMessageActions text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} side="user" className={clsx("fade-up flex flex-col items-end", tight ? "mt-1" : "mt-3")}>
+        <ChatMessageActions text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} onCite={onCite} side="user" className={clsx("fade-up flex flex-col items-end", tight ? "mt-1" : "mt-3")}>
           {entry.replyTo && <ReplyChip quote={entry.replyTo} />}
           {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} onAsk={onAsk} />}
           {entry.text && (
@@ -350,7 +352,7 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, on
         <MessageImages>
           <div className={tight ? "mt-1" : "mt-3"}>
             {entry.attachments.length > 0 && <AttachmentList attachments={entry.attachments} align="start" onAsk={onAsk} />}
-            {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} />}
+            {entry.text && <BotBubble text={entry.text} threadId={threadId} itemId={entry.id} runId={entry.runId} onReply={onReply} onCite={onCite} />}
           </div>
         </MessageImages>
       );
@@ -375,14 +377,14 @@ function EntryView({ entry, prev, bot, threadId, onOpenFile, onReply, accent, on
   }
 }
 
-export function BotBubble({ text, threadId, itemId, runId, onReply }: { text: string; threadId?: string; itemId?: string; runId?: string | null; onReply?: (text: string) => void }) {
+export function BotBubble({ text, threadId, itemId, runId, onReply, onCite }: { text: string; threadId?: string; itemId?: string; runId?: string | null; onReply?: (text: string) => void; onCite?: (text: string) => void }) {
   // Agents often write several short paragraphs; they read best as stacked bubbles.
   const workspace = useContext(WorkspaceFileContext);
   // A bubble that is only a file link is drawn by the file stack below, with its card, player or thumbnail.
   const parts = splitBubbles(text).filter((part) => !workspace || !soloMarkdownLink(part, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)));
   const stackPaths = useMemo(() => workspace ? new Set(messageFileLinks(text, (href) => workspaceLinkPath(href, workspace.workspaceRoot, workspace.fromPath)).map((link) => link.path)) : null, [text, workspace]);
   return (
-    <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} side="bot">
+    <ChatMessageActions text={text} threadId={threadId} itemId={itemId} runId={runId} onReply={onReply} onCite={onCite} side="bot">
       <MessageImages>
         <FileStackContext.Provider value={stackPaths}>
         <div data-message-body="markdown" className="stack-left flex flex-col items-start gap-1">
@@ -492,7 +494,7 @@ function useMobileChat() {
   return mobile;
 }
 
-function Composer({ bot, threadId, working, embedded, offline, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; working: boolean; embedded: boolean; offline: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
+function Composer({ bot, threadId, citeTo, working, embedded, offline, inVoiceChat, onVoiceChat, availableBots }: { bot: Bot; threadId: string | null; citeTo?: { current: ((quote: string) => void) | null }; working: boolean; embedded: boolean; offline: boolean; inVoiceChat: boolean; onVoiceChat: () => void; availableBots?: MentionBot[] }) {
   const draft = chatDraft(bot, threadId);
   const { text, attachments: atts, sending, failed, replyTo, fresh } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const { setText, addFiles, setReply, setFresh } = draft;
@@ -583,6 +585,18 @@ function Composer({ bot, threadId, working, embedded, offline, inVoiceChat, onVo
     focus.onEntry(ta.current);
   }, [draft, focus]);
   const replying = !!replyTo;
+  useEffect(() => {
+    if (!citeTo) return;
+    citeTo.current = (quote) => {
+      const el = ta.current, insert = el && citation(el.value, quote);
+      if (!el || !insert) return;
+      // Like Reply, Cite is the explicit request for the keyboard; the quote lands at the end with the caret after it.
+      focus.onPointerDown(el);
+      el.focus({ preventScroll: true });
+      replaceText(el, { from: el.value.length, to: el.value.length, insert }, setText);
+    };
+    return () => { citeTo.current = null; };
+  }, [citeTo, focus, setText]);
   useEffect(() => {
     if (!replying || !ta.current) return;
     // Choosing Reply is the explicit request for the keyboard.
