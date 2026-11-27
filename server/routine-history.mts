@@ -3,6 +3,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { ThreebotDb } from './db.mts';
 
 /** A scheduled task from T3's `scheduledTasks.subscribe`, as far as this file reads it. */
 export type RoutineTask = { id: string; projectId?: string | null; threadId?: string | null; lastRunAt?: string | null; lastRunStatus?: string | null; runCount?: number };
@@ -47,15 +48,39 @@ function triggerFromMessage(messageId: string | null | undefined, taskId: string
   const tail = messageId.slice(prefix.length);
   return tail.includes(':webhook:') || tail.startsWith('webhook:') ? 'webhook' : tail.endsWith(':manual') ? 'manual' : tail.endsWith(':scheduled') ? 'scheduled' : 'unknown';
 }
-export function createRoutineHistory({ file, now = () => new Date().toISOString(), limit = 200 }: { file: string; now?: () => string; limit?: number }) {
+export function createRoutineHistory({ file, now = () => new Date().toISOString(), limit = 200, db }: { file: string; now?: () => string; limit?: number; db?: ThreebotDb }) {
   // Every reader goes through serial(), which loads it first.
   let state!: RoutineHistoryState; let queue: Promise<unknown> = Promise.resolve(); const previous = new Map<string, { lastRunAt: string | null; status: string | null | undefined; count: number | undefined }>();
   const load = async (): Promise<void> => {
     if (state) return;
+    if (db) {
+      const observingSince = db.getMeta('routine_history:observing_since') ?? now();
+      if (!db.getMeta('routine_history:observing_since')) db.setMeta('routine_history:observing_since', observingSince);
+      const rows = (db.raw.prepare('SELECT id, task_id, at, status, trigger_type, thread_id, run_id, source FROM routine_history ORDER BY at DESC').all() as Array<{
+        id: string; task_id: string; at: string; status: string; trigger_type: RoutineHistoryRow['trigger'];
+        thread_id: string | null; run_id: string | null; source: RoutineHistoryRow['source'];
+      }>).map((row) => ({
+        id: row.id, taskId: row.task_id, at: row.at, status: row.status, trigger: row.trigger_type,
+        threadId: row.thread_id, runId: row.run_id, source: row.source,
+      }));
+      state = { version: 1, observingSince, rows };
+      return;
+    }
     try { state = JSON.parse(await fs.readFile(file, 'utf8')); if (state.version !== 1 || !Array.isArray(state.rows) || !stamp(state.observingSince)) throw new Error('Invalid routine history file'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; state = { version: 1, observingSince: now(), rows: [] }; }
   };
   const persist = async () => {
+    if (db) {
+      db.transaction(() => {
+        db.setMeta('routine_history:observing_since', state.observingSince);
+        db.raw.prepare('DELETE FROM routine_history').run();
+        const insert = db.raw.prepare('INSERT INTO routine_history (id, task_id, at, status, trigger_type, thread_id, run_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        for (const row of state.rows) {
+          insert.run(row.id, row.taskId, row.at, row.status, row.trigger, row.threadId, row.runId, row.source);
+        }
+      });
+      return;
+    }
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file + '.tmp', JSON.stringify(state) + '\n', { mode: 0o600 });
     await fs.rename(file + '.tmp', file);
@@ -112,12 +137,12 @@ export function createRoutineHistory({ file, now = () => new Date().toISOString(
 
 /** Register behind the gateway's existing authentication boundary. One handler
  * owns both read subscriptions; close() is available to tests/shutdown owners. */
-export function createRoutineHistoryRoutes({ rpc, file, timeoutMs = 15000 }: { rpc: () => Promise<RoutineRpcClient>; file: string; timeoutMs?: number }) {
+export function createRoutineHistoryRoutes({ rpc, file, timeoutMs = 15000, db }: { rpc: () => Promise<RoutineRpcClient>; file: string; timeoutMs?: number; db?: ThreebotDb }) {
   const bounded = <T,>(promise: Promise<T>): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Routine read timed out')), timeoutMs); })]).finally(() => clearTimeout(timer));
   };
-  const history = createRoutineHistory({ file });
+  const history = createRoutineHistory({ file, db });
   let connection: RoutineRpcClient | null | undefined; let starting: Promise<void> | null | undefined; let taskStream: RpcStream | null | undefined; let shellStream: RpcStream | null | undefined; let tasks: RoutineTask[] = [];
   let healthy = false; let pending: Promise<unknown> = Promise.resolve(); const stamps = new Map<string, string | null | undefined>(); const threads = new Map<string, ShellThread>();
   const work = new Map<string, ShellThread>(); let workers = 0;
