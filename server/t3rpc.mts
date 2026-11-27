@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
-// RPC results and stream items are T3 Code's own JSON payloads; this client does not model their schema.
+// RPC results and stream items are T3 Code's own JSON payloads; T3Adapter models the consumed shapes.
 type RpcValue = any;
 type Pending = { resolve: (value: RpcValue) => void; reject: (error: unknown) => void; onChunk?: (item: RpcValue) => void };
 
