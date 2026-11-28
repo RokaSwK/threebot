@@ -248,6 +248,9 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
   const last = activeStep === questions.length - 1;
   const row = q.options.length <= 3 && q.options.every((option) => option.label.length <= 24);
   const notes = q.options.map((option) => option.description).filter(Boolean).join(" · ");
+  // Pending multi-select rows are checkboxes; the picked names are listed in pick order.
+  const checklist = pending && q.multiSelect === true;
+  const picked = checklist && Array.isArray(selection) ? selection.map((value) => q.options.find((option) => (option.value ?? option.label) === value)?.label ?? value) : [];
 
   return (
     <section className={clsx("question-card fade-up", resolved && "question-card-answered")} aria-label={resolved ? "Answered question" : "Question"} data-question-status={status}>
@@ -258,15 +261,16 @@ function QuestionRequestCard({ entry, threadId }: QuestionProps) {
       {resolved && <span className="sr-only">Answered</span>}
       {!pending && !resolved && <p className="question-terminal-status">{statusLabel}</p>}
       {pending && q.multiSelect && <p className="question-hint">Choose all that apply</p>}
+      {picked.length > 0 && <ul className="question-picked" aria-label="Picked">{picked.map((label, index) => <li key={index}>{label}</li>)}</ul>}
       {takeOver && <div className="pb-2"><Pill onClick={() => openDialog({ kind: "computer", slug: bot.slug })} className="w-full"><Monitor size={14} /> Take over</Pill></div>}
       {resolved && <div className="question-answer-summary"><span>Your answer</span><p>{values.map(value => q.options.find(option => (option.value ?? option.label) === value)?.label ?? value).join(", ")}</p></div>}
       {/* Short choices are small pills in a row, with what they mean in one quiet line underneath. */}
-      <div className="question-options" data-layout={row ? "row" : "stack"}>
+      <div className="question-options" data-layout={row ? "row" : "stack"} data-checklist={checklist || undefined} data-picked={picked.length > 0 || undefined}>
         {q.options.map((option, index) => {
           const value = option.value ?? option.label;
           if (resolved && !chosen(value)) return null;
           return <button type="button" key={value} disabled={response.disabled} aria-pressed={chosen(value)} onClick={() => choose(value)} className="question-option">
-            <span className="question-option-badge">{String.fromCharCode(65 + index)}</span>
+            <span className="question-option-badge">{checklist ? chosen(value) && <Check size={14} strokeWidth={3} aria-hidden="true" /> : String.fromCharCode(65 + index)}</span>
             <span className="question-option-copy"><span className="question-option-label">{option.label}</span>{!row && option.description && !resolved && <span className="question-option-description">{option.description}</span>}</span>
           </button>;
         })}

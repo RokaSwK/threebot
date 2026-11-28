@@ -114,3 +114,16 @@
 .model-choice { height: 32px; padding-inline: 12px; border-radius: 999px; background: var(--bg-card); font-size: 13px; }
 .model-choice[aria-pressed="true"], .model-choice.active { background: var(--pill); color: var(--pill-fg); }
 .model-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+/* Multi-select: each row is a checkbox, picked rows stand out and the rest fade. */
+.question-picked { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 10px; padding: 0; list-style: none; }
+.question-picked li { padding: 2px 10px; border-radius: 999px; background: var(--pill-soft); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.question-options[data-checklist] .question-option { gap: 10px; align-items: center; transition: opacity .15s; }
+.question-options[data-checklist] .question-option:first-child:not([aria-pressed="true"]) { background: var(--bg-card); color: inherit; }
+.question-options[data-checklist] .question-option:first-child:not([aria-pressed="true"]) .question-option-description { color: var(--fg-muted); opacity: 1; }
+.question-options[data-checklist] .question-option-badge { display: grid; width: 20px; height: 20px; margin: 0; border: 2px solid var(--fg-muted); border-radius: 6px; background: transparent; }
+.question-options[data-checklist] .question-option[aria-pressed="true"] .question-option-badge { border-color: var(--pill); background: var(--pill); color: var(--pill-fg); }
+.question-options[data-checklist][data-picked] .question-option[aria-pressed="false"]:not(:hover):not(:focus-visible) { opacity: .55; }
+@media (prefers-reduced-motion: no-preference) {
+  .question-options[data-checklist] .question-option[aria-pressed="true"] { animation: question-pick .18s ease-out; }
+}
+@keyframes question-pick { 50% { transform: scale(1.02); } }
