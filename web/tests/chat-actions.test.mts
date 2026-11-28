@@ -397,6 +397,42 @@ for (const contextMenuFirst of [false, true]) test(`a long press on a Bot reply 
   assert.equal(document.querySelector('[role="menu"]'), null); assert.equal(window.getSelection().rangeCount, 0);
 });
 
+test("every long press and selection change ends in the same Cite menu under the current selection", async () => {
+  const cited = [];
+  await render("bot", "First one here. Second **bold** part here. Third.", [], "main", (text) => cited.push(text));
+  const buzz = touchAt("First"); const bubble = host.querySelector(".bubble");
+  // Only the range holding the pressed word sits under the finger; ranges sit lower the later their text starts.
+  let pressed = "First";
+  mock.method(window.Range.prototype, "getClientRects", function () { return this.toString().includes(pressed) ? [{ left: 0, right: 390, top: 0, bottom: 300 }] : []; });
+  mock.method(window.Range.prototype, "getBoundingClientRect", function () { const top = 100 + 20 * this.startOffset; return { left: 12, right: 300, top, bottom: top + 20 }; });
+  const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
+  await longPress(bubble);
+  assert.equal(window.getSelection().toString(), "First one here.");
+  assert.equal(menu().querySelector('[role="menuitem"]').textContent, "Cite sentence");
+  // A second long press with the first sentence still selected: our menu again, not the browser's.
+  pressed = "Second"; touchAt("Second");
+  mock.method(window.Range.prototype, "getClientRects", function () { return this.toString().includes(pressed) ? [{ left: 0, right: 390, top: 0, bottom: 300 }] : []; });
+  mock.method(window.Range.prototype, "getBoundingClientRect", function () { const top = 100 + 20 * this.startOffset; return { left: 12, right: 300, top, bottom: top + 20 }; });
+  Object.defineProperty(navigator, "vibrate", { configurable: true, value: (ms) => buzz.push(ms) });
+  await longPress(bubble);
+  assert.equal(window.getSelection().toString(), "Second bold part here.");
+  assert.equal(menu().querySelector('[role="menuitem"]').textContent, "Cite sentence");
+  assert.deepEqual(buzz, [10, 10]);
+  // Widening the selection by its handles: the menu follows it and cites the selection.
+  const top = menu().style.top, body = host.querySelector("[data-message-body]");
+  const walker = document.createTreeWalker(body, window.NodeFilter.SHOW_TEXT); const first = walker.nextNode();
+  const selection = window.getSelection(); const range = selection.getRangeAt(0);
+  await act(async () => { selection.setBaseAndExtent(first, 0, range.endContainer, range.endOffset); await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(menu().querySelector('[role="menuitem"]').textContent, "Cite selection");
+  assert.notEqual(menu().style.top, top, "the menu moved under the new selection");
+  // A long press on the widened selection keeps it.
+  await longPress(bubble);
+  assert.equal(window.getSelection().toString(), "First one here. Second bold part here.");
+  assert.equal(menu().querySelector('[role="menuitem"]').textContent, "Cite selection");
+  await click(button("Cite selection"));
+  assert.deepEqual(cited, ["First one here. Second bold part here."]);
+});
+
 test("a long press near the composer opens the menu above the sentence, and one off the text keeps the sheet", async () => {
   await render("bot", "Only sentence.", [], "main", () => {});
   touchAt("Only"); mock.method(window.Range.prototype, "getBoundingClientRect", () => ({ left: 12, right: 300, top: 700, bottom: 720 }));

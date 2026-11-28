@@ -11,8 +11,14 @@ import "./ChatMessageActions.css";
 type ActionState = "idle" | "copying" | "copied" | "copy-error" | "marking-unread" | "marked-unread" | "unread-error" | "selection-error";
 const QUICK_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮", "🔥", "👀", "🙏", "😢", "💯"];
 type Point = { x: number; y: number };
-/** Where the menu opens. `bottom` anchors it above a sentence that has no room below; `sentence` marks a long press that selected one. */
-type MenuAt = Point & { bottom?: number; sentence?: boolean };
+/** Where the menu opens. `bottom` anchors it above a selection that has no room below; `sentence` marks a long press, `quote` the sentence it picked. */
+type MenuAt = Point & { bottom?: number; sentence?: boolean; quote?: string };
+
+/** The long-press menu goes under the selection, or above it when the selection sits near the composer. */
+function menuUnder(range: Range, quote: string | undefined): MenuAt {
+  const rect = range.getBoundingClientRect(), view = window.visualViewport, height = (view?.offsetTop ?? 0) + (view?.height ?? window.innerHeight);
+  return rect.bottom + 360 < height ? { x: rect.left, y: rect.bottom + 8, sentence: true, quote } : { x: rect.left, y: 0, bottom: document.documentElement.clientHeight - rect.top + 8, sentence: true, quote };
+}
 
 function interactive(target: EventTarget | null) {
   return target instanceof Element && !!target.closest("a,button,input,textarea,select,video,audio,[contenteditable=true]");
@@ -98,7 +104,12 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
         top: Math.max(y + 8, Math.min(last.bottom + (touch ? 28 : 8), y + (view?.height ?? window.innerHeight) - 52)),
       } });
     };
-    const changed = () => { setSelecting(ownsSelection()); place(); };
+    const changed = () => {
+      const owned = ownsSelection(), selection = window.getSelection();
+      setSelecting(owned); place();
+      // Dragging the handles moves the long-press menu with the selection.
+      if (owned && selection) setPosition((at) => at?.sentence ? menuUnder(selection.getRangeAt(selection.rangeCount - 1), at.quote) : at);
+    };
     place();
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -205,18 +216,23 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
     cancelHold(); swipe.current = null;
     navigator.vibrate?.(10);
     const body = messageBody(), selection = window.getSelection();
-    const range = citable && body && selection ? sentenceAt(body, point.x, point.y) : null;
+    // A press on text that's already selected keeps that selection; elsewhere it picks the sentence.
+    const current = ownsSelection() && selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const inside = current && [...current.getClientRects()].some((rect) => point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom);
+    const range = citable && body && selection ? inside ? current : sentenceAt(body, point.x, point.y) : null;
     if (!range || !selection) { setPosition(point); return; }
-    setSelecting(true); selection.removeAllRanges(); selection.addRange(range);
-    // The menu opens under the sentence, or above it when the sentence sits near the composer.
-    const rect = range.getBoundingClientRect(), view = window.visualViewport, height = (view?.offsetTop ?? 0) + (view?.height ?? window.innerHeight);
-    setPosition(rect.bottom + 360 < height ? { x: rect.left, y: rect.bottom + 8, sentence: true } : { x: rect.left, y: 0, bottom: document.documentElement.clientHeight - rect.top + 8, sentence: true });
+    setSelecting(true);
+    if (range !== current) { selection.removeAllRanges(); selection.addRange(range); }
+    setPosition(menuUnder(range, inside ? undefined : range.toString()));
   };
   const startHold = (event: PointerEvent<HTMLDivElement>) => {
     cancelHold(); swipe.current = null;
-    if (selecting || ownsSelection() || event.pointerType !== "touch" && event.pointerType !== "pen" || interactive(event.target)) return;
+    if (event.pointerType !== "touch" && event.pointerType !== "pen" || interactive(event.target)) return;
+    // With a selection already up, a long press still belongs to us on Bot replies, so the menu is always ours.
+    const selected = selecting || ownsSelection();
+    if (selected && !citable) return;
     const point = { x: event.clientX, y: event.clientY };
-    if (citable) swipe.current = { ...point, dx: 0 };
+    if (citable && !selected) swipe.current = { ...point, dx: 0 };
     hold.current = { point, timer: window.setTimeout(() => held(point), 500) };
   };
   const moveHold = (event: PointerEvent<HTMLDivElement>) => {
@@ -285,7 +301,7 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
       <button type="button" className="chat-message-sheet-dismiss" aria-label="Close message actions" onClick={close}><span aria-hidden="true" /></button>
       {picking ? <EmojiPicker onBack={() => setPicking(false)} onPick={react} /> : <>
       {position.sentence && <div role="group" aria-label="Cite" className="chat-message-action-group">
-        <button type="button" role="menuitem" onPointerDown={keepSelection} onMouseDown={keepSelection} onClick={cite}><TextQuote size={20} aria-hidden="true" />Cite sentence</button>
+        <button type="button" role="menuitem" onPointerDown={keepSelection} onMouseDown={keepSelection} onClick={cite}><TextQuote size={20} aria-hidden="true" />{window.getSelection()?.toString() === position.quote ? "Cite sentence" : "Cite selection"}</button>
       </div>}
       {threadId && itemId && <div role="group" aria-label="Reactions" className="chat-reaction-grid">
         {QUICK_REACTIONS.map((emoji) => <button key={emoji} type="button" aria-pressed={!!reactions?.includes(emoji)} aria-label={reactions?.includes(emoji) ? `Remove ${emoji} reaction` : `React with ${emoji}`} onClick={() => react(emoji)}>{emoji}</button>)}
