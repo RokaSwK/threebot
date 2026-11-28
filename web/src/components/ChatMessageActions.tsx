@@ -1,15 +1,24 @@
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, Copy, MessageSquareDot, MoreHorizontal, Reply, SmilePlus, TextCursor, TextQuote } from "lucide-react";
 import { copyText } from "../lib/t3";
 import { markThreadUnread, toggleReaction, toast, useApp } from "../store";
 import { MOBILE_CHAT_QUERY } from "../lib/chatBehavior";
+import { sentenceAt } from "../lib/reply";
 import { EmojiPicker } from "./EmojiPicker";
 import "./ChatMessageActions.css";
 
 type ActionState = "idle" | "copying" | "copied" | "copy-error" | "marking-unread" | "marked-unread" | "unread-error" | "selection-error";
 const QUICK_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮", "🔥", "👀", "🙏", "😢", "💯"];
 type Point = { x: number; y: number };
+/** Where the menu opens. `bottom` anchors it above a selection that has no room below; `sentence` marks a long press, `quote` the sentence it picked. */
+type MenuAt = Point & { bottom?: number; sentence?: boolean; quote?: string };
+
+/** The long-press menu goes under the selection, or above it when the selection sits near the composer. */
+function menuUnder(range: Range, quote: string | undefined): MenuAt {
+  const rect = range.getBoundingClientRect(), view = window.visualViewport, height = (view?.offsetTop ?? 0) + (view?.height ?? window.innerHeight);
+  return rect.bottom + 360 < height ? { x: rect.left, y: rect.bottom + 8, sentence: true, quote } : { x: rect.left, y: 0, bottom: document.documentElement.clientHeight - rect.top + 8, sentence: true, quote };
+}
 
 function interactive(target: EventTarget | null) {
   return target instanceof Element && !!target.closest("a,button,input,textarea,select,video,audio,[contenteditable=true]");
@@ -35,8 +44,8 @@ function renderedMessageText(body: HTMLElement) {
 
 /** Message content stays mounted while actions and native text selection open. */
 export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onCite, side, children, className = "" }: { text: string; threadId?: string; itemId?: string; runId?: string | null; onReply?: (text: string) => void; onCite?: (text: string) => void; side: "user" | "bot"; children: ReactNode; className?: string }) {
-  const [position, setPosition] = useState<Point | null>(null);
-  const [citeAt, setCiteAt] = useState<Point | null>(null);
+  const [position, setPosition] = useState<MenuAt | null>(null);
+  const [citeAt, setCiteAt] = useState<{ style: CSSProperties; preview?: string } | null>(null);
   const [picking, setPicking] = useState(false);
   const reactions = useApp((s) => threadId && itemId ? s.threadMeta?.[threadId]?.reactions?.[itemId] : undefined);
   const [state, setState] = useState<ActionState>("idle");
@@ -47,6 +56,9 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
   const copyButton = useRef<HTMLButtonElement>(null);
   const operation = useRef<symbol | null>(null);
   const hold = useRef<{ timer: number; point: Point } | null>(null);
+  const swipe = useRef<{ x: number; y: number; dx: number } | null>(null);
+  // Long press selects the sentence and swipe cites the reply, on Bot replies only.
+  const citable = !!onCite && side === "bot";
   const cancelHold = () => { if (hold.current) window.clearTimeout(hold.current.timer); hold.current = null; };
   const messageBody = () => wrapper.current?.querySelector<HTMLElement>("[data-message-body]");
   const ownsSelection = () => {
@@ -76,7 +88,7 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
   }, [state]);
   useEffect(() => {
     if (!selecting) { setCiteAt(null); return; }
-    // Cite sits under the selection's end, where the phone's own selection menu (drawn above) leaves room.
+    // Desktop: Cite sits under the selection's end. Phones: in a bar above the composer, clear of the OS selection menu.
     const place = () => {
       const selection = window.getSelection();
       const range = onCite && ownsSelection() && selection ? selection.getRangeAt(selection.rangeCount - 1) : null;
@@ -84,13 +96,20 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
       const last = rects?.length ? rects[rects.length - 1] : range?.getBoundingClientRect();
       const view = window.visualViewport, x = view?.offsetLeft ?? 0, y = view?.offsetTop ?? 0;
       const touch = window.matchMedia(MOBILE_CHAT_QUERY).matches;
-      // On phones the native end handle hangs under the selection, so Cite sits clear of it.
-      setCiteAt(last ? {
-        x: Math.max(x + 8, Math.min(last.right - 40, x + (view?.width ?? window.innerWidth) - 104)),
-        y: Math.max(y + 8, Math.min(last.bottom + (touch ? 28 : 8), y + (view?.height ?? window.innerHeight) - 52)),
-      } : null);
+      const composer = touch && wrapper.current?.closest(".chat-view")?.querySelector(".composer-shell")?.getBoundingClientRect();
+      if (!last) setCiteAt(null);
+      else if (composer) setCiteAt({ preview: selection?.toString().replace(/\s+/g, " ").trim(), style: { left: composer.left, width: composer.width, bottom: document.documentElement.clientHeight - composer.top + 6 } });
+      else setCiteAt({ style: {
+        left: Math.max(x + 8, Math.min(last.right - 40, x + (view?.width ?? window.innerWidth) - 104)),
+        top: Math.max(y + 8, Math.min(last.bottom + (touch ? 28 : 8), y + (view?.height ?? window.innerHeight) - 52)),
+      } });
     };
-    const changed = () => { setSelecting(ownsSelection()); place(); };
+    const changed = () => {
+      const owned = ownsSelection(), selection = window.getSelection();
+      setSelecting(owned); place();
+      // Dragging the handles moves the long-press menu with the selection.
+      if (owned && selection) setPosition((at) => at?.sentence ? menuUnder(selection.getRangeAt(selection.rangeCount - 1), at.quote) : at);
+    };
     place();
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -101,7 +120,8 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
     document.addEventListener("selectionchange", changed);
     window.addEventListener("keydown", escape, true);
     window.addEventListener("scroll", place, true);
-    return () => { document.removeEventListener("selectionchange", changed); window.removeEventListener("keydown", escape, true); window.removeEventListener("scroll", place, true); };
+    window.addEventListener("resize", place);
+    return () => { document.removeEventListener("selectionchange", changed); window.removeEventListener("keydown", escape, true); window.removeEventListener("scroll", place, true); window.removeEventListener("resize", place); };
   }, [selecting]);
   useEffect(() => {
     if (!position) { setPicking(false); return; }
@@ -125,7 +145,7 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
     window.addEventListener("pointerdown", outside);
     window.addEventListener("keydown", key, true);
     const overflow = document.body.style.overflow;
-    const mobile = window.matchMedia(MOBILE_CHAT_QUERY).matches;
+    const mobile = window.matchMedia(MOBILE_CHAT_QUERY).matches && !position.sentence;
     if (mobile) document.body.style.overflow = "hidden";
     window.addEventListener("scroll", scrolling, true);
     window.addEventListener("resize", close);
@@ -181,7 +201,7 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
   };
   const cite = () => {
     const quote = selectedText();
-    window.getSelection()?.removeAllRanges(); setSelecting(false);
+    window.getSelection()?.removeAllRanges(); setSelecting(false); setPosition(null);
     if (quote) onCite?.(quote);
   };
   // A mouse selection joins the Select Text state, so Cite shows for it too. The drag often ends outside the message.
@@ -191,11 +211,45 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
     copyText(runId).then(() => toast("Copied request ID"), () => toast("Couldn't copy request ID"));
     setPosition(null);
   };
+  /** A long press, from its timer or the browser's contextmenu, whichever comes first. */
+  const held = (point: Point) => {
+    cancelHold(); swipe.current = null;
+    navigator.vibrate?.(10);
+    const body = messageBody(), selection = window.getSelection();
+    // A press on text that's already selected keeps that selection; elsewhere it picks the sentence.
+    const current = ownsSelection() && selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const inside = current && [...current.getClientRects()].some((rect) => point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom);
+    const range = citable && body && selection ? inside ? current : sentenceAt(body, point.x, point.y) : null;
+    if (!range || !selection) { setPosition(point); return; }
+    setSelecting(true);
+    if (range !== current) { selection.removeAllRanges(); selection.addRange(range); }
+    setPosition(menuUnder(range, inside ? undefined : range.toString()));
+  };
   const startHold = (event: PointerEvent<HTMLDivElement>) => {
-    cancelHold();
-    if (selecting || ownsSelection() || event.pointerType !== "touch" && event.pointerType !== "pen" || interactive(event.target)) return;
+    cancelHold(); swipe.current = null;
+    if (event.pointerType !== "touch" && event.pointerType !== "pen" || interactive(event.target)) return;
+    // With a selection already up, a long press still belongs to us on Bot replies, so the menu is always ours.
+    const selected = selecting || ownsSelection();
+    if (selected && !citable) return;
     const point = { x: event.clientX, y: event.clientY };
-    hold.current = { point, timer: window.setTimeout(() => { hold.current = null; setPosition(point); }, 500) };
+    if (citable && !selected) swipe.current = { ...point, dx: 0 };
+    hold.current = { point, timer: window.setTimeout(() => held(point), 500) };
+  };
+  const moveHold = (event: PointerEvent<HTMLDivElement>) => {
+    const point = hold.current?.point;
+    if (point && Math.hypot(event.clientX - point.x, event.clientY - point.y) > 10) cancelHold();
+    const start = swipe.current, el = wrapper.current;
+    if (!start || !el) return;
+    const dx = event.clientX - start.x, dy = event.clientY - start.y;
+    if (!start.dx && Math.abs(dy) > 10) { swipe.current = null; return; }
+    if (dx > 10 && dx > Math.abs(dy)) { start.dx = dx; el.style.transition = "none"; el.style.transform = `translateX(${Math.min(dx, 72)}px)`; }
+  };
+  /** Swipe right past the threshold cites the whole reply, like a chat app's swipe to reply. */
+  const endSwipe = (release: boolean) => {
+    const dx = swipe.current?.dx ?? 0, el = wrapper.current, body = messageBody();
+    swipe.current = null;
+    if (el) { el.style.transition = ""; el.style.transform = ""; }
+    if (release && dx >= 56 && body) onCite?.(renderedMessageText(body));
   };
   const viewport = window.visualViewport;
   const offsetX = viewport?.offsetLeft ?? 0, offsetY = viewport?.offsetTop ?? 0;
@@ -204,6 +258,9 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
   const pending = state === "copying" || state === "marking-unread";
   // Resize dismisses the menu, so its next open uses the current input layout.
   const mobile = typeof window.matchMedia === "function" && window.matchMedia(MOBILE_CHAT_QUERY).matches;
+  // A long press that selected a sentence opens the menu under it, not as the phone's bottom sheet.
+  const sheet = mobile && !position?.sentence;
+  const keepSelection = (event: { preventDefault: () => void }) => event.preventDefault();
   const confirmed = state === "copied" || state === "marked-unread";
   const feedback = state === "copied" ? "Message copied." : state === "copying" ? "Copying message…" : state === "marked-unread" ? "Conversation marked as unread." : state === "marking-unread" ? "Marking conversation unread…" : selecting ? "Message text selected. Use your browser's text actions." : "";
   const close = () => { setPosition(null); trigger.current?.focus({ preventScroll: true }); };
@@ -216,10 +273,15 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
       if (selected === null) return;
       event.clipboardData.setData("text/plain", selected); event.preventDefault();
     }}
-    onContextMenu={(event) => { if (!selecting && !ownsSelection() && !interactive(event.target)) { event.preventDefault(); cancelHold(); setPosition({ x: event.clientX, y: event.clientY }); } }}
+    onContextMenu={(event) => {
+      // On Android the long press also sends contextmenu: it fires the pending hold once, and a late one keeps the sentence.
+      if (hold.current) { event.preventDefault(); held(hold.current.point); }
+      else if (position?.sentence) event.preventDefault();
+      else if (!selecting && !ownsSelection() && !interactive(event.target)) { event.preventDefault(); cancelHold(); setPosition({ x: event.clientX, y: event.clientY }); }
+    }}
     onPointerDown={(event) => { startHold(event); if (onCite && event.pointerType === "mouse") document.addEventListener("pointerup", noticeSelection, { once: true }); }}
-    onPointerMove={(event) => { const point = hold.current?.point; if (point && Math.hypot(event.clientX - point.x, event.clientY - point.y) > 10) cancelHold(); }}
-    onPointerUp={cancelHold} onPointerCancel={cancelHold} onPointerLeave={cancelHold}>
+    onPointerMove={moveHold}
+    onPointerUp={() => { cancelHold(); endSwipe(true); }} onPointerCancel={() => { cancelHold(); endSwipe(false); }} onPointerLeave={cancelHold}>
     {children}
     {reactionChips}
     <button ref={trigger} type="button" className="chat-message-action-trigger" aria-label="Message actions" aria-haspopup="menu" aria-expanded={!!position}
@@ -227,15 +289,20 @@ export function ChatMessageActions({ text, threadId, itemId, runId, onReply, onC
       <MoreHorizontal size={16} aria-hidden="true" />
     </button>
     <span role="status" className={confirmed || state === "marking-unread" ? "chat-message-copy-feedback" : "sr-only"}>{feedback}</span>
-    {citeAt && createPortal(<button type="button" className="chat-message-cite" data-mobile={mobile} style={{ left: citeAt.x, top: citeAt.y }}
-      onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={cite}>
+    {citeAt && !position && createPortal(citeAt.preview === undefined ? <button type="button" className="chat-message-cite" data-mobile={mobile} style={citeAt.style} onPointerDown={keepSelection} onMouseDown={keepSelection} onClick={cite}>
       <TextQuote size={15} aria-hidden="true" />Cite
-    </button>, document.body)}
+    </button> : <div className="chat-message-cite-bar" style={citeAt.style}>
+      <TextQuote size={16} aria-hidden="true" /><span>{citeAt.preview}</span>
+      <button type="button" className="chat-message-cite" onPointerDown={keepSelection} onMouseDown={keepSelection} onClick={cite}>Cite</button>
+    </div>, document.body)}
     {position && createPortal(<>
-    <div className="chat-message-action-backdrop" data-mobile={mobile} onPointerDown={(event) => event.stopPropagation()} onClick={close} />
-    <div ref={menu} role="menu" aria-label="Message actions" data-mobile={mobile} className="chat-message-action-menu" style={mobile ? undefined : { left, top }}>
+    <div className="chat-message-action-backdrop" data-mobile={sheet} onPointerDown={(event) => event.stopPropagation()} onClick={close} />
+    <div ref={menu} role="menu" aria-label="Message actions" data-mobile={sheet} className="chat-message-action-menu" style={sheet ? undefined : position.bottom === undefined ? { left, top } : { left, bottom: position.bottom }}>
       <button type="button" className="chat-message-sheet-dismiss" aria-label="Close message actions" onClick={close}><span aria-hidden="true" /></button>
       {picking ? <EmojiPicker onBack={() => setPicking(false)} onPick={react} /> : <>
+      {position.sentence && <div role="group" aria-label="Cite" className="chat-message-action-group">
+        <button type="button" role="menuitem" onPointerDown={keepSelection} onMouseDown={keepSelection} onClick={cite}><TextQuote size={20} aria-hidden="true" />{window.getSelection()?.toString() === position.quote ? "Cite sentence" : "Cite selection"}</button>
+      </div>}
       {threadId && itemId && <div role="group" aria-label="Reactions" className="chat-reaction-grid">
         {QUICK_REACTIONS.map((emoji) => <button key={emoji} type="button" aria-pressed={!!reactions?.includes(emoji)} aria-label={reactions?.includes(emoji) ? `Remove ${emoji} reaction` : `React with ${emoji}`} onClick={() => react(emoji)}>{emoji}</button>)}
         <button type="button" aria-label="More emoji" onClick={() => setPicking(true)}><SmilePlus size={21} aria-hidden="true" /></button>
