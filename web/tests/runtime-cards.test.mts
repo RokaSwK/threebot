@@ -553,6 +553,28 @@ test("pending custom question draft survives leaving and returning to the same r
   assert.equal(calls.length, 0, "navigation does not submit a draft");
 });
 
+test("multi-select rows are checkboxes and the picked names are listed in pick order", async () => {
+  const value = fixtures.question(); value.item.questions = [{ ...question, multiSelect: true }];
+  await render("question", value);
+  const options = document.querySelector(".question-options");
+  assert.equal(options.hasAttribute("data-checklist"), true);
+  assert.equal(options.hasAttribute("data-picked"), false);
+  assert.equal(document.querySelector(".question-picked"), null);
+  await click(button("Second")); await click(button("First"));
+  assert.deepEqual([...document.querySelectorAll(".question-picked li")].map((chip) => chip.textContent), ["Second", "First"]);
+  assert.equal(options.hasAttribute("data-picked"), true);
+  assert.equal(button("First").querySelectorAll(".question-option-badge svg").length, 1, "a picked row shows its check");
+  await click(button("First"));
+  assert.equal(button("First").querySelectorAll(".question-option-badge svg").length, 0);
+  assert.deepEqual([...document.querySelectorAll(".question-picked li")].map((chip) => chip.textContent), ["Second"]);
+});
+
+test("single-choice rows keep their letters and no picked list", async () => {
+  await render("question", fixtures.question());
+  assert.equal(document.querySelector(".question-options").hasAttribute("data-checklist"), false);
+  assert.equal(button("First").querySelector(".question-option-badge").textContent, "A");
+});
+
 test("pending multi-select choices survive remount and can still be changed", async () => {
   const value = fixtures.question(); value.item.questions = [{ ...question, multiSelect: true }];
   await render("question", value);
