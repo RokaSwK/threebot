@@ -181,8 +181,10 @@ test("Cite adds the selection as a blockquote after the draft, with the caret an
   assert.equal(textarea().selectionStart, textarea().value.length);
   await runtime.act(async () => citeTo.current("   "));
   assert.equal(textarea().value, "My draft\n\n> First line\n>\n>   second line\n\n", "an empty selection adds nothing");
+  await runtime.act(async () => citeTo.current("Another point"));
+  assert.equal(textarea().value, "My draft\n\n> First line\n>\n>   second line\n\n> Another point\n\n", "each Cite adds its own quote after the last");
   await click(send());
-  assert.equal(sends[0].command.text, "My draft\n\n> First line\n>\n>   second line");
+  assert.equal(sends[0].command.text, "My draft\n\n> First line\n>\n>   second line\n\n> Another point");
 });
 
 test("same-turn duplicate send events dispatch a payload once", async () => {

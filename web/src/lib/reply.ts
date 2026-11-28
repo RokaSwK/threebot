@@ -24,3 +24,32 @@ export function citation(draft: string, selection: string) {
   const gap = !draft.trim() || draft.endsWith("\n\n") ? "" : draft.endsWith("\n") ? "\n" : "\n\n";
   return quote === ">" ? "" : `${gap}${quote}\n\n`;
 }
+
+/** The sentence under a point, as a range inside its paragraph, or null when the point isn't on message text. */
+export function sentenceAt(body: HTMLElement, x: number, y: number) {
+  const caret = document.caretPositionFromPoint?.(x, y);
+  const hit = caret ? null : document.caretRangeFromPoint?.(x, y);
+  const node = caret?.offsetNode ?? hit?.startContainer, offset = caret?.offset ?? hit?.startOffset ?? 0;
+  // Code blocks have no sentences; they keep today's action sheet.
+  if (!(node instanceof Text) || !body.contains(node) || node.parentElement?.closest("pre")) return null;
+  const found = node.parentElement?.closest("p,li,blockquote,td,th,h1,h2,h3,h4,h5,h6,[data-message-body]");
+  const block = found && body.contains(found) ? found : body;
+  const nodes: { node: Text; start: number }[] = [];
+  let text = "", at = -1;
+  const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+  for (let next = walker.nextNode(); next; next = walker.nextNode()) {
+    if (next === node) at = text.length + offset;
+    nodes.push({ node: next as Text, start: text.length }); text += next.textContent ?? "";
+  }
+  const sentence = [...new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(text)].find(({ index, segment }) => at < index + segment.length);
+  if (!sentence?.segment.trim()) return null;
+  const end = sentence.index + sentence.segment.trimEnd().length;
+  const place = (position: number, edge: "start" | "end") => {
+    const owner = nodes.findLast(({ start }) => edge === "start" ? start <= position : start < position)!;
+    return [owner.node, position - owner.start] as const;
+  };
+  const range = document.createRange();
+  range.setStart(...place(sentence.index, "start")); range.setEnd(...place(end, "end"));
+  // Caret lookups snap to the nearest text, so a press on the bubble's padding finds none.
+  return [...range.getClientRects()].some((rect) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) ? range : null;
+}

@@ -97,3 +97,14 @@
 .chat-message-cite:hover { background: var(--bg-hover); }
 .chat-message-cite:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chat-message-cite[data-mobile="true"] { min-height: 44px; padding: 0 16px; font-size: 15px; }
+/* Phones: Cite waits in a slim bar above the composer, where the OS selection menu can't cover it. */
+.chat-message-cite-bar {
+  position: fixed; z-index: 80; display: flex; align-items: center; gap: 8px;
+  min-height: 44px; padding: 4px 4px 4px 12px; border: 1px solid var(--border); border-radius: 16px;
+  color: var(--fg-muted); background: var(--bg-elevated); box-shadow: var(--shadow-pop);
+  font-size: 13px; -webkit-user-select: none; user-select: none;
+}
+.chat-message-cite-bar > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-message-cite-bar > .chat-message-cite { position: static; min-height: 36px; box-shadow: none; color: var(--fg); }
+/* Horizontal moves belong to swipe-to-cite; vertical scroll and pinch stay with the browser. */
+.chat-message-actions[data-mobile="true"] { touch-action: pan-y pinch-zoom; transition: transform .18s ease-out; }

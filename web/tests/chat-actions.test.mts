@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 const channels = [];
 globalThis.MessageChannel = class extends MessageChannel { constructor() { super(); channels.push(this); } };
 const window = domWindow(new Window({ url: "https://chat-actions.test/", width: 390, height: 844, settings: { navigation: { disableChildFrameNavigation: true }, enableImageFileLoading: false } }));
-for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "history"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
+for (const key of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "NodeFilter", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "IntersectionObserver", "localStorage", "requestAnimationFrame", "cancelAnimationFrame", "history"]) Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
 Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
 globalThis.getComputedStyle = window.getComputedStyle.bind(window);
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -358,6 +358,96 @@ test("a message without Cite shows no Cite button for its selection", async () =
   const selection = window.getSelection(); await act(async () => { selection.removeAllRanges(); selection.addRange(range); });
   await drag(selected);
   assert.equal(document.querySelector(".chat-message-cite"), null);
+});
+
+// Layout the DOM can't do: where the finger lands in the text, and where the sentence sits.
+const touchAt = (word, rects = [{ left: 0, right: 390, top: 0, bottom: 300 }]) => {
+  const node = [...host.querySelectorAll("[data-message-body] *, [data-message-body]")].flatMap((element) => [...element.childNodes]).find((child) => child.nodeType === 3 && child.textContent.includes(word));
+  assert.ok(node, `text "${word}" is rendered`);
+  document.caretPositionFromPoint = () => ({ offsetNode: node, offset: node.textContent.indexOf(word), getClientRect: () => null });
+  mock.method(window.Range.prototype, "getClientRects", () => rects);
+  mock.method(window.Range.prototype, "getBoundingClientRect", () => ({ left: 12, right: 300, top: 100, bottom: 120 }));
+  const buzz = []; Object.defineProperty(navigator, "vibrate", { configurable: true, value: (ms) => buzz.push(ms) });
+  return buzz;
+};
+const touch = (type, element, x, y) => element.dispatchEvent(new window.PointerEvent(type, { bubbles: true, cancelable: true, pointerType: "touch", clientX: x, clientY: y }));
+const longPress = async (element, contextMenuFirst = false) => act(async () => {
+  touch("pointerdown", element, 20, 20);
+  if (contextMenuFirst) element.dispatchEvent(new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+  await new Promise((resolve) => setTimeout(resolve, 550));
+});
+afterEach(() => { delete document.caretPositionFromPoint; delete navigator.vibrate; });
+
+for (const contextMenuFirst of [false, true]) test(`a long press on a Bot reply selects the sentence and opens the menu under it, with Cite sentence first${contextMenuFirst ? " (contextmenu before the timer)" : ""}`, async () => {
+  const cited = [];
+  await render("bot", "First one here. Second **bold** part here. Third.", [], "main", (text) => cited.push(text));
+  const buzz = touchAt("Second"); const bubble = host.querySelector(".bubble");
+  await longPress(bubble, contextMenuFirst);
+  assert.equal(window.getSelection().toString(), "Second bold part here.");
+  assert.deepEqual(buzz, [10], "one short buzz per long press");
+  const menu = document.querySelector<HTMLElement>('[role="menu"]');
+  assert.equal(menu.getAttribute("data-mobile"), "false", "a popover under the sentence, not the bottom sheet");
+  assert.equal(menu.style.top, "128px");
+  assert.equal(menu.querySelector('[role="menuitem"]').textContent, "Cite sentence");
+  assert.ok(button("Copy message"), "the usual items stay");
+  const late = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }); await act(async () => bubble.dispatchEvent(late));
+  assert.equal(late.defaultPrevented, true, "a late contextmenu from the same press keeps the sentence");
+  await click(button("Cite sentence"));
+  assert.deepEqual(cited, ["Second bold part here."]);
+  assert.equal(document.querySelector('[role="menu"]'), null); assert.equal(window.getSelection().rangeCount, 0);
+});
+
+test("a long press near the composer opens the menu above the sentence, and one off the text keeps the sheet", async () => {
+  await render("bot", "Only sentence.", [], "main", () => {});
+  touchAt("Only"); mock.method(window.Range.prototype, "getBoundingClientRect", () => ({ left: 12, right: 300, top: 700, bottom: 720 }));
+  await longPress(host.querySelector(".bubble"));
+  const menu = document.querySelector<HTMLElement>('[role="menu"]');
+  assert.equal(menu.style.top, ""); assert.ok(menu.style.bottom, "anchored above the sentence");
+  await act(async () => window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" })));
+  await act(async () => window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" })));
+  window.getSelection().removeAllRanges();
+  touchAt("Only", [{ left: 100, right: 200, top: 100, bottom: 120 }]);
+  await longPress(host.querySelector(".bubble"));
+  assert.equal(document.querySelector('[role="menu"]').getAttribute("data-mobile"), "true", "the press missed the text: today's sheet");
+  assert.equal(button("Cite sentence"), undefined); assert.equal(window.getSelection().rangeCount, 0);
+});
+
+test("swiping a Bot reply to the right cites all of it; short or vertical moves don't", async () => {
+  const cited = [];
+  await render("bot", "Whole **reply** text.", [], "main", (text) => cited.push(text));
+  const bubble = host.querySelector(".bubble"), wrapper = document.querySelector<HTMLElement>(".chat-message-actions");
+  const swipe = async (points) => act(async () => { touch("pointerdown", bubble, 20, 20); for (const [x, y] of points) touch("pointermove", bubble, x, y); const [x, y] = points.at(-1); touch("pointerup", bubble, x, y); });
+  await swipe([[40, 22], [70, 24]]);
+  assert.deepEqual(cited, []);
+  await act(async () => { touch("pointerdown", bubble, 20, 20); touch("pointermove", bubble, 60, 22); touch("pointermove", bubble, 100, 24); });
+  assert.equal(wrapper.style.transform, "translateX(72px)", "the reply follows the finger, up to a limit");
+  await act(async () => touch("pointerup", bubble, 100, 24));
+  assert.equal(wrapper.style.transform, "");
+  assert.deepEqual(cited, ["Whole reply text."]);
+  await swipe([[22, 40], [100, 44]]);
+  assert.equal(cited.length, 1, "a vertical start is a scroll, not a swipe");
+  await act(async () => { touch("pointerdown", bubble, 20, 20); touch("pointermove", bubble, 100, 24); touch("pointercancel", bubble, 100, 24); });
+  assert.equal(cited.length, 1, "the browser taking the gesture cancels it"); assert.equal(wrapper.style.transform, "");
+  await render("user", "My own message.", [], "main", (text) => cited.push(text));
+  const mine = host.querySelector(".bubble");
+  await act(async () => { touch("pointerdown", mine, 20, 20); touch("pointermove", mine, 100, 22); touch("pointerup", mine, 100, 22); });
+  assert.equal(cited.length, 1, "user messages don't swipe");
+});
+
+test("on phones Cite sits in a bar above the composer, with a preview of the selection", async () => {
+  const cited = [];
+  const view = document.createElement("section"); view.className = "chat-view"; document.body.append(view); view.append(host);
+  const composer = document.createElement("div"); composer.className = "composer-shell"; view.append(composer);
+  mock.method(composer, "getBoundingClientRect", () => ({ left: 16, width: 358, top: 760, bottom: 820 }));
+  await render("bot", "Choose **this  part** and leave the rest.", [], "main", (text) => cited.push(text));
+  const selected = host.querySelector("strong"); const range = document.createRange(); range.selectNodeContents(selected);
+  const selection = window.getSelection(); await act(async () => { selection.removeAllRanges(); selection.addRange(range); });
+  await drag(selected);
+  const bar = document.querySelector<HTMLElement>(".chat-message-cite-bar");
+  assert.ok(bar); assert.equal(bar.querySelector("span").textContent, "this part");
+  assert.equal(bar.style.left, "16px"); assert.equal(bar.style.width, "358px"); assert.equal(bar.style.bottom, `${document.documentElement.clientHeight - 760 + 6}px`);
+  await click(bar.querySelector("button"));
+  assert.equal(cited.length, 1); assert.match(cited[0], /^this +part$/); assert.equal(document.querySelector(".chat-message-cite-bar"), null);
 });
 
 test("native selection Copy also excludes code controls and duplicate KaTeX trees", async () => {
